@@ -70,6 +70,11 @@ export interface HealthCheck {
   total_amount: number
   public_token: string | null
   public_expires_at: string | null
+  sent_at: string | null
+  first_opened_at: string | null
+  closed_at: string | null
+  closed_by: string | null
+  closed_by_user?: { id: string; first_name: string; last_name: string } | null
   vehicle?: Vehicle
   customer?: Customer
   technician?: { id: string; first_name: string; last_name: string }
@@ -135,7 +140,22 @@ export interface CheckResult {
   rag_status: 'green' | 'amber' | 'red' | null
   value: unknown
   notes: string | null
+  is_mot_failure?: boolean
+  checked_at?: string | null
+  checked_by?: string | null
   media?: ResultMedia[]
+  template_item?: {
+    id: string
+    name: string
+    description: string | null
+    item_type: string
+    config: Record<string, unknown>
+    section?: {
+      id: string
+      name: string
+      sort_order: number
+    }
+  }
 }
 
 export interface ResultMedia {
@@ -153,10 +173,15 @@ export interface RepairItem {
   description: string | null
   rag_status: 'amber' | 'red'
   parts_cost: number
-  labour_cost: number
-  total_cost: number
+  labor_cost: number
+  total_price: number
   is_approved: boolean | null
   is_visible: boolean
+  is_mot_failure: boolean
+  follow_up_date: string | null
+  work_completed_at: string | null
+  work_completed_by: string | null
+  work_completed_by_user?: { id: string; first_name: string; last_name: string } | null
   sort_order: number
   created_at: string
 }
@@ -170,4 +195,36 @@ export interface StatusHistoryEntry {
   notes: string | null
   created_at: string
   user?: { first_name: string; last_name: string }
+}
+
+export interface Authorization {
+  id: string
+  repair_item_id: string
+  decision: 'approved' | 'declined'
+  decided_at: string
+  customer_notes: string | null
+  signature_data: boolean
+}
+
+export interface HealthCheckSummary {
+  total_items: number
+  red_count: number
+  amber_count: number
+  green_count: number
+  total_identified: number
+  total_authorised: number
+  total_declined: number
+  work_completed_count: number
+  work_outstanding_count: number
+  work_completed_value: number
+  work_outstanding_value: number
+  media_count: number
+}
+
+export interface FullHealthCheckResponse {
+  healthCheck: HealthCheck
+  check_results?: CheckResult[]
+  repair_items?: RepairItem[]
+  authorizations?: Authorization[]
+  summary?: HealthCheckSummary
 }

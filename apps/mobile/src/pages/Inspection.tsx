@@ -5,10 +5,13 @@ import { api, HealthCheck, TemplateSection, TemplateItem, CheckResult } from '..
 import { Card } from '../components/Card'
 import { Button } from '../components/Button'
 import { RAGSelector, RAGIndicator } from '../components/RAGSelector'
-import { TextArea } from '../components/Input'
+import { Input, TextArea } from '../components/Input'
 import { PhotoCapture } from '../components/PhotoCapture'
 import { TyreDepthInput } from '../components/TyreDepthInput'
 import { BrakeMeasurementInput } from '../components/BrakeMeasurementInput'
+import { MeasurementInput } from '../components/MeasurementInput'
+import { SelectInput } from '../components/SelectInput'
+import { MultiSelectInput } from '../components/MultiSelectInput'
 import { Badge } from '../components/Badge'
 import { db } from '../lib/db'
 
@@ -143,7 +146,8 @@ export function Inspection() {
           templateItemId: itemId,
           status: result.rag_status,
           value: result.value,
-          notes: result.notes
+          notes: result.notes,
+          is_mot_failure: result.is_mot_failure
         })
       })
     } catch {
@@ -208,10 +212,11 @@ export function Inspection() {
     if (!session || !id) return
 
     try {
-      await api(`/api/v1/health-checks/${id}/status`, {
+      // Clock out with complete=false to pause (this also changes status to 'paused')
+      await api(`/api/v1/health-checks/${id}/clock-out`, {
         method: 'POST',
         token: session.access_token,
-        body: JSON.stringify({ status: 'paused' })
+        body: JSON.stringify({ complete: false })
       })
       navigate('/')
     } catch (err) {
@@ -409,7 +414,19 @@ interface InspectionItemProps {
 function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, onViewPhoto }: InspectionItemProps) {
   const handleRAGChange = (newStatus: 'green' | 'amber' | 'red' | null) => {
     if ('vibrate' in navigator) navigator.vibrate(50)
-    onSave({ status: newStatus, rag_status: newStatus })
+    // Clear MOT failure flag if status changes away from red
+    const updateData: Partial<CheckResult> = {
+      status: newStatus,
+      rag_status: newStatus
+    }
+    if (newStatus !== 'red') {
+      updateData.is_mot_failure = false
+    }
+    onSave(updateData)
+  }
+
+  const handleMOTFailureChange = (isMOTFailure: boolean) => {
+    onSave({ is_mot_failure: isMOTFailure })
   }
 
   const handleNotesChange = (notes: string) => {
@@ -430,7 +447,7 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
         className="w-full p-4 flex items-center justify-between text-left"
       >
         <div className="flex items-center gap-3 flex-1 min-w-0">
-          <RAGIndicator status={ragStatus || 'gray'} />
+          <RAGIndicator status={ragStatus || null} />
           <span className="font-medium truncate">{item.name}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -449,9 +466,13 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
       </button>
 
       {/* Quick RAG buttons - always visible for RAG type */}
-      {!expanded && item.item_type === 'rag' && (
+      {!expanded && item.itemType === 'rag' && (
         <div className="px-4 pb-4 flex gap-2">
-          {(['green', 'amber', 'red'] as const).map((status) => (
+          {([
+            { status: 'green' as const, label: 'PASS', icon: '✓' },
+            { status: 'amber' as const, label: 'ADVISORY', icon: '⚠' },
+            { status: 'red' as const, label: 'URGENT', icon: '✕' }
+          ]).map(({ status, label, icon }) => (
             <button
               key={status}
               onClick={(e) => {
@@ -459,7 +480,7 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
                 handleRAGChange(status)
               }}
               className={`
-                flex-1 py-3 font-medium text-sm transition-colors
+                flex-1 py-3 font-medium text-sm transition-colors flex flex-col items-center justify-center
                 ${ragStatus === status
                   ? status === 'green'
                     ? 'bg-rag-green text-white'
@@ -470,7 +491,8 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
                 }
               `}
             >
-              {status === 'green' ? 'OK' : status === 'amber' ? 'Advise' : 'Urgent'}
+              <span className="text-lg">{icon}</span>
+              <span>{label}</span>
             </button>
           ))}
         </div>
@@ -484,11 +506,11 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
           )}
 
           {/* Item type specific input */}
-          {item.item_type === 'rag' && (
+          {item.itemType === 'rag' && (
             <RAGSelector value={ragStatus || null} onChange={handleRAGChange} />
           )}
 
-          {item.item_type === 'tyre_depth' && (
+          {item.itemType === 'tyre_depth' && (
             <TyreDepthInput
               value={result?.value as any}
               onChange={handleValueChange}
@@ -497,7 +519,7 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
             />
           )}
 
-          {item.item_type === 'brake_measurement' && (
+          {item.itemType === 'brake_measurement' && (
             <BrakeMeasurementInput
               value={result?.value as any}
               onChange={handleValueChange}
@@ -506,7 +528,7 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
             />
           )}
 
-          {item.item_type === 'fluid_level' && (
+          {item.itemType === 'fluid_level' && (
             <FluidLevelInput
               value={result?.value as string}
               onChange={handleValueChange}
@@ -515,12 +537,84 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
             />
           )}
 
-          {item.item_type === 'yes_no' && (
+          {item.itemType === 'yes_no' && (
             <YesNoInput
               value={result?.value as boolean}
               onChange={handleValueChange}
               onRAGChange={handleRAGChange}
             />
+          )}
+
+          {item.itemType === 'measurement' && (
+            <MeasurementInput
+              value={result?.value as number}
+              onChange={handleValueChange}
+              onRAGChange={handleRAGChange}
+              config={item.config as any}
+            />
+          )}
+
+          {item.itemType === 'select' && (
+            <SelectInput
+              value={result?.value as string}
+              onChange={handleValueChange}
+              onRAGChange={handleRAGChange}
+              config={item.config as any}
+            />
+          )}
+
+          {item.itemType === 'text' && (
+            <Input
+              value={(result?.value as string) || ''}
+              onChange={(e) => handleValueChange(e.target.value)}
+              placeholder="Enter text"
+            />
+          )}
+
+          {item.itemType === 'number' && (
+            <Input
+              type="number"
+              inputMode="decimal"
+              value={(result?.value as string) || ''}
+              onChange={(e) => handleValueChange(e.target.value ? parseFloat(e.target.value) : null)}
+              placeholder="Enter number"
+            />
+          )}
+
+          {item.itemType === 'multi_select' && (
+            <MultiSelectInput
+              value={result?.value as string[]}
+              onChange={handleValueChange}
+              config={item.config as any}
+            />
+          )}
+
+          {/* MOT Failure checkbox - only shown when status is red/urgent */}
+          {ragStatus === 'red' && (
+            <label className="flex items-center gap-3 p-3 bg-rag-red-bg border border-rag-red rounded cursor-pointer">
+              <div className={`
+                w-6 h-6 flex-shrink-0 border-2 rounded flex items-center justify-center
+                ${result?.is_mot_failure
+                  ? 'bg-rag-red border-rag-red'
+                  : 'bg-white border-gray-400'
+                }
+              `}>
+                {result?.is_mot_failure && (
+                  <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+              </div>
+              <input
+                type="checkbox"
+                checked={result?.is_mot_failure || false}
+                onChange={(e) => handleMOTFailureChange(e.target.checked)}
+                className="sr-only"
+              />
+              <span className="text-sm font-medium text-rag-red">
+                Possible MOT Failure
+              </span>
+            </label>
           )}
 
           {/* Notes */}

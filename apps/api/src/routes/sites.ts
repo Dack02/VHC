@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import { checkSiteLimit } from '../services/limits.js'
 
 const sites = new Hono()
 
@@ -55,6 +56,12 @@ sites.post('/', authorize(['super_admin', 'org_admin']), async (c) => {
 
     if (!name) {
       return c.json({ error: 'Name is required' }, 400)
+    }
+
+    // Check site limit
+    const limitCheck = await checkSiteLimit(auth.orgId)
+    if (!limitCheck.allowed) {
+      return c.json({ error: limitCheck.message }, 403)
     }
 
     const { data: site, error } = await supabaseAdmin
@@ -183,6 +190,58 @@ sites.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin']), async
   } catch (error) {
     console.error('Update site error:', error)
     return c.json({ error: 'Failed to update site' }, 500)
+  }
+})
+
+// DELETE /api/v1/sites/:id - Soft delete site
+sites.delete('/:id', authorize(['super_admin', 'org_admin']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    // Verify site belongs to org
+    const { data: existingSite, error: fetchError } = await supabaseAdmin
+      .from('sites')
+      .select('*, users:users(count), health_checks:health_checks(count)')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    if (fetchError || !existingSite) {
+      return c.json({ error: 'Site not found' }, 404)
+    }
+
+    // Check if site has active users or health checks
+    const usersCount = existingSite.users?.[0]?.count || 0
+    const healthChecksCount = existingSite.health_checks?.[0]?.count || 0
+
+    if (usersCount > 0 || healthChecksCount > 0) {
+      return c.json({
+        error: 'Cannot delete site with active users or health checks. Reassign or deactivate them first.',
+        details: {
+          usersCount,
+          healthChecksCount
+        }
+      }, 400)
+    }
+
+    // Soft delete
+    const { error } = await supabaseAdmin
+      .from('sites')
+      .update({
+        is_active: false,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+
+    if (error) {
+      return c.json({ error: error.message }, 500)
+    }
+
+    return c.json({ message: 'Site deactivated successfully' })
+  } catch (error) {
+    console.error('Delete site error:', error)
+    return c.json({ error: 'Failed to delete site' }, 500)
   }
 })
 

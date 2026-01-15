@@ -8,8 +8,12 @@ export default {
     extend: {
       colors: {
         primary: {
-          DEFAULT: '#1e40af',
-          dark: '#1e3a8a',
+          DEFAULT: 'var(--brand-primary, #3B82F6)',
+          hover: 'var(--brand-primary-hover, #2563EB)',
+          light: 'var(--brand-primary-light, #93C5FD)',
+        },
+        secondary: {
+          DEFAULT: 'var(--brand-secondary, #10B981)',
         },
         rag: {
           green: '#16a34a',

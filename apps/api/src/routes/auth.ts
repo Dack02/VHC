@@ -27,7 +27,7 @@ auth.post('/login', async (c) => {
       .from('users')
       .select(`
         *,
-        organization:organizations(id, name, slug),
+        organization:organizations(id, name, slug, status, onboarding_completed, onboarding_step),
         site:sites(id, name)
       `)
       .eq('auth_id', data.user.id)
@@ -41,6 +41,16 @@ auth.post('/login', async (c) => {
       return c.json({ error: 'Account is deactivated' }, 403)
     }
 
+    // Transform organization data to include onboarding fields
+    const org = user.organization as {
+      id: string
+      name: string
+      slug: string
+      status: string
+      onboarding_completed: boolean
+      onboarding_step: number
+    } | null
+
     return c.json({
       user: {
         id: user.id,
@@ -48,7 +58,16 @@ auth.post('/login', async (c) => {
         firstName: user.first_name,
         lastName: user.last_name,
         role: user.role,
-        organization: user.organization,
+        isOrgAdmin: user.is_org_admin,
+        isSiteAdmin: user.is_site_admin,
+        organization: org ? {
+          id: org.id,
+          name: org.name,
+          slug: org.slug,
+          status: org.status,
+          onboardingCompleted: org.onboarding_completed,
+          onboardingStep: org.onboarding_step
+        } : null,
         site: user.site
       },
       session: {
@@ -90,7 +109,7 @@ auth.get('/me', authMiddleware, async (c) => {
       .from('users')
       .select(`
         *,
-        organization:organizations(id, name, slug, settings),
+        organization:organizations(id, name, slug, status, onboarding_completed, onboarding_step, settings),
         site:sites(id, name, address, phone, email, settings)
       `)
       .eq('id', auth.user.id)
@@ -100,6 +119,17 @@ auth.get('/me', authMiddleware, async (c) => {
       return c.json({ error: 'User not found' }, 404)
     }
 
+    // Transform organization data
+    const org = user.organization as {
+      id: string
+      name: string
+      slug: string
+      status: string
+      onboarding_completed: boolean
+      onboarding_step: number
+      settings: unknown
+    } | null
+
     return c.json({
       id: user.id,
       email: user.email,
@@ -107,8 +137,18 @@ auth.get('/me', authMiddleware, async (c) => {
       lastName: user.last_name,
       phone: user.phone,
       role: user.role,
+      isOrgAdmin: user.is_org_admin,
+      isSiteAdmin: user.is_site_admin,
       isActive: user.is_active,
-      organization: user.organization,
+      organization: org ? {
+        id: org.id,
+        name: org.name,
+        slug: org.slug,
+        status: org.status,
+        onboardingCompleted: org.onboarding_completed,
+        onboardingStep: org.onboarding_step,
+        settings: org.settings
+      } : null,
       site: user.site,
       settings: user.settings,
       createdAt: user.created_at

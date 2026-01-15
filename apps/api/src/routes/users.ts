@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import { checkUserLimit } from '../services/limits.js'
 
 const users = new Hono()
 
@@ -72,6 +73,12 @@ users.post('/', authorize(['super_admin', 'org_admin', 'site_admin']), async (c)
 
     if (!email || !password || !firstName || !lastName || !role) {
       return c.json({ error: 'Missing required fields' }, 400)
+    }
+
+    // Check user limit
+    const limitCheck = await checkUserLimit(auth.orgId)
+    if (!limitCheck.allowed) {
+      return c.json({ error: limitCheck.message }, 403)
     }
 
     // Site admins can only create users for their site

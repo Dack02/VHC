@@ -83,4 +83,141 @@ organizations.patch('/:id', authorize(['super_admin', 'org_admin']), async (c) =
   }
 })
 
+// Default threshold values
+// Note: Brake disc thresholds removed - they are vehicle-specific (manufacturer min spec)
+const DEFAULT_THRESHOLDS = {
+  tyre_red_below_mm: 1.6,
+  tyre_amber_below_mm: 3.0,
+  brake_pad_red_below_mm: 3.0,
+  brake_pad_amber_below_mm: 5.0
+}
+
+// GET /api/v1/organizations/:id/thresholds - Get inspection thresholds
+organizations.get('/:id/thresholds', async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    // Users can only access their own organization's thresholds
+    if (id !== auth.orgId) {
+      return c.json({ error: 'Organization not found' }, 404)
+    }
+
+    // Try to get existing thresholds
+    let { data: thresholds } = await supabaseAdmin
+      .from('inspection_thresholds')
+      .select('*')
+      .eq('organization_id', id)
+      .single()
+
+    // If no thresholds exist, create defaults
+    if (!thresholds) {
+      const { data: newThresholds, error: createError } = await supabaseAdmin
+        .from('inspection_thresholds')
+        .insert({
+          organization_id: id,
+          ...DEFAULT_THRESHOLDS
+        })
+        .select()
+        .single()
+
+      if (createError) {
+        console.error('Error creating default thresholds:', createError)
+        // Return defaults even if insert failed
+        return c.json({
+          organizationId: id,
+          ...DEFAULT_THRESHOLDS,
+          isDefault: true
+        })
+      }
+
+      thresholds = newThresholds
+    }
+
+    return c.json({
+      id: thresholds.id,
+      organizationId: thresholds.organization_id,
+      tyreRedBelowMm: parseFloat(thresholds.tyre_red_below_mm),
+      tyreAmberBelowMm: parseFloat(thresholds.tyre_amber_below_mm),
+      brakePadRedBelowMm: parseFloat(thresholds.brake_pad_red_below_mm),
+      brakePadAmberBelowMm: parseFloat(thresholds.brake_pad_amber_below_mm),
+      updatedAt: thresholds.updated_at
+    })
+  } catch (error) {
+    console.error('Get thresholds error:', error)
+    return c.json({ error: 'Failed to get thresholds' }, 500)
+  }
+})
+
+// PATCH /api/v1/organizations/:id/thresholds - Update inspection thresholds
+organizations.patch('/:id/thresholds', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const body = await c.req.json()
+
+    // Users can only update their own organization's thresholds
+    if (id !== auth.orgId) {
+      return c.json({ error: 'Organization not found' }, 404)
+    }
+
+    const {
+      tyreRedBelowMm,
+      tyreAmberBelowMm,
+      brakePadRedBelowMm,
+      brakePadAmberBelowMm,
+      resetToDefaults
+    } = body
+
+    // Build update data
+    const updateData: Record<string, unknown> = {}
+
+    if (resetToDefaults) {
+      // Reset all to defaults
+      Object.assign(updateData, DEFAULT_THRESHOLDS)
+    } else {
+      // Update only provided values
+      if (tyreRedBelowMm !== undefined) updateData.tyre_red_below_mm = tyreRedBelowMm
+      if (tyreAmberBelowMm !== undefined) updateData.tyre_amber_below_mm = tyreAmberBelowMm
+      if (brakePadRedBelowMm !== undefined) updateData.brake_pad_red_below_mm = brakePadRedBelowMm
+      if (brakePadAmberBelowMm !== undefined) updateData.brake_pad_amber_below_mm = brakePadAmberBelowMm
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return c.json({ error: 'No valid fields to update' }, 400)
+    }
+
+    // Upsert thresholds (create if not exists, update if exists)
+    const { data: thresholds, error } = await supabaseAdmin
+      .from('inspection_thresholds')
+      .upsert({
+        organization_id: id,
+        ...DEFAULT_THRESHOLDS,
+        ...updateData
+      }, {
+        onConflict: 'organization_id'
+      })
+      .select()
+      .single()
+
+    if (error) {
+      console.error('Update thresholds error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+
+    return c.json({
+      id: thresholds.id,
+      organizationId: thresholds.organization_id,
+      tyreRedBelowMm: parseFloat(thresholds.tyre_red_below_mm),
+      tyreAmberBelowMm: parseFloat(thresholds.tyre_amber_below_mm),
+      brakePadRedBelowMm: parseFloat(thresholds.brake_pad_red_below_mm),
+      brakePadAmberBelowMm: parseFloat(thresholds.brake_pad_amber_below_mm),
+      updatedAt: thresholds.updated_at
+    })
+  } catch (error) {
+    console.error('Update thresholds error:', error)
+    return c.json({ error: 'Failed to update thresholds' }, 500)
+  }
+})
+
 export default organizations

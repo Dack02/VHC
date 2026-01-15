@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { ThresholdsProvider } from './context/ThresholdsContext'
 import { Login } from './pages/Login'
 import { JobList } from './pages/JobList'
 import { PreCheck } from './pages/PreCheck'
@@ -10,7 +11,9 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <ThresholdsProvider>
+          <AppRoutes />
+        </ThresholdsProvider>
       </AuthProvider>
     </BrowserRouter>
   )

@@ -1191,12 +1191,12 @@ font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 - [ ] Repair item management
 
 ## Phase 5: Customer Portal (Week 9-10)
-- [ ] Public token validation
-- [ ] Portal UI (mobile-first)
-- [ ] Photo gallery
-- [ ] Authorize/decline flow
-- [ ] Signature capture
-- [ ] Activity tracking
+- [x] Public token validation
+- [x] Portal UI (mobile-first)
+- [x] Photo gallery
+- [x] Authorize/decline flow
+- [x] Signature capture
+- [x] Activity tracking
 
 ## Phase 6: Notifications (Week 11-12)
 - [ ] BullMQ job queue setup

@@ -11,6 +11,16 @@ export interface AuthUser {
   organizationId: string
   siteId: string | null
   isActive: boolean
+  isOrgAdmin?: boolean
+  isSiteAdmin?: boolean
+}
+
+export interface SuperAdmin {
+  id: string
+  email: string
+  name: string
+  authUserId: string
+  isActive: boolean
 }
 
 export interface AuthContext {
@@ -18,10 +28,15 @@ export interface AuthContext {
   orgId: string
 }
 
+export interface SuperAdminContext {
+  superAdmin: SuperAdmin
+}
+
 // Extend Hono context with auth
 declare module 'hono' {
   interface ContextVariableMap {
     auth: AuthContext
+    superAdmin: SuperAdmin
   }
 }
 
@@ -68,7 +83,9 @@ export async function authMiddleware(c: Context, next: Next) {
         role: user.role,
         organizationId: user.organization_id,
         siteId: user.site_id,
-        isActive: user.is_active
+        isActive: user.is_active,
+        isOrgAdmin: user.is_org_admin || false,
+        isSiteAdmin: user.is_site_admin || false
       },
       orgId: user.organization_id
     }
@@ -132,5 +149,130 @@ export function authorizeMinRole(minRole: UserRole) {
     }
 
     await next()
+  }
+}
+
+/**
+ * Super Admin authentication middleware
+ * Checks if user exists in super_admins table
+ */
+export async function superAdminMiddleware(c: Context, next: Next) {
+  const authHeader = c.req.header('Authorization')
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return c.json({ error: 'Missing or invalid authorization header' }, 401)
+  }
+
+  const token = authHeader.substring(7)
+
+  try {
+    // Verify the JWT with Supabase
+    const { data: { user: authUser }, error: authError } = await supabaseAdmin.auth.getUser(token)
+
+    if (authError || !authUser) {
+      return c.json({ error: 'Invalid or expired token' }, 401)
+    }
+
+    // Check if user is a super admin
+    const { data: superAdmin, error: superAdminError } = await supabaseAdmin
+      .from('super_admins')
+      .select('*')
+      .eq('auth_user_id', authUser.id)
+      .single()
+
+    if (superAdminError || !superAdmin) {
+      return c.json({ error: 'Super admin access required' }, 403)
+    }
+
+    if (!superAdmin.is_active) {
+      return c.json({ error: 'Super admin account is deactivated' }, 403)
+    }
+
+    // Update last login
+    await supabaseAdmin
+      .from('super_admins')
+      .update({ last_login_at: new Date().toISOString() })
+      .eq('id', superAdmin.id)
+
+    // Set the super admin context
+    c.set('superAdmin', {
+      id: superAdmin.id,
+      email: superAdmin.email,
+      name: superAdmin.name,
+      authUserId: superAdmin.auth_user_id,
+      isActive: superAdmin.is_active
+    })
+
+    await next()
+  } catch (error) {
+    console.error('Super admin middleware error:', error)
+    return c.json({ error: 'Authentication failed' }, 401)
+  }
+}
+
+/**
+ * Org Admin authorization middleware
+ * Must be used after authMiddleware
+ */
+export function requireOrgAdmin() {
+  return async (c: Context, next: Next) => {
+    const auth = c.get('auth')
+
+    if (!auth) {
+      return c.json({ error: 'Not authenticated' }, 401)
+    }
+
+    if (!auth.user.isOrgAdmin && auth.user.role !== 'org_admin') {
+      return c.json({ error: 'Organization admin access required' }, 403)
+    }
+
+    await next()
+  }
+}
+
+/**
+ * Site Admin authorization middleware
+ * Must be used after authMiddleware
+ */
+export function requireSiteAdmin() {
+  return async (c: Context, next: Next) => {
+    const auth = c.get('auth')
+
+    if (!auth) {
+      return c.json({ error: 'Not authenticated' }, 401)
+    }
+
+    if (!auth.user.isSiteAdmin && !auth.user.isOrgAdmin && auth.user.role !== 'site_admin' && auth.user.role !== 'org_admin') {
+      return c.json({ error: 'Site admin access required' }, 403)
+    }
+
+    await next()
+  }
+}
+
+/**
+ * Log super admin activity
+ */
+export async function logSuperAdminActivity(
+  superAdminId: string,
+  action: string,
+  targetType?: string,
+  targetId?: string,
+  details?: Record<string, unknown>,
+  ipAddress?: string,
+  userAgent?: string
+) {
+  try {
+    await supabaseAdmin.from('super_admin_activity_log').insert({
+      super_admin_id: superAdminId,
+      action,
+      target_type: targetType,
+      target_id: targetId,
+      details,
+      ip_address: ipAddress,
+      user_agent: userAgent
+    })
+  } catch (error) {
+    console.error('Failed to log super admin activity:', error)
   }
 }

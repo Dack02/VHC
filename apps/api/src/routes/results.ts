@@ -80,7 +80,7 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
     const auth = c.get('auth')
     const { id } = c.req.param()
     const body = await c.req.json()
-    const { templateItemId, status, value, notes } = body
+    const { templateItemId, status, value, notes, is_mot_failure } = body
 
     if (!templateItemId) {
       return c.json({ error: 'Template item ID is required' }, 400)
@@ -102,14 +102,20 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
     let result
     if (existing) {
       // Update existing result
+      const updateData: Record<string, unknown> = {
+        rag_status: status,
+        value,
+        notes,
+        updated_at: new Date().toISOString()
+      }
+      // Only set is_mot_failure if provided (allows clearing it)
+      if (is_mot_failure !== undefined) {
+        updateData.is_mot_failure = is_mot_failure
+      }
+
       const { data, error } = await supabaseAdmin
         .from('check_results')
-        .update({
-          rag_status: status,
-          value,
-          notes,
-          updated_at: new Date().toISOString()
-        })
+        .update(updateData)
         .eq('id', existing.id)
         .select()
         .single()
@@ -127,7 +133,8 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
           template_item_id: templateItemId,
           rag_status: status,
           value,
-          notes
+          notes,
+          is_mot_failure: is_mot_failure || false
         })
         .select()
         .single()
@@ -138,12 +145,59 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
       result = data
     }
 
+    // Auto-create repair item if is_mot_failure is true
+    if (result.is_mot_failure && result.rag_status === 'red') {
+      // Check if repair item already exists for this result
+      const { data: existingRepairItem } = await supabaseAdmin
+        .from('repair_items')
+        .select('id')
+        .eq('check_result_id', result.id)
+        .single()
+
+      if (!existingRepairItem) {
+        // Get template item name for description
+        const { data: templateItem } = await supabaseAdmin
+          .from('template_items')
+          .select('name')
+          .eq('id', templateItemId)
+          .single()
+
+        // Get max sort order
+        const { data: maxOrderResult } = await supabaseAdmin
+          .from('repair_items')
+          .select('sort_order')
+          .eq('health_check_id', id)
+          .order('sort_order', { ascending: false })
+          .limit(1)
+          .single()
+
+        const sortOrder = (maxOrderResult?.sort_order || 0) + 1
+        const itemName = templateItem?.name || 'Unknown Item'
+
+        // Create repair item with is_mot_failure flag
+        await supabaseAdmin
+          .from('repair_items')
+          .insert({
+            health_check_id: id,
+            check_result_id: result.id,
+            description: `MOT FAILURE: ${itemName} requires immediate attention`,
+            labour_cost: 0,
+            parts_cost: 0,
+            total_cost: 0,
+            sort_order: sortOrder,
+            is_authorized: false,
+            is_mot_failure: true
+          })
+      }
+    }
+
     return c.json({
       id: result.id,
       templateItemId: result.template_item_id,
       status: result.rag_status,
       value: result.value,
       notes: result.notes,
+      is_mot_failure: result.is_mot_failure,
       createdAt: result.created_at,
       updatedAt: result.updated_at
     }, existing ? 200 : 201)

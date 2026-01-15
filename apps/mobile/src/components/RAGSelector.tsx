@@ -7,7 +7,7 @@ interface RAGSelectorProps {
   onChange: (status: RAGStatus) => void
   disabled?: boolean
   showLabels?: boolean
-  size?: 'default' | 'compact'
+  size?: 'default' | 'large' | 'compact'
 }
 
 export function RAGSelector({
@@ -15,7 +15,7 @@ export function RAGSelector({
   onChange,
   disabled = false,
   showLabels = true,
-  size = 'default'
+  size = 'large'
 }: RAGSelectorProps) {
   const [pressing, setPressing] = useState<RAGStatus>(null)
 
@@ -31,32 +31,45 @@ export function RAGSelector({
     onChange(value === status ? null : status)
   }, [disabled, onChange, value])
 
-  const buttonHeight = size === 'compact' ? 'h-14' : 'h-[72px]'
+  const buttonHeight = size === 'compact' ? 'h-14' : size === 'large' ? 'h-[72px]' : 'h-[56px]'
 
-  const buttons: { status: RAGStatus; label: string; bgClass: string; activeClass: string }[] = [
+  const buttons: {
+    status: RAGStatus
+    label: string
+    icon: string
+    bgClass: string
+    borderClass: string
+    textClass: string
+  }[] = [
     {
       status: 'green',
-      label: 'OK',
+      label: 'PASS',
+      icon: '✓',
       bgClass: 'bg-rag-green',
-      activeClass: 'ring-4 ring-green-300 scale-[0.98]'
+      borderClass: 'border-green-500',
+      textClass: 'text-green-700'
     },
     {
       status: 'amber',
-      label: 'Advisory',
+      label: 'ADVISORY',
+      icon: '⚠',
       bgClass: 'bg-rag-amber',
-      activeClass: 'ring-4 ring-yellow-300 scale-[0.98]'
+      borderClass: 'border-amber-500',
+      textClass: 'text-amber-700'
     },
     {
       status: 'red',
-      label: 'Urgent',
+      label: 'URGENT',
+      icon: '✕',
       bgClass: 'bg-rag-red',
-      activeClass: 'ring-4 ring-red-300 scale-[0.98]'
+      borderClass: 'border-red-500',
+      textClass: 'text-red-700'
     }
   ]
 
   return (
-    <div className="grid grid-cols-3 gap-2">
-      {buttons.map(({ status, label, bgClass, activeClass }) => {
+    <div className="flex gap-3">
+      {buttons.map(({ status, label, icon, bgClass, borderClass, textClass }) => {
         const isSelected = value === status
         const isPressing = pressing === status
 
@@ -66,14 +79,16 @@ export function RAGSelector({
             type="button"
             disabled={disabled}
             className={`
-              ${buttonHeight} ${bgClass}
-              text-white font-semibold text-lg
-              transition-all duration-150
+              flex-1 ${buttonHeight}
+              border-2 transition-all duration-150
               flex flex-col items-center justify-center
               disabled:opacity-50 disabled:cursor-not-allowed
-              ${isSelected ? activeClass : 'opacity-70'}
+              ${isSelected
+                ? `${bgClass} text-white border-transparent`
+                : `bg-white ${textClass} border-gray-300 hover:${borderClass}`
+              }
               ${isPressing && !isSelected ? 'scale-95' : ''}
-              ${!isSelected && !disabled ? 'hover:opacity-90' : ''}
+              ${isSelected ? 'scale-[0.98] shadow-md' : ''}
             `}
             onClick={() => handleSelect(status)}
             onTouchStart={() => setPressing(status)}
@@ -84,12 +99,8 @@ export function RAGSelector({
             aria-pressed={isSelected}
             aria-label={`Mark as ${label}`}
           >
-            {isSelected && (
-              <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-              </svg>
-            )}
-            {showLabels && <span className={isSelected ? '' : 'mt-2'}>{label}</span>}
+            <span className="text-2xl">{icon}</span>
+            {showLabels && <span className="text-sm font-semibold">{label}</span>}
           </button>
         )
       })}

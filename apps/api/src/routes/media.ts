@@ -70,21 +70,57 @@ media.post('/health-checks/:id/results/:resultId/media/upload-url', authorize(['
   }
 })
 
-// POST /api/v1/health-checks/:id/results/:resultId/media - Create media record after upload
+// POST /api/v1/health-checks/:id/results/:resultId/media - Upload media directly or create record
 media.post('/health-checks/:id/results/:resultId/media', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {
     const auth = c.get('auth')
     const { id, resultId } = c.req.param()
-    const body = await c.req.json()
-    const { path, caption } = body
-
-    if (!path) {
-      return c.json({ error: 'Path is required' }, 400)
-    }
 
     const result = await verifyAccess(id, resultId, auth.orgId)
     if (!result) {
       return c.json({ error: 'Result not found' }, 404)
+    }
+
+    const contentType = c.req.header('content-type') || ''
+    let path: string
+    let caption: string | undefined
+
+    if (contentType.includes('multipart/form-data')) {
+      // Direct file upload via FormData
+      const formData = await c.req.formData()
+      const file = formData.get('file') as File | null
+      caption = formData.get('caption') as string | undefined
+
+      if (!file) {
+        return c.json({ error: 'File is required' }, 400)
+      }
+
+      // Generate unique path
+      const ext = file.name.split('.').pop() || 'jpg'
+      path = `${auth.orgId}/${id}/${resultId}/${Date.now()}.${ext}`
+
+      // Upload to Supabase storage
+      const buffer = await file.arrayBuffer()
+      const { error: uploadError } = await supabaseAdmin.storage
+        .from(BUCKET_NAME)
+        .upload(path, buffer, {
+          contentType: file.type || 'image/jpeg',
+          upsert: false
+        })
+
+      if (uploadError) {
+        console.error('Storage upload error:', uploadError)
+        return c.json({ error: 'Failed to upload file: ' + uploadError.message }, 500)
+      }
+    } else {
+      // JSON body with pre-uploaded path
+      const body = await c.req.json()
+      path = body.path
+      caption = body.caption
+
+      if (!path) {
+        return c.json({ error: 'Path is required' }, 400)
+      }
     }
 
     // Get public URL
@@ -92,36 +128,38 @@ media.post('/health-checks/:id/results/:resultId/media', authorize(['super_admin
       .from(BUCKET_NAME)
       .getPublicUrl(path)
 
-    // Create thumbnail URL (Supabase image transforms)
-    const thumbnailUrl = urlData.publicUrl + '?width=200&height=200'
-
     // Create media record
     const { data: mediaRecord, error } = await supabaseAdmin
       .from('result_media')
       .insert({
         check_result_id: resultId,
-        url: urlData.publicUrl,
-        thumbnail_url: thumbnailUrl,
-        caption,
-        uploaded_by: auth.user.id
+        media_type: 'photo',
+        storage_path: path,
+        thumbnail_path: path, // Use same path, Supabase transforms handle thumbnails
+        caption
       })
       .select()
       .single()
 
     if (error) {
+      console.error('DB insert error:', error)
       return c.json({ error: error.message }, 500)
     }
 
+    // Build URLs from storage path
+    const url = urlData.publicUrl
+    const thumbnailUrl = url + '?width=200&height=200'
+
     return c.json({
       id: mediaRecord.id,
-      url: mediaRecord.url,
-      thumbnailUrl: mediaRecord.thumbnail_url,
+      url,
+      thumbnailUrl,
       caption: mediaRecord.caption,
       createdAt: mediaRecord.created_at
     }, 201)
   } catch (error) {
     console.error('Create media record error:', error)
-    return c.json({ error: 'Failed to create media record' }, 500)
+    return c.json({ error: error instanceof Error ? error.message : 'Failed to create media record' }, 500)
   }
 })
 

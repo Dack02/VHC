@@ -18,7 +18,7 @@ export function PricingTab({ healthCheckId, repairItems, onUpdate }: PricingTabP
     title: '',
     description: '',
     parts_cost: 0,
-    labour_cost: 0,
+    labor_cost: 0,
     is_visible: true
   })
 
@@ -28,7 +28,7 @@ export function PricingTab({ healthCheckId, repairItems, onUpdate }: PricingTabP
       title: item.title,
       description: item.description || '',
       parts_cost: item.parts_cost,
-      labour_cost: item.labour_cost,
+      labor_cost: item.labor_cost,
       is_visible: item.is_visible
     })
   }
@@ -106,7 +106,7 @@ export function PricingTab({ healthCheckId, repairItems, onUpdate }: PricingTabP
   // Calculate totals
   const visibleItems = repairItems.filter(i => i.is_visible)
   const totalParts = visibleItems.reduce((sum, i) => sum + i.parts_cost, 0)
-  const totalLabour = visibleItems.reduce((sum, i) => sum + i.labour_cost, 0)
+  const totalLabour = visibleItems.reduce((sum, i) => sum + i.labor_cost, 0)
   const totalAmount = totalParts + totalLabour
 
   // Group by RAG status
@@ -212,7 +212,7 @@ interface ItemListProps {
     title: string
     description: string
     parts_cost: number
-    labour_cost: number
+    labor_cost: number
     is_visible: boolean
   }
   setEditForm: (form: any) => void
@@ -273,8 +273,8 @@ function ItemList({
                   <input
                     type="number"
                     step="0.01"
-                    value={editForm.labour_cost}
-                    onChange={e => setEditForm({ ...editForm, labour_cost: parseFloat(e.target.value) || 0 })}
+                    value={editForm.labor_cost}
+                    onChange={e => setEditForm({ ...editForm, labor_cost: parseFloat(e.target.value) || 0 })}
                     className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary"
                   />
                 </div>
@@ -314,8 +314,8 @@ function ItemList({
                 )}
                 <div className="flex gap-4 mt-2 text-sm">
                   <span className="text-gray-500">Parts: £{item.parts_cost.toFixed(2)}</span>
-                  <span className="text-gray-500">Labour: £{item.labour_cost.toFixed(2)}</span>
-                  <span className="font-medium">Total: £{item.total_cost.toFixed(2)}</span>
+                  <span className="text-gray-500">Labour: £{item.labor_cost.toFixed(2)}</span>
+                  <span className="font-medium">Total: £{item.total_price.toFixed(2)}</span>
                 </div>
               </div>
               <div className="flex items-center gap-2">

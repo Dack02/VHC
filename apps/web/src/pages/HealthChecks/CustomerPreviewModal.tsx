@@ -17,7 +17,7 @@ export function CustomerPreviewModal({ healthCheck, repairItems, onClose, onSend
   const amberItems = visibleItems.filter(item => item.rag_status === 'amber')
 
   const totalParts = visibleItems.reduce((sum, i) => sum + i.parts_cost, 0)
-  const totalLabour = visibleItems.reduce((sum, i) => sum + i.labour_cost, 0)
+  const totalLabour = visibleItems.reduce((sum, i) => sum + i.labor_cost, 0)
   const totalAmount = totalParts + totalLabour
 
   return (
@@ -89,9 +89,9 @@ export function CustomerPreviewModal({ healthCheck, repairItems, onClose, onSend
                             )}
                           </div>
                           <div className="text-right">
-                            <div className="font-bold text-gray-900">£{item.total_cost.toFixed(2)}</div>
+                            <div className="font-bold text-gray-900">£{item.total_price.toFixed(2)}</div>
                             <div className="text-xs text-gray-500">
-                              Parts: £{item.parts_cost.toFixed(2)} | Labour: £{item.labour_cost.toFixed(2)}
+                              Parts: £{item.parts_cost.toFixed(2)} | Labour: £{item.labor_cost.toFixed(2)}
                             </div>
                           </div>
                         </div>
@@ -119,9 +119,9 @@ export function CustomerPreviewModal({ healthCheck, repairItems, onClose, onSend
                             )}
                           </div>
                           <div className="text-right">
-                            <div className="font-bold text-gray-900">£{item.total_cost.toFixed(2)}</div>
+                            <div className="font-bold text-gray-900">£{item.total_price.toFixed(2)}</div>
                             <div className="text-xs text-gray-500">
-                              Parts: £{item.parts_cost.toFixed(2)} | Labour: £{item.labour_cost.toFixed(2)}
+                              Parts: £{item.parts_cost.toFixed(2)} | Labour: £{item.labor_cost.toFixed(2)}
                             </div>
                           </div>
                         </div>

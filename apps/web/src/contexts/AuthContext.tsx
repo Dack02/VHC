@@ -7,10 +7,15 @@ interface User {
   firstName: string
   lastName: string
   role: string
+  isOrgAdmin?: boolean
+  isSiteAdmin?: boolean
   organization: {
     id: string
     name: string
     slug: string
+    status?: 'active' | 'pending' | 'suspended' | 'cancelled'
+    onboardingCompleted?: boolean
+    onboardingStep?: number
   }
   site: {
     id: string

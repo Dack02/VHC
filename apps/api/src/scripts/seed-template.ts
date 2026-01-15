@@ -150,8 +150,31 @@ async function seedTemplate() {
     .single()
 
   if (existingTemplate) {
-    console.log('Template already exists, skipping...')
-    return
+    console.log('Deleting existing template to re-seed...')
+
+    // First delete health checks that reference this template
+    const { error: healthChecksError } = await supabase
+      .from('health_checks')
+      .delete()
+      .eq('template_id', existingTemplate.id)
+
+    if (healthChecksError) {
+      console.error('Failed to delete health checks:', healthChecksError)
+      process.exit(1)
+    }
+    console.log('Deleted health checks referencing template.')
+
+    // Now delete the template
+    const { error: deleteError } = await supabase
+      .from('check_templates')
+      .delete()
+      .eq('id', existingTemplate.id)
+
+    if (deleteError) {
+      console.error('Failed to delete existing template:', deleteError)
+      process.exit(1)
+    }
+    console.log('Existing template deleted.')
   }
 
   // Create the template

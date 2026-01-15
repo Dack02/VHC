@@ -1,7 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
+import { SuperAdminProvider } from './contexts/SuperAdminContext'
+import { BrandingProvider } from './contexts/BrandingContext'
 import ProtectedLayout from './layouts/ProtectedLayout'
 import DashboardLayout from './layouts/DashboardLayout'
+import AdminLayout from './layouts/AdminLayout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Users from './pages/Users'
@@ -11,30 +14,72 @@ import Customers from './pages/Customers'
 import HealthCheckList from './pages/HealthChecks/HealthCheckList'
 import HealthCheckDetail from './pages/HealthChecks/HealthCheckDetail'
 import NewHealthCheck from './pages/HealthChecks/NewHealthCheck'
+import TyreManufacturers from './pages/Admin/TyreManufacturers'
+import TyreSizes from './pages/Admin/TyreSizes'
+import InspectionThresholds from './pages/Admin/InspectionThresholds'
+import CustomerPortal from './pages/CustomerPortal/CustomerPortal'
+import AdminLogin from './pages/admin/AdminLogin'
+import AdminDashboard from './pages/admin/AdminDashboard'
+import AdminOrganizations from './pages/admin/AdminOrganizations'
+import AdminOrganizationDetail from './pages/admin/AdminOrganizationDetail'
+import AdminPlans from './pages/admin/AdminPlans'
+import AdminActivity from './pages/admin/AdminActivity'
+import AdminSettings from './pages/admin/AdminSettings'
+import ImpersonationBanner from './components/admin/ImpersonationBanner'
+import SuspendedBanner from './components/SuspendedBanner'
+import Onboarding from './pages/Onboarding'
 
 function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
+      <SuperAdminProvider>
+        <BrandingProvider>
+          <BrowserRouter>
+            <ImpersonationBanner />
+            <SuspendedBanner />
+            <Routes>
+              {/* Public routes */}
+              <Route path="/view/:token" element={<CustomerPortal />} />
+              <Route path="/login" element={<Login />} />
 
-          <Route element={<ProtectedLayout />}>
-            <Route element={<DashboardLayout />}>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/users" element={<Users />} />
-              <Route path="/health-checks" element={<HealthCheckList />} />
-              <Route path="/health-checks/new" element={<NewHealthCheck />} />
-              <Route path="/health-checks/:id" element={<HealthCheckDetail />} />
-              <Route path="/customers" element={<Customers />} />
-              <Route path="/templates" element={<TemplateList />} />
-              <Route path="/templates/:id" element={<TemplateBuilder />} />
-            </Route>
-          </Route>
+              {/* Super Admin Portal routes */}
+              <Route path="/admin/login" element={<AdminLogin />} />
+              <Route path="/admin" element={<AdminLayout />}>
+                <Route index element={<AdminDashboard />} />
+                <Route path="organizations" element={<AdminOrganizations />} />
+                <Route path="organizations/:id" element={<AdminOrganizationDetail />} />
+                <Route path="plans" element={<AdminPlans />} />
+                <Route path="activity" element={<AdminActivity />} />
+                <Route path="settings" element={<AdminSettings />} />
+              </Route>
 
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
+              {/* Onboarding route (protected but no dashboard layout) */}
+              <Route element={<ProtectedLayout />}>
+                <Route path="/onboarding" element={<Onboarding />} />
+              </Route>
+
+              {/* Main app routes */}
+              <Route element={<ProtectedLayout />}>
+                <Route element={<DashboardLayout />}>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/users" element={<Users />} />
+                  <Route path="/health-checks" element={<HealthCheckList />} />
+                  <Route path="/health-checks/new" element={<NewHealthCheck />} />
+                  <Route path="/health-checks/:id" element={<HealthCheckDetail />} />
+                  <Route path="/customers" element={<Customers />} />
+                  <Route path="/templates" element={<TemplateList />} />
+                  <Route path="/templates/:id" element={<TemplateBuilder />} />
+                  <Route path="/admin/tyre-manufacturers" element={<TyreManufacturers />} />
+                  <Route path="/admin/tyre-sizes" element={<TyreSizes />} />
+                  <Route path="/settings/thresholds" element={<InspectionThresholds />} />
+                </Route>
+              </Route>
+
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </BrowserRouter>
+        </BrandingProvider>
+      </SuperAdminProvider>
     </AuthProvider>
   )
 }

@@ -103,7 +103,7 @@ export interface Template {
 export interface TemplateSection {
   id: string
   name: string
-  sort_order: number
+  sortOrder: number
   items: TemplateItem[]
 }
 
@@ -111,10 +111,10 @@ export interface TemplateItem {
   id: string
   name: string
   description: string | null
-  item_type: 'rag' | 'tyre_depth' | 'brake_measurement' | 'fluid_level' | 'yes_no' | 'select' | 'measurement'
+  itemType: 'rag' | 'tyre_depth' | 'brake_measurement' | 'fluid_level' | 'yes_no' | 'select' | 'measurement' | 'text' | 'number' | 'multi_select'
   config: Record<string, unknown>
-  sort_order: number
-  is_required: boolean
+  sortOrder: number
+  isRequired: boolean
 }
 
 export interface CheckResult {
@@ -124,6 +124,7 @@ export interface CheckResult {
   value: unknown
   notes: string | null
   media?: ResultMedia[]
+  is_mot_failure?: boolean
   // Aliases for backwards compatibility with local storage
   health_check_id?: string
   template_item_id?: string
@@ -137,4 +138,18 @@ export interface ResultMedia {
   thumbnailUrl?: string | null
   annotation_data: unknown | null
   caption?: string | null
+}
+
+export interface InspectionThresholds {
+  tyreRedBelowMm: number
+  tyreAmberBelowMm: number
+  brakePadRedBelowMm: number
+  brakePadAmberBelowMm: number
+}
+
+export const DEFAULT_THRESHOLDS: InspectionThresholds = {
+  tyreRedBelowMm: 1.6,
+  tyreAmberBelowMm: 3.0,
+  brakePadRedBelowMm: 3.0,
+  brakePadAmberBelowMm: 5.0
 }

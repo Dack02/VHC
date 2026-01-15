@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: #1e40af;
+  --color-primary-dark: #1e3a8a;
+  --color-rag-green: #16a34a;
+  --color-rag-green-bg: #dcfce7;
+  --color-rag-amber: #ca8a04;
+  --color-rag-amber-bg: #fef9c3;
+  --color-rag-red: #dc2626;
+  --color-rag-red-bg: #fee2e2;
+}
+
+html, body, #root {
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Square edges for automotive aesthetic */
+.btn {
+  border-radius: 0;
+  min-height: 56px;
+}
+
+.card {
+  border-radius: 0;
+}
+
+/* Large touch targets for gloves */
+.touch-target {
+  min-height: 56px;
+  min-width: 56px;
+}
+
+/* RAG buttons - extra large */
+.rag-btn {
+  height: 72px;
+  border-radius: 0;
+  font-weight: 600;
+  font-size: 1.125rem;
+}
+
+/* Safe area insets for iOS */
+.safe-area-inset-top {
+  padding-top: env(safe-area-inset-top, 0);
+}
+
+.safe-area-inset-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* Prevent iOS bounce scroll */
+html {
+  overflow: hidden;
+  height: 100%;
+}
+
+body {
+  overflow: auto;
+  height: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Input styling for iOS */
+input, textarea, select {
+  font-size: 16px; /* Prevents zoom on focus in iOS */
+  border-radius: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Spinner animation */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Focus visible for accessibility */
+:focus-visible {
+  outline: 2px solid #1e40af;
+  outline-offset: 2px;
+}
+
+/* Hide scrollbars but keep functionality */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Active state for touch devices */
+.touch-active:active {
+  opacity: 0.7;
+  transform: scale(0.98);
+}

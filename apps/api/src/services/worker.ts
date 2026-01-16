@@ -13,8 +13,12 @@ import {
   type SendReminderJob,
   type CustomerNotificationJob,
   type StaffNotificationJob,
-  type NotificationJob
+  type NotificationJob,
+  type DmsImportJob,
+  type DmsScheduledImportJob,
+  type DmsJob
 } from './queue.js'
+import { runDmsImport } from '../jobs/dms-import.js'
 import { sendEmail, sendHealthCheckReadyEmail, sendReminderEmail } from './email.js'
 import { sendSms, sendHealthCheckReadySms, sendReminderSms } from './sms.js'
 import { supabaseAdmin } from '../lib/supabase.js'
@@ -222,6 +226,77 @@ reminderWorker.on('completed', (job) => {
 
 reminderWorker.on('failed', (job, err) => {
   console.error(`Reminder job ${job?.id} failed:`, err.message)
+})
+
+/**
+ * DMS Import Worker
+ */
+const dmsImportWorker = new Worker(
+  QUEUE_NAMES.DMS_IMPORT,
+  async (job: Job<DmsJob>) => {
+    console.log(`Processing DMS import job ${job.id}:`, job.data.type)
+
+    // Determine import options based on job type
+    let importOptions: {
+      organizationId: string
+      siteId?: string
+      date: string
+      importType: 'manual' | 'scheduled'
+      triggeredBy?: string
+    }
+
+    if (job.data.type === 'dms_import') {
+      // Manual or triggered import with specific date
+      const importJob = job.data as DmsImportJob
+      importOptions = {
+        organizationId: importJob.organizationId,
+        siteId: importJob.siteId,
+        date: importJob.date,
+        importType: importJob.importType,
+        triggeredBy: importJob.triggeredBy
+      }
+    } else {
+      // Scheduled import - use today's date
+      const scheduledJob = job.data as DmsScheduledImportJob
+      importOptions = {
+        organizationId: scheduledJob.organizationId,
+        siteId: scheduledJob.siteId,
+        date: new Date().toISOString().split('T')[0],
+        importType: 'scheduled',
+        triggeredBy: undefined
+      }
+    }
+
+    console.log(`[DMS Import] Starting import for org ${importOptions.organizationId}, date ${importOptions.date}`)
+
+    const result = await runDmsImport(importOptions)
+
+    if (!result.success && result.errors.length > 0) {
+      console.error(`[DMS Import] Import completed with errors:`, result.errors)
+      // Don't throw for partial failures - the import record tracks them
+      if (result.bookingsImported === 0 && result.bookingsFound > 0) {
+        throw new Error(`Import failed: ${result.errors[0]?.error || 'All bookings failed to import'}`)
+      }
+    }
+
+    console.log(`[DMS Import] Import completed:`, {
+      found: result.bookingsFound,
+      imported: result.bookingsImported,
+      skipped: result.bookingsSkipped,
+      failed: result.bookingsFailed
+    })
+
+    return result
+  },
+  { connection: redis }
+)
+
+dmsImportWorker.on('completed', (job) => {
+  console.log(`DMS import job ${job.id} completed`)
+})
+
+dmsImportWorker.on('failed', (job, err) => {
+  console.error(`DMS import job ${job?.id} failed:`, err.message)
 })
 
 /**
@@ -642,7 +717,8 @@ async function shutdown() {
     emailWorker.close(),
     smsWorker.close(),
     notificationWorker.close(),
-    reminderWorker.close()
+    reminderWorker.close(),
+    dmsImportWorker.close()
   ])
   await redis.quit()
   process.exit(0)

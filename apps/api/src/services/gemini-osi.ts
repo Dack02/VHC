@@ -357,91 +357,113 @@ export async function fetchDiaryBookings(
   })
 
   try {
-    // POST request with JSON body
-    const response = await makeRequest<{
-      // Gemini API response structure - array of bookings
-      [index: number]: {
-        Id: number
-        BookingDate: string
-        TimeBooked: string
-        PromiseTime: string
-        ArrivalStatus: string
-        Workshop: string
-        Vehicle: {
-          Id: number
-          Registration: string
-          VIN?: string
-          Make?: string
-          Model?: string
-          Colour?: string
-          FuelType?: string
-          CurrentMileage?: number
-        }
-        InvoiceTo: {
-          Id: number
-          Title?: string
-          Forename: string
-          Surname: string
-          Email?: string
-          Mobile?: string
-          Telephone?: string
-          Address1?: string
-          Address2?: string
-          Address3?: string
-          Postcode?: string
-        }
-        DeliverTo?: {
-          Id: number
-          Title?: string
-          Forename: string
-          Surname: string
-          Email?: string
-          Mobile?: string
-          Telephone?: string
-        }
-        Jobsheets?: Array<{
-          Id: number
-          JobsheetNumber: string
-          Description?: string
-          Status?: string
-        }>
-      }
-    }>(credentials, 'api/v2/workshop/get-diary-bookings', {
-      method: 'POST',
-      body: {
-        from: date,
-        to: endDate || date,
-        siteId
-      }
+    // Build query string for GET request
+    // Gemini API uses GET with query parameters, not POST
+    const queryParams = new URLSearchParams({
+      StartTime: `${date}T00:00:00`,
+      EndTime: `${endDate || date}T23:59:59`,
+      Site: siteId.toString()
     })
 
-    // Gemini API returns an array directly (or object with numeric keys)
-    // Convert to array if needed
-    const responseArray = Array.isArray(response)
-      ? response
-      : Object.values(response).filter(item => typeof item === 'object' && item !== null)
+    // GET request with query parameters
+    const response = await makeRequest<{
+      error: {
+        message: string
+        code: number
+      }
+      result: {
+        Bookings: Array<{
+          BookingID: number
+          DueDateTime: string
+          CollectionDateTime: string
+          Workshop: string
+          ArrivalStatus: string
+          CustomerWaiting: boolean
+          LoanCar: boolean
+          Internal: boolean
+          Notes?: string
+          Vehicle: {
+            Registration: string
+            ChassisNumber?: string
+            Make?: string
+            Model?: string
+            Specification?: string
+            Colour?: string
+            FuelType?: string
+            EngineSize?: number
+            CurrentMileage?: number
+          }
+          InvoiceTo: {
+            CustomerID: number
+            Reference?: string
+            Title?: string
+            Forename: string
+            Surname: string
+            Email?: string
+            Mobile?: string
+            Telephone?: string
+            Street1?: string
+            Street2?: string
+            Town?: string
+            County?: string
+            Postcode?: string
+          }
+          DeliverTo?: {
+            CustomerID: number
+            Reference?: string
+            Title?: string
+            Forename: string
+            Surname: string
+            Email?: string
+            Mobile?: string
+            Telephone?: string
+          }
+          Jobsheet?: {
+            Number: number
+            Status?: string
+            Total?: number
+            Repairs?: Array<{
+              Code?: string
+              Description?: string
+              Notes?: string
+            }>
+          }
+        }>
+      }
+    }>(credentials, `api/v2/workshop/get-diary-bookings?${queryParams}`, {
+      method: 'GET'
+    })
+
+    // Check for API-level errors
+    if (response.error && response.error.code !== 0) {
+      throw createApiError(response.error.message || 'Unknown API error', undefined, false)
+    }
+
+    // Extract bookings from result wrapper
+    const rawBookings = response.result?.Bookings || []
 
     // Transform bookings to our format
-    const bookings: GeminiBooking[] = responseArray.map((b: any) => ({
-      bookingId: String(b.Id),
-      bookingDate: b.BookingDate,
-      bookingTime: b.TimeBooked,
-      promiseTime: b.PromiseTime,
+    // Note: Gemini API field names from actual response
+    const bookings: GeminiBooking[] = rawBookings.map((b) => ({
+      bookingId: String(b.BookingID),
+      bookingDate: b.DueDateTime?.split('T')[0] || '',
+      bookingTime: b.DueDateTime?.split('T')[1]?.substring(0, 5) || '',
+      promiseTime: b.CollectionDateTime?.split('T')[1]?.substring(0, 5),
       estimatedDuration: 60, // Default, not provided by API
 
       // Customer from InvoiceTo
-      customerId: String(b.InvoiceTo?.Id || ''),
+      customerId: String(b.InvoiceTo?.CustomerID || b.InvoiceTo?.Reference || ''),
       customerTitle: b.InvoiceTo?.Title,
       customerFirstName: b.InvoiceTo?.Forename || '',
       customerLastName: b.InvoiceTo?.Surname || '',
-      customerEmail: b.InvoiceTo?.Email,
+      customerEmail: b.InvoiceTo?.Email || undefined,
       customerPhone: b.InvoiceTo?.Telephone,
       customerMobile: b.InvoiceTo?.Mobile,
 
       // Vehicle
-      vehicleId: String(b.Vehicle?.Id || ''),
+      vehicleId: b.Vehicle?.Registration || '', // Use registration as ID since no separate ID
       vehicleReg: b.Vehicle?.Registration || '',
-      vehicleVin: b.Vehicle?.VIN,
+      vehicleVin: b.Vehicle?.ChassisNumber, // Note: Gemini uses ChassisNumber not VIN
       vehicleMake: b.Vehicle?.Make,
       vehicleModel: b.Vehicle?.Model,
       vehicleColor: b.Vehicle?.Colour,
@@ -450,13 +472,13 @@ export async function fetchDiaryBookings(
 
       // Booking details
       serviceType: b.Workshop || 'service',
-      description: b.Jobsheets?.[0]?.Description,
+      description: b.Notes,
       arrivalStatus: b.ArrivalStatus,
       workshop: b.Workshop,
 
       // Jobsheet info
-      jobsheetNumber: b.Jobsheets?.[0]?.JobsheetNumber,
-      status: b.ArrivalStatus || 'booked'
+      jobsheetNumber: b.Jobsheet?.Number ? String(b.Jobsheet.Number) : undefined,
+      status: b.ArrivalStatus || 'PENDING'
     }))
 
     logger.info('Successfully fetched Gemini diary bookings', {
@@ -499,7 +521,7 @@ export async function testConnection(credentials: GeminiCredentials): Promise<{
   dealerName?: string
 }> {
   logger.info('Testing Gemini API connection', {
-        apiUrl: credentials.apiUrl
+    apiUrl: credentials.apiUrl
   })
 
   try {
@@ -507,38 +529,41 @@ export async function testConnection(credentials: GeminiCredentials): Promise<{
     // This verifies the API URL and credentials are correct
     const today = new Date().toISOString().split('T')[0]
 
-    const response = await makeRequest<unknown>(credentials, 'api/v2/workshop/get-diary-bookings', {
-      method: 'POST',
-      body: {
-        from: today,
-        to: today,
-        siteId: 1
-      },
+    // Build query string - Gemini API uses GET, not POST
+    const queryParams = new URLSearchParams({
+      StartTime: `${today}T00:00:00`,
+      EndTime: `${today}T23:59:59`,
+      Site: '1'
+    })
+
+    const response = await makeRequest<{
+      error: { message: string; code: number }
+      result: { Bookings: unknown[] } | null
+    }>(credentials, `api/v2/workshop/get-diary-bookings?${queryParams}`, {
+      method: 'GET',
       retries: 1
     })
 
-    // Gemini API returns an array of bookings on success
-    // Any response without an error is considered successful
-    if (response !== null && response !== undefined) {
-      const bookingCount = Array.isArray(response)
-        ? response.length
-        : Object.keys(response as object).length
-
+    // Check for API-level errors
+    if (response.error && response.error.code !== 0) {
       return {
-        success: true,
-        message: `Connection successful - found ${bookingCount} booking(s) for today`
+        success: false,
+        message: response.error.message || 'API returned error'
       }
     }
 
+    // Count bookings from result
+    const bookingCount = response.result?.Bookings?.length || 0
+
     return {
-      success: false,
-      message: 'API returned empty response'
+      success: true,
+      message: `Connection successful - found ${bookingCount} booking(s) for today`
     }
 
   } catch (err) {
     const apiError = err as GeminiApiError
     logger.error('Gemini connection test failed', {
-            apiUrl: credentials.apiUrl,
+      apiUrl: credentials.apiUrl,
       error: apiError.message,
       statusCode: apiError.statusCode
     })
@@ -582,4 +607,144 @@ export async function testConnection(credentials: GeminiCredentials): Promise<{
 export async function isDmsAvailable(organizationId: string): Promise<boolean> {
   const { configured } = await getDmsCredentials(organizationId)
   return configured
+}
+
+// ============================================
+// Customer Search
+// ============================================
+
+export interface GeminiCustomerSearchParams {
+  surname?: string
+  postcode?: string
+  telephone?: string
+  mobile?: string
+  email?: string
+  siteId?: number
+}
+
+export interface GeminiCustomerResult {
+  customerId: string
+  reference: string
+  forename?: string
+  surname: string
+  name: string  // Full display name
+  postcode?: string
+  telephone?: string
+  telephone2?: string
+  mobile?: string
+  email?: string
+  email2?: string
+}
+
+export interface GeminiCustomerSearchResponse {
+  success: boolean
+  customers: GeminiCustomerResult[]
+  error?: string
+}
+
+/**
+ * Search for customers in Gemini DMS
+ * Requires at least one search parameter (surname, postcode, telephone, mobile, or email)
+ */
+export async function searchCustomers(
+  credentials: GeminiCredentials,
+  params: GeminiCustomerSearchParams
+): Promise<GeminiCustomerSearchResponse> {
+  const { surname, postcode, telephone, mobile, email, siteId = 1 } = params
+
+  // Validate at least one search param is provided
+  if (!surname && !postcode && !telephone && !mobile && !email) {
+    return {
+      success: false,
+      customers: [],
+      error: 'At least one search parameter is required (surname, postcode, telephone, mobile, or email)'
+    }
+  }
+
+  logger.info('Searching Gemini customers', {
+    surname,
+    postcode,
+    hasPhone: !!telephone || !!mobile,
+    hasEmail: !!email
+  })
+
+  try {
+    // Build query string
+    const queryParams = new URLSearchParams()
+    queryParams.set('Site', siteId.toString())
+
+    if (surname) queryParams.set('Surname', surname)
+    if (postcode) queryParams.set('Postcode', postcode)
+    if (telephone) queryParams.set('Telephone', telephone)
+    if (mobile) queryParams.set('Mobile', mobile)
+    if (email) queryParams.set('Email', email)
+
+    const response = await makeRequest<{
+      error: { message: string; code: number }
+      result: {
+        results: Array<{
+          CustomerID: number
+          Reference: string
+          Forename?: string
+          Surname: string
+          Name: string
+          Postcode?: string
+          Telephone?: string
+          Telephone2?: string
+          Mobile?: string
+          Email?: string
+          Email2?: string
+        }>
+      }
+    }>(credentials, `api/v2/customers/get-customer-list?${queryParams}`, {
+      method: 'GET'
+    })
+
+    // Check for API-level errors
+    if (response.error && response.error.code !== 0) {
+      return {
+        success: false,
+        customers: [],
+        error: response.error.message || 'Customer search failed'
+      }
+    }
+
+    // Transform results
+    const customers: GeminiCustomerResult[] = (response.result?.results || []).map(c => ({
+      customerId: String(c.CustomerID),
+      reference: c.Reference,
+      forename: c.Forename || undefined,
+      surname: c.Surname,
+      name: c.Name,
+      postcode: c.Postcode || undefined,
+      telephone: c.Telephone || undefined,
+      telephone2: c.Telephone2 || undefined,
+      mobile: c.Mobile || undefined,
+      email: c.Email || undefined,
+      email2: c.Email2 || undefined
+    }))
+
+    logger.info('Customer search completed', {
+      found: customers.length
+    })
+
+    return {
+      success: true,
+      customers
+    }
+
+  } catch (err) {
+    const apiError = err as GeminiApiError
+
+    logger.error('Customer search failed', {
+      error: apiError.message,
+      statusCode: apiError.statusCode
+    }, apiError)
+
+    return {
+      success: false,
+      customers: [],
+      error: apiError.message || 'Customer search failed'
+    }
+  }
 }

@@ -69,19 +69,32 @@ dashboard.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
     const totalToday = healthChecks?.length || 0
     const completedToday = healthChecks?.filter(hc => ['completed', 'authorized', 'declined'].includes(hc.status)).length || 0
 
-    // Status counts
+    // Status counts (for period)
     const statusCounts: Record<string, number> = {}
     healthChecks?.forEach(hc => {
       statusCounts[hc.status] = (statusCounts[hc.status] || 0) + 1
     })
 
-    // Column counts for board
+    // Column counts for board - get ALL active health checks regardless of date
+    // This shows current workflow state, not just today's created items
+    let activeQuery = supabaseAdmin
+      .from('health_checks')
+      .select('id, status')
+      .eq('organization_id', auth.orgId)
+      .not('status', 'in', '(completed,cancelled,expired)')
+
+    if (site_id) activeQuery = activeQuery.eq('site_id', site_id)
+    if (technician_id) activeQuery = activeQuery.eq('technician_id', technician_id)
+    if (advisor_id) activeQuery = activeQuery.eq('advisor_id', advisor_id)
+
+    const { data: activeHealthChecks } = await activeQuery
+
     const columnCounts = {
-      technician: healthChecks?.filter(hc => statusGroups.technician.includes(hc.status)).length || 0,
-      tech_done: healthChecks?.filter(hc => statusGroups.tech_done.includes(hc.status)).length || 0,
-      advisor: healthChecks?.filter(hc => statusGroups.advisor.includes(hc.status)).length || 0,
-      customer: healthChecks?.filter(hc => statusGroups.customer.includes(hc.status)).length || 0,
-      actioned: healthChecks?.filter(hc => statusGroups.actioned.includes(hc.status)).length || 0
+      technician: activeHealthChecks?.filter(hc => statusGroups.technician.includes(hc.status)).length || 0,
+      tech_done: activeHealthChecks?.filter(hc => statusGroups.tech_done.includes(hc.status)).length || 0,
+      advisor: activeHealthChecks?.filter(hc => statusGroups.advisor.includes(hc.status)).length || 0,
+      customer: activeHealthChecks?.filter(hc => statusGroups.customer.includes(hc.status)).length || 0,
+      actioned: activeHealthChecks?.filter(hc => statusGroups.actioned.includes(hc.status)).length || 0
     }
 
     // Calculate average response time (sent to first_opened)

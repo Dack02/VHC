@@ -207,6 +207,7 @@ export interface CheckResult {
   id: string
   healthCheckId: string
   templateItemId: string
+  instanceNumber: number  // For duplicate items (e.g., two oil leaks), default 1
   ragStatus?: RagStatus
   value?: Record<string, unknown>
   notes?: string

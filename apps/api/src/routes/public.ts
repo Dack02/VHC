@@ -9,6 +9,12 @@ import { cancelHealthCheckReminders, notifyCustomerAction } from '../services/sc
 
 const publicRoutes = new Hono()
 
+// Helper to build storage URL from path
+function getStorageUrl(storagePath: string): string {
+  const supabaseUrl = process.env.SUPABASE_URL
+  return `${supabaseUrl}/storage/v1/object/public/vhc-photos/${storagePath}`
+}
+
 /**
  * GET /api/public/vhc/:token
  * Get health check data for customer portal
@@ -97,6 +103,15 @@ publicRoutes.get('/vhc/:token', async (c) => {
     .update(updateData)
     .eq('id', healthCheck.id)
 
+  // Notify staff when customer opens health check for the first time
+  if (isFirstView) {
+    const site = healthCheck.site as unknown as { id: string }
+    await notifyCustomerAction(healthCheck.id, site.id, 'viewed', {
+      viewCount: 1,
+      isFirstView: true
+    })
+  }
+
   // Get repair items with their check results
   const { data: repairItems } = await supabaseAdmin
     .from('repair_items')
@@ -137,6 +152,8 @@ publicRoutes.get('/vhc/:token', async (c) => {
       rag_status,
       notes,
       value,
+      instance_number,
+      template_item_id,
       template_item:template_items(
         id,
         name,
@@ -149,11 +166,12 @@ publicRoutes.get('/vhc/:token', async (c) => {
       media:result_media(
         id,
         media_type,
-        url,
-        thumbnail_url,
+        storage_path,
+        thumbnail_path,
         caption,
         annotation_data,
-        sort_order
+        sort_order,
+        include_in_report
       )
     `)
     .eq('health_check_id', healthCheck.id)
@@ -196,7 +214,36 @@ publicRoutes.get('/vhc/:token', async (c) => {
     customer: healthCheck.customer,
     site: healthCheck.site,
     repairItems: enhancedRepairItems,
-    checkResults: checkResults || [],
+    checkResults: (checkResults || []).map(result => {
+      // Check if this item has duplicates
+      const instanceNum = (result as Record<string, unknown>).instance_number as number || 1
+      const hasDuplicates = (checkResults || []).filter(
+        r => (r as Record<string, unknown>).template_item_id === (result as Record<string, unknown>).template_item_id
+      ).length > 1
+      const templateItem = result.template_item as { name?: string } | null
+      const baseName = templateItem?.name || 'Unknown Item'
+      const displayName = hasDuplicates ? `${baseName} (${instanceNum})` : baseName
+
+      return {
+        ...result,
+        instance_number: instanceNum,
+        display_name: displayName,
+        media: result.media
+          ?.filter((m: Record<string, unknown>) => m.include_in_report !== false)
+          .map((m: Record<string, unknown>) => {
+            const url = m.storage_path ? getStorageUrl(m.storage_path as string) : null
+            return {
+              id: m.id,
+              media_type: m.media_type,
+              url,
+              thumbnail_url: url ? `${url}?width=200&height=200` : null,
+              caption: m.caption,
+              annotation_data: m.annotation_data,
+              sort_order: m.sort_order
+            }
+          })
+      }
+    }),
     isFirstView
   })
 })

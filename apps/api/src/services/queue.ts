@@ -145,7 +145,7 @@ export interface StaffNotificationJob {
     | 'link_expired'
     | 'tech_completed'
   healthCheckId: string
-  organizationId: string
+  organizationId?: string // Optional - worker fetches from health check
   siteId: string
   userId?: string // Target specific user, or broadcast to site
   metadata?: Record<string, unknown>
@@ -186,7 +186,20 @@ export async function queueSms(job: SendSmsJob) {
 }
 
 export async function queueNotification(job: NotificationJob) {
-  return notificationQueue.add(job.type, job)
+  console.log(`[Queue] Adding notification job:`, {
+    type: job.type,
+    ...(job.type === 'customer_health_check_ready' ? {
+      healthCheckId: (job as CustomerNotificationJob).healthCheckId,
+      organizationId: (job as CustomerNotificationJob).organizationId,
+      sendEmail: (job as CustomerNotificationJob).sendEmail,
+      sendSms: (job as CustomerNotificationJob).sendSms,
+      customerEmail: (job as CustomerNotificationJob).customerEmail,
+      customerMobile: (job as CustomerNotificationJob).customerMobile
+    } : {})
+  })
+  const result = await notificationQueue.add(job.type, job)
+  console.log(`[Queue] Notification job added with ID: ${result.id}`)
+  return result
 }
 
 export async function scheduleReminder(

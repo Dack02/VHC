@@ -47,6 +47,8 @@ results.get('/health-checks/:id/results', authorize(['super_admin', 'org_admin',
         id: r.id,
         templateItemId: r.template_item_id,
         template_item_id: r.template_item_id,
+        instanceNumber: r.instance_number || 1,
+        instance_number: r.instance_number || 1,
         templateItem: r.template_item ? {
           id: r.template_item.id,
           name: r.template_item.name,
@@ -80,7 +82,7 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
     const auth = c.get('auth')
     const { id } = c.req.param()
     const body = await c.req.json()
-    const { templateItemId, status, value, notes, is_mot_failure } = body
+    const { templateItemId, status, value, notes, is_mot_failure, instanceNumber } = body
 
     if (!templateItemId) {
       return c.json({ error: 'Template item ID is required' }, 400)
@@ -91,16 +93,44 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
       return c.json({ error: 'Health check not found' }, 404)
     }
 
-    // Check if result already exists for this item
+    // Determine instance number to use (default to 1)
+    const targetInstanceNumber = instanceNumber || 1
+
+    // Check if result already exists for this item + instance number
     const { data: existing } = await supabaseAdmin
       .from('check_results')
       .select('id')
       .eq('health_check_id', id)
       .eq('template_item_id', templateItemId)
+      .eq('instance_number', targetInstanceNumber)
       .single()
 
+    // SAFEGUARD: If no exact match found but results exist for this template item,
+    // update the first instance instead of creating a new duplicate
+    // This prevents accidental duplicates when client has stale instance_number
+    let effectiveExisting = existing
+    let effectiveInstanceNumber = targetInstanceNumber
+    if (!existing && targetInstanceNumber !== 1) {
+      // Check if ANY results exist for this template_item
+      const { data: anyExisting } = await supabaseAdmin
+        .from('check_results')
+        .select('id, instance_number')
+        .eq('health_check_id', id)
+        .eq('template_item_id', templateItemId)
+        .order('instance_number', { ascending: true })
+        .limit(1)
+        .single()
+
+      if (anyExisting) {
+        // Update the existing result instead of creating a new one
+        console.warn(`Safeguard: Redirecting save from instance ${targetInstanceNumber} to ${anyExisting.instance_number} for template_item ${templateItemId}`)
+        effectiveExisting = anyExisting
+        effectiveInstanceNumber = anyExisting.instance_number
+      }
+    }
+
     let result
-    if (existing) {
+    if (effectiveExisting) {
       // Update existing result
       const updateData: Record<string, unknown> = {
         rag_status: status,
@@ -116,7 +146,7 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
       const { data, error } = await supabaseAdmin
         .from('check_results')
         .update(updateData)
-        .eq('id', existing.id)
+        .eq('id', effectiveExisting.id)
         .select()
         .single()
 
@@ -131,6 +161,7 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
         .insert({
           health_check_id: id,
           template_item_id: templateItemId,
+          instance_number: targetInstanceNumber,
           rag_status: status,
           value,
           notes,
@@ -162,6 +193,13 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
           .eq('id', templateItemId)
           .single()
 
+        // Check if there are other instances of this item (to determine if we should show instance number)
+        const { count: instanceCount } = await supabaseAdmin
+          .from('check_results')
+          .select('id', { count: 'exact', head: true })
+          .eq('health_check_id', id)
+          .eq('template_item_id', templateItemId)
+
         // Get max sort order
         const { data: maxOrderResult } = await supabaseAdmin
           .from('repair_items')
@@ -172,7 +210,9 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
           .single()
 
         const sortOrder = (maxOrderResult?.sort_order || 0) + 1
-        const itemName = templateItem?.name || 'Unknown Item'
+        const baseName = templateItem?.name || 'Unknown Item'
+        // Include instance number in name if there are multiple instances
+        const itemName = (instanceCount && instanceCount > 1) ? `${baseName} (${targetInstanceNumber})` : baseName
 
         // Create repair item with is_mot_failure flag
         await supabaseAdmin
@@ -180,6 +220,7 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
           .insert({
             health_check_id: id,
             check_result_id: result.id,
+            title: itemName,
             description: `MOT FAILURE: ${itemName} requires immediate attention`,
             labour_cost: 0,
             parts_cost: 0,
@@ -194,13 +235,15 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
     return c.json({
       id: result.id,
       templateItemId: result.template_item_id,
+      instanceNumber: result.instance_number || 1,
+      instance_number: result.instance_number || 1,
       status: result.rag_status,
       value: result.value,
       notes: result.notes,
       is_mot_failure: result.is_mot_failure,
       createdAt: result.created_at,
       updatedAt: result.updated_at
-    }, existing ? 200 : 201)
+    }, effectiveExisting ? 200 : 201)
   } catch (error) {
     console.error('Save result error:', error)
     return c.json({ error: 'Failed to save result' }, 500)
@@ -226,14 +269,16 @@ results.post('/health-checks/:id/results/batch', authorize(['super_admin', 'org_
 
     const savedResults = []
     for (const r of resultsToSave) {
-      const { templateItemId, status, value, notes } = r
+      const { templateItemId, status, value, notes, instanceNumber } = r
+      const targetInstanceNumber = instanceNumber || 1
 
-      // Check if result already exists
+      // Check if result already exists for this item + instance
       const { data: existing } = await supabaseAdmin
         .from('check_results')
         .select('id')
         .eq('health_check_id', id)
         .eq('template_item_id', templateItemId)
+        .eq('instance_number', targetInstanceNumber)
         .single()
 
       let result
@@ -251,6 +296,7 @@ results.post('/health-checks/:id/results/batch', authorize(['super_admin', 'org_
           .insert({
             health_check_id: id,
             template_item_id: templateItemId,
+            instance_number: targetInstanceNumber,
             rag_status: status,
             value,
             notes
@@ -264,6 +310,7 @@ results.post('/health-checks/:id/results/batch', authorize(['super_admin', 'org_
         savedResults.push({
           id: result.id,
           templateItemId: result.template_item_id,
+          instanceNumber: result.instance_number || 1,
           status: result.rag_status,
           value: result.value
         })
@@ -313,6 +360,8 @@ results.patch('/health-checks/:id/results/:resultId', authorize(['super_admin', 
     return c.json({
       id: result.id,
       templateItemId: result.template_item_id,
+      instanceNumber: result.instance_number || 1,
+      instance_number: result.instance_number || 1,
       status: result.rag_status,
       value: result.value,
       notes: result.notes,
@@ -321,6 +370,143 @@ results.patch('/health-checks/:id/results/:resultId', authorize(['super_admin', 
   } catch (error) {
     console.error('Update result error:', error)
     return c.json({ error: 'Failed to update result' }, 500)
+  }
+})
+
+// POST /api/v1/health-checks/:id/results/duplicate - Create a duplicate of an item
+results.post('/health-checks/:id/results/duplicate', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const body = await c.req.json()
+    const { templateItemId } = body
+
+    if (!templateItemId) {
+      return c.json({ error: 'Template item ID is required' }, 400)
+    }
+
+    const healthCheck = await verifyHealthCheckAccess(id, auth.orgId)
+    if (!healthCheck) {
+      return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Get the max instance number for this template item
+    const { data: maxInstanceResult } = await supabaseAdmin
+      .from('check_results')
+      .select('instance_number')
+      .eq('health_check_id', id)
+      .eq('template_item_id', templateItemId)
+      .order('instance_number', { ascending: false })
+      .limit(1)
+      .single()
+
+    const nextInstanceNumber = (maxInstanceResult?.instance_number || 0) + 1
+
+    // Get template item for response
+    const { data: templateItem } = await supabaseAdmin
+      .from('template_items')
+      .select('id, name, item_type, config')
+      .eq('id', templateItemId)
+      .single()
+
+    // Create new result with next instance number
+    const { data: result, error } = await supabaseAdmin
+      .from('check_results')
+      .insert({
+        health_check_id: id,
+        template_item_id: templateItemId,
+        instance_number: nextInstanceNumber,
+        rag_status: null,
+        value: null,
+        notes: null
+      })
+      .select()
+      .single()
+
+    if (error) {
+      return c.json({ error: error.message }, 500)
+    }
+
+    return c.json({
+      id: result.id,
+      templateItemId: result.template_item_id,
+      template_item_id: result.template_item_id,
+      instanceNumber: result.instance_number,
+      instance_number: result.instance_number,
+      templateItem: templateItem ? {
+        id: templateItem.id,
+        name: templateItem.name,
+        itemType: templateItem.item_type,
+        config: templateItem.config
+      } : null,
+      status: result.rag_status,
+      rag_status: result.rag_status,
+      value: result.value,
+      notes: result.notes,
+      createdAt: result.created_at,
+      updatedAt: result.updated_at
+    }, 201)
+  } catch (error) {
+    console.error('Duplicate result error:', error)
+    return c.json({ error: 'Failed to create duplicate' }, 500)
+  }
+})
+
+// DELETE /api/v1/health-checks/:id/results/:resultId - Delete a result (e.g., remove a duplicate)
+results.delete('/health-checks/:id/results/:resultId', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id, resultId } = c.req.param()
+
+    const healthCheck = await verifyHealthCheckAccess(id, auth.orgId)
+    if (!healthCheck) {
+      return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Get the result to check if it's a duplicate (instance_number > 1)
+    const { data: existingResult } = await supabaseAdmin
+      .from('check_results')
+      .select('id, instance_number, template_item_id')
+      .eq('id', resultId)
+      .eq('health_check_id', id)
+      .single()
+
+    if (!existingResult) {
+      return c.json({ error: 'Result not found' }, 404)
+    }
+
+    // Only allow deleting duplicates (instance_number > 1)
+    // The primary instance (1) should be cleared, not deleted
+    if (existingResult.instance_number === 1) {
+      return c.json({ error: 'Cannot delete primary instance. Clear the result instead.' }, 400)
+    }
+
+    // Delete associated media first (cascade should handle this, but be explicit)
+    await supabaseAdmin
+      .from('result_media')
+      .delete()
+      .eq('check_result_id', resultId)
+
+    // Delete associated repair items
+    await supabaseAdmin
+      .from('repair_items')
+      .delete()
+      .eq('check_result_id', resultId)
+
+    // Delete the result
+    const { error } = await supabaseAdmin
+      .from('check_results')
+      .delete()
+      .eq('id', resultId)
+
+    if (error) {
+      return c.json({ error: error.message }, 500)
+    }
+
+    return c.json({ success: true, deletedId: resultId })
+  } catch (error) {
+    console.error('Delete result error:', error)
+    return c.json({ error: 'Failed to delete result' }, 500)
   }
 })
 

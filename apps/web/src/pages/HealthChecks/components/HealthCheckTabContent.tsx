@@ -116,9 +116,10 @@ export function HealthCheckTabContent({
     return null
   }
 
-  // Helper to check if an item is a tyre item
+  // Helper to check if an item is a tyre item (depth or details)
   const isTyreItem = (result: CheckResult | null): boolean => {
-    return result?.template_item?.item_type === 'tyre_depth'
+    const itemType = result?.template_item?.item_type
+    return itemType === 'tyre_depth' || itemType === 'tyre_details'
   }
 
   // Helper to check if an item is a brake item
@@ -219,14 +220,29 @@ export function HealthCheckTabContent({
                 title={section.name}
                 itemCount={sectionResults.length}
               />
-              {sectionResults.map(result => {
+              {sectionResults.map((result) => {
                 // Check if this is a tyre or brake item that should show details
                 const showDetails = isTyreItem(result) || isBrakeItem(result)
+
+                // Build display name with instance number if duplicate
+                // Get all results for this template item and find position
+                const sameTemplateResults = sectionResults.filter(
+                  r => r.template_item_id === result.template_item_id
+                )
+                const hasDuplicates = sameTemplateResults.length > 1
+
+                // Use position in sorted list for display (1, 2, 3...) not raw instance_number
+                const displayIndex = sameTemplateResults.findIndex(r => r.id === result.id)
+                const displayNumber = displayIndex + 1
+
+                const displayName = hasDuplicates
+                  ? `${result.template_item?.name || 'Unknown Item'} (${displayNumber})`
+                  : result.template_item?.name || 'Unknown Item'
 
                 return (
                   <div key={result.id}>
                     <GreenItemRow
-                      title={result.template_item?.name || 'Unknown Item'}
+                      title={displayName}
                       notes={result.notes}
                       value={result.value}
                     />

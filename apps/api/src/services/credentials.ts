@@ -33,13 +33,25 @@ export interface CredentialResult<T> {
 export async function getSmsCredentials(
   organizationId: string
 ): Promise<CredentialResult<SmsCredentials>> {
+  console.log(`[Credentials] Getting SMS credentials for org ${organizationId}`)
+
   try {
     // First check organization notification settings
-    const { data: orgSettings } = await supabaseAdmin
+    const { data: orgSettings, error: orgError } = await supabaseAdmin
       .from('organization_notification_settings')
       .select('*')
       .eq('organization_id', organizationId)
       .single()
+
+    console.log(`[Credentials] Org notification settings:`, {
+      found: !!orgSettings,
+      error: orgError?.message,
+      use_platform_sms: orgSettings?.use_platform_sms,
+      sms_enabled: orgSettings?.sms_enabled,
+      has_twilio_sid: !!orgSettings?.twilio_account_sid_encrypted,
+      has_twilio_token: !!orgSettings?.twilio_auth_token_encrypted,
+      has_phone: !!orgSettings?.twilio_phone_number
+    })
 
     // If org has custom SMS credentials and is not using platform
     if (
@@ -57,25 +69,34 @@ export async function getSmsCredentials(
           phoneNumber: orgSettings.twilio_phone_number
         }
 
+        console.log(`[Credentials] Using ORG SMS credentials for org ${organizationId}`)
         return {
           source: 'organization',
           configured: true,
           credentials
         }
       } catch (decryptError) {
-        console.error('Failed to decrypt org SMS credentials:', decryptError)
+        console.error('[Credentials] Failed to decrypt org SMS credentials:', decryptError)
         // Fall through to platform credentials
       }
     }
 
     // Fall back to platform credentials
-    const { data: platformSettings } = await supabaseAdmin
+    console.log(`[Credentials] Falling back to platform SMS credentials for org ${organizationId}`)
+    const { data: platformSettings, error: platformError } = await supabaseAdmin
       .from('platform_settings')
       .select('settings')
       .eq('id', 'notifications')
       .single()
 
+    console.log(`[Credentials] Platform settings:`, {
+      found: !!platformSettings,
+      error: platformError?.message,
+      settings_exists: !!platformSettings?.settings
+    })
+
     if (!platformSettings?.settings) {
+      console.log(`[Credentials] Platform notification settings not found`)
       return {
         source: 'platform',
         configured: false,
@@ -86,12 +107,20 @@ export async function getSmsCredentials(
 
     const settings = platformSettings.settings as Record<string, unknown>
 
+    console.log(`[Credentials] Platform SMS config:`, {
+      sms_enabled: settings.sms_enabled,
+      has_account_sid: !!settings.twilio_account_sid,
+      has_auth_token: !!settings.twilio_auth_token_encrypted,
+      has_phone: !!settings.twilio_phone_number
+    })
+
     if (
       !settings.sms_enabled ||
       !settings.twilio_account_sid ||
       !settings.twilio_auth_token_encrypted ||
       !settings.twilio_phone_number
     ) {
+      console.log(`[Credentials] Platform SMS not configured`)
       return {
         source: 'platform',
         configured: false,
@@ -107,13 +136,14 @@ export async function getSmsCredentials(
         phoneNumber: settings.twilio_phone_number as string
       }
 
+      console.log(`[Credentials] Using PLATFORM SMS credentials for org ${organizationId}`)
       return {
         source: 'platform',
         configured: true,
         credentials
       }
     } catch (decryptError) {
-      console.error('Failed to decrypt platform SMS credentials:', decryptError)
+      console.error('[Credentials] Failed to decrypt platform SMS credentials:', decryptError)
       return {
         source: 'platform',
         configured: false,
@@ -122,7 +152,7 @@ export async function getSmsCredentials(
       }
     }
   } catch (error) {
-    console.error('Error getting SMS credentials:', error)
+    console.error('[Credentials] Error getting SMS credentials:', error)
     return {
       source: 'platform',
       configured: false,
@@ -139,13 +169,24 @@ export async function getSmsCredentials(
 export async function getEmailCredentials(
   organizationId: string
 ): Promise<CredentialResult<EmailCredentials>> {
+  console.log(`[Credentials] Getting Email credentials for org ${organizationId}`)
+
   try {
     // First check organization notification settings
-    const { data: orgSettings } = await supabaseAdmin
+    const { data: orgSettings, error: orgError } = await supabaseAdmin
       .from('organization_notification_settings')
       .select('*')
       .eq('organization_id', organizationId)
       .single()
+
+    console.log(`[Credentials] Org notification settings for email:`, {
+      found: !!orgSettings,
+      error: orgError?.message,
+      use_platform_email: orgSettings?.use_platform_email,
+      email_enabled: orgSettings?.email_enabled,
+      has_api_key: !!orgSettings?.resend_api_key_encrypted,
+      has_from_email: !!orgSettings?.resend_from_email
+    })
 
     // If org has custom Email credentials and is not using platform
     if (
@@ -162,25 +203,34 @@ export async function getEmailCredentials(
           fromName: orgSettings.resend_from_name || 'Vehicle Health Check'
         }
 
+        console.log(`[Credentials] Using ORG Email credentials for org ${organizationId}`)
         return {
           source: 'organization',
           configured: true,
           credentials
         }
       } catch (decryptError) {
-        console.error('Failed to decrypt org Email credentials:', decryptError)
+        console.error('[Credentials] Failed to decrypt org Email credentials:', decryptError)
         // Fall through to platform credentials
       }
     }
 
     // Fall back to platform credentials
-    const { data: platformSettings } = await supabaseAdmin
+    console.log(`[Credentials] Falling back to platform Email credentials for org ${organizationId}`)
+    const { data: platformSettings, error: platformError } = await supabaseAdmin
       .from('platform_settings')
       .select('settings')
       .eq('id', 'notifications')
       .single()
 
+    console.log(`[Credentials] Platform settings for email:`, {
+      found: !!platformSettings,
+      error: platformError?.message,
+      settings_exists: !!platformSettings?.settings
+    })
+
     if (!platformSettings?.settings) {
+      console.log(`[Credentials] Platform notification settings not found for email`)
       return {
         source: 'platform',
         configured: false,
@@ -191,11 +241,18 @@ export async function getEmailCredentials(
 
     const settings = platformSettings.settings as Record<string, unknown>
 
+    console.log(`[Credentials] Platform Email config:`, {
+      email_enabled: settings.email_enabled,
+      has_api_key: !!settings.resend_api_key_encrypted,
+      has_from_email: !!settings.resend_from_email
+    })
+
     if (
       !settings.email_enabled ||
       !settings.resend_api_key_encrypted ||
       !settings.resend_from_email
     ) {
+      console.log(`[Credentials] Platform Email not configured`)
       return {
         source: 'platform',
         configured: false,
@@ -211,13 +268,14 @@ export async function getEmailCredentials(
         fromName: (settings.resend_from_name as string) || 'Vehicle Health Check'
       }
 
+      console.log(`[Credentials] Using PLATFORM Email credentials for org ${organizationId}`)
       return {
         source: 'platform',
         configured: true,
         credentials
       }
     } catch (decryptError) {
-      console.error('Failed to decrypt platform Email credentials:', decryptError)
+      console.error('[Credentials] Failed to decrypt platform Email credentials:', decryptError)
       return {
         source: 'platform',
         configured: false,
@@ -226,7 +284,7 @@ export async function getEmailCredentials(
       }
     }
   } catch (error) {
-    console.error('Error getting Email credentials:', error)
+    console.error('[Credentials] Error getting Email credentials:', error)
     return {
       source: 'platform',
       configured: false,

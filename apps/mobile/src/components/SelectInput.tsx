@@ -12,6 +12,7 @@ interface SelectInputProps {
   onRAGChange: (status: 'green' | 'amber' | 'red' | null) => void
   config?: {
     options?: SelectOption[] | string[]
+    ragMapping?: Record<string, 'green' | 'amber' | 'red'>
   }
 }
 
@@ -38,6 +39,12 @@ export function SelectInput({
       navigator.vibrate(30)
     }
 
+    // Check ragMapping config first
+    if (config?.ragMapping && config.ragMapping[newValue]) {
+      onRAGChange(config.ragMapping[newValue])
+      return
+    }
+
     // Find the option and set RAG if defined
     const selectedOption = options.find((opt) => opt.value === newValue)
     if (selectedOption?.rag) {
@@ -47,7 +54,7 @@ export function SelectInput({
       const lower = newValue.toLowerCase()
       if (lower === 'good' || lower === 'ok' || lower === 'pass') {
         onRAGChange('green')
-      } else if (lower === 'fair' || lower === 'advisory' || lower === 'warn') {
+      } else if (lower === 'fair' || lower === 'advisory' || lower === 'warn' || lower.includes('replacement') || lower.includes('required')) {
         onRAGChange('amber')
       } else if (lower === 'poor' || lower === 'bad' || lower === 'fail' || lower === 'urgent') {
         onRAGChange('red')
@@ -55,10 +62,19 @@ export function SelectInput({
         onRAGChange(null)
       }
     }
-  }, [onChange, onRAGChange, options])
+  }, [onChange, onRAGChange, options, config])
 
   const getColor = () => {
     if (!value) return 'border-gray-300'
+
+    // Check ragMapping config first
+    if (config?.ragMapping && config.ragMapping[value]) {
+      switch (config.ragMapping[value]) {
+        case 'green': return 'border-green-500 bg-green-50'
+        case 'amber': return 'border-amber-500 bg-amber-50'
+        case 'red': return 'border-red-500 bg-red-50'
+      }
+    }
 
     const selectedOption = options.find((opt) => opt.value === value)
     if (selectedOption?.rag) {
@@ -74,7 +90,7 @@ export function SelectInput({
     if (lower === 'good' || lower === 'ok' || lower === 'pass') {
       return 'border-green-500 bg-green-50'
     }
-    if (lower === 'fair' || lower === 'advisory' || lower === 'warn') {
+    if (lower === 'fair' || lower === 'advisory' || lower === 'warn' || lower.includes('replacement') || lower.includes('required')) {
       return 'border-amber-500 bg-amber-50'
     }
     if (lower === 'poor' || lower === 'bad' || lower === 'fail' || lower === 'urgent') {

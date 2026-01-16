@@ -35,3 +35,6 @@ coverage/
 # Misc
 *.pem
 .cache/
+
+# Backups (should be stored outside repo in ~/VHC_backups/)
+backups/

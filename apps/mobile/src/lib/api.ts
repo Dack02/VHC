@@ -111,7 +111,7 @@ export interface TemplateItem {
   id: string
   name: string
   description: string | null
-  itemType: 'rag' | 'tyre_depth' | 'brake_measurement' | 'fluid_level' | 'yes_no' | 'select' | 'measurement' | 'text' | 'number' | 'multi_select'
+  itemType: 'rag' | 'tyre_depth' | 'tyre_details' | 'brake_measurement' | 'brake_fluid' | 'fluid_level' | 'yes_no' | 'select' | 'measurement' | 'text' | 'number' | 'multi_select'
   config: Record<string, unknown>
   sortOrder: number
   isRequired: boolean
@@ -120,6 +120,7 @@ export interface TemplateItem {
 export interface CheckResult {
   id: string
   templateItemId: string
+  instanceNumber?: number  // For duplicate items (e.g., two oil leaks), default 1
   status: 'green' | 'amber' | 'red' | null
   value: unknown
   notes: string | null
@@ -128,6 +129,7 @@ export interface CheckResult {
   // Aliases for backwards compatibility with local storage
   health_check_id?: string
   template_item_id?: string
+  instance_number?: number
   rag_status?: 'green' | 'amber' | 'red' | null
 }
 

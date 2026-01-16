@@ -8,7 +8,9 @@ import { RAGSelector, RAGIndicator } from '../components/RAGSelector'
 import { Input, TextArea } from '../components/Input'
 import { PhotoCapture } from '../components/PhotoCapture'
 import { TyreDepthInput } from '../components/TyreDepthInput'
+import { TyreDetailsInput } from '../components/TyreDetailsInput'
 import { BrakeMeasurementInput } from '../components/BrakeMeasurementInput'
+import { BrakeFluidSelector } from '../components/BrakeFluidSelector'
 import { MeasurementInput } from '../components/MeasurementInput'
 import { SelectInput } from '../components/SelectInput'
 import { MultiSelectInput } from '../components/MultiSelectInput'
@@ -26,10 +28,16 @@ export function Inspection() {
   const [error, setError] = useState<string | null>(null)
 
   const [currentSectionIndex, setCurrentSectionIndex] = useState(0)
+  // Key format: `${templateItemId}-${instanceNumber}` to support duplicates
   const [results, setResults] = useState<Map<string, Partial<CheckResult>>>(new Map())
   const [expandedItem, setExpandedItem] = useState<string | null>(null)
   const [photoItemId, setPhotoItemId] = useState<string | null>(null)
   const [viewingPhoto, setViewingPhoto] = useState<{ url: string; caption?: string } | null>(null)
+  const [creatingDuplicate, setCreatingDuplicate] = useState(false)
+
+  // Helper to generate result key
+  const getResultKey = (templateItemId: string, instanceNumber: number = 1) =>
+    `${templateItemId}-${instanceNumber}`
 
   useEffect(() => {
     fetchJob()
@@ -62,12 +70,16 @@ export function Inspection() {
       apiResults.forEach((r) => {
         // Handle both camelCase (API) and snake_case (offline storage) formats
         const itemId = r.templateItemId || r.template_item_id
+        const instanceNum = r.instanceNumber || r.instance_number || 1
         if (itemId) {
-          resultsMap.set(itemId, {
+          const key = getResultKey(itemId, instanceNum)
+          resultsMap.set(key, {
             ...r,
             // Normalize to have both formats for compatibility
             templateItemId: itemId,
             template_item_id: itemId,
+            instanceNumber: instanceNum,
+            instance_number: instanceNum,
             rag_status: r.status || r.rag_status,
             status: r.status || r.rag_status
           })
@@ -76,16 +88,23 @@ export function Inspection() {
 
       const offlineResults = await db.getResults(id)
       offlineResults.forEach((r) => {
-        const itemId = r.templateItemId || r.template_item_id
+        // Type cast to handle both snake_case and camelCase fields
+        const result = r as any
+        // Now offline DB properly stores template_item_id and instance_number separately
+        const itemId = result.template_item_id
+        const instanceNum = result.instance_number || 1
         if (itemId) {
-          const existing = resultsMap.get(itemId)
-          if (!existing || (r as any).updated_at > (existing as any)?.updated_at) {
-            resultsMap.set(itemId, {
+          const key = getResultKey(itemId, instanceNum)
+          const existing = resultsMap.get(key)
+          if (!existing || result.updated_at > (existing as any)?.updated_at) {
+            resultsMap.set(key, {
               ...r,
               templateItemId: itemId,
               template_item_id: itemId,
-              rag_status: r.status || r.rag_status,
-              status: r.status || r.rag_status
+              instanceNumber: instanceNum,
+              instance_number: instanceNum,
+              rag_status: result.status || result.rag_status,
+              status: result.status || result.rag_status
             })
           }
         }
@@ -101,29 +120,59 @@ export function Inspection() {
 
   const currentSection = sections[currentSectionIndex]
 
-  // Calculate totals
-  const totalItems = sections.reduce((sum, s) => sum + (s.items?.length || 0), 0)
+  // Get all instances for a template item
+  const getItemInstances = (templateItemId: string) => {
+    const instances: Array<{ instanceNumber: number; result: Partial<CheckResult> }> = []
+    results.forEach((result, key) => {
+      if (key.startsWith(`${templateItemId}-`)) {
+        const instanceNumber = result.instanceNumber || result.instance_number || 1
+        instances.push({ instanceNumber, result })
+      }
+    })
+    // Sort by instance number
+    return instances.sort((a, b) => a.instanceNumber - b.instanceNumber)
+  }
+
+  // Calculate totals (including duplicates)
+  const totalItems = [...results.values()].length || sections.reduce((sum, s) => sum + (s.items?.length || 0), 0)
   const completedItems = [...results.values()].filter((r) => {
     const status = r.status || r.rag_status
     return status !== null && status !== undefined
   }).length
 
-  const sectionCompletedCount = (section: TemplateSection) =>
-    (section.items || []).filter((item) => {
-      const r = results.get(item.id)
-      return r?.status || r?.rag_status
-    }).length
+  const sectionCompletedCount = (section: TemplateSection) => {
+    let count = 0
+    ;(section.items || []).forEach((item) => {
+      const instances = getItemInstances(item.id)
+      if (instances.length === 0) {
+        // Check for old key format (just item.id) for backward compatibility
+        const r = results.get(item.id) || results.get(getResultKey(item.id, 1))
+        if (r?.status || r?.rag_status) count++
+      } else {
+        instances.forEach(({ result }) => {
+          if (result?.status || result?.rag_status) count++
+        })
+      }
+    })
+    return count
+  }
 
-  // Save result
-  const saveResult = async (itemId: string, data: Partial<CheckResult>) => {
-    const existingResult = results.get(itemId)
+  // Save result (itemKey is the composite key: `${templateItemId}-${instanceNumber}`)
+  const saveResult = async (itemKey: string, data: Partial<CheckResult>) => {
+    const existingResult = results.get(itemKey)
     const newStatus = data.status || data.rag_status || existingResult?.status || existingResult?.rag_status
+
+    // Parse itemKey to get templateItemId and instanceNumber
+    const [templateItemId, instanceStr] = itemKey.split('-')
+    const instanceNumber = parseInt(instanceStr, 10) || 1
 
     const result = {
       ...existingResult,
       ...data,
-      templateItemId: itemId,
-      template_item_id: itemId,
+      templateItemId,
+      template_item_id: templateItemId,
+      instanceNumber,
+      instance_number: instanceNumber,
       health_check_id: id!,
       status: newStatus,
       rag_status: newStatus,
@@ -132,18 +181,19 @@ export function Inspection() {
 
     setResults((prev) => {
       const newResults = new Map(prev)
-      newResults.set(itemId, result)
+      newResults.set(itemKey, result)
       return newResults
     })
 
-    await db.saveResult(id!, itemId, result)
+    await db.saveResult(id!, itemKey, result)
 
     try {
       await api(`/api/v1/health-checks/${id}/results`, {
         method: 'POST',
         token: session?.access_token,
         body: JSON.stringify({
-          templateItemId: itemId,
+          templateItemId,
+          instanceNumber,
           status: result.rag_status,
           value: result.value,
           notes: result.notes,
@@ -154,14 +204,83 @@ export function Inspection() {
       await db.addToSyncQueue({
         type: 'result',
         health_check_id: id!,
-        item_id: itemId,
+        item_id: itemKey,
         data: result
       })
     }
   }
 
+  // Create a duplicate of an item
+  const createDuplicate = async (templateItemId: string) => {
+    if (!session || !id || creatingDuplicate) return
+
+    setCreatingDuplicate(true)
+    try {
+      const newResult = await api<{
+        id: string
+        templateItemId: string
+        instanceNumber: number
+        instance_number: number
+      }>(`/api/v1/health-checks/${id}/results/duplicate`, {
+        method: 'POST',
+        token: session.access_token,
+        body: JSON.stringify({ templateItemId })
+      })
+
+      const instanceNum = newResult.instanceNumber || newResult.instance_number
+      const key = getResultKey(templateItemId, instanceNum)
+
+      setResults((prev) => {
+        const newResults = new Map(prev)
+        newResults.set(key, {
+          ...newResult,
+          templateItemId,
+          template_item_id: templateItemId,
+          instanceNumber: instanceNum,
+          instance_number: instanceNum,
+          status: null,
+          rag_status: null
+        })
+        return newResults
+      })
+
+      // Expand the new duplicate
+      setExpandedItem(key)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create duplicate')
+    } finally {
+      setCreatingDuplicate(false)
+    }
+  }
+
+  // Delete a duplicate item (only works for instance_number > 1)
+  const deleteDuplicate = async (itemKey: string, resultId: string) => {
+    if (!session || !id) return
+
+    try {
+      await api(`/api/v1/health-checks/${id}/results/${resultId}`, {
+        method: 'DELETE',
+        token: session.access_token
+      })
+
+      setResults((prev) => {
+        const newResults = new Map(prev)
+        newResults.delete(itemKey)
+        return newResults
+      })
+
+      setExpandedItem(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete duplicate')
+    }
+  }
+
   const handlePhotoCapture = async (photoData: string) => {
     if (!photoItemId || !session) return
+
+    // photoItemId is now a composite key: templateItemId-instanceNumber
+    const [templateItemId, instanceStr] = photoItemId.split('-')
+    const instanceNumber = parseInt(instanceStr, 10) || 1
 
     setPhotoItemId(null)
 
@@ -176,7 +295,8 @@ export function Inspection() {
             method: 'POST',
             token: session.access_token,
             body: JSON.stringify({
-              templateItemId: photoItemId,
+              templateItemId,
+              instanceNumber,
               status: result?.status || result?.rag_status || null
             })
           }
@@ -320,18 +440,62 @@ export function Inspection() {
           <div className="bg-rag-red-bg text-rag-red p-4 mb-4">{error}</div>
         )}
 
-        {currentSection?.items?.map((item) => (
-          <InspectionItem
-            key={item.id}
-            item={item}
-            result={results.get(item.id)}
-            expanded={expandedItem === item.id}
-            onToggle={() => setExpandedItem(expandedItem === item.id ? null : item.id)}
-            onSave={(data) => saveResult(item.id, data)}
-            onAddPhoto={() => setPhotoItemId(item.id)}
-            onViewPhoto={(url, caption) => setViewingPhoto({ url, caption })}
-          />
-        ))}
+        {currentSection?.items?.map((item) => {
+          const instances = getItemInstances(item.id)
+          const hasInstances = instances.length > 0
+
+          // If no instances exist yet, show the primary (instance 1)
+          if (!hasInstances) {
+            const key = getResultKey(item.id, 1)
+            const result = results.get(key) || results.get(item.id) // Backward compatibility
+            return (
+              <div key={item.id} className="space-y-2">
+                <InspectionItem
+                  item={item}
+                  itemKey={key}
+                  instanceNumber={1}
+                  totalInstances={1}
+                  result={result}
+                  expanded={expandedItem === key || expandedItem === item.id}
+                  onToggle={() => setExpandedItem(expandedItem === key ? null : key)}
+                  onSave={(data) => saveResult(key, data)}
+                  onAddPhoto={() => setPhotoItemId(key)}
+                  onViewPhoto={(url, caption) => setViewingPhoto({ url, caption })}
+                  onDuplicate={() => createDuplicate(item.id)}
+                />
+              </div>
+            )
+          }
+
+          // Render all instances
+          return (
+            <div key={item.id} className="space-y-2">
+              {instances.map(({ instanceNumber, result }, displayIndex) => {
+                const key = getResultKey(item.id, instanceNumber)
+                // Use displayIndex + 1 for display (1, 2, 3...) rather than raw instanceNumber
+                // This ensures sequential display even if database instance_numbers are non-sequential
+                const displayNumber = displayIndex + 1
+                return (
+                  <InspectionItem
+                    key={key}
+                    item={item}
+                    itemKey={key}
+                    instanceNumber={displayNumber}
+                    totalInstances={instances.length}
+                    result={result}
+                    expanded={expandedItem === key}
+                    onToggle={() => setExpandedItem(expandedItem === key ? null : key)}
+                    onSave={(data) => saveResult(key, data)}
+                    onAddPhoto={() => setPhotoItemId(key)}
+                    onViewPhoto={(url, caption) => setViewingPhoto({ url, caption })}
+                    onDuplicate={() => createDuplicate(item.id)}
+                    onDeleteDuplicate={displayIndex > 0 && result?.id ? () => deleteDuplicate(key, result.id!) : undefined}
+                  />
+                )
+              })}
+            </div>
+          )
+        })}
       </main>
 
       {/* Footer */}
@@ -403,15 +567,34 @@ export function Inspection() {
 // Individual inspection item component
 interface InspectionItemProps {
   item: TemplateItem
+  itemKey: string
+  instanceNumber: number
+  totalInstances: number
   result: Partial<CheckResult> | undefined
   expanded: boolean
   onToggle: () => void
   onSave: (data: Partial<CheckResult>) => void
   onAddPhoto: () => void
   onViewPhoto: (url: string, caption?: string) => void
+  onDuplicate: () => void
+  onDeleteDuplicate?: () => void
 }
 
-function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, onViewPhoto }: InspectionItemProps) {
+function InspectionItem({
+  item,
+  itemKey: _itemKey,
+  instanceNumber,
+  totalInstances,
+  result,
+  expanded,
+  onToggle,
+  onSave,
+  onAddPhoto,
+  onViewPhoto,
+  onDuplicate,
+  onDeleteDuplicate
+}: InspectionItemProps) {
+  void _itemKey // Suppress unused variable warning
   const handleRAGChange = (newStatus: 'green' | 'amber' | 'red' | null) => {
     if ('vibrate' in navigator) navigator.vibrate(50)
     // Clear MOT failure flag if status changes away from red
@@ -439,6 +622,9 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
 
   const ragStatus = result?.status || result?.rag_status
 
+  // Display name with instance number if there are multiple instances
+  const displayName = totalInstances > 1 ? `${item.name} (${instanceNumber})` : item.name
+
   return (
     <Card padding="none" className="overflow-hidden">
       {/* Item header - always visible */}
@@ -448,7 +634,10 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
       >
         <div className="flex items-center gap-3 flex-1 min-w-0">
           <RAGIndicator status={ragStatus || null} />
-          <span className="font-medium truncate">{item.name}</span>
+          <span className="font-medium truncate">{displayName}</span>
+          {instanceNumber > 1 && (
+            <Badge variant="gray" size="sm">Duplicate</Badge>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {result?.media && result.media.length > 0 && (
@@ -519,6 +708,15 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
             />
           )}
 
+          {item.itemType === 'tyre_details' && (
+            <TyreDetailsInput
+              value={result?.value as any}
+              onChange={handleValueChange}
+              onRAGChange={handleRAGChange}
+              config={item.config}
+            />
+          )}
+
           {item.itemType === 'brake_measurement' && (
             <BrakeMeasurementInput
               value={result?.value as any}
@@ -531,9 +729,30 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
           {item.itemType === 'fluid_level' && (
             <FluidLevelInput
               value={result?.value as string}
-              onChange={handleValueChange}
-              onRAGChange={handleRAGChange}
+              onChange={(level, ragStatus) => {
+                // Combined update with both value and RAG status in single save
+                onSave({
+                  value: level,
+                  status: ragStatus,
+                  rag_status: ragStatus,
+                  is_mot_failure: ragStatus !== 'red' ? false : result?.is_mot_failure
+                })
+              }}
               config={item.config as { levels?: string[] }}
+            />
+          )}
+
+          {item.itemType === 'brake_fluid' && (
+            <BrakeFluidSelector
+              value={result?.value as string}
+              onChange={(val, ragStatus) => {
+                onSave({
+                  value: val,
+                  status: ragStatus,
+                  rag_status: ragStatus,
+                  is_mot_failure: ragStatus !== 'red' ? false : result?.is_mot_failure
+                })
+              }}
             />
           )}
 
@@ -650,6 +869,42 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
               ))}
             </div>
           )}
+
+          {/* Duplicate/Delete actions */}
+          <div className="flex gap-2 pt-2 border-t border-gray-100 mt-4">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation()
+                onDuplicate()
+              }}
+              className="flex-1"
+            >
+              <span className="flex items-center justify-center gap-1">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                Add Another {item.name}
+              </span>
+            </Button>
+            {onDeleteDuplicate && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (confirm(`Delete this duplicate of "${item.name}"?`)) {
+                    onDeleteDuplicate()
+                  }
+                }}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </Button>
+            )}
+          </div>
         </div>
       )}
     </Card>
@@ -659,12 +914,12 @@ function InspectionItem({ item, result, expanded, onToggle, onSave, onAddPhoto, 
 // Fluid level input
 interface FluidLevelInputProps {
   value: string | undefined
-  onChange: (value: string) => void
-  onRAGChange: (status: 'green' | 'amber' | 'red' | null) => void
+  onChange: (value: string, ragStatus: 'green' | 'amber' | 'red') => void
+  onRAGChange?: (status: 'green' | 'amber' | 'red' | null) => void // Optional for backward compatibility
   config?: { levels?: string[] }
 }
 
-function FluidLevelInput({ value, onChange, onRAGChange, config }: FluidLevelInputProps) {
+function FluidLevelInput({ value, onChange, config }: FluidLevelInputProps) {
   const levels = config?.levels || ['OK', 'Low', 'Very Low', 'Overfilled']
 
   const getRAG = (level: string): 'green' | 'amber' | 'red' => {
@@ -694,8 +949,9 @@ function FluidLevelInput({ value, onChange, onRAGChange, config }: FluidLevelInp
               }
             `}
             onClick={() => {
-              onChange(level)
-              onRAGChange(rag)
+              if ('vibrate' in navigator) navigator.vibrate(50)
+              // Call combined onChange with both value and RAG status
+              onChange(level, rag)
             }}
           >
             {level}

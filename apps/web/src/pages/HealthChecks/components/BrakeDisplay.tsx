@@ -1,23 +1,61 @@
 /**
  * BrakeDisplay Component
  * Displays brake inspection data with pad and disc measurements
+ * Styled to match TyreDisplay card format with warning banners and color-coded values
  */
 
 type BrakeType = 'disc' | 'drum'
 
+// Legacy format (flat fields)
+interface AxleMeasurementLegacy {
+  brake_type: BrakeType
+  ns_pad: number | null
+  ns_disc: number | null
+  ns_disc_min: number | null
+  os_pad: number | null
+  os_disc: number | null
+  os_disc_min: number | null
+}
+
+// New format from BrakeMeasurementInput (nested objects)
+interface SideMeasurement {
+  pad: number | null
+  disc: number | null
+  disc_min: number | null
+}
+
+interface AxleMeasurementNew {
+  brake_type: BrakeType
+  nearside: SideMeasurement
+  offside: SideMeasurement
+}
+
+// Normalized format for display
 interface AxleMeasurement {
   brake_type: BrakeType
   ns_pad: number | null
   ns_disc: number | null
-  ns_disc_min: number | null  // Manufacturer minimum spec
+  ns_disc_min: number | null
   os_pad: number | null
   os_disc: number | null
-  os_disc_min: number | null  // Manufacturer minimum spec
+  os_disc_min: number | null
 }
 
+// Can be legacy format with front/rear, or new single-axle format
 interface BrakeData {
-  front?: AxleMeasurement
-  rear?: AxleMeasurement
+  front?: AxleMeasurementLegacy | AxleMeasurementNew
+  rear?: AxleMeasurementLegacy | AxleMeasurementNew
+  // New format fields (single axle data without front/rear wrapper)
+  brake_type?: BrakeType
+  nearside?: SideMeasurement
+  offside?: SideMeasurement
+  // Legacy single-axle flat fields
+  ns_pad?: number | null
+  os_pad?: number | null
+  ns_disc?: number | null
+  os_disc?: number | null
+  ns_disc_min?: number | null
+  os_disc_min?: number | null
 }
 
 interface BrakeDisplayProps {
@@ -26,28 +64,173 @@ interface BrakeDisplayProps {
 }
 
 // Pad thresholds (organization-wide settings)
-const PAD_RED_THRESHOLD = 3    // mm - below this is red
-const PAD_AMBER_THRESHOLD = 5  // mm - below this is amber
+const PAD_RED_THRESHOLD = 3    // mm - below this is red (urgent)
+const PAD_AMBER_THRESHOLD = 5  // mm - below this is amber (advisory)
 
-export function BrakeDisplay({ data, ragStatus: _ragStatus }: BrakeDisplayProps) {
-  // ragStatus reserved for future color-coding enhancements
-  void _ragStatus
+// Convert new format to normalized format
+function normalizeAxleData(data: AxleMeasurementLegacy | AxleMeasurementNew | BrakeData): AxleMeasurement | null {
+  if (!data) return null
+
+  // Check for new nested format (nearside/offside objects)
+  const newFormat = data as AxleMeasurementNew
+  if (newFormat.nearside || newFormat.offside) {
+    return {
+      brake_type: newFormat.brake_type || 'disc',
+      ns_pad: newFormat.nearside?.pad ?? null,
+      ns_disc: newFormat.nearside?.disc ?? null,
+      ns_disc_min: newFormat.nearside?.disc_min ?? null,
+      os_pad: newFormat.offside?.pad ?? null,
+      os_disc: newFormat.offside?.disc ?? null,
+      os_disc_min: newFormat.offside?.disc_min ?? null
+    }
+  }
+
+  // Legacy flat format
+  const legacyFormat = data as AxleMeasurementLegacy
+  if (legacyFormat.ns_pad !== undefined || legacyFormat.os_pad !== undefined ||
+      legacyFormat.ns_disc !== undefined || legacyFormat.os_disc !== undefined) {
+    return {
+      brake_type: legacyFormat.brake_type || 'disc',
+      ns_pad: legacyFormat.ns_pad ?? null,
+      ns_disc: legacyFormat.ns_disc ?? null,
+      ns_disc_min: legacyFormat.ns_disc_min ?? null,
+      os_pad: legacyFormat.os_pad ?? null,
+      os_disc: legacyFormat.os_disc ?? null,
+      os_disc_min: legacyFormat.os_disc_min ?? null
+    }
+  }
+
+  return null
+}
+
+// Calculate severity level for an axle
+function getAxleSeverity(axle: AxleMeasurement): 'urgent' | 'advisory' | null {
+  // Check disc replacement (most urgent)
+  const nsDiscBelowMin = axle.ns_disc !== null && axle.ns_disc_min !== null && axle.ns_disc < axle.ns_disc_min
+  const osDiscBelowMin = axle.os_disc !== null && axle.os_disc_min !== null && axle.os_disc < axle.os_disc_min
+
+  // Check pad levels
+  const nsPadUrgent = axle.ns_pad !== null && axle.ns_pad < PAD_RED_THRESHOLD
+  const osPadUrgent = axle.os_pad !== null && axle.os_pad < PAD_RED_THRESHOLD
+  const nsPadAdvisory = axle.ns_pad !== null && axle.ns_pad < PAD_AMBER_THRESHOLD
+  const osPadAdvisory = axle.os_pad !== null && axle.os_pad < PAD_AMBER_THRESHOLD
+
+  if (nsDiscBelowMin || osDiscBelowMin || nsPadUrgent || osPadUrgent) {
+    return 'urgent'
+  }
+  if (nsPadAdvisory || osPadAdvisory) {
+    return 'advisory'
+  }
+  return null
+}
+
+// Get summary info for an axle
+function getAxleSummary(axle: AxleMeasurement): { minSpec: number | null; lowest: number | null; diff: number | null; type: 'disc' | 'pad' } | null {
+  const isDisc = axle.brake_type === 'disc'
+
+  // For disc brakes, prioritize disc measurements if below spec
+  if (isDisc) {
+    const nsDiscBelowMin = axle.ns_disc !== null && axle.ns_disc_min !== null && axle.ns_disc < axle.ns_disc_min
+    const osDiscBelowMin = axle.os_disc !== null && axle.os_disc_min !== null && axle.os_disc < axle.os_disc_min
+
+    if (nsDiscBelowMin || osDiscBelowMin) {
+      const discReadings: { value: number; min: number }[] = []
+      if (axle.ns_disc !== null && axle.ns_disc_min !== null) {
+        discReadings.push({ value: axle.ns_disc, min: axle.ns_disc_min })
+      }
+      if (axle.os_disc !== null && axle.os_disc_min !== null) {
+        discReadings.push({ value: axle.os_disc, min: axle.os_disc_min })
+      }
+
+      if (discReadings.length > 0) {
+        // Find the reading furthest below spec
+        const worstReading = discReadings.reduce((worst, current) => {
+          const worstDiff = worst.value - worst.min
+          const currentDiff = current.value - current.min
+          return currentDiff < worstDiff ? current : worst
+        })
+
+        return {
+          minSpec: worstReading.min,
+          lowest: worstReading.value,
+          diff: worstReading.value - worstReading.min,
+          type: 'disc'
+        }
+      }
+    }
+  }
+
+  // Check pad levels
+  const padReadings = [axle.ns_pad, axle.os_pad].filter((v): v is number => v !== null)
+  if (padReadings.length > 0) {
+    const lowestPad = Math.min(...padReadings)
+    const threshold = lowestPad < PAD_RED_THRESHOLD ? PAD_RED_THRESHOLD : PAD_AMBER_THRESHOLD
+
+    if (lowestPad < PAD_AMBER_THRESHOLD) {
+      return {
+        minSpec: threshold,
+        lowest: lowestPad,
+        diff: lowestPad - threshold,
+        type: 'pad'
+      }
+    }
+
+    // Show positive info even if OK
+    return {
+      minSpec: PAD_AMBER_THRESHOLD,
+      lowest: lowestPad,
+      diff: lowestPad - PAD_AMBER_THRESHOLD,
+      type: 'pad'
+    }
+  }
+
+  return null
+}
+
+export function BrakeDisplay({ data, ragStatus }: BrakeDisplayProps) {
   if (!data) {
     return <div className="text-sm text-gray-500">No brake data recorded</div>
   }
 
-  const hasFront = data.front && (
-    data.front.ns_pad !== null ||
-    data.front.os_pad !== null ||
-    data.front.ns_disc !== null ||
-    data.front.os_disc !== null
+  // Check if data is single-axle (no front/rear wrapper) vs multi-axle
+  const isSingleAxle = !data.front && !data.rear && (
+    data.nearside !== undefined || data.offside !== undefined ||
+    data.ns_pad !== undefined || data.os_pad !== undefined ||
+    data.brake_type !== undefined
   )
 
-  const hasRear = data.rear && (
-    data.rear.ns_pad !== null ||
-    data.rear.os_pad !== null ||
-    data.rear.ns_disc !== null ||
-    data.rear.os_disc !== null
+  if (isSingleAxle) {
+    const axle = normalizeAxleData(data)
+    if (!axle) {
+      return <div className="text-sm text-gray-500">No brake measurements recorded</div>
+    }
+
+    const hasData = axle.ns_pad !== null || axle.os_pad !== null ||
+                    axle.ns_disc !== null || axle.os_disc !== null
+
+    if (!hasData) {
+      return <div className="text-sm text-gray-500">No brake measurements recorded</div>
+    }
+
+    return (
+      <div className="space-y-4">
+        <AxleCard title="Brakes" axle={axle} ragStatus={ragStatus} />
+      </div>
+    )
+  }
+
+  // Multi-axle data (front/rear)
+  const frontAxle = data.front ? normalizeAxleData(data.front) : null
+  const rearAxle = data.rear ? normalizeAxleData(data.rear) : null
+
+  const hasFront = frontAxle && (
+    frontAxle.ns_pad !== null || frontAxle.os_pad !== null ||
+    frontAxle.ns_disc !== null || frontAxle.os_disc !== null
+  )
+
+  const hasRear = rearAxle && (
+    rearAxle.ns_pad !== null || rearAxle.os_pad !== null ||
+    rearAxle.ns_disc !== null || rearAxle.os_disc !== null
   )
 
   if (!hasFront && !hasRear) {
@@ -55,141 +238,159 @@ export function BrakeDisplay({ data, ragStatus: _ragStatus }: BrakeDisplayProps)
   }
 
   return (
-    <div className="space-y-4">
-      {hasFront && data.front && (
-        <AxleDisplay
-          title="Front Brakes"
-          axle={data.front}
-        />
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {hasFront && frontAxle && (
+        <AxleCard title="Front Brakes" axle={frontAxle} ragStatus={ragStatus} />
       )}
-      {hasRear && data.rear && (
-        <AxleDisplay
-          title="Rear Brakes"
-          axle={data.rear}
-        />
+      {hasRear && rearAxle && (
+        <AxleCard title="Rear Brakes" axle={rearAxle} ragStatus={ragStatus} />
       )}
     </div>
   )
 }
 
-interface AxleDisplayProps {
+interface AxleCardProps {
   title: string
   axle: AxleMeasurement
+  ragStatus?: 'green' | 'amber' | 'red' | null
 }
 
-function AxleDisplay({ title, axle }: AxleDisplayProps) {
+function AxleCard({ title, axle, ragStatus }: AxleCardProps) {
   const brakeTypeLabel = axle.brake_type === 'disc' ? 'Disc' : 'Drum'
+  const isDisc = axle.brake_type === 'disc'
+
+  // Determine severity
+  const severity = getAxleSeverity(axle)
+  const isUrgent = ragStatus === 'red' || severity === 'urgent'
+  const isAdvisory = ragStatus === 'amber' || (severity === 'advisory' && !isUrgent)
+
+  // Get summary for bottom bar
+  const summary = getAxleSummary(axle)
+
+  // Card styling matching TyreDisplay
+  const cardBorderClass = isUrgent
+    ? 'border-red-400 border-2'
+    : isAdvisory
+    ? 'border-amber-400 border-2'
+    : 'border-gray-200 border'
+
+  const cardBgClass = isUrgent
+    ? 'bg-red-50'
+    : isAdvisory
+    ? 'bg-amber-50'
+    : 'bg-gray-50'
+
+  // Get color classes for measurements
+  const getPadColor = (value: number | null): string => {
+    if (value === null) return 'text-gray-400 bg-gray-100'
+    if (value < PAD_RED_THRESHOLD) return 'text-red-700 bg-red-100 border-red-300'
+    if (value < PAD_AMBER_THRESHOLD) return 'text-amber-700 bg-amber-100 border-amber-300'
+    return 'text-green-700 bg-green-100 border-green-300'
+  }
+
+  const getDiscColor = (actual: number | null, minSpec: number | null): string => {
+    if (actual === null) return 'text-gray-400 bg-gray-100'
+    if (minSpec !== null && actual < minSpec) return 'text-red-700 bg-red-100 border-red-300'
+    return 'text-green-700 bg-green-100 border-green-300'
+  }
+
+  // Labels for brake type
+  const frictionLabel = isDisc ? 'Pad' : 'Shoe'
+  const surfaceLabel = isDisc ? 'Disc' : 'Drum'
 
   return (
-    <div className="bg-gray-50 border border-gray-200 rounded p-3">
-      <div className="font-medium text-gray-700 mb-3">
-        {title} ({brakeTypeLabel})
+    <div className={`${cardBgClass} ${cardBorderClass} rounded-lg p-3 text-sm`}>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="font-semibold text-gray-700">{title} ({brakeTypeLabel})</div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        {/* N/S Side */}
-        <div>
-          <div className="text-xs text-gray-500 font-medium mb-2 text-center border-b border-gray-200 pb-1">
-            N/S (Near Side)
+      {/* Warning Banner */}
+      {(isUrgent || isAdvisory) && (
+        <div className={`mb-3 p-2 rounded-lg flex items-center gap-2 ${
+          isUrgent
+            ? 'bg-red-100 border-2 border-red-400'
+            : 'bg-amber-100 border-2 border-amber-400'
+        }`}>
+          <span className="text-lg">{isUrgent ? '🚨' : '⚠️'}</span>
+          <div>
+            <div className={`font-semibold text-sm ${
+              isUrgent ? 'text-red-800' : 'text-amber-800'
+            }`}>
+              {isUrgent ? 'Below Minimum Specification' : 'Approaching Minimum'}
+            </div>
+            <div className={`text-xs font-medium ${
+              isUrgent ? 'text-red-600' : 'text-amber-600'
+            }`}>
+              {isUrgent ? 'Urgent - Replace' : 'Advisory - Monitor'}
+            </div>
           </div>
+        </div>
+      )}
+
+      {/* Measurements - N/S and O/S side by side */}
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        {/* N/S Column */}
+        <div className={`p-2 rounded ${isUrgent ? 'bg-red-100' : isAdvisory ? 'bg-amber-100' : 'bg-white'} border border-gray-200`}>
+          <div className="text-xs font-medium text-gray-500 mb-2 text-center">N/S</div>
           <div className="space-y-2">
-            <MeasurementRow
-              label="Pad"
-              value={axle.ns_pad}
-              unit="mm"
-              thresholds={{ red: PAD_RED_THRESHOLD, amber: PAD_AMBER_THRESHOLD }}
-            />
-            {axle.brake_type === 'disc' && (
-              <DiscMeasurementRow
-                actual={axle.ns_disc}
-                minSpec={axle.ns_disc_min}
-              />
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-600">{frictionLabel}</span>
+              <span className={`px-2 py-0.5 rounded text-xs font-mono font-medium border ${getPadColor(axle.ns_pad)}`}>
+                {axle.ns_pad !== null ? `${axle.ns_pad}mm` : '-'}
+              </span>
+            </div>
+            {isDisc && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-600">{surfaceLabel}</span>
+                <span className={`px-2 py-0.5 rounded text-xs font-mono font-medium border ${getDiscColor(axle.ns_disc, axle.ns_disc_min)}`}>
+                  {axle.ns_disc !== null ? `${axle.ns_disc}mm` : '-'}
+                </span>
+              </div>
             )}
           </div>
         </div>
 
-        {/* O/S Side */}
-        <div>
-          <div className="text-xs text-gray-500 font-medium mb-2 text-center border-b border-gray-200 pb-1">
-            O/S (Off Side)
-          </div>
+        {/* O/S Column */}
+        <div className={`p-2 rounded ${isUrgent ? 'bg-red-100' : isAdvisory ? 'bg-amber-100' : 'bg-white'} border border-gray-200`}>
+          <div className="text-xs font-medium text-gray-500 mb-2 text-center">O/S</div>
           <div className="space-y-2">
-            <MeasurementRow
-              label="Pad"
-              value={axle.os_pad}
-              unit="mm"
-              thresholds={{ red: PAD_RED_THRESHOLD, amber: PAD_AMBER_THRESHOLD }}
-            />
-            {axle.brake_type === 'disc' && (
-              <DiscMeasurementRow
-                actual={axle.os_disc}
-                minSpec={axle.os_disc_min}
-              />
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-gray-600">{frictionLabel}</span>
+              <span className={`px-2 py-0.5 rounded text-xs font-mono font-medium border ${getPadColor(axle.os_pad)}`}>
+                {axle.os_pad !== null ? `${axle.os_pad}mm` : '-'}
+              </span>
+            </div>
+            {isDisc && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-600">{surfaceLabel}</span>
+                <span className={`px-2 py-0.5 rounded text-xs font-mono font-medium border ${getDiscColor(axle.os_disc, axle.os_disc_min)}`}>
+                  {axle.os_disc !== null ? `${axle.os_disc}mm` : '-'}
+                </span>
+              </div>
             )}
           </div>
         </div>
       </div>
-    </div>
-  )
-}
 
-interface MeasurementRowProps {
-  label: string
-  value: number | null
-  unit: string
-  thresholds: { red: number; amber: number }
-}
-
-function MeasurementRow({ label, value, unit, thresholds }: MeasurementRowProps) {
-  const getColor = () => {
-    if (value === null) return 'text-gray-400'
-    if (value < thresholds.red) return 'text-red-600'
-    if (value < thresholds.amber) return 'text-amber-600'
-    return 'text-green-600'
-  }
-
-  return (
-    <div className="flex justify-between items-center text-sm">
-      <span className="text-gray-600">{label}:</span>
-      <span className={`font-mono font-medium ${getColor()}`}>
-        {value !== null ? `${value}${unit}` : '-'}
-      </span>
-    </div>
-  )
-}
-
-interface DiscMeasurementRowProps {
-  actual: number | null
-  minSpec: number | null
-}
-
-function DiscMeasurementRow({ actual, minSpec }: DiscMeasurementRowProps) {
-  // Determine status: actual < minSpec means replacement required
-  const needsReplacement = actual !== null && minSpec !== null && actual < minSpec
-
-  const getActualColor = () => {
-    if (actual === null) return 'text-gray-400'
-    if (needsReplacement) return 'text-red-600'
-    return 'text-green-600'
-  }
-
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between items-center text-sm">
-        <span className="text-gray-600">Disc:</span>
-        <span className={`font-mono font-medium ${getActualColor()}`}>
-          {actual !== null ? `${actual}mm` : '-'}
-        </span>
-      </div>
-      <div className="flex justify-between items-center text-sm">
-        <span className="text-gray-500 text-xs">Min Spec:</span>
-        <span className="font-mono text-xs text-gray-500">
-          {minSpec !== null ? `${minSpec}mm` : '-'}
-        </span>
-      </div>
-      {needsReplacement && (
-        <div className="bg-red-100 text-red-700 text-xs font-medium px-2 py-0.5 rounded text-center">
-          REPLACEMENT REQUIRED
+      {/* Summary Bar (like Remaining Legal Tread) */}
+      {summary && (
+        <div className={`text-center py-1.5 px-2 rounded text-xs font-semibold ${
+          summary.diff !== null && summary.diff < 0
+            ? 'bg-red-200 text-red-800 border border-red-300'
+            : summary.diff !== null && summary.diff < 2
+            ? 'bg-amber-200 text-amber-800 border border-amber-300'
+            : 'bg-green-200 text-green-800 border border-green-300'
+        }`}>
+          {summary.diff !== null && summary.diff < 0 ? (
+            <span>
+              Min Spec: {summary.minSpec}mm • Lowest: {summary.lowest}mm • {Math.abs(summary.diff).toFixed(1)}mm under
+            </span>
+          ) : (
+            <span>
+              Min Spec: {summary.minSpec}mm • Lowest: {summary.lowest}mm • {summary.diff?.toFixed(1)}mm above
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -198,6 +399,7 @@ function DiscMeasurementRow({ actual, minSpec }: DiscMeasurementRowProps) {
 
 /**
  * Compact brake summary for list views
+ * Supports both new format (nearside/offside) and legacy format (ns_pad/os_pad)
  */
 interface BrakeSummaryProps {
   data: BrakeData | null
@@ -208,26 +410,46 @@ export function BrakeSummary({ data }: BrakeSummaryProps) {
     return <span className="text-gray-500">-</span>
   }
 
-  // Find lowest pad reading
-  const padReadings = [
-    data.front?.ns_pad,
-    data.front?.os_pad,
-    data.rear?.ns_pad,
-    data.rear?.os_pad
-  ].filter((v): v is number => v !== null && v !== undefined)
+  // Normalize all axle data first
+  const isSingleAxle = !data.front && !data.rear && (
+    data.nearside !== undefined || data.offside !== undefined ||
+    data.ns_pad !== undefined || data.os_pad !== undefined ||
+    data.brake_type !== undefined
+  )
+
+  let padReadings: number[] = []
+  let discChecks: { actual: number | null; min: number | null }[] = []
+
+  if (isSingleAxle) {
+    const axle = normalizeAxleData(data)
+    if (axle) {
+      padReadings = [axle.ns_pad, axle.os_pad].filter((v): v is number => v !== null)
+      discChecks = [
+        { actual: axle.ns_disc, min: axle.ns_disc_min },
+        { actual: axle.os_disc, min: axle.os_disc_min }
+      ]
+    }
+  } else {
+    const frontAxle = data.front ? normalizeAxleData(data.front) : null
+    const rearAxle = data.rear ? normalizeAxleData(data.rear) : null
+
+    padReadings = [
+      frontAxle?.ns_pad, frontAxle?.os_pad,
+      rearAxle?.ns_pad, rearAxle?.os_pad
+    ].filter((v): v is number => v !== null && v !== undefined)
+
+    discChecks = [
+      { actual: frontAxle?.ns_disc ?? null, min: frontAxle?.ns_disc_min ?? null },
+      { actual: frontAxle?.os_disc ?? null, min: frontAxle?.os_disc_min ?? null },
+      { actual: rearAxle?.ns_disc ?? null, min: rearAxle?.ns_disc_min ?? null },
+      { actual: rearAxle?.os_disc ?? null, min: rearAxle?.os_disc_min ?? null }
+    ]
+  }
 
   const minPad = padReadings.length > 0 ? Math.min(...padReadings) : null
 
-  // Check if any disc needs replacement
-  const discNeedsReplacement = [
-    { actual: data.front?.ns_disc, min: data.front?.ns_disc_min },
-    { actual: data.front?.os_disc, min: data.front?.os_disc_min },
-    { actual: data.rear?.ns_disc, min: data.rear?.ns_disc_min },
-    { actual: data.rear?.os_disc, min: data.rear?.os_disc_min }
-  ].some(({ actual, min }) =>
-    actual !== null && actual !== undefined &&
-    min !== null && min !== undefined &&
-    actual < min
+  const discNeedsReplacement = discChecks.some(({ actual, min }) =>
+    actual !== null && min !== null && actual < min
   )
 
   if (minPad === null && !discNeedsReplacement) {

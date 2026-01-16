@@ -29,7 +29,7 @@ const defaultTemplate = {
       items: [
         { name: 'Engine Oil Level', itemType: 'fluid_level', config: { levels: ['OK', 'Low', 'Very Low', 'Overfilled'] } },
         { name: 'Coolant Level', itemType: 'fluid_level', config: { levels: ['OK', 'Low', 'Very Low', 'Overfilled'] } },
-        { name: 'Brake Fluid Level', itemType: 'fluid_level', config: { levels: ['OK', 'Low', 'Very Low', 'Overfilled'] } },
+        { name: 'Brake Fluid', itemType: 'brake_fluid', config: {} },
         { name: 'Power Steering Fluid', itemType: 'fluid_level', config: { levels: ['OK', 'Low', 'Very Low', 'N/A'] } },
         { name: 'Washer Fluid Level', itemType: 'fluid_level', config: { levels: ['OK', 'Low', 'Empty'] } },
         { name: 'Battery Condition', itemType: 'rag', config: {} },
@@ -42,10 +42,8 @@ const defaultTemplate = {
       name: 'Brakes',
       description: 'Brake system inspection',
       items: [
-        { name: 'Front Brake Pads', itemType: 'brake_measurement', config: { unit: 'mm', minThickness: 3, warningThickness: 5 } },
-        { name: 'Rear Brake Pads', itemType: 'brake_measurement', config: { unit: 'mm', minThickness: 3, warningThickness: 5 } },
-        { name: 'Front Brake Discs', itemType: 'rag', config: {} },
-        { name: 'Rear Brake Discs', itemType: 'rag', config: {} },
+        { name: 'Front Brakes', itemType: 'brake_measurement', config: {} },
+        { name: 'Rear Brakes', itemType: 'brake_measurement', config: {} },
         { name: 'Brake Lines & Hoses', itemType: 'rag', config: {} },
         { name: 'Handbrake Operation', itemType: 'rag', config: {} }
       ]
@@ -54,10 +52,11 @@ const defaultTemplate = {
       name: 'Tyres & Wheels',
       description: 'Tyre condition and tread depth',
       items: [
-        { name: 'Front Left Tyre', itemType: 'tyre_depth', config: { positions: ['outer', 'centre', 'inner'], unit: 'mm', minDepth: 1.6, warningDepth: 3 } },
-        { name: 'Front Right Tyre', itemType: 'tyre_depth', config: { positions: ['outer', 'centre', 'inner'], unit: 'mm', minDepth: 1.6, warningDepth: 3 } },
-        { name: 'Rear Left Tyre', itemType: 'tyre_depth', config: { positions: ['outer', 'centre', 'inner'], unit: 'mm', minDepth: 1.6, warningDepth: 3 } },
-        { name: 'Rear Right Tyre', itemType: 'tyre_depth', config: { positions: ['outer', 'centre', 'inner'], unit: 'mm', minDepth: 1.6, warningDepth: 3 } },
+        { name: 'Tyre Details', itemType: 'tyre_details', config: {} },
+        { name: 'Front Left Tyre', itemType: 'tyre_depth', config: {} },
+        { name: 'Front Right Tyre', itemType: 'tyre_depth', config: {} },
+        { name: 'Rear Left Tyre', itemType: 'tyre_depth', config: {} },
+        { name: 'Rear Right Tyre', itemType: 'tyre_depth', config: {} },
         { name: 'Spare Tyre', itemType: 'rag', config: {} },
         { name: 'Wheel Condition', itemType: 'rag', config: {} },
         { name: 'Wheel Nuts/Bolts', itemType: 'rag', config: {} }

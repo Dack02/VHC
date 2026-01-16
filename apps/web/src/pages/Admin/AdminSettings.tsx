@@ -46,6 +46,15 @@ export default function AdminSettings() {
   const [saving, setSaving] = useState(false)
   const [activeSection, setActiveSection] = useState('general')
   const [successMessage, setSuccessMessage] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
+
+  // Test notification modal state
+  const [showTestSmsModal, setShowTestSmsModal] = useState(false)
+  const [showTestEmailModal, setShowTestEmailModal] = useState(false)
+  const [testPhoneNumber, setTestPhoneNumber] = useState('')
+  const [testEmailAddress, setTestEmailAddress] = useState('')
+  const [testingSms, setTestingSms] = useState(false)
+  const [testingEmail, setTestingEmail] = useState(false)
 
   useEffect(() => {
     fetchData()
@@ -103,6 +112,78 @@ export default function AdminSettings() {
     })
   }
 
+  const handleTestSms = async () => {
+    if (!session?.accessToken || !testPhoneNumber) return
+
+    setTestingSms(true)
+    setErrorMessage('')
+    setSuccessMessage('')
+
+    try {
+      const result = await api<{ success: boolean; message?: string; error?: string }>(
+        '/api/v1/admin/platform/notifications/test-sms',
+        {
+          method: 'POST',
+          body: { to: testPhoneNumber },
+          token: session.accessToken
+        }
+      )
+
+      if (result.success) {
+        setSuccessMessage(result.message || 'Test SMS sent successfully')
+        setShowTestSmsModal(false)
+        setTestPhoneNumber('')
+      } else {
+        setErrorMessage(result.error || 'Failed to send test SMS')
+      }
+      setTimeout(() => {
+        setSuccessMessage('')
+        setErrorMessage('')
+      }, 5000)
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Failed to send test SMS')
+      setTimeout(() => setErrorMessage(''), 5000)
+    } finally {
+      setTestingSms(false)
+    }
+  }
+
+  const handleTestEmail = async () => {
+    if (!session?.accessToken || !testEmailAddress) return
+
+    setTestingEmail(true)
+    setErrorMessage('')
+    setSuccessMessage('')
+
+    try {
+      const result = await api<{ success: boolean; message?: string; error?: string }>(
+        '/api/v1/admin/platform/notifications/test-email',
+        {
+          method: 'POST',
+          body: { to: testEmailAddress },
+          token: session.accessToken
+        }
+      )
+
+      if (result.success) {
+        setSuccessMessage(result.message || 'Test email sent successfully')
+        setShowTestEmailModal(false)
+        setTestEmailAddress('')
+      } else {
+        setErrorMessage(result.error || 'Failed to send test email')
+      }
+      setTimeout(() => {
+        setSuccessMessage('')
+        setErrorMessage('')
+      }, 5000)
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Failed to send test email')
+      setTimeout(() => setErrorMessage(''), 5000)
+    } finally {
+      setTestingEmail(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -145,6 +226,13 @@ export default function AdminSettings() {
       {successMessage && (
         <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg">
           {successMessage}
+        </div>
+      )}
+
+      {errorMessage && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center justify-between">
+          <span>{errorMessage}</span>
+          <button onClick={() => setErrorMessage('')} className="text-red-700 hover:text-red-900">&times;</button>
         </div>
       )}
 
@@ -418,10 +506,149 @@ export default function AdminSettings() {
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
+
+              {/* Test Notification Buttons */}
+              <div className="border-t border-gray-200 pt-4">
+                <h3 className="text-sm font-medium text-gray-900 mb-3">Test Notifications</h3>
+                <p className="text-xs text-gray-500 mb-4">
+                  Send test messages to verify platform credentials are working correctly.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowTestSmsModal(true)}
+                    className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg font-medium hover:bg-gray-50"
+                  >
+                    Test SMS
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowTestEmailModal(true)}
+                    className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg font-medium hover:bg-gray-50"
+                  >
+                    Test Email
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* Test SMS Modal */}
+      {showTestSmsModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Test SMS</h2>
+              <button
+                onClick={() => {
+                  setShowTestSmsModal(false)
+                  setTestPhoneNumber('')
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-gray-600 mb-4">
+                Enter a phone number to send a test SMS using the platform Twilio credentials.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+                <input
+                  type="tel"
+                  value={testPhoneNumber}
+                  onChange={(e) => setTestPhoneNumber(e.target.value)}
+                  placeholder="+447..."
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autoFocus
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Include country code (e.g., +44 for UK)
+                </p>
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowTestSmsModal(false)
+                  setTestPhoneNumber('')
+                }}
+                className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTestSms}
+                disabled={testingSms || !testPhoneNumber}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {testingSms ? 'Sending...' : 'Send Test SMS'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Test Email Modal */}
+      {showTestEmailModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Test Email</h2>
+              <button
+                onClick={() => {
+                  setShowTestEmailModal(false)
+                  setTestEmailAddress('')
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-gray-600 mb-4">
+                Enter an email address to send a test email using the platform Resend credentials.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                <input
+                  type="email"
+                  value={testEmailAddress}
+                  onChange={(e) => setTestEmailAddress(e.target.value)}
+                  placeholder="test@example.com"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowTestEmailModal(false)
+                  setTestEmailAddress('')
+                }}
+                className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTestEmail}
+                disabled={testingEmail || !testEmailAddress}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {testingEmail ? 'Sending...' : 'Send Test Email'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

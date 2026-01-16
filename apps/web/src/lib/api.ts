@@ -280,6 +280,7 @@ export interface CheckResult {
   id: string
   health_check_id: string
   template_item_id: string
+  instance_number?: number  // For duplicate items (e.g., two oil leaks), default 1
   rag_status: 'green' | 'amber' | 'red' | null
   value: unknown
   notes: string | null
@@ -306,6 +307,9 @@ export interface ResultMedia {
   url: string
   thumbnail_url: string | null
   annotation_data: unknown | null
+  caption?: string | null
+  sort_order?: number
+  include_in_report?: boolean
 }
 
 export interface RepairItem {

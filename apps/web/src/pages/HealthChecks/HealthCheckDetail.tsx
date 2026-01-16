@@ -441,8 +441,12 @@ export default function HealthCheckDetail() {
             onUpdate={fetchData}
           />
         )}
-        {activeTab === 'photos' && (
-          <PhotosTab results={results} />
+        {activeTab === 'photos' && healthCheck && (
+          <PhotosTab
+            results={results}
+            healthCheckId={healthCheck.id}
+            onSelectionChange={fetchData}
+          />
         )}
         {activeTab === 'timeline' && (
           <TimelineTab history={history} />

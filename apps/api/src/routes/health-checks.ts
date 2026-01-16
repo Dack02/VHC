@@ -4,7 +4,7 @@ import { authMiddleware, authorize } from '../middleware/auth.js'
 import { generateHealthCheckPDF, type HealthCheckPDFData } from '../services/pdf-generator.js'
 import { queueNotification } from '../services/queue.js'
 import { scheduleHealthCheckReminders } from '../services/scheduler.js'
-import { notifyHealthCheckStatusChanged } from '../services/websocket.js'
+import { notifyHealthCheckStatusChanged, notifyTechnicianClockedIn, notifyTechnicianClockedOut } from '../services/websocket.js'
 
 const healthChecks = new Hono()
 
@@ -273,7 +273,7 @@ healthChecks.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin'
           input_type,
           section:template_sections(name)
         ),
-        media:result_media(id, url, thumbnail_url, type)
+        media:result_media(id, storage_path, thumbnail_path, media_type, include_in_report)
       `)
       .eq('health_check_id', id)
       .order('created_at', { ascending: true })
@@ -351,12 +351,18 @@ healthChecks.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin'
             input_type: templateItem.input_type,
             section: templateItem.section ? { name: templateItem.section.name } : undefined
           } : undefined,
-          media: r.media?.map(m => ({
-            id: m.id,
-            url: m.url,
-            thumbnail_url: m.thumbnail_url,
-            type: m.type
-          }))
+          media: r.media
+            ?.filter((m: Record<string, unknown>) => m.include_in_report !== false)
+            .map((m: Record<string, unknown>) => {
+              const supabaseUrl = process.env.SUPABASE_URL
+              const url = m.storage_path ? `${supabaseUrl}/storage/v1/object/public/vhc-photos/${m.storage_path}` : null
+              return {
+                id: m.id as string,
+                url: url || '',
+                thumbnail_url: url ? `${url}?width=200&height=200` : null,
+                type: (m.media_type as string) || 'photo'
+              }
+            })
         }
       }),
 
@@ -533,7 +539,7 @@ healthChecks.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 's
         .eq('health_check_id', id)
 
       // Fetch repair items with work completion info
-      const { data: repairItems } = await supabaseAdmin
+      let { data: repairItems } = await supabaseAdmin
         .from('repair_items')
         .select(`
           *,
@@ -541,6 +547,23 @@ healthChecks.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 's
         `)
         .eq('health_check_id', id)
         .order('sort_order', { ascending: true })
+
+      // Auto-generate repair items for existing health checks that don't have them
+      // This handles health checks completed before the auto-generation feature
+      const hasRedAmberResults = checkResults?.some(r => r.rag_status === 'red' || r.rag_status === 'amber')
+      if ((!repairItems || repairItems.length === 0) && hasRedAmberResults) {
+        await autoGenerateRepairItems(id)
+        // Re-fetch repair items after generation
+        const { data: generatedItems } = await supabaseAdmin
+          .from('repair_items')
+          .select(`
+            *,
+            work_completed_by_user:users!repair_items_work_completed_by_fkey(id, first_name, last_name)
+          `)
+          .eq('health_check_id', id)
+          .order('sort_order', { ascending: true })
+        repairItems = generatedItems
+      }
 
       // Fetch authorizations
       const { data: authorizations } = await supabaseAdmin
@@ -579,7 +602,8 @@ healthChecks.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 's
             thumbnail_url: url ? `${url}?width=200&height=200` : null,
             annotation_data: m.annotation_data,
             caption: m.caption,
-            sort_order: m.sort_order
+            sort_order: m.sort_order,
+            include_in_report: m.include_in_report !== false
           }
         })
       }))
@@ -769,10 +793,13 @@ healthChecks.post('/:id/status', authorize(['super_admin', 'org_admin', 'site_ad
       return c.json({ error: 'Status is required' }, 400)
     }
 
-    // Get current health check
+    // Get current health check with vehicle info for notifications
     const { data: current } = await supabaseAdmin
       .from('health_checks')
-      .select('status, technician_id')
+      .select(`
+        status, technician_id, site_id,
+        vehicle:vehicles(registration)
+      `)
       .eq('id', id)
       .eq('organization_id', auth.orgId)
       .single()
@@ -814,6 +841,17 @@ healthChecks.post('/:id/status', authorize(['super_admin', 'org_admin', 'site_ad
         change_source: 'user',
         notes
       })
+
+    // Send WebSocket notification for status change
+    if (current.site_id) {
+      const vehicleReg = (current.vehicle as unknown as { registration: string })?.registration || 'Unknown'
+      notifyHealthCheckStatusChanged(current.site_id, id, {
+        status,
+        previousStatus: current.status,
+        vehicleReg,
+        updatedBy: `${auth.user.firstName} ${auth.user.lastName}`
+      })
+    }
 
     return c.json({
       id: healthCheck.id,
@@ -969,10 +1007,13 @@ healthChecks.post('/:id/clock-in', authorize(['super_admin', 'org_admin', 'site_
     const auth = c.get('auth')
     const { id } = c.req.param()
 
-    // Get health check and verify ownership
+    // Get health check with vehicle info for notifications
     const { data: healthCheck } = await supabaseAdmin
       .from('health_checks')
-      .select('id, status, technician_id')
+      .select(`
+        id, status, technician_id, site_id,
+        vehicle:vehicles(registration)
+      `)
       .eq('id', id)
       .eq('organization_id', auth.orgId)
       .single()
@@ -985,6 +1026,9 @@ healthChecks.post('/:id/clock-in', authorize(['super_admin', 'org_admin', 'site_
     if (auth.user.role === 'technician' && healthCheck.technician_id !== auth.user.id) {
       return c.json({ error: 'Not authorized to clock in to this health check' }, 403)
     }
+
+    // Get vehicle registration for notifications
+    const vehicleReg = (healthCheck.vehicle as unknown as { registration: string })?.registration || 'Unknown'
 
     // Check for existing open time entry for this technician
     const { data: openEntry } = await supabaseAdmin
@@ -1042,6 +1086,25 @@ healthChecks.post('/:id/clock-in', authorize(['super_admin', 'org_admin', 'site_
           change_source: 'user',
           notes: 'Technician clocked in'
         })
+
+      // Send WebSocket notification for status change
+      if (healthCheck.site_id) {
+        notifyHealthCheckStatusChanged(healthCheck.site_id, id, {
+          status: 'in_progress',
+          previousStatus: healthCheck.status,
+          vehicleReg,
+          updatedBy: `${auth.user.firstName} ${auth.user.lastName}`
+        })
+      }
+    }
+
+    // Send WebSocket notification for clock in
+    if (healthCheck.site_id) {
+      notifyTechnicianClockedIn(healthCheck.site_id, id, {
+        technicianId: auth.user.id,
+        technicianName: `${auth.user.firstName} ${auth.user.lastName}`,
+        vehicleReg
+      })
     }
 
     return c.json({
@@ -1070,10 +1133,13 @@ healthChecks.post('/:id/clock-out', authorize(['super_admin', 'org_admin', 'site
       // Body is empty or not JSON, use default
     }
 
-    // Get health check
+    // Get health check with vehicle info for notifications
     const { data: healthCheck } = await supabaseAdmin
       .from('health_checks')
-      .select('id, status, technician_id')
+      .select(`
+        id, status, technician_id, site_id,
+        vehicle:vehicles(registration)
+      `)
       .eq('id', id)
       .eq('organization_id', auth.orgId)
       .single()
@@ -1086,6 +1152,9 @@ healthChecks.post('/:id/clock-out', authorize(['super_admin', 'org_admin', 'site
     if (auth.user.role === 'technician' && healthCheck.technician_id !== auth.user.id) {
       return c.json({ error: 'Not authorized to clock out of this health check' }, 403)
     }
+
+    // Get vehicle registration for notifications
+    const vehicleReg = (healthCheck.vehicle as unknown as { registration: string })?.registration || 'Unknown'
 
     // Find open time entry
     const { data: openEntry } = await supabaseAdmin
@@ -1140,6 +1209,32 @@ healthChecks.post('/:id/clock-out', authorize(['super_admin', 'org_admin', 'site
           change_source: 'user',
           notes: complete ? 'Technician completed check' : 'Technician clocked out (paused)'
         })
+
+      // Auto-generate repair items when tech completes the check
+      if (newStatus === 'tech_completed') {
+        await autoGenerateRepairItems(id)
+      }
+
+      // Send WebSocket notification for status change
+      if (healthCheck.site_id) {
+        notifyHealthCheckStatusChanged(healthCheck.site_id, id, {
+          status: newStatus,
+          previousStatus: healthCheck.status,
+          vehicleReg,
+          updatedBy: `${auth.user.firstName} ${auth.user.lastName}`
+        })
+      }
+    }
+
+    // Send WebSocket notification for clock out
+    if (healthCheck.site_id) {
+      notifyTechnicianClockedOut(healthCheck.site_id, id, {
+        technicianId: auth.user.id,
+        technicianName: `${auth.user.firstName} ${auth.user.lastName}`,
+        vehicleReg,
+        completed: complete,
+        duration: durationMinutes
+      })
     }
 
     return c.json({
@@ -1295,6 +1390,7 @@ healthChecks.post('/:id/publish', authorize(['super_admin', 'org_admin', 'site_a
       type: 'customer_health_check_ready',
       healthCheckId: id,
       customerId: healthCheck.customer_id,
+      organizationId: auth.orgId,
       publicToken,
       publicUrl,
       sendEmail: send_email,
@@ -1397,7 +1493,8 @@ healthChecks.get('/:id/results', authorize(['super_admin', 'org_admin', 'site_ad
             id: m.id,
             url,
             thumbnail_url: url ? `${url}?width=200&height=200` : null,
-            annotation_data: m.annotation_data
+            annotation_data: m.annotation_data,
+            include_in_report: m.include_in_report !== false
           }
         })
       }))
@@ -1853,6 +1950,88 @@ healthChecks.post('/:id/close', authorize(['super_admin', 'org_admin', 'site_adm
     return c.json({ error: 'Failed to close health check' }, 500)
   }
 })
+
+// Helper function to auto-generate repair items from check results
+async function autoGenerateRepairItems(healthCheckId: string) {
+  try {
+    // Get check results with red/amber status
+    const { data: results } = await supabaseAdmin
+      .from('check_results')
+      .select(`
+        id, rag_status, notes, is_mot_failure,
+        template_item:template_items(name, description)
+      `)
+      .eq('health_check_id', healthCheckId)
+      .in('rag_status', ['red', 'amber'])
+
+    if (!results || results.length === 0) {
+      return { created: 0 }
+    }
+
+    // Get existing repair items to avoid duplicates
+    const { data: existingItems } = await supabaseAdmin
+      .from('repair_items')
+      .select('check_result_id')
+      .eq('health_check_id', healthCheckId)
+
+    const existingResultIds = new Set(existingItems?.map(i => i.check_result_id) || [])
+
+    // Filter to results that don't already have repair items
+    const resultsToCreate = results.filter(r => !existingResultIds.has(r.id))
+
+    if (resultsToCreate.length === 0) {
+      return { created: 0 }
+    }
+
+    // Get current max sort order
+    const { data: maxOrder } = await supabaseAdmin
+      .from('repair_items')
+      .select('sort_order')
+      .eq('health_check_id', healthCheckId)
+      .order('sort_order', { ascending: false })
+      .limit(1)
+      .single()
+
+    let sortOrder = (maxOrder?.sort_order || 0) + 1
+
+    // Create repair items
+    const newItems = resultsToCreate.map(result => {
+      // Handle template_item which may be object or array from Supabase
+      const templateItem = Array.isArray(result.template_item)
+        ? result.template_item[0]
+        : result.template_item
+      return {
+        health_check_id: healthCheckId,
+        check_result_id: result.id,
+        title: templateItem?.name || 'Repair Item',
+        description: result.notes || templateItem?.description || null,
+        rag_status: result.rag_status,
+        parts_cost: 0,
+        labor_cost: 0,
+        total_price: 0,
+        is_visible: true,
+        is_mot_failure: result.is_mot_failure || false,
+        sort_order: sortOrder++
+      }
+    })
+
+    const { data: created, error } = await supabaseAdmin
+      .from('repair_items')
+      .insert(newItems)
+      .select()
+
+    if (error) {
+      console.error('Auto-generate repair items error:', error)
+      return { created: 0, error: error.message }
+    }
+
+    console.log(`Auto-generated ${created?.length || 0} repair items for health check ${healthCheckId}`)
+    return { created: created?.length || 0 }
+  } catch (error) {
+    console.error('Auto-generate repair items error:', error)
+    return { created: 0, error: error instanceof Error ? error.message : 'Unknown error' }
+  }
+}
 
 // Helper function to update health check totals
 async function updateHealthCheckTotals(healthCheckId: string) {

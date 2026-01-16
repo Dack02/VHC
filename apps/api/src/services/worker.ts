@@ -3,6 +3,7 @@
  * Run separately: npx tsx src/services/worker.ts
  */
 
+import 'dotenv/config'
 import { Worker, Job } from 'bullmq'
 import {
   redis,
@@ -259,7 +260,9 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
 
   // Send email if requested
   if (data.sendEmail && data.customerEmail) {
-    await sendHealthCheckReadyEmail(
+    console.log(`[Customer Notification] Sending email to ${data.customerEmail} for health check ${data.healthCheckId}`)
+
+    const emailResult = await sendHealthCheckReadyEmail(
       data.customerEmail,
       customerName,
       vehicleReg,
@@ -274,21 +277,36 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
       organizationId
     )
 
+    console.log(`[Customer Notification] Email result:`, {
+      success: emailResult.success,
+      messageId: emailResult.messageId,
+      error: emailResult.error,
+      source: emailResult.source
+    })
+
     await supabaseAdmin.from('communication_logs').insert({
       health_check_id: data.healthCheckId,
       channel: 'email',
       recipient: data.customerEmail,
       subject: `Your Vehicle Health Check is Ready - ${vehicleReg}`,
-      status: 'sent'
+      status: emailResult.success ? 'sent' : 'failed',
+      external_id: emailResult.messageId,
+      error_message: emailResult.error
     })
 
-    // Track usage
-    await incrementOrgUsage(organizationId, { emails_sent: 1 })
+    // Only track usage if actually sent
+    if (emailResult.success) {
+      await incrementOrgUsage(organizationId, { emails_sent: 1 })
+    } else {
+      console.error(`[Customer Notification] Email failed for ${data.healthCheckId}:`, emailResult.error)
+    }
   }
 
   // Send SMS if requested
   if (data.sendSms && data.customerMobile) {
-    await sendHealthCheckReadySms(
+    console.log(`[Customer Notification] Sending SMS to ${data.customerMobile} for health check ${data.healthCheckId}`)
+
+    const smsResult = await sendHealthCheckReadySms(
       data.customerMobile,
       customerName,
       vehicleReg,
@@ -297,15 +315,28 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
       organizationId
     )
 
+    console.log(`[Customer Notification] SMS result:`, {
+      success: smsResult.success,
+      messageId: smsResult.messageId,
+      error: smsResult.error,
+      source: smsResult.source
+    })
+
     await supabaseAdmin.from('communication_logs').insert({
       health_check_id: data.healthCheckId,
       channel: 'sms',
       recipient: data.customerMobile,
-      status: 'sent'
+      status: smsResult.success ? 'sent' : 'failed',
+      external_id: smsResult.messageId,
+      error_message: smsResult.error
     })
 
-    // Track usage
-    await incrementOrgUsage(organizationId, { sms_sent: 1 })
+    // Only track usage if actually sent
+    if (smsResult.success) {
+      await incrementOrgUsage(organizationId, { sms_sent: 1 })
+    } else {
+      console.error(`[Customer Notification] SMS failed for ${data.healthCheckId}:`, smsResult.error)
+    }
   }
 }
 
@@ -313,6 +344,8 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
  * Process staff notification
  */
 async function processStaffNotification(data: StaffNotificationJob) {
+  console.log(`[Staff Notification] Processing: ${data.notificationType} for health check ${data.healthCheckId}, site ${data.siteId}`)
+
   // Get health check details
   const { data: healthCheck } = await supabaseAdmin
     .from('health_checks')
@@ -430,17 +463,25 @@ async function processStaffNotification(data: StaffNotificationJob) {
       actionUrl: `/health-checks/${data.healthCheckId}`
     })
   } else {
-    // Broadcast to all site staff
-    const { data: users } = await supabaseAdmin
+    // Broadcast to all site staff (service advisors and admins)
+    console.log(`[Staff Notification] Querying users for site ${data.siteId}`)
+    const { data: users, error: usersError } = await supabaseAdmin
       .from('users')
       .select('id')
       .eq('site_id', data.siteId)
       .eq('is_active', true)
-      .in('role', ['admin', 'manager', 'advisor'])
+      .in('role', ['org_admin', 'site_admin', 'service_advisor'])
 
-    if (users) {
+    if (usersError) {
+      console.error(`[Staff Notification] Error querying users:`, usersError)
+    }
+
+    console.log(`[Staff Notification] Found ${users?.length || 0} users to notify`)
+
+    if (users && users.length > 0) {
       for (const user of users) {
-        await supabaseAdmin.from('notifications').insert({
+        console.log(`[Staff Notification] Creating notification for user ${user.id}`)
+        const { error: insertError } = await supabaseAdmin.from('notifications').insert({
           user_id: user.id,
           type: data.notificationType,
           title,
@@ -449,6 +490,12 @@ async function processStaffNotification(data: StaffNotificationJob) {
           priority,
           action_url: `/health-checks/${data.healthCheckId}`
         })
+
+        if (insertError) {
+          console.error(`[Staff Notification] Error inserting notification:`, insertError)
+        } else {
+          console.log(`[Staff Notification] Notification created for user ${user.id}`)
+        }
 
         sendUserNotification(user.id, {
           id: crypto.randomUUID(),
@@ -460,6 +507,8 @@ async function processStaffNotification(data: StaffNotificationJob) {
           actionUrl: `/health-checks/${data.healthCheckId}`
         })
       }
+    } else {
+      console.log(`[Staff Notification] No users found to notify at site ${data.siteId}`)
     }
   }
 }

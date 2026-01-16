@@ -9,7 +9,7 @@ Work through each issue below. Test after fixing. Check off with [x] when verifi
 
 ### BUG-001: Health Check Tab Not Showing Red/Amber Items
 **Priority:** HIGH
-**Status:** [ ] Fixed [ ] Tested
+**Status:** [x] Fixed [ ] Tested
 
 **Problem:**
 After completing a health check, the Red and Amber items are NOT showing on the Health Check tab of the Health Check detail page. However, the Summary tab correctly shows the counts, so the data exists.
@@ -32,8 +32,8 @@ After completing a health check, the Red and Amber items are NOT showing on the 
 ---
 
 ### BUG-002: Dashboard KPIs Not Updating
-**Priority:** HIGH  
-**Status:** [ ] Fixed [ ] Tested
+**Priority:** HIGH
+**Status:** [x] Fixed [ ] Tested
 
 **Problem:**
 After completing a health check, the "Tech Done" KPI on the dashboard did not update. Other dashboard metrics may also not be updating.
@@ -58,7 +58,7 @@ After completing a health check, the "Tech Done" KPI on the dashboard did not up
 
 ### BUG-003: Fluid Level Items No Visual Selection Feedback
 **Priority:** MEDIUM
-**Status:** [ ] Fixed [ ] Tested
+**Status:** [x] Fixed [ ] Tested
 
 **Problem:**
 When clicking on a fluid level item (like Brake Fluid), there's no visual indication that a selection was made. Other item types show color changes on selection.
@@ -84,7 +84,7 @@ When clicking on a fluid level item (like Brake Fluid), there's no visual indica
 
 ### ENH-001: Rename "Brake Fluid Level" and Change Options
 **Priority:** MEDIUM
-**Status:** [ ] Done [ ] Tested
+**Status:** [x] Done [ ] Tested
 
 **Current:**
 - Name: "Brake Fluid Level"
@@ -108,7 +108,7 @@ When clicking on a fluid level item (like Brake Fluid), there's no visual indica
 
 ### ENH-002: Restructure Tyre Input - Split Details from Tread
 **Priority:** HIGH
-**Status:** [ ] Done [ ] Tested
+**Status:** [x] Done [ ] Tested
 
 **Current:**
 Tyre input has tabs: "Tyre Details" and "Tyre Tread" - requires multiple clicks to see all tyres.
@@ -167,7 +167,7 @@ TREAD DEPTH (Per Tyre - Separate Sections)
 
 ### ENH-003: Move Kanban View to Health Checks Page as Default
 **Priority:** MEDIUM
-**Status:** [ ] Done [ ] Tested
+**Status:** [x] Done [ ] Tested
 
 **Current:**
 - Kanban board is on Dashboard page

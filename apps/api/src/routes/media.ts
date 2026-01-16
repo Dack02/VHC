@@ -163,18 +163,18 @@ media.post('/health-checks/:id/results/:resultId/media', authorize(['super_admin
   }
 })
 
-// DELETE /api/v1/media/:mediaId - Delete media
-media.delete('/media/:mediaId', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+// PATCH /api/v1/media/:mediaId - Update media (include_in_report)
+media.patch('/media/:mediaId', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
   try {
     const auth = c.get('auth')
     const { mediaId } = c.req.param()
+    const body = await c.req.json()
 
     // Get media record with health check verification
     const { data: mediaRecord, error: fetchError } = await supabaseAdmin
       .from('result_media')
       .select(`
         id,
-        url,
         check_result:check_results(
           health_check:health_checks(organization_id)
         )
@@ -186,18 +186,141 @@ media.delete('/media/:mediaId', authorize(['super_admin', 'org_admin', 'site_adm
       return c.json({ error: 'Media not found' }, 404)
     }
 
-    // Verify org access
-    const healthCheck = (mediaRecord.check_result as { health_check: { organization_id: string } })?.health_check
+    // Verify org access - Supabase returns nested arrays for joins
+    const checkResult = mediaRecord.check_result as unknown as { health_check: { organization_id: string } } | undefined
+    const healthCheck = checkResult?.health_check
     if (healthCheck?.organization_id !== auth.orgId) {
       return c.json({ error: 'Not authorized' }, 403)
     }
 
-    // Extract path from URL and delete from storage
-    const url = new URL(mediaRecord.url)
-    const pathMatch = url.pathname.match(/\/storage\/v1\/object\/public\/[^/]+\/(.+)/)
-    if (pathMatch) {
-      const filePath = pathMatch[1]
-      await supabaseAdmin.storage.from(BUCKET_NAME).remove([filePath])
+    // Build update data
+    const updateData: Record<string, unknown> = {}
+    if (body.include_in_report !== undefined) {
+      updateData.include_in_report = body.include_in_report
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return c.json({ error: 'No valid fields to update' }, 400)
+    }
+
+    // Update media record
+    const { data: updated, error: updateError } = await supabaseAdmin
+      .from('result_media')
+      .update(updateData)
+      .eq('id', mediaId)
+      .select()
+      .single()
+
+    if (updateError) {
+      return c.json({ error: updateError.message }, 500)
+    }
+
+    return c.json({
+      id: updated.id,
+      include_in_report: updated.include_in_report
+    })
+  } catch (error) {
+    console.error('Update media error:', error)
+    return c.json({ error: 'Failed to update media' }, 500)
+  }
+})
+
+// PATCH /api/v1/health-checks/:id/media/selection - Bulk update include_in_report
+media.patch('/health-checks/:id/media/selection', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id: healthCheckId } = c.req.param()
+    const body = await c.req.json()
+    const { include_in_report, media_ids } = body
+
+    if (include_in_report === undefined) {
+      return c.json({ error: 'include_in_report is required' }, 400)
+    }
+
+    // Verify health check belongs to org
+    const { data: healthCheck } = await supabaseAdmin
+      .from('health_checks')
+      .select('id')
+      .eq('id', healthCheckId)
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    if (!healthCheck) {
+      return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Get all check result IDs for this health check
+    const { data: checkResults } = await supabaseAdmin
+      .from('check_results')
+      .select('id')
+      .eq('health_check_id', healthCheckId)
+
+    if (!checkResults || checkResults.length === 0) {
+      return c.json({ updated: 0 })
+    }
+
+    const resultIds = checkResults.map(r => r.id)
+
+    // Build update query
+    let query = supabaseAdmin
+      .from('result_media')
+      .update({ include_in_report })
+      .in('check_result_id', resultIds)
+
+    // If specific media IDs provided, filter to those
+    if (media_ids && Array.isArray(media_ids) && media_ids.length > 0) {
+      query = query.in('id', media_ids)
+    }
+
+    const { error: updateError, count } = await query
+
+    if (updateError) {
+      return c.json({ error: updateError.message }, 500)
+    }
+
+    return c.json({
+      updated: count || 0,
+      include_in_report
+    })
+  } catch (error) {
+    console.error('Bulk update media selection error:', error)
+    return c.json({ error: 'Failed to update media selection' }, 500)
+  }
+})
+
+// DELETE /api/v1/media/:mediaId - Delete media
+media.delete('/media/:mediaId', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { mediaId } = c.req.param()
+
+    // Get media record with health check verification
+    const { data: mediaRecord, error: fetchError } = await supabaseAdmin
+      .from('result_media')
+      .select(`
+        id,
+        storage_path,
+        check_result:check_results(
+          health_check:health_checks(organization_id)
+        )
+      `)
+      .eq('id', mediaId)
+      .single()
+
+    if (fetchError || !mediaRecord) {
+      return c.json({ error: 'Media not found' }, 404)
+    }
+
+    // Verify org access - Supabase returns nested arrays for joins
+    const checkResult = mediaRecord.check_result as unknown as { health_check: { organization_id: string } } | undefined
+    const healthCheck = checkResult?.health_check
+    if (healthCheck?.organization_id !== auth.orgId) {
+      return c.json({ error: 'Not authorized' }, 403)
+    }
+
+    // Delete from storage using storage_path
+    if (mediaRecord.storage_path) {
+      await supabaseAdmin.storage.from(BUCKET_NAME).remove([mediaRecord.storage_path])
     }
 
     // Delete media record

@@ -1,11 +1,13 @@
 /**
  * PhotosTab Component
- * Grid layout for photos with filtering and lightbox viewer
+ * Grid layout for photos with filtering, lightbox viewer, and report selection
  * Includes lazy loading for performance optimization
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { CheckResult, ResultMedia } from '../../../lib/api'
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5180'
 
 type RAGFilter = 'all' | 'red' | 'amber' | 'green'
 
@@ -17,11 +19,28 @@ interface PhotoWithContext {
 
 interface PhotosTabProps {
   results: CheckResult[]
+  healthCheckId?: string
+  onSelectionChange?: () => void
 }
 
-export function PhotosTab({ results }: PhotosTabProps) {
+export function PhotosTab({ results, healthCheckId, onSelectionChange }: PhotosTabProps) {
   const [filter, setFilter] = useState<RAGFilter>('all')
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
+  const [photoSelections, setPhotoSelections] = useState<Record<string, boolean>>({})
+  const [updating, setUpdating] = useState<string | null>(null)
+
+  // Initialize selections from results
+  useEffect(() => {
+    const initialSelections: Record<string, boolean> = {}
+    results.forEach(result => {
+      if (result.media) {
+        result.media.forEach(media => {
+          initialSelections[media.id] = media.include_in_report !== false
+        })
+      }
+    })
+    setPhotoSelections(initialSelections)
+  }, [results])
 
   // Collect all photos from results with context
   const allPhotos: PhotoWithContext[] = []
@@ -46,6 +65,108 @@ export function PhotosTab({ results }: PhotosTabProps) {
     red: allPhotos.filter(p => p.result.rag_status === 'red').length,
     amber: allPhotos.filter(p => p.result.rag_status === 'amber').length,
     green: allPhotos.filter(p => p.result.rag_status === 'green').length
+  }
+
+  // Selection counts
+  const selectedCount = Object.values(photoSelections).filter(Boolean).length
+  const totalCount = allPhotos.length
+
+  // Toggle photo selection
+  const togglePhotoSelection = async (mediaId: string, include: boolean) => {
+    if (!healthCheckId || updating) return
+
+    setUpdating(mediaId)
+    setPhotoSelections(prev => ({ ...prev, [mediaId]: include }))
+
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${API_URL}/api/v1/media/${mediaId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ include_in_report: include })
+      })
+
+      if (!response.ok) {
+        // Revert on error
+        setPhotoSelections(prev => ({ ...prev, [mediaId]: !include }))
+        console.error('Failed to update photo selection')
+      } else {
+        onSelectionChange?.()
+      }
+    } catch (error) {
+      // Revert on error
+      setPhotoSelections(prev => ({ ...prev, [mediaId]: !include }))
+      console.error('Error updating photo selection:', error)
+    } finally {
+      setUpdating(null)
+    }
+  }
+
+  // Select all photos
+  const selectAll = async () => {
+    if (!healthCheckId || updating) return
+
+    setUpdating('all')
+    const newSelections: Record<string, boolean> = {}
+    allPhotos.forEach(p => { newSelections[p.media.id] = true })
+    setPhotoSelections(newSelections)
+
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${API_URL}/api/v1/health-checks/${healthCheckId}/media/selection`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ include_in_report: true })
+      })
+
+      if (!response.ok) {
+        console.error('Failed to select all photos')
+      } else {
+        onSelectionChange?.()
+      }
+    } catch (error) {
+      console.error('Error selecting all photos:', error)
+    } finally {
+      setUpdating(null)
+    }
+  }
+
+  // Deselect all photos
+  const deselectAll = async () => {
+    if (!healthCheckId || updating) return
+
+    setUpdating('all')
+    const newSelections: Record<string, boolean> = {}
+    allPhotos.forEach(p => { newSelections[p.media.id] = false })
+    setPhotoSelections(newSelections)
+
+    try {
+      const token = localStorage.getItem('token')
+      const response = await fetch(`${API_URL}/api/v1/health-checks/${healthCheckId}/media/selection`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ include_in_report: false })
+      })
+
+      if (!response.ok) {
+        console.error('Failed to deselect all photos')
+      } else {
+        onSelectionChange?.()
+      }
+    } catch (error) {
+      console.error('Error deselecting all photos:', error)
+    } finally {
+      setUpdating(null)
+    }
   }
 
   // Keyboard navigation for lightbox
@@ -110,35 +231,69 @@ export function PhotosTab({ results }: PhotosTabProps) {
 
   return (
     <div className="space-y-4">
-      {/* Filter buttons */}
-      <div className="flex gap-2">
-        <FilterButton
-          label="All"
-          count={counts.all}
-          active={filter === 'all'}
-          onClick={() => setFilter('all')}
-        />
-        <FilterButton
-          label="Red"
-          count={counts.red}
-          active={filter === 'red'}
-          onClick={() => setFilter('red')}
-          color="red"
-        />
-        <FilterButton
-          label="Amber"
-          count={counts.amber}
-          active={filter === 'amber'}
-          onClick={() => setFilter('amber')}
-          color="amber"
-        />
-        <FilterButton
-          label="Green"
-          count={counts.green}
-          active={filter === 'green'}
-          onClick={() => setFilter('green')}
-          color="green"
-        />
+      {/* Header with filter buttons and selection controls */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        {/* Filter buttons */}
+        <div className="flex gap-2">
+          <FilterButton
+            label="All"
+            count={counts.all}
+            active={filter === 'all'}
+            onClick={() => setFilter('all')}
+          />
+          <FilterButton
+            label="Red"
+            count={counts.red}
+            active={filter === 'red'}
+            onClick={() => setFilter('red')}
+            color="red"
+          />
+          <FilterButton
+            label="Amber"
+            count={counts.amber}
+            active={filter === 'amber'}
+            onClick={() => setFilter('amber')}
+            color="amber"
+          />
+          <FilterButton
+            label="Green"
+            count={counts.green}
+            active={filter === 'green'}
+            onClick={() => setFilter('green')}
+            color="green"
+          />
+        </div>
+
+        {/* Selection controls - only show if healthCheckId is provided */}
+        {healthCheckId && (
+          <div className="flex items-center gap-3">
+            {/* Selection count indicator */}
+            <span className="text-sm text-gray-600">
+              <span className="font-medium text-gray-900">{selectedCount}</span>
+              {' of '}
+              <span className="font-medium text-gray-900">{totalCount}</span>
+              {' photos selected for report'}
+            </span>
+
+            {/* Select/Deselect all buttons */}
+            <div className="flex gap-2">
+              <button
+                onClick={selectAll}
+                disabled={updating !== null || selectedCount === totalCount}
+                className="px-3 py-1.5 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Select All
+              </button>
+              <button
+                onClick={deselectAll}
+                disabled={updating !== null || selectedCount === 0}
+                className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Deselect All
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Photo grid */}
@@ -148,46 +303,101 @@ export function PhotosTab({ results }: PhotosTabProps) {
         </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {filteredPhotos.map(({ result, media, index }) => (
-            <div
-              key={media.id}
-              className="bg-white border border-gray-200 rounded-lg overflow-hidden cursor-pointer group hover:shadow-md transition-shadow"
-              onClick={() => setSelectedIndex(index)}
-            >
-              {/* Thumbnail with lazy loading */}
-              <div className="relative aspect-square bg-gray-100 overflow-hidden">
-                <LazyImage
-                  src={media.thumbnail_url || media.url}
-                  alt=""
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                />
-                {/* RAG indicator */}
-                <div className={`
-                  absolute top-2 left-2 w-3 h-3 rounded-full ring-2 ring-white
-                  ${result.rag_status === 'green' ? 'bg-green-500' : ''}
-                  ${result.rag_status === 'amber' ? 'bg-amber-500' : ''}
-                  ${result.rag_status === 'red' ? 'bg-red-500' : ''}
-                `} />
-                {/* Annotation indicator */}
-                {media.annotation_data !== null && media.annotation_data !== undefined && (
-                  <div className="absolute top-2 right-2 bg-white bg-opacity-90 rounded p-1">
-                    <svg className="w-3 h-3 text-gray-600" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
-                    </svg>
-                  </div>
-                )}
-              </div>
-              {/* Item name */}
-              <div className="px-3 py-2">
-                <div className="text-sm font-medium text-gray-900 truncate">
-                  {result.template_item?.name || 'Unknown Item'}
+          {filteredPhotos.map(({ result, media, index }) => {
+            const isSelected = photoSelections[media.id] !== false
+            const isUpdating = updating === media.id || updating === 'all'
+
+            return (
+              <div
+                key={media.id}
+                className={`
+                  bg-white border rounded-lg overflow-hidden group transition-all
+                  ${isSelected ? 'border-gray-200' : 'border-gray-200 opacity-60'}
+                  ${!isUpdating ? 'hover:shadow-md' : ''}
+                `}
+              >
+                {/* Thumbnail with lazy loading */}
+                <div
+                  className="relative aspect-square bg-gray-100 overflow-hidden cursor-pointer"
+                  onClick={() => setSelectedIndex(index)}
+                >
+                  <LazyImage
+                    src={media.thumbnail_url || media.url}
+                    alt=""
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                  />
+
+                  {/* RAG indicator */}
+                  <div className={`
+                    absolute top-2 left-2 w-3 h-3 rounded-full ring-2 ring-white
+                    ${result.rag_status === 'green' ? 'bg-green-500' : ''}
+                    ${result.rag_status === 'amber' ? 'bg-amber-500' : ''}
+                    ${result.rag_status === 'red' ? 'bg-red-500' : ''}
+                  `} />
+
+                  {/* Selection checkbox overlay - only show if healthCheckId is provided */}
+                  {healthCheckId && (
+                    <div
+                      className="absolute top-2 right-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <label className="relative flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          disabled={isUpdating}
+                          onChange={(e) => togglePhotoSelection(media.id, e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className={`
+                          w-6 h-6 rounded-md flex items-center justify-center transition-all
+                          ${isSelected
+                            ? 'bg-blue-600 ring-2 ring-white'
+                            : 'bg-white bg-opacity-90 ring-2 ring-gray-300'
+                          }
+                          ${isUpdating ? 'opacity-50' : 'hover:ring-blue-400'}
+                        `}>
+                          {isSelected && (
+                            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </div>
+                      </label>
+                    </div>
+                  )}
+
+                  {/* Annotation indicator */}
+                  {media.annotation_data !== null && media.annotation_data !== undefined && (
+                    <div className="absolute bottom-2 right-2 bg-white bg-opacity-90 rounded p-1">
+                      <svg className="w-3 h-3 text-gray-600" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+                      </svg>
+                    </div>
+                  )}
+
+                  {/* Not included overlay */}
+                  {!isSelected && healthCheckId && (
+                    <div className="absolute inset-0 bg-white bg-opacity-40 flex items-center justify-center">
+                      <span className="bg-gray-800 bg-opacity-70 text-white text-xs px-2 py-1 rounded">
+                        Not in report
+                      </span>
+                    </div>
+                  )}
                 </div>
-                {result.notes && (
-                  <div className="text-xs text-gray-500 truncate">{result.notes}</div>
-                )}
+
+                {/* Item name */}
+                <div className="px-3 py-2">
+                  <div className="text-sm font-medium text-gray-900 truncate">
+                    {result.template_item?.name || 'Unknown Item'}
+                  </div>
+                  {result.notes && (
+                    <div className="text-xs text-gray-500 truncate">{result.notes}</div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
@@ -264,6 +474,23 @@ export function PhotosTab({ results }: PhotosTabProps) {
                     <p className="text-gray-300 text-sm mt-2">{selectedPhoto.result.notes}</p>
                   )}
                 </div>
+
+                {/* Selection toggle in lightbox */}
+                {healthCheckId && (
+                  <div className="flex items-center gap-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={photoSelections[selectedPhoto.media.id] !== false}
+                        disabled={updating !== null}
+                        onChange={(e) => togglePhotoSelection(selectedPhoto.media.id, e.target.checked)}
+                        className="w-5 h-5 rounded border-gray-400 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900"
+                      />
+                      <span className="text-white text-sm">Include in report</span>
+                    </label>
+                  </div>
+                )}
+
                 {/* Counter */}
                 <div className="text-gray-400 text-sm">
                   {currentFilteredIndex + 1} of {filteredPhotos.length}

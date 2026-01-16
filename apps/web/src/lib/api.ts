@@ -4,10 +4,77 @@ interface ApiOptions {
   method?: string
   body?: unknown
   token?: string | null
+  retry?: boolean
+  retryCount?: number
+  retryDelay?: number
+  timeout?: number
+}
+
+// API Error with additional context
+export class ApiError extends Error {
+  public readonly status: number
+  public readonly code?: string
+  public readonly details?: Record<string, unknown>
+
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    details?: Record<string, unknown>
+  ) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+    this.details = details
+  }
+
+  get isNetworkError(): boolean {
+    return this.status === 0
+  }
+
+  get isUnauthorized(): boolean {
+    return this.status === 401
+  }
+
+  get isForbidden(): boolean {
+    return this.status === 403
+  }
+
+  get isNotFound(): boolean {
+    return this.status === 404
+  }
+
+  get isRateLimited(): boolean {
+    return this.status === 429
+  }
+
+  get isServerError(): boolean {
+    return this.status >= 500
+  }
+}
+
+// Helper to check if error is retryable
+function isRetryableError(status: number): boolean {
+  // Retry on network errors (0), server errors (5xx), and rate limits (429)
+  return status === 0 || status >= 500 || status === 429
+}
+
+// Sleep helper
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 export async function api<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
-  const { method = 'GET', body, token } = options
+  const {
+    method = 'GET',
+    body,
+    token,
+    retry = true,
+    retryCount = 3,
+    retryDelay = 1000,
+    timeout = 30000,
+  } = options
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json'
@@ -17,19 +84,95 @@ export async function api<T>(endpoint: string, options: ApiOptions = {}): Promis
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const response = await fetch(`${API_URL}${endpoint}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined
-  })
+  let lastError: ApiError | null = null
+  const attempts = retry ? retryCount : 1
 
-  const data = await response.json()
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      // Create abort controller for timeout
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), timeout)
 
-  if (!response.ok) {
-    throw new Error(data.error || 'API request failed')
+      const response = await fetch(`${API_URL}${endpoint}`, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      })
+
+      clearTimeout(timeoutId)
+
+      // Try to parse JSON response
+      let data: Record<string, unknown> = {}
+      const contentType = response.headers.get('content-type')
+      if (contentType?.includes('application/json')) {
+        data = await response.json()
+      }
+
+      if (!response.ok) {
+        const error = new ApiError(
+          (data.error as string) || `Request failed with status ${response.status}`,
+          response.status,
+          data.code as string | undefined,
+          data.details as Record<string, unknown> | undefined
+        )
+
+        // Check if we should retry
+        if (retry && attempt < attempts && isRetryableError(response.status)) {
+          lastError = error
+          // Exponential backoff with jitter
+          const delay = retryDelay * Math.pow(2, attempt - 1) + Math.random() * 1000
+          console.warn(`API request failed (attempt ${attempt}/${attempts}), retrying in ${Math.round(delay)}ms...`)
+          await sleep(delay)
+          continue
+        }
+
+        throw error
+      }
+
+      return data as T
+    } catch (err) {
+      // Handle abort/timeout
+      if (err instanceof Error && err.name === 'AbortError') {
+        const error = new ApiError('Request timed out', 0)
+        if (retry && attempt < attempts) {
+          lastError = error
+          const delay = retryDelay * Math.pow(2, attempt - 1)
+          console.warn(`API request timed out (attempt ${attempt}/${attempts}), retrying in ${delay}ms...`)
+          await sleep(delay)
+          continue
+        }
+        throw error
+      }
+
+      // Handle network errors
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        const error = new ApiError('Network error - please check your connection', 0)
+        if (retry && attempt < attempts) {
+          lastError = error
+          const delay = retryDelay * Math.pow(2, attempt - 1)
+          console.warn(`Network error (attempt ${attempt}/${attempts}), retrying in ${delay}ms...`)
+          await sleep(delay)
+          continue
+        }
+        throw error
+      }
+
+      // Re-throw ApiError directly
+      if (err instanceof ApiError) {
+        throw err
+      }
+
+      // Wrap unknown errors
+      throw new ApiError(
+        err instanceof Error ? err.message : 'An unexpected error occurred',
+        0
+      )
+    }
   }
 
-  return data
+  // Should never reach here, but just in case
+  throw lastError || new ApiError('Request failed after all retries', 0)
 }
 
 // Types

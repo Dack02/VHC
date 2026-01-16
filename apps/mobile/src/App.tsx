@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { ThresholdsProvider } from './context/ThresholdsContext'
+import { ToastProvider } from './context/ToastContext'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { Login } from './pages/Login'
 import { JobList } from './pages/JobList'
 import { PreCheck } from './pages/PreCheck'
@@ -9,13 +11,17 @@ import { Summary } from './pages/Summary'
 
 function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <ThresholdsProvider>
-          <AppRoutes />
-        </ThresholdsProvider>
-      </AuthProvider>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <ToastProvider>
+        <BrowserRouter>
+          <AuthProvider>
+            <ThresholdsProvider>
+              <AppRoutes />
+            </ThresholdsProvider>
+          </AuthProvider>
+        </BrowserRouter>
+      </ToastProvider>
+    </ErrorBoundary>
   )
 }
 

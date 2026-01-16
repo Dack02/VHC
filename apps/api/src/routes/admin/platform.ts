@@ -16,6 +16,202 @@ const platformRoutes = new Hono()
 platformRoutes.use('*', superAdminMiddleware)
 
 /**
+ * GET /api/v1/admin/platform/settings
+ * Get all platform settings combined (for admin UI)
+ */
+platformRoutes.get('/settings', async (c) => {
+  try {
+    // Fetch all platform settings
+    const { data: allSettings, error } = await supabaseAdmin
+      .from('platform_settings')
+      .select('*')
+
+    if (error) {
+      return c.json({ error: error.message }, 500)
+    }
+
+    // Build combined settings object
+    const combined: Record<string, unknown> = {
+      general: {
+        platformName: 'VHC Platform',
+        supportEmail: '',
+        termsUrl: '',
+        privacyUrl: ''
+      },
+      defaults: {
+        defaultPlanId: '',
+        trialDays: 14,
+        requireEmailVerification: true
+      },
+      features: {
+        allowSelfSignup: true,
+        enableDmsIntegration: true,
+        enableNotifications: true
+      },
+      credentials: {
+        resendApiKey: '',
+        resendFromEmail: '',
+        resendFromName: '',
+        twilioAccountSid: '',
+        twilioAuthToken: '',
+        twilioFromNumber: '',
+        dvlaApiKey: ''
+      }
+    }
+
+    // Merge in stored settings
+    for (const row of allSettings || []) {
+      const settings = row.settings as Record<string, unknown>
+
+      if (row.id === 'general') {
+        combined.general = { ...combined.general as Record<string, unknown>, ...settings }
+      } else if (row.id === 'defaults') {
+        combined.defaults = { ...combined.defaults as Record<string, unknown>, ...settings }
+      } else if (row.id === 'features') {
+        combined.features = { ...combined.features as Record<string, unknown>, ...settings }
+      } else if (row.id === 'notifications') {
+        // Map notification settings to credentials
+        const creds = combined.credentials as Record<string, unknown>
+        if (settings.twilio_account_sid) creds.twilioAccountSid = settings.twilio_account_sid
+        if (settings.twilio_phone_number) creds.twilioFromNumber = settings.twilio_phone_number
+        if (settings.resend_from_email) creds.resendFromEmail = settings.resend_from_email
+        if (settings.resend_from_name) creds.resendFromName = settings.resend_from_name
+        // Mask encrypted values
+        if (settings.twilio_auth_token_encrypted) {
+          try {
+            const decrypted = decrypt(settings.twilio_auth_token_encrypted as string)
+            creds.twilioAuthToken = maskString(decrypted)
+          } catch {
+            creds.twilioAuthToken = '••••••••'
+          }
+        }
+        if (settings.resend_api_key_encrypted) {
+          try {
+            const decrypted = decrypt(settings.resend_api_key_encrypted as string)
+            creds.resendApiKey = maskString(decrypted)
+          } catch {
+            creds.resendApiKey = '••••••••'
+          }
+        }
+      }
+    }
+
+    return c.json(combined)
+  } catch (err) {
+    return c.json({ error: 'Failed to fetch platform settings' }, 500)
+  }
+})
+
+/**
+ * PATCH /api/v1/admin/platform/settings
+ * Update all platform settings (for admin UI)
+ */
+platformRoutes.patch('/settings', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const body = await c.req.json()
+
+  try {
+    // Update general settings
+    if (body.general) {
+      await supabaseAdmin
+        .from('platform_settings')
+        .upsert({
+          id: 'general',
+          settings: body.general,
+          updated_at: new Date().toISOString(),
+          updated_by: superAdmin.id
+        })
+    }
+
+    // Update defaults
+    if (body.defaults) {
+      await supabaseAdmin
+        .from('platform_settings')
+        .upsert({
+          id: 'defaults',
+          settings: body.defaults,
+          updated_at: new Date().toISOString(),
+          updated_by: superAdmin.id
+        })
+    }
+
+    // Update features
+    if (body.features) {
+      await supabaseAdmin
+        .from('platform_settings')
+        .upsert({
+          id: 'features',
+          settings: body.features,
+          updated_at: new Date().toISOString(),
+          updated_by: superAdmin.id
+        })
+    }
+
+    // Update credentials (notifications)
+    if (body.credentials) {
+      const { data: existingNotifications } = await supabaseAdmin
+        .from('platform_settings')
+        .select('settings')
+        .eq('id', 'notifications')
+        .single()
+
+      const notificationSettings: Record<string, unknown> =
+        (existingNotifications?.settings as Record<string, unknown>) || {}
+
+      // Map credentials to notification settings
+      if (body.credentials.twilioAccountSid) {
+        notificationSettings.twilio_account_sid = body.credentials.twilioAccountSid
+      }
+      if (body.credentials.twilioAuthToken && !body.credentials.twilioAuthToken.includes('•')) {
+        // Only update if not masked
+        if (isEncryptionConfigured()) {
+          notificationSettings.twilio_auth_token_encrypted = encrypt(body.credentials.twilioAuthToken)
+        }
+      }
+      if (body.credentials.twilioFromNumber) {
+        notificationSettings.twilio_phone_number = body.credentials.twilioFromNumber
+      }
+      if (body.credentials.resendApiKey && !body.credentials.resendApiKey.includes('•')) {
+        // Only update if not masked
+        if (isEncryptionConfigured()) {
+          notificationSettings.resend_api_key_encrypted = encrypt(body.credentials.resendApiKey)
+        }
+      }
+      if (body.credentials.resendFromEmail) {
+        notificationSettings.resend_from_email = body.credentials.resendFromEmail
+      }
+      if (body.credentials.resendFromName) {
+        notificationSettings.resend_from_name = body.credentials.resendFromName
+      }
+
+      await supabaseAdmin
+        .from('platform_settings')
+        .upsert({
+          id: 'notifications',
+          settings: notificationSettings,
+          updated_at: new Date().toISOString(),
+          updated_by: superAdmin.id
+        })
+    }
+
+    // Log activity
+    await logSuperAdminActivity(
+      superAdmin.id,
+      'update_platform_settings',
+      'platform_settings',
+      'all',
+      { sections: Object.keys(body) },
+      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      c.req.header('User-Agent')
+    )
+
+    return c.json({ success: true })
+  } catch (err) {
+    return c.json({ error: 'Failed to save platform settings' }, 500)
+  }
+})
+
+/**
  * GET /api/v1/admin/platform/settings/:id
  * Get platform settings by key
  */

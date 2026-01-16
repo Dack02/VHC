@@ -21,13 +21,26 @@ interface Customer {
   last_name: string
 }
 
+interface OrganizationSettings {
+  logoUrl?: string | null
+  primaryColor?: string | null
+  secondaryColor?: string | null
+  legalName?: string | null
+  phone?: string | null
+  email?: string | null
+  website?: string | null
+  addressLine1?: string | null
+  city?: string | null
+  postcode?: string | null
+}
+
 interface Site {
   name: string
   phone: string | null
   email: string | null
   organization?: {
     name: string
-    settings?: Record<string, unknown>
+    settings?: OrganizationSettings
   }
 }
 
@@ -134,6 +147,30 @@ export default function CustomerPortal() {
 
     fetchData()
   }, [token])
+
+  // Apply organization branding CSS variables
+  useEffect(() => {
+    if (!data?.site?.organization?.settings) return
+
+    const settings = data.site.organization.settings
+    const root = document.documentElement
+
+    if (settings.primaryColor) {
+      root.style.setProperty('--brand-primary', settings.primaryColor)
+      // Calculate hover color (darken by 15%)
+      const hex = settings.primaryColor.replace('#', '')
+      const r = Math.max(0, parseInt(hex.substring(0, 2), 16) * 0.85)
+      const g = Math.max(0, parseInt(hex.substring(2, 4), 16) * 0.85)
+      const b = Math.max(0, parseInt(hex.substring(4, 6), 16) * 0.85)
+      root.style.setProperty('--brand-primary-hover', `#${Math.round(r).toString(16).padStart(2, '0')}${Math.round(g).toString(16).padStart(2, '0')}${Math.round(b).toString(16).padStart(2, '0')}`)
+    }
+
+    // Cleanup on unmount
+    return () => {
+      root.style.removeProperty('--brand-primary')
+      root.style.removeProperty('--brand-primary-hover')
+    }
+  }, [data?.site?.organization?.settings])
 
   // Handle authorize
   const handleAuthorize = async (repairItemId: string) => {
@@ -310,7 +347,15 @@ export default function CustomerPortal() {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-4">
           <div className="text-center">
-            <p className="text-sm text-gray-500">{site?.organization?.name || site?.name}</p>
+            {site?.organization?.settings?.logoUrl ? (
+              <img
+                src={site.organization.settings.logoUrl}
+                alt={site.organization?.name || site.name}
+                className="h-10 w-auto mx-auto mb-2 object-contain"
+              />
+            ) : (
+              <p className="text-sm text-gray-500">{site?.organization?.name || site?.name}</p>
+            )}
             <h1 className="text-lg font-bold text-gray-900">Vehicle Health Check</h1>
           </div>
         </div>
@@ -549,7 +594,12 @@ export default function CustomerPortal() {
               <div className="p-4">
                 <button
                   onClick={() => setShowSignature(true)}
-                  className="w-full py-4 bg-blue-600 text-white font-semibold text-lg hover:bg-blue-700"
+                  className="w-full py-4 text-white font-semibold text-lg"
+                  style={{
+                    backgroundColor: 'var(--brand-primary, #3B82F6)'
+                  }}
+                  onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--brand-primary-hover, #2563EB)'}
+                  onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'var(--brand-primary, #3B82F6)'}
                 >
                   Sign to Confirm
                 </button>
@@ -582,9 +632,17 @@ export default function CustomerPortal() {
 
         {/* Contact Info */}
         <div className="text-center text-sm text-gray-500 py-4">
-          <p className="font-medium text-gray-700">{site?.name}</p>
-          {site?.phone && <p>{site.phone}</p>}
-          {site?.email && <p>{site.email}</p>}
+          <p className="font-medium text-gray-700">{site?.organization?.name || site?.name}</p>
+          <p className="text-gray-600">{site?.name}</p>
+          {(site?.organization?.settings?.phone || site?.phone) && (
+            <p>{site?.organization?.settings?.phone || site?.phone}</p>
+          )}
+          {(site?.organization?.settings?.email || site?.email) && (
+            <p>{site?.organization?.settings?.email || site?.email}</p>
+          )}
+          {site?.organization?.settings?.website && (
+            <p>{site.organization.settings.website}</p>
+          )}
         </div>
       </main>
 
@@ -895,7 +953,10 @@ function SignatureCapture({
         <button
           onClick={submitSignature}
           disabled={!hasSignature || saving}
-          className="flex-1 py-2 bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="flex-1 py-2 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          style={{
+            backgroundColor: 'var(--brand-primary, #3B82F6)'
+          }}
         >
           {saving ? (
             <>

@@ -5,6 +5,16 @@
 
 import { Resend } from 'resend'
 import { getEmailCredentials, EmailCredentials } from './credentials.js'
+import { supabaseAdmin } from '../lib/supabase.js'
+
+export interface OrganizationBranding {
+  logoUrl?: string | null
+  primaryColor?: string
+  organizationName?: string
+  phone?: string
+  email?: string
+  website?: string
+}
 
 // Legacy: Environment-based credentials for backward compatibility
 const envApiKey = process.env.RESEND_API_KEY
@@ -199,7 +209,19 @@ export async function sendHealthCheckReadyEmail(
   customMessage?: string,
   organizationId?: string
 ): Promise<EmailResult> {
+  // Get organization branding
+  const branding = organizationId
+    ? await getOrganizationBranding(organizationId)
+    : { primaryColor: '#3B82F6', organizationName: dealershipName }
+
+  const primaryColor = branding.primaryColor || '#3B82F6'
+
   const subject = `Your Vehicle Health Check is Ready - ${vehicleReg}`
+
+  // Build header with logo or text
+  const headerContent = branding.logoUrl
+    ? `<img src="${branding.logoUrl}" alt="${branding.organizationName}" style="max-height: 48px; max-width: 200px; margin-bottom: 8px;">`
+    : `<h1 style="color: #ffffff; margin: 0; font-size: 24px;">Vehicle Health Check</h1>`
 
   const html = `
 <!DOCTYPE html>
@@ -213,8 +235,8 @@ export async function sendHealthCheckReadyEmail(
   <table cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
     <!-- Header -->
     <tr>
-      <td style="background-color: #1e40af; padding: 24px; text-align: center;">
-        <h1 style="color: #ffffff; margin: 0; font-size: 24px;">Vehicle Health Check</h1>
+      <td style="background-color: ${primaryColor}; padding: 24px; text-align: center;">
+        ${headerContent}
       </td>
     </tr>
 
@@ -227,7 +249,7 @@ export async function sendHealthCheckReadyEmail(
           Your vehicle health check for <strong>${vehicleReg}</strong> (${vehicleMakeModel}) is now ready for your review.
         </p>
 
-        ${customMessage ? `<p style="margin: 0 0 24px; color: #333; font-size: 16px; padding: 16px; background-color: #f8f8f8; border-left: 4px solid #1e40af;">${customMessage}</p>` : ''}
+        ${customMessage ? `<p style="margin: 0 0 24px; color: #333; font-size: 16px; padding: 16px; background-color: #f8f8f8; border-left: 4px solid ${primaryColor};">${customMessage}</p>` : ''}
 
         <!-- Summary -->
         <table cellpadding="0" cellspacing="0" width="100%" style="margin: 0 0 24px;">
@@ -251,7 +273,7 @@ export async function sendHealthCheckReadyEmail(
         <table cellpadding="0" cellspacing="0" width="100%" style="margin: 0 0 24px;">
           <tr>
             <td style="text-align: center;">
-              <a href="${publicUrl}" style="display: inline-block; background-color: #1e40af; color: #ffffff; text-decoration: none; padding: 16px 32px; font-size: 18px; font-weight: bold;">
+              <a href="${publicUrl}" style="display: inline-block; background-color: ${primaryColor}; color: #ffffff; text-decoration: none; padding: 16px 32px; font-size: 18px; font-weight: bold;">
                 View Health Check
               </a>
             </td>
@@ -271,7 +293,7 @@ export async function sendHealthCheckReadyEmail(
     <!-- Footer -->
     <tr>
       <td style="background-color: #f4f4f4; padding: 24px; text-align: center;">
-        <p style="margin: 0 0 8px; color: #666; font-size: 14px;">${dealershipName}</p>
+        <p style="margin: 0 0 8px; color: #666; font-size: 14px;">${branding.organizationName || dealershipName}</p>
         <p style="margin: 0; color: #999; font-size: 12px;">
           This link will expire in 72 hours. Please respond at your earliest convenience.
         </p>
@@ -299,7 +321,7 @@ Please review the findings and authorize any necessary repairs.
 
 If you have any questions, please call us at ${dealershipPhone}.
 
-${dealershipName}
+${branding.organizationName || dealershipName}
 `
 
   return sendEmail({ to, subject, html, text, organizationId })
@@ -318,10 +340,25 @@ export async function sendReminderEmail(
   hoursRemaining?: number,
   organizationId?: string
 ): Promise<EmailResult> {
+  // Get organization branding
+  const branding = organizationId
+    ? await getOrganizationBranding(organizationId)
+    : { primaryColor: '#3B82F6', organizationName: dealershipName }
+
+  const primaryColor = branding.primaryColor || '#3B82F6'
+
   const isUrgent = hoursRemaining && hoursRemaining <= 24
   const subject = isUrgent
     ? `Urgent: Your Health Check Link Expires Soon - ${vehicleReg}`
     : `Reminder: Your Vehicle Health Check Awaits - ${vehicleReg}`
+
+  // Build header with logo or text
+  const headerContent = branding.logoUrl
+    ? `<img src="${branding.logoUrl}" alt="${branding.organizationName}" style="max-height: 48px; max-width: 200px; margin-bottom: 8px;">`
+    : `<h1 style="color: #ffffff; margin: 0; font-size: 24px;">${isUrgent ? 'Action Required' : 'Reminder'}</h1>`
+
+  const headerBg = isUrgent ? '#dc2626' : (branding.logoUrl ? primaryColor : '#ca8a04')
+  const buttonBg = isUrgent ? '#dc2626' : primaryColor
 
   const html = `
 <!DOCTYPE html>
@@ -333,8 +370,8 @@ export async function sendReminderEmail(
 <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
   <table cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
     <tr>
-      <td style="background-color: ${isUrgent ? '#dc2626' : '#ca8a04'}; padding: 24px; text-align: center;">
-        <h1 style="color: #ffffff; margin: 0; font-size: 24px;">${isUrgent ? 'Action Required' : 'Reminder'}</h1>
+      <td style="background-color: ${headerBg}; padding: 24px; text-align: center;">
+        ${headerContent}
       </td>
     </tr>
 
@@ -352,7 +389,7 @@ export async function sendReminderEmail(
         <table cellpadding="0" cellspacing="0" width="100%" style="margin: 0 0 24px;">
           <tr>
             <td style="text-align: center;">
-              <a href="${publicUrl}" style="display: inline-block; background-color: ${isUrgent ? '#dc2626' : '#1e40af'}; color: #ffffff; text-decoration: none; padding: 16px 32px; font-size: 18px; font-weight: bold;">
+              <a href="${publicUrl}" style="display: inline-block; background-color: ${buttonBg}; color: #ffffff; text-decoration: none; padding: 16px 32px; font-size: 18px; font-weight: bold;">
                 View Health Check Now
               </a>
             </td>
@@ -367,7 +404,7 @@ export async function sendReminderEmail(
 
     <tr>
       <td style="background-color: #f4f4f4; padding: 24px; text-align: center;">
-        <p style="margin: 0; color: #666; font-size: 14px;">${dealershipName}</p>
+        <p style="margin: 0; color: #666; font-size: 14px;">${branding.organizationName || dealershipName}</p>
       </td>
     </tr>
   </table>
@@ -391,6 +428,11 @@ export async function sendAuthorizationConfirmationEmail(
   dealershipPhone: string,
   organizationId?: string
 ): Promise<EmailResult> {
+  // Get organization branding
+  const branding = organizationId
+    ? await getOrganizationBranding(organizationId)
+    : { primaryColor: '#3B82F6', organizationName: dealershipName }
+
   const subject = `Work Authorized - ${vehicleReg}`
 
   const itemsHtml = authorizedItems
@@ -404,6 +446,11 @@ export async function sendAuthorizationConfirmationEmail(
     )
     .join('')
 
+  // Build header with logo or text
+  const headerContent = branding.logoUrl
+    ? `<img src="${branding.logoUrl}" alt="${branding.organizationName}" style="max-height: 48px; max-width: 200px; margin-bottom: 8px;">`
+    : `<h1 style="color: #ffffff; margin: 0; font-size: 24px;">Work Authorized</h1>`
+
   const html = `
 <!DOCTYPE html>
 <html>
@@ -415,7 +462,7 @@ export async function sendAuthorizationConfirmationEmail(
   <table cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
     <tr>
       <td style="background-color: #16a34a; padding: 24px; text-align: center;">
-        <h1 style="color: #ffffff; margin: 0; font-size: 24px;">Work Authorized</h1>
+        ${headerContent}
       </td>
     </tr>
 
@@ -457,7 +504,7 @@ export async function sendAuthorizationConfirmationEmail(
 
     <tr>
       <td style="background-color: #f4f4f4; padding: 24px; text-align: center;">
-        <p style="margin: 0; color: #666; font-size: 14px;">${dealershipName}</p>
+        <p style="margin: 0; color: #666; font-size: 14px;">${branding.organizationName || dealershipName}</p>
       </td>
     </tr>
   </table>
@@ -473,4 +520,38 @@ export async function sendAuthorizationConfirmationEmail(
  */
 export function isResendConfigured(): boolean {
   return !!legacyResend
+}
+
+/**
+ * Get organization branding settings
+ */
+export async function getOrganizationBranding(organizationId: string): Promise<OrganizationBranding> {
+  const defaultBranding: OrganizationBranding = {
+    primaryColor: '#3B82F6',
+    organizationName: 'Vehicle Health Check'
+  }
+
+  try {
+    const { data: org } = await supabaseAdmin
+      .from('organizations')
+      .select('name, settings')
+      .eq('id', organizationId)
+      .single()
+
+    if (!org) return defaultBranding
+
+    const settings = org.settings as Record<string, unknown> | null
+
+    return {
+      logoUrl: settings?.logoUrl as string | null,
+      primaryColor: (settings?.primaryColor as string) || defaultBranding.primaryColor,
+      organizationName: org.name || defaultBranding.organizationName,
+      phone: settings?.phone as string,
+      email: settings?.email as string,
+      website: settings?.website as string
+    }
+  } catch (error) {
+    console.error('Failed to get organization branding:', error)
+    return defaultBranding
+  }
 }

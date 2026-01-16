@@ -1,0 +1,59 @@
+{
+  "_note": "This is a sample response structure based on the Gemini OSI API implementation in gemini-osi.ts. The server at central-2304.geminiosi.co.uk was not reachable during exploration (connection timeout). This structure is derived from the existing codebase.",
+  "_endpoint": "POST /api/v2/workshop/get-diary-bookings",
+  "_request": {
+    "from": "2025-01-15",
+    "to": "2025-01-22",
+    "siteId": 1
+  },
+  "_authentication": "Basic Auth (username:password base64 encoded)",
+  "sample_booking": {
+    "Id": 12345,
+    "BookingDate": "2025-01-15",
+    "TimeBooked": "09:00",
+    "PromiseTime": "17:00",
+    "ArrivalStatus": "Not Arrived",
+    "Workshop": "Service",
+    "Vehicle": {
+      "Id": 67890,
+      "Registration": "AB12 CDE",
+      "VIN": "WVWZZZ3CZWE123456",
+      "Make": "Volkswagen",
+      "Model": "Golf",
+      "Colour": "Blue",
+      "FuelType": "Petrol",
+      "CurrentMileage": 45000
+    },
+    "InvoiceTo": {
+      "Id": 11111,
+      "Title": "Mr",
+      "Forename": "John",
+      "Surname": "Smith",
+      "Email": "john.smith@example.com",
+      "Mobile": "07700900123",
+      "Telephone": "01onal234567",
+      "Address1": "123 Main Street",
+      "Address2": "Anytown",
+      "Address3": "County",
+      "Postcode": "AB1 2CD"
+    },
+    "DeliverTo": {
+      "Id": 11111,
+      "Title": "Mr",
+      "Forename": "John",
+      "Surname": "Smith",
+      "Email": "john.smith@example.com",
+      "Mobile": "07700900123",
+      "Telephone": "01234567890"
+    },
+    "Jobsheets": [
+      {
+        "Id": 99999,
+        "JobsheetNumber": "JS-2025-001234",
+        "Description": "Full service and MOT inspection",
+        "Status": "Open"
+      }
+    ]
+  },
+  "_expected_response_format": "Array of booking objects (or object with numeric keys representing array indices)"
+}

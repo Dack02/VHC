@@ -594,38 +594,38 @@ claude -p "Continue with Phase 9 tasks in TODO-multi-tenant.md. Apply organizati
 ```
 
 ### 9.1 Branding Context
-- [ ] Create BrandingContext/Provider:
+- [x] Create BrandingContext/Provider:
   - Fetch org settings on load
   - Provide logo_url, primary_color, secondary_color
   - Provide org name
 
 ### 9.2 Apply Branding in Tenant App
-- [ ] Header: Show org logo
-- [ ] Sidebar: Use primary color for active items
-- [ ] Buttons: Use primary color as accent
+- [x] Header: Show org logo
+- [x] Sidebar: Use primary color for active items
+- [x] Buttons: Use primary color as accent
 
 ### 9.3 Apply Branding in Customer Portal
-- [ ] Header: Show org logo
-- [ ] Use primary/secondary colors for buttons and accents
-- [ ] Footer: Show org name and contact
+- [x] Header: Show org logo
+- [x] Use primary/secondary colors for buttons and accents
+- [x] Footer: Show org name and contact
 
 ### 9.4 Apply Branding in Emails
-- [ ] Include org logo in email header
-- [ ] Use org name in "From" field (if using own credentials)
-- [ ] Use org colors in email template
+- [x] Include org logo in email header
+- [x] Use org name in "From" field (if using own credentials)
+- [x] Use org colors in email template
 
 ### 9.5 Apply Branding in PDFs
-- [ ] Header: Show org logo
-- [ ] Use org name and address
-- [ ] Footer: Show org contact details
+- [x] Header: Show org logo
+- [x] Use org name and address
+- [x] Footer: Show org contact details
 
 ### ⛔ HARD STOP — Phase 9 Verification
 ```
 Before proceeding, verify:
-- [ ] Tenant app shows org logo
-- [ ] Customer portal shows org branding
-- [ ] Emails include org logo and name
-- [ ] PDFs show org branding
+- [x] Tenant app shows org logo
+- [x] Customer portal shows org branding
+- [x] Emails include org logo and name
+- [x] PDFs show org branding
 ```
 
 ---
@@ -638,60 +638,60 @@ claude -p "Continue with Phase 10 tasks in TODO-multi-tenant.md. Final polish an
 ```
 
 ### 10.1 Create Test Data
-- [ ] Create 2-3 test organizations
-- [ ] Create users at different roles
-- [ ] Create sample health checks
+- [x] Create 2-3 test organizations
+- [x] Create users at different roles
+- [x] Create sample health checks
 
 ### 10.2 Test Role Permissions
-- [ ] Test super admin can access all orgs
-- [ ] Test org admin can only access their org
-- [ ] Test site admin can only access their site
-- [ ] Test service advisor permissions
-- [ ] Test technician permissions
+- [x] Test super admin can access all orgs
+- [x] Test org admin can only access their org
+- [x] Test site admin can only access their site
+- [x] Test service advisor permissions
+- [x] Test technician permissions
 
 ### 10.3 Test Limit Enforcement
-- [ ] Test site limit (can't exceed max_sites)
-- [ ] Test user limit (can't exceed max_users)
-- [ ] Test health check limit (can't exceed monthly limit)
-- [ ] Verify friendly error messages
+- [x] Test site limit (can't exceed max_sites)
+- [x] Test user limit (can't exceed max_users)
+- [x] Test health check limit (can't exceed monthly limit)
+- [x] Verify friendly error messages
 
 ### 10.4 Test Credential Hierarchy
-- [ ] Test SMS with platform credentials
-- [ ] Test SMS with org credentials
-- [ ] Test email with platform credentials
-- [ ] Test email with org credentials
-- [ ] Test fallback when org credentials not set
+- [x] Test SMS with platform credentials
+- [x] Test SMS with org credentials
+- [x] Test email with platform credentials
+- [x] Test email with org credentials
+- [x] Test fallback when org credentials not set
 
 ### 10.5 Test Impersonation
-- [ ] Super admin can impersonate any user
-- [ ] Actions logged correctly
-- [ ] Banner shows during impersonation
-- [ ] Can end impersonation
+- [x] Super admin can impersonate any user
+- [x] Actions logged correctly
+- [x] Banner shows during impersonation
+- [x] Can end impersonation
 
 ### 10.6 Test Onboarding
-- [ ] New org sees onboarding
-- [ ] Can complete all steps
-- [ ] Can skip and return later
-- [ ] Completed orgs don't see onboarding
+- [x] New org sees onboarding
+- [x] Can complete all steps
+- [x] Can skip and return later
+- [x] Completed orgs don't see onboarding
 
 ### 10.7 Security Review
-- [ ] Verify RLS policies working
-- [ ] Verify org isolation (can't access other org's data)
-- [ ] Verify credentials encrypted at rest
-- [ ] Verify activity logging
+- [x] Verify RLS policies working
+- [x] Verify org isolation (can't access other org's data)
+- [x] Verify credentials encrypted at rest
+- [x] Verify activity logging
 
 ### ⛔ FINAL VERIFICATION
 ```
 Multi-tenant implementation complete:
-- [ ] Super admin portal functional
-- [ ] Can create and manage organizations
-- [ ] Org admins can manage their settings
-- [ ] Notification credentials work (platform + org override)
-- [ ] Branding applied throughout
-- [ ] Limits enforced correctly
-- [ ] Onboarding guides new orgs
-- [ ] Impersonation works for support
-- [ ] Security audit passed
+- [x] Super admin portal functional
+- [x] Can create and manage organizations
+- [x] Org admins can manage their settings
+- [x] Notification credentials work (platform + org override)
+- [x] Branding applied throughout
+- [x] Limits enforced correctly
+- [x] Onboarding guides new orgs
+- [x] Impersonation works for support
+- [x] Security audit passed
 ```
 
 ---

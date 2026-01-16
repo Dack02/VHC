@@ -16,7 +16,8 @@ export const QUEUE_NAMES = {
   NOTIFICATIONS: 'notifications',
   REMINDERS: 'reminders',
   EMAILS: 'emails',
-  SMS: 'sms'
+  SMS: 'sms',
+  DMS_IMPORT: 'dms-import'
 } as const
 
 // Create queues
@@ -69,6 +70,19 @@ export const smsQueue = new Queue(QUEUE_NAMES.SMS, {
     },
     removeOnComplete: 100,
     removeOnFail: 500
+  }
+})
+
+export const dmsImportQueue = new Queue(QUEUE_NAMES.DMS_IMPORT, {
+  connection: redis,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: {
+      type: 'exponential',
+      delay: 5000
+    },
+    removeOnComplete: 50,
+    removeOnFail: 100
   }
 })
 
@@ -137,6 +151,21 @@ export interface StaffNotificationJob {
   metadata?: Record<string, unknown>
 }
 
+export interface DmsImportJob {
+  type: 'dms_import'
+  organizationId: string
+  siteId?: string
+  date: string  // YYYY-MM-DD
+  importType: 'manual' | 'scheduled'
+  triggeredBy?: string  // user ID for manual imports
+}
+
+export interface DmsScheduledImportJob {
+  type: 'dms_scheduled_import'
+  organizationId: string
+  siteId?: string
+}
+
 export type NotificationJob =
   | SendEmailJob
   | SendSmsJob
@@ -144,6 +173,8 @@ export type NotificationJob =
   | ScheduleReminderJob
   | CustomerNotificationJob
   | StaffNotificationJob
+
+export type DmsJob = DmsImportJob | DmsScheduledImportJob
 
 // Helper functions to add jobs
 export async function queueEmail(job: SendEmailJob) {
@@ -189,6 +220,71 @@ export async function cancelReminders(healthCheckId: string) {
   }
 }
 
+// DMS Import Queue Functions
+export async function queueDmsImport(job: DmsImportJob) {
+  const jobId = `dms-import-${job.organizationId}-${job.date}`
+  return dmsImportQueue.add('import', job, { jobId })
+}
+
+export async function scheduleDmsImport(
+  organizationId: string,
+  siteId: string | undefined,
+  hour: number,  // 0-23
+  days: number[] // 0-6 (Sun-Sat)
+) {
+  // Calculate next run time
+  const now = new Date()
+  const nextRun = new Date()
+  nextRun.setHours(hour, 0, 0, 0)
+
+  // If we've already passed the hour today, schedule for tomorrow
+  if (nextRun <= now) {
+    nextRun.setDate(nextRun.getDate() + 1)
+  }
+
+  // Find next valid day
+  while (!days.includes(nextRun.getDay())) {
+    nextRun.setDate(nextRun.getDate() + 1)
+  }
+
+  const delay = nextRun.getTime() - now.getTime()
+
+  // Schedule the job
+  const jobId = `dms-scheduled-${organizationId}`
+  return dmsImportQueue.add(
+    'scheduled',
+    {
+      type: 'dms_scheduled_import',
+      organizationId,
+      siteId
+    } as DmsScheduledImportJob,
+    {
+      jobId,
+      delay,
+      repeat: {
+        pattern: `0 ${hour} * * ${days.join(',')}`, // Cron pattern
+        tz: 'Europe/London'
+      }
+    }
+  )
+}
+
+export async function cancelDmsSchedule(organizationId: string) {
+  const jobId = `dms-scheduled-${organizationId}`
+  const job = await dmsImportQueue.getJob(jobId)
+  if (job) {
+    await job.remove()
+  }
+
+  // Also remove any repeatable jobs
+  const repeatableJobs = await dmsImportQueue.getRepeatableJobs()
+  for (const repeatJob of repeatableJobs) {
+    if (repeatJob.id === jobId || repeatJob.name === jobId) {
+      await dmsImportQueue.removeRepeatableByKey(repeatJob.key)
+    }
+  }
+}
+
 // Check Redis connection
 export async function checkRedisConnection(): Promise<boolean> {
   try {
@@ -206,5 +302,6 @@ export async function closeQueues() {
   await reminderQueue.close()
   await emailQueue.close()
   await smsQueue.close()
+  await dmsImportQueue.close()
   await redis.quit()
 }

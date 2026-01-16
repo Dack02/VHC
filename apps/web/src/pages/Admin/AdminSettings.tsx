@@ -20,10 +20,15 @@ interface PlatformSettings {
     enableNotifications: boolean
   }
   credentials: {
-    sendgridApiKey: string
+    // Email - Resend
+    resendApiKey: string
+    resendFromEmail: string
+    resendFromName: string
+    // SMS - Twilio
     twilioAccountSid: string
     twilioAuthToken: string
     twilioFromNumber: string
+    // Other
     dvlaApiKey: string
   }
 }
@@ -322,19 +327,54 @@ export default function AdminSettings() {
                 </p>
               </div>
 
+              {/* Resend Email Settings */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">SendGrid API Key</label>
-                <input
-                  type="password"
-                  value={settings.credentials.sendgridApiKey}
-                  onChange={(e) => updateSettings('credentials', 'sendgridApiKey', e.target.value)}
-                  placeholder="••••••••••••••••"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+                <h3 className="text-sm font-medium text-gray-900 mb-3">Email Settings (Resend)</h3>
+                <p className="text-xs text-gray-500 mb-3">
+                  Platform default email credentials for organizations that don't have their own.
+                </p>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Resend API Key</label>
+                    <input
+                      type="password"
+                      value={settings.credentials.resendApiKey}
+                      onChange={(e) => updateSettings('credentials', 'resendApiKey', e.target.value)}
+                      placeholder="re_••••••••••••••••"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">From Email</label>
+                      <input
+                        type="email"
+                        value={settings.credentials.resendFromEmail}
+                        onChange={(e) => updateSettings('credentials', 'resendFromEmail', e.target.value)}
+                        placeholder="noreply@vhc-platform.com"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">From Name</label>
+                      <input
+                        type="text"
+                        value={settings.credentials.resendFromName}
+                        onChange={(e) => updateSettings('credentials', 'resendFromName', e.target.value)}
+                        placeholder="VHC Platform"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
 
+              {/* Twilio SMS Settings */}
               <div className="border-t border-gray-200 pt-4">
-                <h3 className="text-sm font-medium text-gray-900 mb-3">Twilio Settings</h3>
+                <h3 className="text-sm font-medium text-gray-900 mb-3">SMS Settings (Twilio)</h3>
+                <p className="text-xs text-gray-500 mb-3">
+                  Platform default SMS credentials for organizations that don't have their own.
+                </p>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Account SID</label>

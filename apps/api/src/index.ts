@@ -2,7 +2,11 @@ import 'dotenv/config'
 import { Hono } from 'hono'
 import { serve } from '@hono/node-server'
 import { cors } from 'hono/cors'
-import { logger } from 'hono/logger'
+
+// Custom middleware
+import { requestContext, errorHandler, notFoundHandler } from './middleware/error-handler.js'
+import { RateLimiters } from './middleware/rate-limit.js'
+import { logger } from './lib/logger.js'
 
 // Routes
 import auth from './routes/auth.js'
@@ -18,6 +22,7 @@ import results from './routes/results.js'
 import repairItems from './routes/repair-items.js'
 import media from './routes/media.js'
 import dms from './routes/dms.js'
+import dmsSettings from './routes/dms-settings.js'
 import tyres from './routes/tyres.js'
 import publicRoutes from './routes/public.js'
 import notifications from './routes/notifications.js'
@@ -27,6 +32,8 @@ import adminStats from './routes/admin/stats.js'
 import orgNotificationSettings from './routes/organization-notification-settings.js'
 import orgAdmin from './routes/org-admin.js'
 import onboarding from './routes/onboarding.js'
+import dashboard from './routes/dashboard.js'
+import reports from './routes/reports.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
@@ -34,21 +41,32 @@ import { checkRedisConnection } from './services/queue.js'
 
 const app = new Hono()
 
+// Get allowed origins from environment or use defaults
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',')
+  : [
+      'http://localhost:5181',
+      'http://localhost:5182',
+      'http://localhost:5183',
+      'http://localhost:5184',
+      'http://127.0.0.1:5181',
+      'http://127.0.0.1:5182',
+      'http://127.0.0.1:5183',
+      'http://127.0.0.1:5184'
+    ]
+
 // Middleware
-app.use('*', logger())
+app.use('*', requestContext)  // Add request ID and timing
+app.use('*', errorHandler)    // Global error handler
 app.use('*', cors({
-  origin: [
-    'http://localhost:5181',
-    'http://localhost:5182',
-    'http://localhost:5183',
-    'http://localhost:5184',
-    'http://127.0.0.1:5181',
-    'http://127.0.0.1:5182',
-    'http://127.0.0.1:5183',
-    'http://127.0.0.1:5184'
-  ],
+  origin: allowedOrigins,
   credentials: true
 }))
+
+// Rate limiting for API routes
+app.use('/api/v1/*', RateLimiters.standard())
+app.use('/api/v1/auth/*', RateLimiters.auth())
+app.use('/api/public/*', RateLimiters.public())
 
 // Health endpoint
 app.get('/health', (c) => {
@@ -82,6 +100,7 @@ app.route('/api/v1', repairItems)
 app.route('/api/v1', media)
 app.route('/api/v1', tyres)
 app.route('/api/v1/dms', dms)
+app.route('/api/v1/dms-settings', dmsSettings)
 app.route('/api/v1/notifications', notifications)
 
 // Admin routes (Super Admin only)
@@ -98,8 +117,17 @@ app.route('/api/v1/organizations', orgAdmin)
 // Onboarding routes (for new organizations)
 app.route('/api/v1/onboarding', onboarding)
 
+// Dashboard routes
+app.route('/api/v1/dashboard', dashboard)
+
+// Reporting routes
+app.route('/api/v1/reports', reports)
+
 // Public routes (no auth required)
 app.route('/api/public', publicRoutes)
+
+// 404 handler for unmatched routes
+app.notFound(notFoundHandler)
 
 const port = process.env.PORT ? parseInt(process.env.PORT) : 5180
 
@@ -115,12 +143,12 @@ initializeWebSocket(server as unknown as import('http').Server)
 // Check Redis connection (optional, for queue support)
 checkRedisConnection().then((connected) => {
   if (connected) {
-    console.log('Redis connected - queue workers available')
+    logger.info('Redis connected - queue workers available')
   } else {
-    console.log('Redis not available - queue features disabled')
+    logger.info('Redis not available - queue features disabled')
   }
 })
 
-console.log(`Server is running on http://localhost:${port}`)
+logger.info(`Server started`, { port, environment: process.env.NODE_ENV || 'development' })
 
 export default app

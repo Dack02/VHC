@@ -7,12 +7,13 @@ const dashboard = new Hono()
 dashboard.use('*', authMiddleware)
 
 // Status groups for board columns
+// Note: 'awaiting_arrival' is handled separately in Dashboard (not part of main kanban flow)
 const statusGroups = {
   technician: ['created', 'assigned', 'in_progress', 'paused'],
   tech_done: ['tech_completed', 'awaiting_review', 'awaiting_pricing', 'awaiting_parts'],
   advisor: ['ready_to_send'],
   customer: ['sent', 'delivered', 'opened', 'partial_response'],
-  actioned: ['authorized', 'declined', 'completed', 'expired', 'cancelled']
+  actioned: ['authorized', 'declined', 'completed', 'expired', 'cancelled', 'no_show']
 }
 
 // Valid transitions for drag-drop
@@ -201,13 +202,17 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         green_count,
         amber_count,
         red_count,
+        customer_waiting,
+        loan_car_required,
+        booked_repairs,
         vehicle:vehicles(id, registration, make, model),
         customer:customers(id, first_name, last_name),
         technician:users!health_checks_technician_id_fkey(id, first_name, last_name),
         advisor:users!health_checks_advisor_id_fkey(id, first_name, last_name)
       `)
       .eq('organization_id', auth.orgId)
-      .not('status', 'in', '(completed,cancelled,expired)')
+      // Exclude terminal states AND DMS pre-arrival states (awaiting_arrival has its own UI section)
+      .not('status', 'in', '(completed,cancelled,expired,awaiting_arrival,no_show)')
       .gte('created_at', startDate)
       .order('created_at', { ascending: false })
 

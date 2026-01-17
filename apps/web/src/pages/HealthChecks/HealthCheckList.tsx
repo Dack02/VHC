@@ -28,6 +28,7 @@ type ViewMode = 'kanban' | 'list'
 const VIEW_PREFERENCE_KEY = 'vhc_health_checks_view'
 
 const statusLabels: Record<string, string> = {
+  awaiting_arrival: 'Awaiting Arrival',
   created: 'Created',
   assigned: 'Assigned',
   in_progress: 'In Progress',
@@ -43,10 +44,12 @@ const statusLabels: Record<string, string> = {
   declined: 'Declined',
   expired: 'Expired',
   completed: 'Completed',
-  cancelled: 'Cancelled'
+  cancelled: 'Cancelled',
+  no_show: 'No Show'
 }
 
 const statusColors: Record<string, string> = {
+  awaiting_arrival: 'bg-blue-100 text-blue-700',
   created: 'bg-gray-100 text-gray-700',
   assigned: 'bg-blue-100 text-blue-700',
   in_progress: 'bg-yellow-100 text-yellow-700',
@@ -62,7 +65,8 @@ const statusColors: Record<string, string> = {
   declined: 'bg-red-100 text-red-700',
   expired: 'bg-gray-100 text-gray-700',
   completed: 'bg-green-100 text-green-700',
-  cancelled: 'bg-gray-100 text-gray-700'
+  cancelled: 'bg-gray-100 text-gray-700',
+  no_show: 'bg-red-100 text-red-700'
 }
 
 // Kanban Board Types
@@ -78,6 +82,9 @@ interface HealthCheckCard {
   amber_count: number
   red_count: number
   total_amount: number
+  customer_waiting?: boolean
+  loan_car_required?: boolean
+  booked_repairs?: Array<{ code?: string; description?: string; notes?: string }>
   vehicle?: { id: string; registration: string; make: string; model: string }
   customer?: { id: string; first_name: string; last_name: string }
   technician?: { id: string; first_name: string; last_name: string }
@@ -150,14 +157,35 @@ function CardContent({ card }: { card: HealthCheckCard }) {
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <span className="font-bold text-gray-900">{card.vehicle?.registration}</span>
-        {(card.isOverdue || card.isExpiringSoon) && (
-          <span className={`px-1.5 py-0.5 text-xs font-medium ${
-            card.isOverdue ? 'bg-rag-red text-white' : 'bg-rag-amber text-white'
-          }`}>
-            {card.isOverdue ? 'OVERDUE' : 'EXPIRING'}
-          </span>
-        )}
+        <div className="flex items-center gap-1">
+          {card.customer_waiting && (
+            <span className="px-1.5 py-0.5 text-xs font-bold text-white bg-red-600 animate-pulse">
+              WAITING
+            </span>
+          )}
+          {card.loan_car_required && (
+            <span className="px-1.5 py-0.5 text-xs font-medium text-blue-700 bg-blue-100">
+              LOAN
+            </span>
+          )}
+          {(card.isOverdue || card.isExpiringSoon) && (
+            <span className={`px-1.5 py-0.5 text-xs font-medium ${
+              card.isOverdue ? 'bg-rag-red text-white' : 'bg-rag-amber text-white'
+            }`}>
+              {card.isOverdue ? 'OVERDUE' : 'EXPIRING'}
+            </span>
+          )}
+        </div>
       </div>
+
+      {/* Pre-booked work indicator */}
+      {card.booked_repairs && card.booked_repairs.length > 0 && (
+        <div className="mb-2">
+          <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5">
+            {card.booked_repairs.length} pre-booked
+          </span>
+        </div>
+      )}
 
       {/* Customer */}
       <div className="text-sm text-gray-600 mb-2">
@@ -246,7 +274,7 @@ function BoardColumn({ column, cards }: { column: Column; cards: HealthCheckCard
           </span>
         </div>
         <div className="text-xs mt-1 opacity-75">
-          {column.statuses.join(', ')}
+          {column.statuses.map(s => statusLabels[s] || s.replace('_', ' ')).join(', ')}
         </div>
       </div>
 
@@ -694,6 +722,7 @@ export default function HealthCheckList() {
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Status</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">RAG</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Technician</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Days on Site</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Created</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700"></th>
                   </tr>
@@ -739,6 +768,23 @@ export default function HealthCheckList() {
                         {hc.technician ? (
                           `${hc.technician.first_name} ${hc.technician.last_name}`
                         ) : '-'}
+                      </td>
+                      <td className="px-4 py-3">
+                        {hc.arrived_at ? (() => {
+                          const arrived = new Date(hc.arrived_at)
+                          const now = new Date()
+                          const diffDays = Math.floor((now.getTime() - arrived.getTime()) / (1000 * 60 * 60 * 24))
+                          const colorClass = diffDays > 2 ? 'text-red-600 font-bold' :
+                                            diffDays > 1 ? 'text-amber-600 font-medium' :
+                                            'text-gray-600'
+                          return (
+                            <span className={colorClass}>
+                              {diffDays} {diffDays === 1 ? 'day' : 'days'}
+                            </span>
+                          )
+                        })() : (
+                          <span className="text-gray-400">-</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-gray-500 text-sm">
                         {new Date(hc.created_at).toLocaleDateString()}

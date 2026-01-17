@@ -70,12 +70,30 @@ interface TechnicianWorkload {
   isClockedIn: boolean
 }
 
+interface AwaitingArrivalItem {
+  id: string
+  registration: string
+  make: string
+  model: string
+  customerName: string
+  promiseTime: string | null
+  dueDate: string | null
+  importedAt: string
+  // Phase 1 Quick Wins
+  customerWaiting: boolean
+  loanCarRequired: boolean
+  bookedRepairs: Array<{ code?: string; description?: string; notes?: string }>
+  jobsheetNumber: string | null
+}
+
 export default function Dashboard() {
   const { user, session } = useAuth()
   const { on, off, isConnected } = useSocket()
   const [data, setData] = useState<DashboardData | null>(null)
   const [queues, setQueues] = useState<QueuesData | null>(null)
   const [technicians, setTechnicians] = useState<TechnicianWorkload[]>([])
+  const [awaitingArrival, setAwaitingArrival] = useState<AwaitingArrivalItem[]>([])
+  const [awaitingArrivalLoading, setAwaitingArrivalLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [liveUpdate, setLiveUpdate] = useState<string | null>(null)
@@ -171,6 +189,63 @@ export default function Dashboard() {
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(value)
+  }
+
+  // Fetch awaiting arrival health checks (from DMS imports)
+  const fetchAwaitingArrival = useCallback(async () => {
+    if (!token) return
+    try {
+      setAwaitingArrivalLoading(true)
+      const response = await api<{ healthChecks: AwaitingArrivalItem[] }>('/api/v1/dms-settings/unactioned?limit=50', { token })
+      setAwaitingArrival(response.healthChecks || [])
+    } catch (err) {
+      console.error('Failed to fetch awaiting arrival:', err)
+    } finally {
+      setAwaitingArrivalLoading(false)
+    }
+  }, [token])
+
+  // Initial fetch for awaiting arrival
+  useEffect(() => {
+    fetchAwaitingArrival()
+  }, [fetchAwaitingArrival])
+
+  // Mark a vehicle as arrived
+  const handleMarkArrived = async (healthCheckId: string) => {
+    if (!token) return
+    try {
+      await api(`/api/v1/health-checks/${healthCheckId}/mark-arrived`, {
+        method: 'POST',
+        token
+      })
+      // Refresh awaiting arrival list
+      fetchAwaitingArrival()
+      // Also refresh dashboard to update counts
+      fetchDashboard()
+      setLiveUpdate('Vehicle marked as arrived')
+      setTimeout(() => setLiveUpdate(null), 3000)
+    } catch (err) {
+      console.error('Failed to mark arrived:', err)
+      setError(err instanceof Error ? err.message : 'Failed to mark vehicle as arrived')
+    }
+  }
+
+  // Mark a vehicle as no-show
+  const handleMarkNoShow = async (healthCheckId: string) => {
+    if (!token) return
+    try {
+      await api(`/api/v1/health-checks/${healthCheckId}/mark-no-show`, {
+        method: 'POST',
+        token
+      })
+      // Refresh awaiting arrival list
+      fetchAwaitingArrival()
+      setLiveUpdate('Vehicle marked as no-show')
+      setTimeout(() => setLiveUpdate(null), 3000)
+    } catch (err) {
+      console.error('Failed to mark no-show:', err)
+      setError(err instanceof Error ? err.message : 'Failed to mark vehicle as no-show')
+    }
   }
 
   if (loading && !data) {
@@ -481,6 +556,101 @@ export default function Dashboard() {
           ))}
         </div>
       </div>
+
+      {/* Awaiting Arrival Section (DMS Imports) */}
+      {awaitingArrival.length > 0 && (
+        <div className="bg-white border border-gray-200 shadow-sm">
+          <div className="border-b border-gray-200 p-4 flex items-center justify-between bg-blue-50">
+            <div>
+              <h2 className="font-semibold text-primary">Awaiting Arrival</h2>
+              <p className="text-xs text-gray-500 mt-1">{awaitingArrival.length} vehicle{awaitingArrival.length !== 1 ? 's' : ''} waiting</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={fetchAwaitingArrival}
+                disabled={awaitingArrivalLoading}
+                className="p-2 text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+                title="Refresh"
+              >
+                <svg className={`w-4 h-4 ${awaitingArrivalLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+              <Link to="/health-checks?status=awaiting_arrival" className="text-sm text-primary hover:underline">
+                View All
+              </Link>
+            </div>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {awaitingArrival.map((item) => (
+              <div key={item.id} className={`p-3 flex items-center justify-between hover:bg-gray-50 ${item.customerWaiting ? 'bg-red-50' : ''}`}>
+                <Link to={`/health-checks/${item.id}`} className="flex-1 min-w-0">
+                  <div className="flex items-center gap-4">
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="font-mono font-semibold text-gray-900 bg-yellow-100 px-2 py-1">
+                        {item.registration}
+                      </div>
+                      {/* Customer Waiting Badge - Phase 1 Quick Wins */}
+                      {item.customerWaiting && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold text-white bg-red-600 animate-pulse">
+                          <span className="w-2 h-2 bg-white rounded-full"></span>
+                          WAITING
+                        </span>
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm text-gray-900 truncate flex items-center gap-2">
+                        {item.make} {item.model}
+                        {/* Loan Car Indicator - Phase 1 Quick Wins */}
+                        {item.loanCarRequired && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium text-blue-700 bg-blue-100" title="Loan car required">
+                            <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+                            </svg>
+                            LOAN
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-sm text-gray-500 truncate">
+                        {item.customerName}
+                      </div>
+                    </div>
+                    {/* Show due time */}
+                    {(item.dueDate || item.promiseTime) && (
+                      <div className="text-sm text-gray-500">
+                        Due: {new Date(item.dueDate || item.promiseTime!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    )}
+                    {/* Pre-booked work indicator - Phase 1 Quick Wins */}
+                    {item.bookedRepairs && item.bookedRepairs.length > 0 && (
+                      <div className="text-xs text-gray-400" title={item.bookedRepairs.map(r => r.description).join(', ')}>
+                        {item.bookedRepairs.length} pre-booked
+                      </div>
+                    )}
+                  </div>
+                </Link>
+                <div className="flex items-center gap-2 ml-4">
+                  <button
+                    onClick={() => handleMarkArrived(item.id)}
+                    className="px-3 py-1.5 bg-rag-green text-white text-sm font-medium hover:bg-rag-green/90"
+                    title="Mark vehicle as arrived"
+                  >
+                    Arrived
+                  </button>
+                  <button
+                    onClick={() => handleMarkNoShow(item.id)}
+                    className="px-3 py-1.5 bg-gray-500 text-white text-sm font-medium hover:bg-gray-600"
+                    title="Mark as no-show"
+                  >
+                    No Show
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

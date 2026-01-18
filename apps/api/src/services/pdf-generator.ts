@@ -66,6 +66,12 @@ interface HealthCheckPDFData {
   // Selected reasons by check result ID
   reasonsByCheckResult?: CheckResultReasonsMap
 
+  // New Repair Items (Phase 6+)
+  newRepairItems?: NewRepairItem[]
+  hasNewRepairItems?: boolean
+  vatRate?: number // Default 20%
+  showDetailedBreakdown?: boolean // Show labour/parts detail
+
   // Summary
   summary: {
     red_count: number
@@ -131,11 +137,58 @@ interface CheckResultReasonsMap {
   [checkResultId: string]: SelectedReasonData[]
 }
 
+// New Repair Items (Phase 6+)
+interface NewRepairOption {
+  id: string
+  name: string
+  description?: string | null
+  labourTotal: number
+  partsTotal: number
+  subtotal: number
+  vatAmount: number
+  totalIncVat: number
+  isRecommended: boolean
+}
+
+interface NewRepairItem {
+  id: string
+  name: string
+  description?: string | null
+  isGroup: boolean
+  labourTotal: number
+  partsTotal: number
+  subtotal: number
+  vatAmount: number
+  totalIncVat: number
+  customerApproved: boolean | null
+  customerApprovedAt?: string | null
+  customerDeclinedReason?: string | null
+  selectedOptionId?: string | null
+  options: NewRepairOption[]
+  linkedCheckResults: string[]
+  // Labour and parts details for optional breakdown
+  labourEntries?: Array<{
+    code: string
+    description: string
+    hours: number
+    rate: number
+    total: number
+    isVatExempt: boolean
+  }>
+  partsEntries?: Array<{
+    partNumber?: string
+    description: string
+    quantity: number
+    sellPrice: number
+    lineTotal: number
+  }>
+}
+
 /**
  * Generate HTML template for PDF
  */
 function generateHTML(data: HealthCheckPDFData): string {
-  const { vehicle, customer, technician, site, branding, results, repairItems, authorizations, summary, reasonsByCheckResult = {} } = data
+  const { vehicle, customer, technician, site, branding, results, repairItems, authorizations, summary, reasonsByCheckResult = {}, newRepairItems = [], hasNewRepairItems = false, vatRate = 20, showDetailedBreakdown = false } = data
 
   // Get branding colors with fallbacks
   const primaryColor = branding?.primaryColor || '#1a3a5c'
@@ -309,6 +362,204 @@ function generateHTML(data: HealthCheckPDFData): string {
         ${item.is_mot_failure ? '<td class="mot-cell">MOT</td>' : '<td class="mot-cell"></td>'}
         ${showPrice ? `<td class="price-cell">${formatCurrency(item.total_price)}</td>` : ''}
       </tr>
+    `
+  }
+
+  // Generate new repair item card HTML (Phase 6+)
+  const getNewRepairItemCard = (item: NewRepairItem): string => {
+    const hasOptions = item.options.length > 0
+    const selectedOption = hasOptions && item.selectedOptionId
+      ? item.options.find(o => o.id === item.selectedOptionId)
+      : null
+
+    // Get price info based on whether there's a selected option
+    const priceInfo = selectedOption || {
+      subtotal: item.subtotal,
+      vatAmount: item.vatAmount,
+      totalIncVat: item.totalIncVat
+    }
+
+    // Approval status badge
+    const getApprovalBadge = () => {
+      if (item.customerApproved === true) {
+        return '<span class="approval-status approved">✓ Approved</span>'
+      } else if (item.customerApproved === false) {
+        return '<span class="approval-status declined">✗ Declined</span>'
+      }
+      return '<span class="approval-status pending">Pending</span>'
+    }
+
+    // Options HTML
+    const optionsHtml = hasOptions ? `
+      <div class="repair-options">
+        ${item.options.map(opt => {
+          const isSelected = opt.id === item.selectedOptionId
+          const classes = ['repair-option']
+          if (isSelected) classes.push('selected')
+          if (opt.isRecommended) classes.push('recommended')
+          return `
+            <div class="${classes.join(' ')}">
+              <div>
+                <span class="repair-option-name">${opt.name}</span>
+                ${opt.isRecommended ? '<span class="recommended-badge">Recommended</span>' : ''}
+                ${isSelected ? '<span class="selected-badge">Selected</span>' : ''}
+                ${opt.description ? `<div style="font-size: 9px; color: #6b7280; margin-top: 2px;">${opt.description}</div>` : ''}
+              </div>
+              <div class="repair-option-price">
+                <div>${formatCurrency(opt.totalIncVat)}</div>
+                <div style="font-size: 9px; color: #6b7280;">Inc VAT</div>
+              </div>
+            </div>
+          `
+        }).join('')}
+      </div>
+    ` : ''
+
+    // Labour/parts breakdown HTML (optional)
+    const breakdownHtml = showDetailedBreakdown && (item.labourEntries?.length || item.partsEntries?.length) ? `
+      <div class="labour-parts-breakdown">
+        ${item.labourEntries && item.labourEntries.length > 0 ? `
+          <div style="margin-bottom: 8px;">
+            <strong>Labour</strong>
+            <table class="breakdown-table">
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Description</th>
+                  <th class="right">Hours</th>
+                  <th class="right">Rate</th>
+                  <th class="right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${item.labourEntries.map(l => `
+                  <tr>
+                    <td>${l.code}</td>
+                    <td>${l.description}${l.isVatExempt ? ' *' : ''}</td>
+                    <td class="right">${l.hours.toFixed(2)}</td>
+                    <td class="right">${formatCurrency(l.rate)}</td>
+                    <td class="right">${formatCurrency(l.total)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : ''}
+        ${item.partsEntries && item.partsEntries.length > 0 ? `
+          <div>
+            <strong>Parts</strong>
+            <table class="breakdown-table">
+              <thead>
+                <tr>
+                  <th>Part No.</th>
+                  <th>Description</th>
+                  <th class="right">Qty</th>
+                  <th class="right">Price</th>
+                  <th class="right">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${item.partsEntries.map(p => `
+                  <tr>
+                    <td>${p.partNumber || '-'}</td>
+                    <td>${p.description}</td>
+                    <td class="right">${p.quantity}</td>
+                    <td class="right">${formatCurrency(p.sellPrice)}</td>
+                    <td class="right">${formatCurrency(p.lineTotal)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        ` : ''}
+      </div>
+    ` : ''
+
+    return `
+      <div class="repair-item-card">
+        <div class="repair-item-header">
+          <div>
+            <div class="repair-item-name">${item.name}</div>
+            ${item.linkedCheckResults.length > 0 ? `
+              <div class="linked-items">
+                <strong>Related items:</strong> ${item.linkedCheckResults.join(', ')}
+              </div>
+            ` : ''}
+          </div>
+          <div style="text-align: right;">
+            ${getApprovalBadge()}
+            <div class="repair-item-price">${formatCurrency(priceInfo.totalIncVat)}</div>
+            <div class="repair-item-price-note">Inc VAT</div>
+          </div>
+        </div>
+        ${item.description ? `<div class="repair-item-description">${item.description}</div>` : ''}
+        ${optionsHtml}
+        ${!hasOptions ? `
+          <div style="font-size: 10px; color: #6b7280; margin-top: 4px;">
+            Labour: ${formatCurrency(item.labourTotal)} • Parts: ${formatCurrency(item.partsTotal)}
+          </div>
+        ` : ''}
+        ${breakdownHtml}
+      </div>
+    `
+  }
+
+  // Generate quote summary HTML for new repair items
+  const getQuoteSummaryHtml = (): string => {
+    if (!hasNewRepairItems || newRepairItems.length === 0) return ''
+
+    // Calculate totals based on selected options
+    let totalSubtotal = 0
+    let totalVat = 0
+    let totalIncVat = 0
+    let hasVatExempt = false
+
+    newRepairItems.forEach(item => {
+      // Only count approved items (or all if none have been actioned)
+      if (item.customerApproved === true || item.customerApproved === null) {
+        if (item.options.length > 0 && item.selectedOptionId) {
+          const opt = item.options.find(o => o.id === item.selectedOptionId)
+          if (opt) {
+            totalSubtotal += opt.subtotal
+            totalVat += opt.vatAmount
+            totalIncVat += opt.totalIncVat
+          }
+        } else if (item.options.length > 0) {
+          // Use recommended option or first if not selected
+          const opt = item.options.find(o => o.isRecommended) || item.options[0]
+          totalSubtotal += opt.subtotal
+          totalVat += opt.vatAmount
+          totalIncVat += opt.totalIncVat
+        } else {
+          totalSubtotal += item.subtotal
+          totalVat += item.vatAmount
+          totalIncVat += item.totalIncVat
+        }
+      }
+
+      // Check for VAT exempt labour
+      if (item.labourEntries?.some(l => l.isVatExempt)) {
+        hasVatExempt = true
+      }
+    })
+
+    return `
+      <div class="quote-summary-box">
+        <div class="quote-summary-title">Quote Summary</div>
+        <div class="quote-row">
+          <span class="quote-label">Subtotal (Ex VAT)</span>
+          <span class="quote-value">${formatCurrency(totalSubtotal)}</span>
+        </div>
+        <div class="quote-row">
+          <span class="quote-label">VAT @ ${vatRate}%</span>
+          <span class="quote-value">${formatCurrency(totalVat)}</span>
+        </div>
+        <div class="quote-row total">
+          <span class="quote-label">Total Inc VAT</span>
+          <span class="quote-value">${formatCurrency(totalIncVat)}</span>
+        </div>
+        ${hasVatExempt ? '<div class="vat-exempt-note">* MOT labour is VAT exempt</div>' : ''}
+      </div>
     `
   }
 
@@ -686,6 +937,230 @@ function generateHTML(data: HealthCheckPDFData): string {
       font-size: 10px;
     }
 
+    /* New Repair Items Section (Phase 6+) */
+    .section-header.purple {
+      background: #f5f3ff;
+      border: 1px solid #ddd6fe;
+      border-bottom: none;
+    }
+
+    .section-header.purple .section-title { color: #7c3aed; }
+
+    .repair-item-card {
+      padding: 12px;
+      border-bottom: 1px solid #f3f4f6;
+    }
+
+    .repair-item-card:last-child {
+      border-bottom: none;
+    }
+
+    .repair-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+
+    .repair-item-name {
+      font-weight: 600;
+      font-size: 12px;
+      color: #1f2937;
+    }
+
+    .repair-item-price {
+      font-weight: 600;
+      font-size: 14px;
+      text-align: right;
+    }
+
+    .repair-item-price-note {
+      font-size: 9px;
+      color: #6b7280;
+      font-weight: normal;
+    }
+
+    .repair-item-description {
+      font-size: 10px;
+      color: #4b5563;
+      margin-bottom: 8px;
+    }
+
+    .linked-items {
+      font-size: 10px;
+      color: #6b7280;
+      margin-bottom: 8px;
+    }
+
+    .linked-items strong {
+      color: #4b5563;
+    }
+
+    .repair-options {
+      margin-top: 8px;
+    }
+
+    .repair-option {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 4px;
+      margin-bottom: 4px;
+    }
+
+    .repair-option.selected {
+      background: #eff6ff;
+      border-color: #3b82f6;
+    }
+
+    .repair-option.recommended {
+      border-left: 3px solid #16a34a;
+    }
+
+    .repair-option-name {
+      font-weight: 500;
+      font-size: 11px;
+    }
+
+    .recommended-badge {
+      display: inline-block;
+      background: #dcfce7;
+      color: #16a34a;
+      font-size: 8px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 3px;
+      margin-left: 6px;
+      text-transform: uppercase;
+    }
+
+    .selected-badge {
+      display: inline-block;
+      background: #dbeafe;
+      color: #2563eb;
+      font-size: 8px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 3px;
+      margin-left: 6px;
+      text-transform: uppercase;
+    }
+
+    .repair-option-price {
+      font-weight: 500;
+      font-size: 11px;
+    }
+
+    .quote-summary-box {
+      margin-top: 16px;
+      padding: 12px;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+    }
+
+    .quote-summary-title {
+      font-weight: 600;
+      font-size: 12px;
+      color: #1f2937;
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .quote-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      font-size: 11px;
+    }
+
+    .quote-row.subtotal {
+      border-top: 1px solid #e5e7eb;
+      margin-top: 8px;
+      padding-top: 8px;
+    }
+
+    .quote-row.total {
+      border-top: 2px solid #1f2937;
+      margin-top: 4px;
+      padding-top: 8px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .quote-label {
+      color: #4b5563;
+    }
+
+    .quote-value {
+      font-weight: 500;
+      color: #1f2937;
+    }
+
+    .vat-exempt-note {
+      font-size: 9px;
+      color: #6b7280;
+      font-style: italic;
+      margin-top: 8px;
+    }
+
+    .approval-status {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 500;
+    }
+
+    .approval-status.approved {
+      background: #dcfce7;
+      color: #16a34a;
+    }
+
+    .approval-status.declined {
+      background: #fee2e2;
+      color: #dc2626;
+    }
+
+    .approval-status.pending {
+      background: #fef9c3;
+      color: #ca8a04;
+    }
+
+    .labour-parts-breakdown {
+      margin-top: 12px;
+      font-size: 10px;
+    }
+
+    .breakdown-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 4px;
+    }
+
+    .breakdown-table th {
+      text-align: left;
+      padding: 4px 6px;
+      background: #f3f4f6;
+      font-weight: 500;
+      font-size: 9px;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+
+    .breakdown-table td {
+      padding: 4px 6px;
+      border-bottom: 1px solid #f3f4f6;
+    }
+
+    .breakdown-table .right {
+      text-align: right;
+    }
+
     .green-list {
       padding: 12px;
       columns: 2;
@@ -912,6 +1387,20 @@ function generateHTML(data: HealthCheckPDFData): string {
     </div>
   ` : ''}
 
+  <!-- Recommended Work (New Repair Items - Phase 6+) -->
+  ${hasNewRepairItems && newRepairItems.length > 0 ? `
+    <div class="section">
+      <div class="section-header purple">
+        <span class="section-title">Recommended Work</span>
+        <span class="section-stats">${newRepairItems.length} item${newRepairItems.length !== 1 ? 's' : ''}</span>
+      </div>
+      <div class="section-content">
+        ${newRepairItems.map(item => getNewRepairItemCard(item)).join('')}
+        ${getQuoteSummaryHtml()}
+      </div>
+    </div>
+  ` : ''}
+
   <!-- Items OK (Green) -->
   ${results.filter(r => r.rag_status === 'green').length > 0 ? `
     <div class="section">
@@ -1133,4 +1622,350 @@ export async function generateHealthCheckPDF(data: HealthCheckPDFData): Promise<
   }
 }
 
-export type { HealthCheckPDFData }
+// Customer Approval Confirmation PDF Types
+interface ApprovalConfirmationPDFData {
+  healthCheckId: string
+  vehicleReg: string
+  vehicleMakeModel: string
+  customerName: string
+  customerEmail?: string
+  approvedAt: string
+  approvedItems: Array<{
+    name: string
+    description?: string | null
+    selectedOption?: string | null
+    totalIncVat: number
+  }>
+  declinedItems: Array<{
+    name: string
+    reason?: string | null
+  }>
+  totalApproved: number
+  totalDeclined: number
+  branding?: OrganizationBranding
+  siteName?: string
+  sitePhone?: string
+}
+
+/**
+ * Generate HTML for customer approval confirmation PDF
+ */
+function generateApprovalConfirmationHTML(data: ApprovalConfirmationPDFData): string {
+  const primaryColor = data.branding?.primaryColor || '#3B82F6'
+  const organizationName = data.branding?.organizationName || data.siteName || 'Vehicle Health Check'
+  const logoUrl = data.branding?.logoUrl
+
+  const formatCurrency = (amount: number) => `£${amount.toFixed(2)}`
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  }
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #1f2937;
+      background: #ffffff;
+      padding: 20mm;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 2px solid ${primaryColor};
+    }
+
+    .logo {
+      max-height: 48px;
+      max-width: 180px;
+    }
+
+    .title-section {
+      text-align: right;
+    }
+
+    .title {
+      font-size: 20px;
+      font-weight: 700;
+      color: ${primaryColor};
+      margin-bottom: 4px;
+    }
+
+    .subtitle {
+      font-size: 12px;
+      color: #6b7280;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    .info-box {
+      background: #f9fafb;
+      border-radius: 6px;
+      padding: 16px;
+    }
+
+    .info-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      color: #6b7280;
+      margin-bottom: 4px;
+    }
+
+    .info-value {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1f2937;
+    }
+
+    .section {
+      margin-bottom: 20px;
+    }
+
+    .section-header {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1f2937;
+      padding: 10px 12px;
+      border-radius: 4px;
+      margin-bottom: 12px;
+    }
+
+    .section-header.approved {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .section-header.declined {
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
+    .item-list {
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .item {
+      padding: 12px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .item:last-child {
+      border-bottom: none;
+    }
+
+    .item-name {
+      font-weight: 600;
+      color: #1f2937;
+      margin-bottom: 2px;
+    }
+
+    .item-option {
+      font-size: 10px;
+      color: #6b7280;
+    }
+
+    .item-price {
+      font-weight: 600;
+      color: ${primaryColor};
+      text-align: right;
+    }
+
+    .item-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .item-reason {
+      font-size: 10px;
+      color: #dc2626;
+      margin-top: 4px;
+    }
+
+    .total-box {
+      background: ${primaryColor};
+      color: white;
+      padding: 16px;
+      border-radius: 6px;
+      margin-top: 20px;
+    }
+
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .total-label {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .total-value {
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .confirmation-text {
+      margin-top: 24px;
+      padding: 16px;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #166534;
+    }
+
+    .footer {
+      margin-top: 32px;
+      padding-top: 16px;
+      border-top: 1px solid #e5e7eb;
+      text-align: center;
+      font-size: 10px;
+      color: #9ca3af;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      ${logoUrl ? `<img src="${logoUrl}" alt="${organizationName}" class="logo" />` : `<div style="font-size: 18px; font-weight: bold; color: ${primaryColor};">${organizationName}</div>`}
+    </div>
+    <div class="title-section">
+      <div class="title">Approval Confirmation</div>
+      <div class="subtitle">Ref: ${data.healthCheckId.slice(0, 8).toUpperCase()}</div>
+    </div>
+  </div>
+
+  <div class="info-grid">
+    <div class="info-box">
+      <div class="info-label">Vehicle</div>
+      <div class="info-value">${data.vehicleReg}</div>
+      <div style="font-size: 11px; color: #6b7280; margin-top: 2px;">${data.vehicleMakeModel}</div>
+    </div>
+    <div class="info-box">
+      <div class="info-label">Customer</div>
+      <div class="info-value">${data.customerName}</div>
+      ${data.customerEmail ? `<div style="font-size: 11px; color: #6b7280; margin-top: 2px;">${data.customerEmail}</div>` : ''}
+    </div>
+  </div>
+
+  ${data.approvedItems.length > 0 ? `
+  <div class="section">
+    <div class="section-header approved">
+      ✓ Approved Work (${data.approvedItems.length} item${data.approvedItems.length > 1 ? 's' : ''})
+    </div>
+    <div class="item-list">
+      ${data.approvedItems.map(item => `
+        <div class="item">
+          <div class="item-row">
+            <div>
+              <div class="item-name">${item.name}</div>
+              ${item.selectedOption ? `<div class="item-option">Option: ${item.selectedOption}</div>` : ''}
+              ${item.description ? `<div class="item-option">${item.description}</div>` : ''}
+            </div>
+            <div class="item-price">${formatCurrency(item.totalIncVat)}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="total-box">
+      <div class="total-row">
+        <div class="total-label">Total Approved (Inc VAT)</div>
+        <div class="total-value">${formatCurrency(data.totalApproved)}</div>
+      </div>
+    </div>
+  </div>
+  ` : ''}
+
+  ${data.declinedItems.length > 0 ? `
+  <div class="section">
+    <div class="section-header declined">
+      ✗ Declined Items (${data.declinedItems.length})
+    </div>
+    <div class="item-list">
+      ${data.declinedItems.map(item => `
+        <div class="item">
+          <div class="item-name">${item.name}</div>
+          ${item.reason ? `<div class="item-reason">Reason: ${item.reason}</div>` : ''}
+        </div>
+      `).join('')}
+    </div>
+  </div>
+  ` : ''}
+
+  <div class="confirmation-text">
+    <strong>Confirmation:</strong> This document confirms that ${data.customerName} has reviewed and responded to the vehicle health check for ${data.vehicleReg} on ${formatDate(data.approvedAt)}.
+    ${data.approvedItems.length > 0 ? `The approved work totaling ${formatCurrency(data.totalApproved)} has been authorized for completion.` : ''}
+  </div>
+
+  <div class="footer">
+    ${organizationName}${data.sitePhone ? ` • ${data.sitePhone}` : ''} • Generated ${new Date().toLocaleDateString('en-GB')}
+  </div>
+</body>
+</html>
+  `
+}
+
+/**
+ * Generate customer approval confirmation PDF
+ */
+export async function generateApprovalConfirmationPDF(data: ApprovalConfirmationPDFData): Promise<Buffer> {
+  const html = generateApprovalConfirmationHTML(data)
+
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  })
+
+  try {
+    const page = await browser.newPage()
+    await page.setContent(html, { waitUntil: 'networkidle0' })
+
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: {
+        top: '10mm',
+        right: '10mm',
+        bottom: '10mm',
+        left: '10mm'
+      }
+    })
+
+    return Buffer.from(pdfBuffer)
+  } finally {
+    await browser.close()
+  }
+}
+
+export type { HealthCheckPDFData, ApprovalConfirmationPDFData }

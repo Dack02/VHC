@@ -350,6 +350,10 @@ export interface RepairItem {
   work_completed_by_user?: { id: string; first_name: string; last_name: string } | null
   sort_order: number
   created_at: string
+  // Group/parent-child fields
+  is_group?: boolean
+  parent_repair_item_id?: string | null
+  children?: RepairItem[]
 }
 
 export interface StatusHistoryEntry {
@@ -393,4 +397,161 @@ export interface FullHealthCheckResponse {
   repair_items?: RepairItem[]
   authorizations?: Authorization[]
   summary?: HealthCheckSummary
+}
+
+// ============================================================================
+// REPAIR GROUPS & PRICING TYPES
+// ============================================================================
+
+export interface LabourCode {
+  id: string
+  code: string
+  description: string
+  hourlyRate: number
+  isVatExempt: boolean
+  isActive: boolean
+  isDefault: boolean
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Supplier {
+  id: string
+  name: string
+  code: string | null
+  accountNumber: string | null
+  contactName: string | null
+  contactEmail: string | null
+  contactPhone: string | null
+  address: string | null
+  notes: string | null
+  isActive: boolean
+  isQuickAdd: boolean
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface RepairLabour {
+  id: string
+  labourCodeId: string
+  labourCode?: {
+    id: string
+    code: string
+    description: string
+  }
+  hours: number
+  rate: number
+  discountPercent: number
+  total: number
+  isVatExempt: boolean
+  notes: string | null
+  createdAt?: string
+}
+
+export interface RepairPart {
+  id: string
+  partNumber: string | null
+  description: string
+  quantity: number
+  supplierId: string | null
+  supplierName: string | null
+  costPrice: number
+  sellPrice: number
+  lineTotal: number
+  marginPercent: number | null
+  markupPercent: number | null
+  notes: string | null
+  createdAt?: string
+}
+
+export interface RepairOption {
+  id: string
+  name: string
+  description: string | null
+  labourTotal: number
+  partsTotal: number
+  subtotal: number
+  vatAmount: number
+  totalIncVat: number
+  isRecommended: boolean
+  sortOrder: number
+  labour?: RepairLabour[]
+  parts?: RepairPart[]
+}
+
+// Child item interface for grouped items
+export interface RepairItemChild {
+  id: string
+  healthCheckId: string
+  name: string
+  description: string | null
+  isGroup: boolean
+  parentRepairItemId: string | null
+  labourStatus: 'pending' | 'in_progress' | 'complete'
+  noLabourRequired: boolean
+  labour?: RepairLabour[]
+  checkResults?: Array<{
+    id: string
+    ragStatus: string
+    notes: string | null
+    templateItem?: { id: string; name: string }
+  }>
+}
+
+export interface NewRepairItem {
+  id: string
+  healthCheckId: string
+  name: string
+  description: string | null
+  isGroup: boolean
+  parentRepairItemId: string | null
+  labourTotal: number
+  partsTotal: number
+  subtotal: number
+  vatAmount: number
+  totalIncVat: number
+  priceOverride: number | null
+  priceOverrideReason: string | null
+  labourStatus: 'pending' | 'in_progress' | 'complete'
+  partsStatus: 'pending' | 'in_progress' | 'complete'
+  quoteStatus: 'pending' | 'ready'
+  customerApproved: boolean | null
+  customerApprovedAt: string | null
+  customerDeclinedReason: string | null
+  selectedOptionId: string | null
+  createdBy: string | null
+  createdAt: string
+  updatedAt: string
+  labourCompletedBy: string | null
+  labourCompletedAt: string | null
+  partsCompletedBy: string | null
+  partsCompletedAt: string | null
+  noLabourRequired: boolean
+  noLabourRequiredBy: string | null
+  noLabourRequiredAt: string | null
+  checkResults?: Array<{
+    id: string
+    ragStatus: string
+    notes: string | null
+    templateItem?: { id: string; name: string }
+  }>
+  options?: RepairOption[]
+  labour?: RepairLabour[]
+  parts?: RepairPart[]
+  children?: RepairItemChild[]
+}
+
+export interface PricingSettings {
+  defaultMarginPercent: number
+  vatRate: number
+}
+
+export interface PricingCalculation {
+  costPrice: number
+  sellPrice: number
+  marginPercent: number
+  markupPercent: number
+  profit: number
 }

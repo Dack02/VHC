@@ -39,6 +39,9 @@ import onboarding from './routes/onboarding.js'
 import dashboard from './routes/dashboard.js'
 import reports from './routes/reports.js'
 import reasons from './routes/reasons.js'
+import labourCodes from './routes/labour-codes.js'
+import suppliers from './routes/suppliers.js'
+import pricing from './routes/pricing.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
@@ -144,6 +147,15 @@ app.route('/api/v1/reports', reports)
 
 // Reasons routes (VHC reasons system)
 app.route('/api/v1', reasons)
+
+// Labour codes routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/labour-codes', labourCodes)
+
+// Suppliers routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/suppliers', suppliers)
+
+// Pricing calculator routes
+app.route('/api/v1/pricing', pricing)
 
 // Public routes (no auth required)
 app.route('/api/public', publicRoutes)

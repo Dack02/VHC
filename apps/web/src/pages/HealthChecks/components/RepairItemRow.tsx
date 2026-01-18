@@ -272,7 +272,14 @@ export function RepairItemRow({
 
           {/* Item name */}
           <div className="flex-1 min-w-0">
-            <div className="font-medium text-gray-900 truncate">{item.title}</div>
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-gray-900 truncate">{item.title}</span>
+              {item.is_group && (
+                <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700 rounded-full">
+                  GROUP{item.children && item.children.length > 0 && ` (${item.children.length})`}
+                </span>
+              )}
+            </div>
             {item.description && !expanded && (
               <div className="text-sm text-gray-500 truncate">{item.description}</div>
             )}
@@ -482,7 +489,14 @@ export function RepairItemRow({
             </button>
 
             <div className="flex-1 min-w-0">
-              <div className="font-medium text-gray-900">{item.title}</div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-gray-900">{item.title}</span>
+                {item.is_group && (
+                  <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700 rounded-full">
+                    GROUP{item.children && item.children.length > 0 && ` (${item.children.length})`}
+                  </span>
+                )}
+              </div>
               {item.description && !expanded && (
                 <div className="text-sm text-gray-500 mt-0.5">{item.description}</div>
               )}
@@ -679,6 +693,28 @@ export function RepairItemRow({
       {/* Expanded section */}
       {expanded && (
         <div className="px-4 py-3 bg-gray-50 border-t border-gray-200">
+          {/* Grouped items (for groups) */}
+          {item.is_group && item.children && item.children.length > 0 && (
+            <div className="mb-3">
+              <div className="text-xs font-medium text-gray-500 uppercase mb-2">Grouped Items</div>
+              <div className="bg-white rounded-lg border border-gray-200 divide-y divide-gray-100">
+                {item.children.map((child) => (
+                  <div key={child.id} className="px-3 py-2 flex items-center gap-2">
+                    <span
+                      className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                        child.rag_status === 'red' ? 'bg-red-500' : 'bg-amber-500'
+                      }`}
+                    />
+                    <span className="text-sm text-gray-700 flex-1">{child.title}</span>
+                    {child.is_mot_failure && (
+                      <span className="text-xs text-red-600 font-medium">MOT</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Description */}
           {item.description && (
             <div className="mb-3">

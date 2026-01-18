@@ -31,6 +31,9 @@ import ReasonSubmissions from './pages/Settings/ReasonSubmissions'
 import ReasonAnalytics from './pages/Settings/ReasonAnalytics'
 import AIUsage from './pages/Settings/AIUsage'
 import AIUsageHistory from './pages/Settings/AIUsageHistory'
+import LabourCodes from './pages/Settings/LabourCodes'
+import Suppliers from './pages/Settings/Suppliers'
+import PricingSettings from './pages/Settings/PricingSettings'
 import CustomerPortal from './pages/CustomerPortal/CustomerPortal'
 import AdminLogin from './pages/Admin/AdminLogin'
 import AdminDashboard from './pages/Admin/AdminDashboard'
@@ -114,6 +117,9 @@ function App() {
                         <Route path="/settings/reason-analytics" element={<ReasonAnalytics />} />
                         <Route path="/settings/ai-usage" element={<AIUsage />} />
                         <Route path="/settings/ai-usage/history" element={<AIUsageHistory />} />
+                        <Route path="/settings/labour-codes" element={<LabourCodes />} />
+                        <Route path="/settings/suppliers" element={<Suppliers />} />
+                        <Route path="/settings/pricing" element={<PricingSettings />} />
                       </Route>
                     </Route>
 

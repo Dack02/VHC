@@ -122,9 +122,18 @@ export async function sendHealthCheckReadySms(
   vehicleReg: string,
   publicUrl: string,
   dealershipName: string,
-  organizationId?: string
+  organizationId?: string,
+  repairItemsCount?: number,
+  quoteTotalIncVat?: number
 ): Promise<SmsResult> {
-  const message = `Hi ${customerName}, your vehicle health check for ${vehicleReg} is ready. Please review and authorize any work: ${publicUrl} - ${dealershipName}`
+  // Build message with optional repair items info
+  let message = `Hi ${customerName}, your vehicle health check for ${vehicleReg} is ready.`
+
+  if (repairItemsCount && repairItemsCount > 0 && quoteTotalIncVat !== undefined) {
+    message += ` ${repairItemsCount} item${repairItemsCount > 1 ? 's' : ''} recommended (£${quoteTotalIncVat.toFixed(2)} inc VAT).`
+  }
+
+  message += ` Review & authorize: ${publicUrl} - ${dealershipName}`
 
   return sendSms(to, message, organizationId)
 }
@@ -159,9 +168,46 @@ export async function sendAuthorizationConfirmationSms(
   vehicleReg: string,
   authorizedTotal: number,
   dealershipName: string,
+  organizationId?: string,
+  approvedCount?: number
+): Promise<SmsResult> {
+  let message = `Thank you ${customerName}!`
+
+  if (approvedCount && approvedCount > 0) {
+    message += ` You've authorized ${approvedCount} item${approvedCount > 1 ? 's' : ''} (£${authorizedTotal.toFixed(2)}) on ${vehicleReg}.`
+  } else if (authorizedTotal > 0) {
+    message += ` You've authorized £${authorizedTotal.toFixed(2)} of work on ${vehicleReg}.`
+  } else {
+    message += ` Your response for ${vehicleReg} has been recorded.`
+  }
+
+  message += ` ${dealershipName} will be in touch shortly.`
+
+  return sendSms(to, message, organizationId)
+}
+
+/**
+ * Send notification to advisor when customer responds (internal SMS)
+ */
+export async function sendCustomerResponseNotificationSms(
+  to: string,
+  advisorName: string,
+  customerName: string,
+  vehicleReg: string,
+  approvedCount: number,
+  declinedCount: number,
+  totalApproved: number,
   organizationId?: string
 ): Promise<SmsResult> {
-  const message = `Thank you ${customerName}! You've authorized £${authorizedTotal.toFixed(2)} of work on ${vehicleReg}. ${dealershipName} will be in touch shortly.`
+  let message = `${advisorName}: ${customerName} responded for ${vehicleReg}. `
+
+  if (approvedCount > 0 && declinedCount > 0) {
+    message += `${approvedCount} approved (£${totalApproved.toFixed(2)}), ${declinedCount} declined.`
+  } else if (approvedCount > 0) {
+    message += `${approvedCount} item${approvedCount > 1 ? 's' : ''} approved (£${totalApproved.toFixed(2)}).`
+  } else {
+    message += `${declinedCount} item${declinedCount > 1 ? 's' : ''} declined.`
+  }
 
   return sendSms(to, message, organizationId)
 }

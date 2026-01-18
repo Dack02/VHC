@@ -220,4 +220,105 @@ organizations.patch('/:id/thresholds', authorize(['super_admin', 'org_admin', 's
   }
 })
 
+// Default pricing values
+const DEFAULT_PRICING = {
+  default_margin_percent: 40.00,
+  vat_rate: 20.00
+}
+
+// GET /api/v1/organizations/:id/pricing-settings - Get pricing settings
+organizations.get('/:id/pricing-settings', async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    // Users can only access their own organization's settings
+    if (id !== auth.orgId) {
+      return c.json({ error: 'Organization not found' }, 404)
+    }
+
+    // Get settings from organization_settings table
+    const { data: settings, error } = await supabaseAdmin
+      .from('organization_settings')
+      .select('default_margin_percent, vat_rate')
+      .eq('organization_id', id)
+      .single()
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('Get pricing settings error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+
+    return c.json({
+      settings: {
+        defaultMarginPercent: settings?.default_margin_percent ?? DEFAULT_PRICING.default_margin_percent,
+        vatRate: settings?.vat_rate ?? DEFAULT_PRICING.vat_rate
+      }
+    })
+  } catch (error) {
+    console.error('Get pricing settings error:', error)
+    return c.json({ error: 'Failed to get pricing settings' }, 500)
+  }
+})
+
+// PATCH /api/v1/organizations/:id/pricing-settings - Update pricing settings
+organizations.patch('/:id/pricing-settings', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const body = await c.req.json()
+
+    // Users can only update their own organization's settings
+    if (id !== auth.orgId) {
+      return c.json({ error: 'Organization not found' }, 404)
+    }
+
+    const { default_margin_percent, vat_rate } = body
+
+    // Validate values
+    if (default_margin_percent !== undefined) {
+      if (default_margin_percent < 0 || default_margin_percent > 100) {
+        return c.json({ error: 'Margin must be between 0 and 100' }, 400)
+      }
+    }
+    if (vat_rate !== undefined) {
+      if (vat_rate < 0 || vat_rate > 100) {
+        return c.json({ error: 'VAT rate must be between 0 and 100' }, 400)
+      }
+    }
+
+    // Build update data
+    const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    if (default_margin_percent !== undefined) updateData.default_margin_percent = default_margin_percent
+    if (vat_rate !== undefined) updateData.vat_rate = vat_rate
+
+    // Upsert settings
+    const { data: settings, error } = await supabaseAdmin
+      .from('organization_settings')
+      .upsert({
+        organization_id: id,
+        ...updateData
+      }, {
+        onConflict: 'organization_id'
+      })
+      .select('default_margin_percent, vat_rate')
+      .single()
+
+    if (error) {
+      console.error('Update pricing settings error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+
+    return c.json({
+      settings: {
+        defaultMarginPercent: settings.default_margin_percent ?? DEFAULT_PRICING.default_margin_percent,
+        vatRate: settings.vat_rate ?? DEFAULT_PRICING.vat_rate
+      }
+    })
+  } catch (error) {
+    console.error('Update pricing settings error:', error)
+    return c.json({ error: 'Failed to update pricing settings' }, 500)
+  }
+})
+
 export default organizations

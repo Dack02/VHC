@@ -1,9 +1,10 @@
 /**
  * HealthCheckTabContent Component
  * RAG-grouped sections view for the advisor health check detail
+ * Supports selecting items to create repair groups
  */
 
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useCallback } from 'react'
 import { CheckResult, RepairItem, Authorization, TemplateSection, api } from '../../../lib/api'
 import { useAuth } from '../../../contexts/AuthContext'
 import { SectionHeader, SectionSubheader } from './SectionHeader'
@@ -11,6 +12,8 @@ import { RepairItemRow, GreenItemRow } from './RepairItemRow'
 import { TyreSetDisplay } from './TyreDisplay'
 import { BrakeDisplay } from './BrakeDisplay'
 import { SelectedReason } from './ItemReasonsDisplay'
+import { SelectionActionBar } from './SelectionActionBar'
+import { CreateRepairGroupModal } from './CreateRepairGroupModal'
 
 interface HealthCheckTabContentProps {
   healthCheckId: string
@@ -20,6 +23,14 @@ interface HealthCheckTabContentProps {
   authorizations: Authorization[]
   onUpdate: () => void
   onPhotoClick?: (resultId: string) => void
+}
+
+// Interface for selected item info passed to modal
+interface SelectedItemInfo {
+  checkResultId: string
+  name: string
+  ragStatus: 'red' | 'amber'
+  existingRepairItem?: RepairItem
 }
 
 export function HealthCheckTabContent({
@@ -35,6 +46,10 @@ export function HealthCheckTabContent({
   void _sections
 
   const { session } = useAuth()
+
+  // Selection state - stores check_result_ids
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showCreateModal, setShowCreateModal] = useState(false)
 
   // Batch-loaded reasons for all check results
   const [reasonsByCheckResult, setReasonsByCheckResult] = useState<Record<string, SelectedReason[]>>({})
@@ -90,15 +105,39 @@ export function HealthCheckTabContent({
     [authorizations]
   )
 
-  // Group repair items by RAG status
+  // Build children map for groups
+  const childrenByParent = useMemo(() => {
+    const map = new Map<string, RepairItem[]>()
+    repairItems.forEach(item => {
+      if (item.parent_repair_item_id) {
+        const children = map.get(item.parent_repair_item_id) || []
+        children.push(item)
+        map.set(item.parent_repair_item_id, children)
+      }
+    })
+    return map
+  }, [repairItems])
+
+  // Group repair items by RAG status (exclude children - they're shown in their parent group)
+  // Attach children to groups
   const redItems = useMemo(() =>
-    repairItems.filter(item => item.rag_status === 'red'),
-    [repairItems]
+    repairItems
+      .filter(item => item.rag_status === 'red' && !item.parent_repair_item_id)
+      .map(item => ({
+        ...item,
+        children: item.is_group ? childrenByParent.get(item.id) || [] : undefined
+      })),
+    [repairItems, childrenByParent]
   )
 
   const amberItems = useMemo(() =>
-    repairItems.filter(item => item.rag_status === 'amber'),
-    [repairItems]
+    repairItems
+      .filter(item => item.rag_status === 'amber' && !item.parent_repair_item_id)
+      .map(item => ({
+        ...item,
+        children: item.is_group ? childrenByParent.get(item.id) || [] : undefined
+      })),
+    [repairItems, childrenByParent]
   )
 
   // Green items come from results, not repair items
@@ -198,6 +237,51 @@ export function HealthCheckTabContent({
     return null
   }
 
+  // Selection handlers
+  const toggleSelection = useCallback((checkResultId: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(checkResultId)) {
+        next.delete(checkResultId)
+      } else {
+        next.add(checkResultId)
+      }
+      return next
+    })
+  }, [])
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set())
+  }, [])
+
+  // Build selected items info for the modal
+  const selectedItems = useMemo((): SelectedItemInfo[] => {
+    const items: SelectedItemInfo[] = []
+
+    selectedIds.forEach(checkResultId => {
+      // Find matching repair item or result
+      const repairItem = repairItems.find(ri => ri.check_result_id === checkResultId)
+      const result = resultsById.get(checkResultId)
+
+      if (result) {
+        items.push({
+          checkResultId,
+          name: result.template_item?.name || 'Unknown Item',
+          ragStatus: result.rag_status as 'red' | 'amber',
+          existingRepairItem: repairItem
+        })
+      }
+    })
+
+    return items
+  }, [selectedIds, repairItems, resultsById])
+
+  const handleCreateGroupSuccess = () => {
+    setShowCreateModal(false)
+    clearSelection()
+    onUpdate()
+  }
+
   return (
     <div className="space-y-4">
       {/* Immediate Attention (Red) */}
@@ -211,17 +295,31 @@ export function HealthCheckTabContent({
           {redItems.map(item => {
             const result = getResultForRepairItem(item)
             const checkResultId = result?.id || item.check_result_id
+            const isSelected = checkResultId ? selectedIds.has(checkResultId) : false
             return (
-              <div key={item.id}>
-                <RepairItemRow
-                  healthCheckId={healthCheckId}
-                  item={item}
-                  result={result}
-                  onUpdate={onUpdate}
-                  onPhotoClick={onPhotoClick}
-                  preloadedReasons={checkResultId ? reasonsByCheckResult[checkResultId] : undefined}
-                />
-                {renderSpecialDisplay(result)}
+              <div key={item.id} className="flex items-start bg-white">
+                {/* Selection checkbox */}
+                {checkResultId && (
+                  <div className="flex-shrink-0 flex items-center pl-3 self-stretch">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelection(checkResultId)}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <RepairItemRow
+                    healthCheckId={healthCheckId}
+                    item={item}
+                    result={result}
+                    onUpdate={onUpdate}
+                    onPhotoClick={onPhotoClick}
+                    preloadedReasons={checkResultId ? reasonsByCheckResult[checkResultId] : undefined}
+                  />
+                  {renderSpecialDisplay(result)}
+                </div>
               </div>
             )
           })}
@@ -239,18 +337,32 @@ export function HealthCheckTabContent({
           {amberItems.map(item => {
             const result = getResultForRepairItem(item)
             const checkResultId = result?.id || item.check_result_id
+            const isSelected = checkResultId ? selectedIds.has(checkResultId) : false
             return (
-              <div key={item.id}>
-                <RepairItemRow
-                  healthCheckId={healthCheckId}
-                  item={item}
-                  result={result}
-                  showFollowUp={true}
-                  onUpdate={onUpdate}
-                  onPhotoClick={onPhotoClick}
-                  preloadedReasons={checkResultId ? reasonsByCheckResult[checkResultId] : undefined}
-                />
-                {renderSpecialDisplay(result)}
+              <div key={item.id} className="flex items-start bg-white">
+                {/* Selection checkbox */}
+                {checkResultId && (
+                  <div className="flex-shrink-0 flex items-center pl-3 self-stretch">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelection(checkResultId)}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <RepairItemRow
+                    healthCheckId={healthCheckId}
+                    item={item}
+                    result={result}
+                    showFollowUp={true}
+                    onUpdate={onUpdate}
+                    onPhotoClick={onPhotoClick}
+                    preloadedReasons={checkResultId ? reasonsByCheckResult[checkResultId] : undefined}
+                  />
+                  {renderSpecialDisplay(result)}
+                </div>
               </div>
             )
           })}
@@ -390,6 +502,23 @@ export function HealthCheckTabContent({
         <div className="bg-white border border-gray-200 rounded-lg p-8 text-center text-gray-500">
           No inspection results available
         </div>
+      )}
+
+      {/* Selection action bar */}
+      <SelectionActionBar
+        selectedCount={selectedIds.size}
+        onCreateGroup={() => setShowCreateModal(true)}
+        onClearSelection={clearSelection}
+      />
+
+      {/* Create repair group modal */}
+      {showCreateModal && selectedItems.length > 0 && (
+        <CreateRepairGroupModal
+          healthCheckId={healthCheckId}
+          selectedItems={selectedItems}
+          onClose={() => setShowCreateModal(false)}
+          onSuccess={handleCreateGroupSuccess}
+        />
       )}
     </div>
   )

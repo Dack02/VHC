@@ -1,9 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
-import { api, HealthCheck, CheckResult, RepairItem, StatusHistoryEntry, TemplateSection, Authorization, HealthCheckSummary, FullHealthCheckResponse } from '../../lib/api'
+import { api, HealthCheck, CheckResult, RepairItem, StatusHistoryEntry, TemplateSection, Authorization, HealthCheckSummary, FullHealthCheckResponse, NewRepairItem } from '../../lib/api'
+import { WorkflowBadges, WorkflowStatus, calculateWorkflowStatus } from '../../components/WorkflowBadges'
 import { PhotosTab } from './tabs/PhotosTab'
 import { TimelineTab } from './tabs/TimelineTab'
+import { LabourTab } from './tabs/LabourTab'
+import { PartsTab } from './tabs/PartsTab'
+import { SummaryTab } from './tabs/SummaryTab'
 import { PublishModal } from './PublishModal'
 import { CustomerPreviewModal } from './CustomerPreviewModal'
 import { HealthCheckTabContent } from './components/HealthCheckTabContent'
@@ -67,7 +71,7 @@ const statusColors: Record<string, string> = {
   cancelled: 'bg-gray-100 text-gray-700'
 }
 
-type Tab = 'summary' | 'health-check' | 'photos' | 'timeline'
+type Tab = 'summary' | 'health-check' | 'labour' | 'parts' | 'photos' | 'timeline'
 
 export default function HealthCheckDetail() {
   const { id } = useParams<{ id: string }>()
@@ -82,6 +86,7 @@ export default function HealthCheckDetail() {
   const [authorizations, setAuthorizations] = useState<Authorization[]>([])
   const [summary, setSummary] = useState<HealthCheckSummary | null>(null)
   const [history, setHistory] = useState<StatusHistoryEntry[]>([])
+  const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
@@ -92,7 +97,8 @@ export default function HealthCheckDetail() {
   const [generatingPDF, setGeneratingPDF] = useState(false)
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  const fetchData = useCallback(async (isRetry = false) => {
+  const fetchData = useCallback(async (options: { isRetry?: boolean; silent?: boolean } = {}) => {
+    const { isRetry = false, silent = false } = options
     if (!session?.accessToken || !id) return
 
     // Clear any pending retry
@@ -101,7 +107,10 @@ export default function HealthCheckDetail() {
       retryTimeoutRef.current = null
     }
 
-    setLoading(true)
+    // Don't show loading spinner for silent background refreshes
+    if (!silent) {
+      setLoading(true)
+    }
     if (!isRetry) setError(null)
 
     try {
@@ -132,6 +141,22 @@ export default function HealthCheckDetail() {
       )
       setHistory(historyData.history || [])
 
+      // Fetch new repair items for workflow status
+      try {
+        const repairItemsData = await api<{ repairItems: NewRepairItem[] }>(
+          `/api/v1/health-checks/${id}/repair-items`,
+          { token: session.accessToken }
+        )
+        const items = repairItemsData.repairItems || []
+
+        // Calculate workflow status from repair items
+        const calculatedStatus = calculateWorkflowStatus(items, hcData.healthCheck.sent_at)
+        setWorkflowStatus(calculatedStatus)
+      } catch {
+        // Workflow status is optional, don't fail the whole page
+        setWorkflowStatus(null)
+      }
+
       // Reset retry count on success
       setRetryCount(0)
     } catch (err) {
@@ -143,13 +168,16 @@ export default function HealthCheckDetail() {
         const delay = Math.pow(2, retryCount) * 1000 // 1s, 2s, 4s
         setRetryCount(prev => prev + 1)
         retryTimeoutRef.current = setTimeout(() => {
-          fetchData(true)
+          fetchData({ isRetry: true })
         }, delay)
       }
     } finally {
       setLoading(false)
     }
   }, [session?.accessToken, id, retryCount])
+
+  // Silent refresh for background updates (no loading spinner)
+  const silentRefresh = useCallback(() => fetchData({ silent: true }), [fetchData])
 
   // Cleanup retry timeout on unmount
   useEffect(() => {
@@ -285,6 +313,8 @@ export default function HealthCheckDetail() {
   const tabs: { id: Tab; label: string; badge?: number }[] = [
     { id: 'summary', label: 'Summary' },
     { id: 'health-check', label: 'Health Check' },
+    { id: 'labour', label: 'Labour' },
+    { id: 'parts', label: 'Parts' },
     { id: 'photos', label: 'Photos', badge: summary?.media_count },
     { id: 'timeline', label: 'Timeline' }
   ]
@@ -391,7 +421,7 @@ export default function HealthCheckDetail() {
       </div>
 
       {/* Vehicle Info Bar */}
-      <VehicleInfoBar healthCheck={healthCheck} />
+      <VehicleInfoBar healthCheck={healthCheck} workflowStatus={workflowStatus} />
 
       {/* Tab Navigation */}
       <div className="bg-white border-b border-gray-200">
@@ -425,10 +455,9 @@ export default function HealthCheckDetail() {
       <div className="p-6">
         {activeTab === 'summary' && (
           <SummaryTab
-            healthCheck={healthCheck}
-            summary={summary}
-            repairItems={repairItems}
-            authorizations={authorizations}
+            healthCheckId={id!}
+            sentAt={healthCheck.sent_at ?? null}
+            onUpdate={silentRefresh}
           />
         )}
         {activeTab === 'health-check' && (
@@ -438,14 +467,26 @@ export default function HealthCheckDetail() {
             results={results}
             repairItems={repairItems}
             authorizations={authorizations}
-            onUpdate={fetchData}
+            onUpdate={silentRefresh}
+          />
+        )}
+        {activeTab === 'labour' && (
+          <LabourTab
+            healthCheckId={id!}
+            onUpdate={silentRefresh}
+          />
+        )}
+        {activeTab === 'parts' && (
+          <PartsTab
+            healthCheckId={id!}
+            onUpdate={silentRefresh}
           />
         )}
         {activeTab === 'photos' && healthCheck && (
           <PhotosTab
             results={results}
             healthCheckId={healthCheck.id}
-            onSelectionChange={fetchData}
+            onSelectionChange={silentRefresh}
           />
         )}
         {activeTab === 'timeline' && (
@@ -505,7 +546,12 @@ function calculateDaysOnSite(arrivedAt: string | null): { days: number; color: s
 }
 
 // Vehicle Info Bar Component
-function VehicleInfoBar({ healthCheck }: { healthCheck: HealthCheck }) {
+interface VehicleInfoBarProps {
+  healthCheck: HealthCheck
+  workflowStatus: WorkflowStatus | null
+}
+
+function VehicleInfoBar({ healthCheck, workflowStatus }: VehicleInfoBarProps) {
   const vehicle = healthCheck.vehicle
   const customer = healthCheck.vehicle?.customer
   const [vinExpanded, setVinExpanded] = useState(false)
@@ -533,9 +579,12 @@ function VehicleInfoBar({ healthCheck }: { healthCheck: HealthCheck }) {
               {vehicle?.registration || '-'}
             </div>
           </div>
-          <span className={`inline-block px-3 py-1 text-sm font-medium rounded ${statusColors[healthCheck.status]}`}>
-            {statusLabels[healthCheck.status]}
-          </span>
+          <div className="flex flex-col items-end gap-2">
+            <span className={`inline-block px-3 py-1 text-sm font-medium rounded ${statusColors[healthCheck.status]}`}>
+              {statusLabels[healthCheck.status]}
+            </span>
+            {workflowStatus && <WorkflowBadges status={workflowStatus} compact />}
+          </div>
         </div>
 
         {/* Vehicle + Customer */}
@@ -721,6 +770,14 @@ function VehicleInfoBar({ healthCheck }: { healthCheck: HealthCheck }) {
           </div>
         </div>
 
+        {/* Workflow Status */}
+        {workflowStatus && (
+          <div>
+            <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Workflow</div>
+            <WorkflowBadges status={workflowStatus} />
+          </div>
+        )}
+
         {/* Phase 1 Quick Wins - Additional indicators */}
         {(healthCheck.loan_car_required || daysOnSite || healthCheck.booked_date) && (
           <>
@@ -764,269 +821,4 @@ function VehicleInfoBar({ healthCheck }: { healthCheck: HealthCheck }) {
   )
 }
 
-// Summary Tab Component
-function SummaryTab({
-  healthCheck,
-  summary,
-  repairItems,
-  authorizations
-}: {
-  healthCheck: HealthCheck
-  summary: HealthCheckSummary | null
-  repairItems: RepairItem[]
-  authorizations: Authorization[]
-}) {
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return 'Not yet'
-    return new Date(dateStr).toLocaleDateString('en-GB', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }
-
-  const formatCurrency = (amount: number) => `£${amount.toFixed(2)}`
-
-  // Create authorization lookup
-  const authByRepairItemId = new Map(authorizations.map(a => [a.repair_item_id, a]))
-
-  // Calculate values from repair items
-  const redItems = repairItems.filter(i => i.rag_status === 'red')
-  const amberItems = repairItems.filter(i => i.rag_status === 'amber')
-  const redTotal = redItems.reduce((sum, i) => sum + (i.total_price || 0), 0)
-  const amberTotal = amberItems.reduce((sum, i) => sum + (i.total_price || 0), 0)
-  const totalIdentified = repairItems.reduce((sum, i) => sum + (i.total_price || 0), 0)
-
-  // Authorization breakdowns
-  const authorisedItems = repairItems.filter(item => authByRepairItemId.get(item.id)?.decision === 'approved')
-  const declinedItems = repairItems.filter(item => authByRepairItemId.get(item.id)?.decision === 'declined')
-  const pendingItems = repairItems.filter(item => !authByRepairItemId.has(item.id))
-
-  const authorisedTotal = authorisedItems.reduce((sum, i) => sum + (i.total_price || 0), 0)
-  const declinedTotal = declinedItems.reduce((sum, i) => sum + (i.total_price || 0), 0)
-  const pendingTotal = pendingItems.reduce((sum, i) => sum + (i.total_price || 0), 0)
-
-  // Work completion
-  const completedWork = authorisedItems.filter(i => i.work_completed_at)
-  const outstandingWork = authorisedItems.filter(i => !i.work_completed_at)
-  const completedValue = completedWork.reduce((sum, i) => sum + (i.total_price || 0), 0)
-  const outstandingValue = outstandingWork.reduce((sum, i) => sum + (i.total_price || 0), 0)
-
-  // Link expiry calculation
-  const expiresAt = healthCheck.public_expires_at ? new Date(healthCheck.public_expires_at) : null
-  const now = new Date()
-  const isExpired = expiresAt && expiresAt < now
-  const hoursUntilExpiry = expiresAt ? Math.floor((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60)) : null
-  const isExpiringSoon = hoursUntilExpiry !== null && hoursUntilExpiry > 0 && hoursUntilExpiry <= 24
-
-  return (
-    <div className="space-y-6">
-      {/* RAG Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-          <div className="text-3xl font-bold text-red-600">{summary?.red_count || healthCheck.red_count}</div>
-          <div className="text-sm text-red-700 font-medium">Immediate Attention</div>
-          {redTotal > 0 && (
-            <div className="text-sm text-red-600 mt-1 font-medium">{formatCurrency(redTotal)}</div>
-          )}
-        </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-          <div className="text-3xl font-bold text-amber-600">{summary?.amber_count || healthCheck.amber_count}</div>
-          <div className="text-sm text-amber-700 font-medium">Advisory</div>
-          {amberTotal > 0 && (
-            <div className="text-sm text-amber-600 mt-1 font-medium">{formatCurrency(amberTotal)}</div>
-          )}
-        </div>
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-          <div className="text-3xl font-bold text-green-600">{summary?.green_count || healthCheck.green_count}</div>
-          <div className="text-sm text-green-700 font-medium">Items OK</div>
-        </div>
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-          <div className="text-3xl font-bold text-gray-600">{summary?.total_items || (healthCheck.green_count + healthCheck.amber_count + healthCheck.red_count)}</div>
-          <div className="text-sm text-gray-700 font-medium">Total Items</div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Customer Response */}
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <h3 className="font-semibold text-gray-900 mb-4">Customer Response</h3>
-          <dl className="space-y-3">
-            <div className="flex justify-between">
-              <dt className="text-gray-500">Sent</dt>
-              <dd className="font-medium">{formatDate(healthCheck.sent_at)}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-gray-500">First Opened</dt>
-              <dd className={`font-medium ${healthCheck.first_opened_at ? 'text-green-600' : 'text-gray-400'}`}>
-                {formatDate(healthCheck.first_opened_at)}
-              </dd>
-            </div>
-            <div className="flex justify-between items-center">
-              <dt className="text-gray-500">Link Expires</dt>
-              <dd className="text-right">
-                <div className={`font-medium ${isExpired ? 'text-red-600' : isExpiringSoon ? 'text-amber-600' : ''}`}>
-                  {formatDate(healthCheck.public_expires_at)}
-                </div>
-                {isExpired && (
-                  <div className="text-xs text-red-600 font-medium">EXPIRED</div>
-                )}
-                {isExpiringSoon && (
-                  <div className="text-xs text-amber-600 font-medium">Expires in {hoursUntilExpiry}h</div>
-                )}
-              </dd>
-            </div>
-          </dl>
-
-          {/* Response Summary */}
-          {authorizations.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <div className="flex gap-4 text-sm">
-                {authorisedItems.length > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-green-500" />
-                    <span className="text-gray-600">{authorisedItems.length} Approved</span>
-                  </div>
-                )}
-                {declinedItems.length > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-red-500" />
-                    <span className="text-gray-600">{declinedItems.length} Declined</span>
-                  </div>
-                )}
-                {pendingItems.length > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-gray-400" />
-                    <span className="text-gray-600">{pendingItems.length} Pending</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Financials */}
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <h3 className="font-semibold text-gray-900 mb-4">Financials</h3>
-          <dl className="space-y-3">
-            <div className="flex justify-between">
-              <dt className="text-gray-500">Total Identified</dt>
-              <dd className="font-semibold">{formatCurrency(totalIdentified)}</dd>
-            </div>
-            <div className="border-t border-gray-100 pt-3">
-              <div className="flex justify-between">
-                <dt className="text-gray-500">Total Authorised</dt>
-                <dd className="font-medium text-green-600">{formatCurrency(authorisedTotal)}</dd>
-              </div>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-gray-500">Total Declined</dt>
-              <dd className="font-medium text-red-600">{formatCurrency(declinedTotal)}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-gray-500">Pending Response</dt>
-              <dd className="font-medium text-gray-500">{formatCurrency(pendingTotal)}</dd>
-            </div>
-            <div className="border-t border-gray-200 pt-3 mt-3">
-              <div className="flex justify-between">
-                <dt className="text-gray-500">Work Completed</dt>
-                <dd className="font-medium text-green-600">
-                  {formatCurrency(completedValue)}
-                  <span className="text-xs text-gray-400 ml-1">({completedWork.length} items)</span>
-                </dd>
-              </div>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-gray-500">Work Outstanding</dt>
-              <dd className="font-medium text-orange-600">
-                {formatCurrency(outstandingValue)}
-                <span className="text-xs text-gray-400 ml-1">({outstandingWork.length} items)</span>
-              </dd>
-            </div>
-          </dl>
-        </div>
-      </div>
-
-      {/* Pre-Booked Work - Phase 1 Quick Wins */}
-      {healthCheck.booked_repairs && healthCheck.booked_repairs.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-            </svg>
-            Pre-Booked Work
-            <span className="text-xs text-gray-500 font-normal">(from DMS)</span>
-          </h3>
-          <div className="space-y-2">
-            {healthCheck.booked_repairs.map((repair, index) => {
-              // Check if this repair matches any VHC finding
-              const matchingRepairItem = repairItems.find(item =>
-                repair.description &&
-                item.title.toLowerCase().includes(repair.description.toLowerCase().substring(0, 15))
-              )
-              const isAlreadyBooked = !!matchingRepairItem
-
-              return (
-                <div
-                  key={index}
-                  className={`p-3 rounded-lg border ${
-                    isAlreadyBooked
-                      ? 'bg-green-50 border-green-200'
-                      : 'bg-gray-50 border-gray-200'
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="font-medium text-gray-900 flex items-center gap-2">
-                        {repair.description || repair.code || 'Unnamed repair'}
-                        {isAlreadyBooked && (
-                          <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded">
-                            <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                            Already Booked
-                          </span>
-                        )}
-                      </div>
-                      {repair.code && (
-                        <div className="text-xs text-gray-500">Code: {repair.code}</div>
-                      )}
-                      {repair.notes && (
-                        <div className="text-sm text-gray-600 mt-1">{repair.notes}</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-          <p className="text-xs text-gray-500 mt-3">
-            These items were pre-booked in the DMS. Items marked "Already Booked" match VHC findings above - no need to recommend again.
-          </p>
-        </div>
-      )}
-
-      {/* Notes */}
-      {(healthCheck.technician_notes || healthCheck.advisor_notes) && (
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
-          <h3 className="font-semibold text-gray-900 mb-4">Notes</h3>
-          {healthCheck.technician_notes && (
-            <div className="mb-4">
-              <h4 className="text-sm font-medium text-gray-500 mb-1">Technician Notes</h4>
-              <p className="text-gray-700 bg-gray-50 p-3 rounded">{healthCheck.technician_notes}</p>
-            </div>
-          )}
-          {healthCheck.advisor_notes && (
-            <div>
-              <h4 className="text-sm font-medium text-gray-500 mb-1">Advisor Notes</h4>
-              <p className="text-gray-700 bg-gray-50 p-3 rounded">{healthCheck.advisor_notes}</p>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
 

@@ -220,7 +220,7 @@ publicRoutes.get('/vhc/:token', async (c) => {
     }
   }
 
-  // Get authorizations
+  // Get authorizations (legacy)
   const { data: authorizations } = await supabaseAdmin
     .from('authorizations')
     .select('*')
@@ -241,8 +241,159 @@ publicRoutes.get('/vhc/:token', async (c) => {
     }
   })
 
+  // ===== NEW REPAIR ITEMS (Phase 6+) =====
+  // Get new repair items with their linked check results and options
+  const { data: newRepairItems } = await supabaseAdmin
+    .from('repair_items')
+    .select(`
+      id,
+      name,
+      description,
+      is_group,
+      labour_total,
+      parts_total,
+      subtotal,
+      vat_amount,
+      total_inc_vat,
+      price_override,
+      price_override_reason,
+      labour_status,
+      parts_status,
+      quote_status,
+      customer_approved,
+      customer_approved_at,
+      customer_declined_reason,
+      selected_option_id,
+      created_at
+    `)
+    .eq('health_check_id', healthCheck.id)
+    .order('created_at')
+
+  // Get repair options for all new repair items
+  const newRepairItemIds = (newRepairItems || []).map(ri => ri.id)
+  let repairOptionsMap: Map<string, Array<{
+    id: string
+    name: string
+    description: string | null
+    labour_total: number
+    parts_total: number
+    subtotal: number
+    vat_amount: number
+    total_inc_vat: number
+    is_recommended: boolean
+    sort_order: number
+  }>> = new Map()
+
+  if (newRepairItemIds.length > 0) {
+    const { data: allOptions } = await supabaseAdmin
+      .from('repair_options')
+      .select(`
+        id,
+        repair_item_id,
+        name,
+        description,
+        labour_total,
+        parts_total,
+        subtotal,
+        vat_amount,
+        total_inc_vat,
+        is_recommended,
+        sort_order
+      `)
+      .in('repair_item_id', newRepairItemIds)
+      .order('sort_order')
+
+    // Group options by repair item
+    for (const opt of allOptions || []) {
+      const riId = opt.repair_item_id
+      if (!repairOptionsMap.has(riId)) {
+        repairOptionsMap.set(riId, [])
+      }
+      repairOptionsMap.get(riId)!.push({
+        id: opt.id,
+        name: opt.name,
+        description: opt.description,
+        labour_total: opt.labour_total || 0,
+        parts_total: opt.parts_total || 0,
+        subtotal: opt.subtotal || 0,
+        vat_amount: opt.vat_amount || 0,
+        total_inc_vat: opt.total_inc_vat || 0,
+        is_recommended: opt.is_recommended || false,
+        sort_order: opt.sort_order || 0
+      })
+    }
+  }
+
+  // Get linked check results for new repair items
+  let linkedCheckResultsMap: Map<string, string[]> = new Map()
+  if (newRepairItemIds.length > 0) {
+    const { data: links } = await supabaseAdmin
+      .from('repair_item_check_results')
+      .select('repair_item_id, check_result_id')
+      .in('repair_item_id', newRepairItemIds)
+
+    for (const link of links || []) {
+      if (!linkedCheckResultsMap.has(link.repair_item_id)) {
+        linkedCheckResultsMap.set(link.repair_item_id, [])
+      }
+      linkedCheckResultsMap.get(link.repair_item_id)!.push(link.check_result_id)
+    }
+  }
+
+  // Enhance new repair items with options and linked check result names
+  const enhancedNewRepairItems = (newRepairItems || []).map(item => {
+    const options = repairOptionsMap.get(item.id) || []
+    const linkedCrIds = linkedCheckResultsMap.get(item.id) || []
+
+    // Get names of linked check results
+    const linkedCheckResultNames = linkedCrIds
+      .map(crId => {
+        const cr = (checkResults || []).find(r => r.id === crId)
+        if (!cr) return null
+        const templateItem = cr.template_item as { name?: string } | null
+        return templateItem?.name || 'Unknown Item'
+      })
+      .filter(Boolean) as string[]
+
+    return {
+      id: item.id,
+      name: item.name,
+      description: item.description,
+      isGroup: item.is_group,
+      labourTotal: item.labour_total || 0,
+      partsTotal: item.parts_total || 0,
+      subtotal: item.subtotal || 0,
+      vatAmount: item.vat_amount || 0,
+      totalIncVat: item.total_inc_vat || 0,
+      priceOverride: item.price_override || null,
+      priceOverrideReason: item.price_override_reason || null,
+      labourStatus: item.labour_status,
+      partsStatus: item.parts_status,
+      quoteStatus: item.quote_status,
+      customerApproved: item.customer_approved,
+      customerApprovedAt: item.customer_approved_at,
+      customerDeclinedReason: item.customer_declined_reason,
+      selectedOptionId: item.selected_option_id,
+      options: options.map(opt => ({
+        id: opt.id,
+        name: opt.name,
+        description: opt.description,
+        labourTotal: opt.labour_total,
+        partsTotal: opt.parts_total,
+        subtotal: opt.subtotal,
+        vatAmount: opt.vat_amount,
+        totalIncVat: opt.total_inc_vat,
+        isRecommended: opt.is_recommended
+      })),
+      linkedCheckResults: linkedCheckResultNames
+    }
+  })
+
   // Track activity
   await trackActivity(healthCheck.id, 'viewed', null, c)
+
+  // Determine if we have new repair items (Phase 6+) or legacy repair items
+  const hasNewRepairItems = (enhancedNewRepairItems || []).length > 0
 
   return c.json({
     healthCheck: {
@@ -260,7 +411,11 @@ publicRoutes.get('/vhc/:token', async (c) => {
     vehicle: healthCheck.vehicle,
     customer: healthCheck.customer,
     site: healthCheck.site,
+    // Legacy repair items (for backwards compatibility)
     repairItems: enhancedRepairItems,
+    // New repair items with options (Phase 6+)
+    newRepairItems: enhancedNewRepairItems,
+    hasNewRepairItems,
     checkResults: (checkResults || []).map(result => {
       // Check if this item has duplicates
       const instanceNum = (result as Record<string, unknown>).instance_number as number || 1
@@ -554,6 +709,343 @@ publicRoutes.post('/vhc/:token/track', async (c) => {
   return c.json({ success: true })
 })
 
+// ===== NEW REPAIR ITEMS ENDPOINTS (Phase 8) =====
+
+/**
+ * POST /api/public/vhc/:token/repair-items/:repairItemId/approve
+ * Approve a new repair item (with optional selected option)
+ */
+publicRoutes.post('/vhc/:token/repair-items/:repairItemId/approve', async (c) => {
+  const token = c.req.param('token')
+  const repairItemId = c.req.param('repairItemId')
+  const body = await c.req.json()
+  const { selectedOptionId, notes } = body
+
+  // Find health check by token
+  const { data: healthCheck, error } = await supabaseAdmin
+    .from('health_checks')
+    .select('id, status, token_expires_at, site_id')
+    .eq('public_token', token)
+    .single()
+
+  if (error || !healthCheck) {
+    return c.json({ error: 'Health check not found' }, 404)
+  }
+
+  // Check expiry
+  if (healthCheck.token_expires_at && new Date(healthCheck.token_expires_at) < new Date()) {
+    return c.json({ error: 'Link has expired' }, 410)
+  }
+
+  // Verify repair item belongs to this health check (using new repair_items table)
+  const { data: repairItem, error: riError } = await supabaseAdmin
+    .from('repair_items')
+    .select('id, name, subtotal, total_inc_vat')
+    .eq('id', repairItemId)
+    .eq('health_check_id', healthCheck.id)
+    .single()
+
+  if (riError || !repairItem) {
+    return c.json({ error: 'Repair item not found' }, 404)
+  }
+
+  // Check if options exist - if so, selectedOptionId is required
+  const { data: options } = await supabaseAdmin
+    .from('repair_options')
+    .select('id')
+    .eq('repair_item_id', repairItemId)
+
+  const hasOptions = (options || []).length > 0
+  if (hasOptions && !selectedOptionId) {
+    return c.json({ error: 'Please select an option before approving' }, 400)
+  }
+
+  // Validate selectedOptionId if provided
+  if (selectedOptionId) {
+    const validOption = (options || []).find(o => o.id === selectedOptionId)
+    if (!validOption) {
+      return c.json({ error: 'Invalid option selected' }, 400)
+    }
+  }
+
+  // Get client info
+  const rawIp = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || c.req.header('x-real-ip')
+  const ipAddress = rawIp && /^[\d.:a-fA-F]+$/.test(rawIp) ? rawIp : null
+
+  // Update the repair item
+  const updateData: Record<string, unknown> = {
+    customer_approved: true,
+    customer_approved_at: new Date().toISOString(),
+    customer_declined_reason: null,
+    updated_at: new Date().toISOString()
+  }
+  if (selectedOptionId) {
+    updateData.selected_option_id = selectedOptionId
+  }
+
+  const { error: updateError } = await supabaseAdmin
+    .from('repair_items')
+    .update(updateData)
+    .eq('id', repairItemId)
+
+  if (updateError) {
+    console.error('Approve repair item error:', updateError)
+    return c.json({ error: 'Failed to save approval' }, 500)
+  }
+
+  // Track activity
+  await trackActivity(healthCheck.id, 'repair_item_approved', repairItemId, c, {
+    selectedOptionId,
+    notes,
+    ipAddress
+  })
+
+  // Update health check status based on new repair items
+  await updateHealthCheckStatusForNewRepairItems(healthCheck.id, healthCheck.site_id)
+
+  return c.json({
+    success: true,
+    message: 'Repair item approved successfully',
+    repairItemId,
+    selectedOptionId
+  })
+})
+
+/**
+ * POST /api/public/vhc/:token/repair-items/:repairItemId/decline
+ * Decline a new repair item
+ */
+publicRoutes.post('/vhc/:token/repair-items/:repairItemId/decline', async (c) => {
+  const token = c.req.param('token')
+  const repairItemId = c.req.param('repairItemId')
+  const body = await c.req.json()
+  const { reason, notes } = body
+
+  // Find health check by token
+  const { data: healthCheck, error } = await supabaseAdmin
+    .from('health_checks')
+    .select('id, status, token_expires_at, site_id')
+    .eq('public_token', token)
+    .single()
+
+  if (error || !healthCheck) {
+    return c.json({ error: 'Health check not found' }, 404)
+  }
+
+  // Check expiry
+  if (healthCheck.token_expires_at && new Date(healthCheck.token_expires_at) < new Date()) {
+    return c.json({ error: 'Link has expired' }, 410)
+  }
+
+  // Verify repair item belongs to this health check
+  const { data: repairItem, error: riError } = await supabaseAdmin
+    .from('repair_items')
+    .select('id, name')
+    .eq('id', repairItemId)
+    .eq('health_check_id', healthCheck.id)
+    .single()
+
+  if (riError || !repairItem) {
+    return c.json({ error: 'Repair item not found' }, 404)
+  }
+
+  // Get client info
+  const rawIp = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || c.req.header('x-real-ip')
+  const ipAddress = rawIp && /^[\d.:a-fA-F]+$/.test(rawIp) ? rawIp : null
+
+  // Update the repair item
+  const { error: updateError } = await supabaseAdmin
+    .from('repair_items')
+    .update({
+      customer_approved: false,
+      customer_approved_at: new Date().toISOString(),
+      customer_declined_reason: reason || notes || null,
+      selected_option_id: null,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', repairItemId)
+
+  if (updateError) {
+    console.error('Decline repair item error:', updateError)
+    return c.json({ error: 'Failed to save decline' }, 500)
+  }
+
+  // Track activity
+  await trackActivity(healthCheck.id, 'repair_item_declined', repairItemId, c, {
+    reason,
+    notes,
+    ipAddress
+  })
+
+  // Update health check status based on new repair items
+  await updateHealthCheckStatusForNewRepairItems(healthCheck.id, healthCheck.site_id)
+
+  return c.json({
+    success: true,
+    message: 'Repair item declined',
+    repairItemId
+  })
+})
+
+/**
+ * POST /api/public/vhc/:token/repair-items/approve-all
+ * Approve all pending new repair items
+ */
+publicRoutes.post('/vhc/:token/repair-items/approve-all', async (c) => {
+  const token = c.req.param('token')
+  const body = await c.req.json()
+  const { selections } = body // Array of { repairItemId, selectedOptionId }
+
+  // Find health check by token
+  const { data: healthCheck, error } = await supabaseAdmin
+    .from('health_checks')
+    .select('id, status, token_expires_at, site_id')
+    .eq('public_token', token)
+    .single()
+
+  if (error || !healthCheck) {
+    return c.json({ error: 'Health check not found' }, 404)
+  }
+
+  // Check expiry
+  if (healthCheck.token_expires_at && new Date(healthCheck.token_expires_at) < new Date()) {
+    return c.json({ error: 'Link has expired' }, 410)
+  }
+
+  // Get all pending repair items
+  const { data: pendingItems } = await supabaseAdmin
+    .from('repair_items')
+    .select('id')
+    .eq('health_check_id', healthCheck.id)
+    .is('customer_approved', null)
+
+  if (!pendingItems || pendingItems.length === 0) {
+    return c.json({ error: 'No pending repair items' }, 400)
+  }
+
+  // Build selection map
+  const selectionMap = new Map<string, string | null>()
+  for (const sel of selections || []) {
+    selectionMap.set(sel.repairItemId, sel.selectedOptionId || null)
+  }
+
+  // Approve all pending items
+  const now = new Date().toISOString()
+  let approvedCount = 0
+
+  for (const item of pendingItems) {
+    // Check if item has options and needs selection
+    const { data: options } = await supabaseAdmin
+      .from('repair_options')
+      .select('id, is_recommended')
+      .eq('repair_item_id', item.id)
+      .order('is_recommended', { ascending: false })
+      .order('sort_order')
+
+    let selectedOptionId = selectionMap.get(item.id) || null
+
+    // If has options but no selection provided, use recommended or first
+    if ((options || []).length > 0 && !selectedOptionId) {
+      const recommended = (options || []).find(o => o.is_recommended)
+      selectedOptionId = recommended?.id || (options || [])[0]?.id || null
+    }
+
+    const updateData: Record<string, unknown> = {
+      customer_approved: true,
+      customer_approved_at: now,
+      customer_declined_reason: null,
+      updated_at: now
+    }
+    if (selectedOptionId) {
+      updateData.selected_option_id = selectedOptionId
+    }
+
+    await supabaseAdmin
+      .from('repair_items')
+      .update(updateData)
+      .eq('id', item.id)
+
+    approvedCount++
+  }
+
+  // Track activity
+  await trackActivity(healthCheck.id, 'approve_all', null, c, {
+    approvedCount
+  })
+
+  // Update health check status
+  await updateHealthCheckStatusForNewRepairItems(healthCheck.id, healthCheck.site_id)
+
+  return c.json({
+    success: true,
+    message: `Approved ${approvedCount} repair items`,
+    approvedCount
+  })
+})
+
+/**
+ * POST /api/public/vhc/:token/repair-items/decline-all
+ * Decline all pending new repair items
+ */
+publicRoutes.post('/vhc/:token/repair-items/decline-all', async (c) => {
+  const token = c.req.param('token')
+  const body = await c.req.json()
+  const { reason } = body
+
+  // Find health check by token
+  const { data: healthCheck, error } = await supabaseAdmin
+    .from('health_checks')
+    .select('id, status, token_expires_at, site_id')
+    .eq('public_token', token)
+    .single()
+
+  if (error || !healthCheck) {
+    return c.json({ error: 'Health check not found' }, 404)
+  }
+
+  // Check expiry
+  if (healthCheck.token_expires_at && new Date(healthCheck.token_expires_at) < new Date()) {
+    return c.json({ error: 'Link has expired' }, 410)
+  }
+
+  // Decline all pending repair items
+  const now = new Date().toISOString()
+  const { data: updatedItems, error: updateError } = await supabaseAdmin
+    .from('repair_items')
+    .update({
+      customer_approved: false,
+      customer_approved_at: now,
+      customer_declined_reason: reason || 'Declined all',
+      selected_option_id: null,
+      updated_at: now
+    })
+    .eq('health_check_id', healthCheck.id)
+    .is('customer_approved', null)
+    .select('id')
+
+  if (updateError) {
+    console.error('Decline all error:', updateError)
+    return c.json({ error: 'Failed to decline items' }, 500)
+  }
+
+  const declinedCount = (updatedItems || []).length
+
+  // Track activity
+  await trackActivity(healthCheck.id, 'decline_all', null, c, {
+    declinedCount,
+    reason
+  })
+
+  // Update health check status
+  await updateHealthCheckStatusForNewRepairItems(healthCheck.id, healthCheck.site_id)
+
+  return c.json({
+    success: true,
+    message: `Declined ${declinedCount} repair items`,
+    declinedCount
+  })
+})
+
 /**
  * Helper: Track customer activity
  */
@@ -705,6 +1197,114 @@ async function updateReasonApprovalStats(repairItemId: string, approved: boolean
     }
   } catch (err) {
     console.error('Error updating reason approval stats:', err)
+  }
+}
+
+/**
+ * Helper: Update health check status based on new repair items (Phase 6+)
+ * This handles the customer_approved field on the repair_items table
+ */
+async function updateHealthCheckStatusForNewRepairItems(healthCheckId: string, siteId: string) {
+  try {
+    // Get health check current state
+    const { data: healthCheck } = await supabaseAdmin
+      .from('health_checks')
+      .select('first_response_at')
+      .eq('id', healthCheckId)
+      .single()
+
+    if (!healthCheck) return
+
+    // Get all new repair items for this health check
+    const { data: repairItems } = await supabaseAdmin
+      .from('repair_items')
+      .select('id, customer_approved, total_inc_vat, selected_option_id')
+      .eq('health_check_id', healthCheckId)
+
+    if (!repairItems || repairItems.length === 0) return
+
+    const totalItems = repairItems.length
+    const approvedItems = repairItems.filter(r => r.customer_approved === true)
+    const declinedItems = repairItems.filter(r => r.customer_approved === false)
+    const pendingItems = repairItems.filter(r => r.customer_approved === null)
+
+    const approvedCount = approvedItems.length
+    const declinedCount = declinedItems.length
+    const respondedCount = approvedCount + declinedCount
+
+    // Calculate totals - for items with options, get price from selected option
+    let totalApprovedAmount = 0
+    let totalDeclinedAmount = 0
+
+    for (const item of approvedItems) {
+      if (item.selected_option_id) {
+        const { data: option } = await supabaseAdmin
+          .from('repair_options')
+          .select('total_inc_vat')
+          .eq('id', item.selected_option_id)
+          .single()
+        totalApprovedAmount += option?.total_inc_vat || item.total_inc_vat || 0
+      } else {
+        totalApprovedAmount += item.total_inc_vat || 0
+      }
+    }
+
+    for (const item of declinedItems) {
+      totalDeclinedAmount += item.total_inc_vat || 0
+    }
+
+    // Determine action for notification
+    const lastAction = approvedItems.length >= declinedItems.length ? 'authorized' : 'declined'
+
+    // Notify staff
+    await notifyCustomerAction(healthCheckId, siteId, lastAction, {
+      totalAuthorized: totalApprovedAmount,
+      totalDeclined: totalDeclinedAmount,
+      approvedCount,
+      declinedCount
+    })
+
+    // Determine new status
+    let newStatus: string | null = null
+
+    if (respondedCount === 0) {
+      // No decisions yet
+      return
+    } else if (pendingItems.length > 0) {
+      // Still have pending items
+      newStatus = 'partial_response'
+    } else if (declinedCount === totalItems) {
+      // All declined
+      newStatus = 'declined'
+    } else {
+      // All items have been actioned (mix of approved/declined or all approved)
+      newStatus = 'authorized'
+    }
+
+    if (newStatus) {
+      const updateData: Record<string, unknown> = {
+        status: newStatus,
+        updated_at: new Date().toISOString()
+      }
+
+      if (newStatus === 'authorized' || newStatus === 'declined') {
+        updateData.fully_responded_at = new Date().toISOString()
+        // Cancel pending reminders when customer fully responds
+        await cancelHealthCheckReminders(healthCheckId)
+      } else if (newStatus === 'partial_response') {
+        // Set first_response_at if not already set
+        if (!healthCheck.first_response_at) {
+          updateData.first_response_at = new Date().toISOString()
+        }
+      }
+
+      await supabaseAdmin
+        .from('health_checks')
+        .update(updateData)
+        .eq('id', healthCheckId)
+    }
+  } catch (err) {
+    console.error('Error updating health check status for new repair items:', err)
   }
 }
 

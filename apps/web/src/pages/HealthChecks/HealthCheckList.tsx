@@ -22,6 +22,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { useAuth } from '../../contexts/AuthContext'
 import { useSocket, WS_EVENTS } from '../../contexts/SocketContext'
 import { api, HealthCheck, User } from '../../lib/api'
+import { WorkflowBadges, WorkflowLegend, WorkflowStatus } from '../../components/WorkflowBadges'
 
 // View type
 type ViewMode = 'kanban' | 'list'
@@ -92,6 +93,8 @@ interface HealthCheckCard {
   isOverdue: boolean
   isExpiringSoon: boolean
   validTransitions: string[]
+  // Workflow status fields
+  workflowStatus?: WorkflowStatus
 }
 
 interface Column {
@@ -226,6 +229,13 @@ function CardContent({ card }: { card: HealthCheckCard }) {
           <span className="font-medium text-gray-900">£{card.total_amount.toFixed(0)}</span>
         )}
       </div>
+
+      {/* Workflow Badges (compact) */}
+      {card.workflowStatus && (
+        <div className="mt-2">
+          <WorkflowBadges status={card.workflowStatus} compact />
+        </div>
+      )}
 
       {/* Status Badge */}
       <div className="mt-2">
@@ -623,21 +633,24 @@ export default function HealthCheckList() {
               </DndContext>
 
               {/* Legend */}
-              <div className="mt-4 flex items-center gap-6 text-xs text-gray-500">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 border-l-4 border-rag-red bg-white"></div>
-                  <span>Overdue</span>
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center gap-6 text-xs text-gray-500">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 border-l-4 border-rag-red bg-white"></div>
+                    <span>Overdue</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 border-l-4 border-rag-amber bg-white"></div>
+                    <span>Link Expiring</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="italic">Drag cards between columns to change status</span>
+                  </div>
+                  <div className="ml-auto text-sm text-gray-500">
+                    {boardData.totalCount} health checks
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 border-l-4 border-rag-amber bg-white"></div>
-                  <span>Link Expiring</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="italic">Drag cards between columns to change status</span>
-                </div>
-                <div className="ml-auto text-sm text-gray-500">
-                  {boardData.totalCount} health checks
-                </div>
+                <WorkflowLegend />
               </div>
             </>
           )}
@@ -720,6 +733,7 @@ export default function HealthCheckList() {
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Registration</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Customer</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Status</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Workflow</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">RAG</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Technician</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Days on Site</th>
@@ -747,6 +761,13 @@ export default function HealthCheckList() {
                         <span className={`inline-block px-2 py-1 text-xs font-medium ${statusColors[hc.status] || 'bg-gray-100 text-gray-700'}`}>
                           {statusLabels[hc.status] || hc.status}
                         </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {(hc as unknown as HealthCheckCard).workflowStatus ? (
+                          <WorkflowBadges status={(hc as unknown as HealthCheckCard).workflowStatus!} compact />
+                        ) : (
+                          <span className="text-gray-400 text-xs">-</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
@@ -802,6 +823,11 @@ export default function HealthCheckList() {
                 </tbody>
               </table>
             )}
+          </div>
+
+          {/* Workflow Legend */}
+          <div className="mt-4 px-4">
+            <WorkflowLegend />
           </div>
 
           {/* Pagination */}

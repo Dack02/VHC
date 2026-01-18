@@ -20,8 +20,8 @@ import {
   type DmsJob
 } from './queue.js'
 import { runDmsImport } from '../jobs/dms-import.js'
-import { sendEmail, sendHealthCheckReadyEmail, sendReminderEmail } from './email.js'
-import { sendSms, sendHealthCheckReadySms, sendReminderSms } from './sms.js'
+import { sendEmail, sendHealthCheckReadyEmail, sendReminderEmail, sendCustomerResponseNotification, sendWorkflowStatusNotification, RepairItemResponse } from './email.js'
+import { sendSms, sendHealthCheckReadySms, sendReminderSms, sendCustomerResponseNotificationSms } from './sms.js'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { WS_EVENTS } from './websocket.js'
 
@@ -536,6 +536,14 @@ async function processStaffNotification(data: StaffNotificationJob) {
         action: 'authorized',
         totalAuthorized: data.metadata?.totalAuthorized as number
       })
+      // Send email/SMS notification to advisor
+      await sendAdvisorResponseNotification(
+        data.healthCheckId,
+        healthCheck.organization_id,
+        data.metadata?.approvedCount as number || 0,
+        data.metadata?.declinedCount as number || 0,
+        data.metadata?.totalAuthorized as number || 0
+      )
       break
 
     case 'customer_declined':
@@ -547,6 +555,14 @@ async function processStaffNotification(data: StaffNotificationJob) {
         action: 'declined',
         totalDeclined: data.metadata?.totalDeclined as number
       })
+      // Send email/SMS notification to advisor
+      await sendAdvisorResponseNotification(
+        data.healthCheckId,
+        healthCheck.organization_id,
+        data.metadata?.approvedCount as number || 0,
+        data.metadata?.declinedCount as number || 0,
+        data.metadata?.totalAuthorized as number || 0
+      )
       break
 
     case 'link_expiring':
@@ -580,6 +596,13 @@ async function processStaffNotification(data: StaffNotificationJob) {
         vehicleReg,
         customerName
       })
+      // Send email notification to advisor
+      await sendWorkflowNotificationEmail(
+        data.healthCheckId,
+        healthCheck.organization_id,
+        'check_complete',
+        data.metadata?.technicianName as string
+      )
       break
   }
 
@@ -773,6 +796,199 @@ async function processReminder(data: SendReminderJob) {
     .eq('id', data.healthCheckId)
 
   console.log(`Sent reminder #${data.reminderNumber} for health check ${data.healthCheckId}`)
+}
+
+/**
+ * Send email/SMS notification to advisor when customer responds
+ */
+async function sendAdvisorResponseNotification(
+  healthCheckId: string,
+  organizationId: string,
+  approvedCount: number,
+  declinedCount: number,
+  totalApproved: number
+) {
+  try {
+    // Get health check with all related data
+    const { data: healthCheck } = await supabaseAdmin
+      .from('health_checks')
+      .select(`
+        id,
+        advisor_id,
+        advisor:users!health_checks_advisor_id_fkey(id, first_name, last_name, email, mobile),
+        vehicle:vehicles(registration, make, model),
+        customer:vehicles(customer:customers(first_name, last_name))
+      `)
+      .eq('id', healthCheckId)
+      .single()
+
+    if (!healthCheck || !healthCheck.advisor) {
+      console.log('[Advisor Notification] No advisor assigned, skipping notification')
+      return
+    }
+
+    const advisor = healthCheck.advisor as unknown as { id: string; first_name: string; last_name: string; email: string; mobile: string }
+    const vehicle = healthCheck.vehicle as unknown as { registration: string; make: string; model: string }
+    const customerData = healthCheck.customer as unknown as { customer: { first_name: string; last_name: string } }
+
+    if (!advisor.email && !advisor.mobile) {
+      console.log('[Advisor Notification] Advisor has no contact info, skipping notification')
+      return
+    }
+
+    const advisorName = `${advisor.first_name} ${advisor.last_name}`
+    const customerName = customerData?.customer ? `${customerData.customer.first_name} ${customerData.customer.last_name}` : 'Customer'
+    const vehicleReg = vehicle?.registration || 'Unknown'
+    const vehicleMakeModel = vehicle ? `${vehicle.make} ${vehicle.model}` : ''
+    const healthCheckUrl = `${process.env.WEB_URL || 'http://localhost:5181'}/health-checks/${healthCheckId}`
+
+    // Get notification settings to check if advisor should be notified
+    const { data: settings } = await supabaseAdmin
+      .from('organization_notification_settings')
+      .select('staff_email_notifications, staff_sms_notifications')
+      .eq('organization_id', organizationId)
+      .single()
+
+    const staffEmailEnabled = settings?.staff_email_notifications !== false
+    const staffSmsEnabled = settings?.staff_sms_notifications !== false
+
+    // Get repair items responses for detailed notification
+    const { data: repairItems } = await supabaseAdmin
+      .from('repair_items')
+      .select(`
+        id,
+        name,
+        total_inc_vat,
+        customer_approved,
+        customer_declined_reason,
+        selected_option_id,
+        options:repair_options(id, name)
+      `)
+      .eq('health_check_id', healthCheckId)
+      .not('customer_approved', 'is', null)
+
+    const responses: RepairItemResponse[] = (repairItems || []).map(item => {
+      const selectedOption = item.options?.find((o: { id: string; name: string }) => o.id === item.selected_option_id)
+      return {
+        name: item.name,
+        approved: item.customer_approved === true,
+        selectedOption: selectedOption?.name || null,
+        declinedReason: item.customer_declined_reason,
+        totalIncVat: item.total_inc_vat || 0
+      }
+    })
+
+    // Send email notification
+    if (staffEmailEnabled && advisor.email) {
+      console.log(`[Advisor Notification] Sending email to ${advisor.email}`)
+      await sendCustomerResponseNotification(
+        advisor.email,
+        advisorName,
+        customerName,
+        vehicleReg,
+        vehicleMakeModel,
+        responses,
+        totalApproved,
+        healthCheckUrl,
+        organizationId
+      )
+    }
+
+    // Send SMS notification
+    if (staffSmsEnabled && advisor.mobile) {
+      console.log(`[Advisor Notification] Sending SMS to ${advisor.mobile}`)
+      await sendCustomerResponseNotificationSms(
+        advisor.mobile,
+        advisorName,
+        customerName,
+        vehicleReg,
+        approvedCount,
+        declinedCount,
+        totalApproved,
+        organizationId
+      )
+    }
+
+    console.log(`[Advisor Notification] Sent notification for health check ${healthCheckId}`)
+  } catch (error) {
+    console.error('[Advisor Notification] Error sending notification:', error)
+  }
+}
+
+/**
+ * Send workflow status email notification to advisor
+ */
+async function sendWorkflowNotificationEmail(
+  healthCheckId: string,
+  organizationId: string,
+  statusType: 'check_complete' | 'awaiting_customer' | 'work_authorized' | 'work_complete',
+  technicianName?: string,
+  approvedCount?: number,
+  totalValue?: number
+) {
+  try {
+    // Get health check with all related data
+    const { data: healthCheck } = await supabaseAdmin
+      .from('health_checks')
+      .select(`
+        id,
+        advisor_id,
+        advisor:users!health_checks_advisor_id_fkey(id, first_name, last_name, email),
+        vehicle:vehicles(registration, make, model)
+      `)
+      .eq('id', healthCheckId)
+      .single()
+
+    if (!healthCheck || !healthCheck.advisor) {
+      console.log('[Workflow Notification] No advisor assigned, skipping notification')
+      return
+    }
+
+    const advisor = healthCheck.advisor as unknown as { id: string; first_name: string; last_name: string; email: string }
+    const vehicle = healthCheck.vehicle as unknown as { registration: string; make: string; model: string }
+
+    if (!advisor.email) {
+      console.log('[Workflow Notification] Advisor has no email, skipping notification')
+      return
+    }
+
+    // Get notification settings
+    const { data: settings } = await supabaseAdmin
+      .from('organization_notification_settings')
+      .select('staff_email_notifications')
+      .eq('organization_id', organizationId)
+      .single()
+
+    if (settings?.staff_email_notifications === false) {
+      console.log('[Workflow Notification] Staff email notifications disabled, skipping')
+      return
+    }
+
+    const advisorName = `${advisor.first_name} ${advisor.last_name}`
+    const vehicleReg = vehicle?.registration || 'Unknown'
+    const vehicleMakeModel = vehicle ? `${vehicle.make} ${vehicle.model}` : ''
+    const healthCheckUrl = `${process.env.WEB_URL || 'http://localhost:5181'}/health-checks/${healthCheckId}`
+
+    console.log(`[Workflow Notification] Sending ${statusType} email to ${advisor.email}`)
+    await sendWorkflowStatusNotification(
+      advisor.email,
+      advisorName,
+      vehicleReg,
+      vehicleMakeModel,
+      statusType,
+      healthCheckUrl,
+      {
+        technicianName,
+        approvedCount,
+        totalValue
+      },
+      organizationId
+    )
+
+    console.log(`[Workflow Notification] Sent ${statusType} notification for health check ${healthCheckId}`)
+  } catch (error) {
+    console.error('[Workflow Notification] Error sending notification:', error)
+  }
 }
 
 /**

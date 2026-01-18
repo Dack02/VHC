@@ -146,12 +146,6 @@ export default function AIUsageDashboard() {
     return n.toString()
   }
 
-  const calculateChange = (current: number, previous: number | undefined) => {
-    if (!previous || previous === 0) return null
-    const change = ((current - previous) / previous) * 100
-    return change
-  }
-
   const formatActionName = (action: string) => {
     return action
       .replace(/_/g, ' ')
@@ -353,7 +347,7 @@ function SummaryCard({
   title,
   value,
   change,
-  isCurrency = false
+  isCurrency: _isCurrency = false
 }: {
   title: string
   value: string | number

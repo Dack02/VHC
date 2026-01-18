@@ -296,6 +296,120 @@ healthChecks.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin'
       .select('repair_item_id, decision, signature_data, signed_at')
       .eq('health_check_id', id)
 
+    // Fetch new repair items with options, labour, parts, and linked check results for PDF
+    const { data: newRepairItemsData } = await supabaseAdmin
+      .from('repair_items')
+      .select(`
+        id,
+        name,
+        description,
+        is_group,
+        labour_total,
+        parts_total,
+        subtotal,
+        vat_amount,
+        total_inc_vat,
+        customer_approved,
+        customer_approved_at,
+        customer_declined_reason,
+        selected_option_id,
+        options:repair_options(
+          id,
+          name,
+          description,
+          labour_total,
+          parts_total,
+          subtotal,
+          vat_amount,
+          total_inc_vat,
+          is_recommended,
+          sort_order
+        ),
+        labour:repair_labour(
+          id,
+          hours,
+          rate,
+          total,
+          is_vat_exempt,
+          labour_code:labour_codes(code, description)
+        ),
+        parts:repair_parts(
+          id,
+          part_number,
+          description,
+          quantity,
+          sell_price,
+          line_total
+        ),
+        linked_check_results:repair_item_check_results(
+          check_result:check_results(
+            id,
+            template_item:template_items(name)
+          )
+        )
+      `)
+      .eq('health_check_id', id)
+      .order('created_at', { ascending: true })
+
+    // Format new repair items for PDF
+    const newRepairItems = (newRepairItemsData || []).map(item => {
+      const linkedCheckResults = (item.linked_check_results || [])
+        .map((lcr: Record<string, unknown>) => {
+          const cr = lcr.check_result as Record<string, unknown> | null
+          const ti = cr?.template_item as { name: string } | null
+          return ti?.name
+        })
+        .filter(Boolean) as string[]
+
+      return {
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        isGroup: item.is_group,
+        labourTotal: parseFloat(item.labour_total as string) || 0,
+        partsTotal: parseFloat(item.parts_total as string) || 0,
+        subtotal: parseFloat(item.subtotal as string) || 0,
+        vatAmount: parseFloat(item.vat_amount as string) || 0,
+        totalIncVat: parseFloat(item.total_inc_vat as string) || 0,
+        customerApproved: item.customer_approved,
+        customerApprovedAt: item.customer_approved_at,
+        customerDeclinedReason: item.customer_declined_reason,
+        selectedOptionId: item.selected_option_id,
+        options: (item.options || []).map((opt: Record<string, unknown>) => ({
+          id: opt.id as string,
+          name: opt.name as string,
+          description: opt.description as string | null,
+          labourTotal: parseFloat(opt.labour_total as string) || 0,
+          partsTotal: parseFloat(opt.parts_total as string) || 0,
+          subtotal: parseFloat(opt.subtotal as string) || 0,
+          vatAmount: parseFloat(opt.vat_amount as string) || 0,
+          totalIncVat: parseFloat(opt.total_inc_vat as string) || 0,
+          isRecommended: opt.is_recommended as boolean
+        })),
+        linkedCheckResults,
+        labourEntries: (item.labour || []).map((lab: Record<string, unknown>) => {
+          const lc = lab.labour_code as { code: string; description: string } | null
+          return {
+            code: lc?.code || '',
+            description: lc?.description || '',
+            hours: parseFloat(lab.hours as string) || 0,
+            rate: parseFloat(lab.rate as string) || 0,
+            total: parseFloat(lab.total as string) || 0,
+            isVatExempt: lab.is_vat_exempt as boolean
+          }
+        }),
+        partsEntries: (item.parts || []).map((part: Record<string, unknown>) => ({
+          partNumber: part.part_number as string | undefined,
+          description: part.description as string,
+          quantity: parseFloat(part.quantity as string) || 0,
+          sellPrice: parseFloat(part.sell_price as string) || 0,
+          lineTotal: parseFloat(part.line_total as string) || 0
+        }))
+      }
+    })
+
+    const hasNewRepairItems = newRepairItems.length > 0
+
     // Fetch selected reasons for all check results
     const checkResultIds = (checkResults || []).map(r => r.id)
     const reasonsByCheckResult: Record<string, Array<{ id: string; reasonText: string; customerDescription?: string | null; followUpDays?: number | null; followUpText?: string | null }>> = {}
@@ -431,6 +545,12 @@ healthChecks.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin'
       })),
 
       reasonsByCheckResult,
+
+      // New Repair Items (Phase 6+)
+      newRepairItems,
+      hasNewRepairItems,
+      vatRate: 20, // Default VAT rate
+      showDetailedBreakdown: false, // Can be enabled for detailed PDF
 
       summary: {
         red_count: redItems.length,
@@ -602,15 +722,17 @@ healthChecks.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 's
         `)
         .eq('health_check_id', id)
 
-      // Fetch repair items with work completion info
+      // Fetch repair items with linked check results via junction table (NEW schema)
       let { data: repairItems } = await supabaseAdmin
         .from('repair_items')
         .select(`
           *,
-          work_completed_by_user:users!repair_items_work_completed_by_fkey(id, first_name, last_name)
+          check_results:repair_item_check_results(
+            check_result:check_results(id, rag_status, notes)
+          )
         `)
         .eq('health_check_id', id)
-        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true })
 
       // Auto-generate repair items for existing health checks that don't have them
       // This handles health checks completed before the auto-generation feature
@@ -622,10 +744,12 @@ healthChecks.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 's
           .from('repair_items')
           .select(`
             *,
-            work_completed_by_user:users!repair_items_work_completed_by_fkey(id, first_name, last_name)
+            check_results:repair_item_check_results(
+              check_result:check_results(id, rag_status, notes)
+            )
           `)
           .eq('health_check_id', id)
-          .order('sort_order', { ascending: true })
+          .order('created_at', { ascending: true })
         repairItems = generatedItems
       }
 
@@ -672,31 +796,51 @@ healthChecks.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 's
         })
       }))
 
-      // Map repair items
-      response.repair_items = repairItems?.map(item => ({
-        id: item.id,
-        health_check_id: item.health_check_id,
-        check_result_id: item.check_result_id,
-        title: item.title,
-        description: item.description,
-        rag_status: item.rag_status,
-        parts_cost: item.parts_cost,
-        labor_cost: item.labor_cost,
-        total_price: item.total_price,
-        is_approved: item.is_approved,
-        is_visible: item.is_visible,
-        is_mot_failure: item.is_mot_failure,
-        follow_up_date: item.follow_up_date,
-        work_completed_at: item.work_completed_at,
-        work_completed_by: item.work_completed_by,
-        work_completed_by_user: item.work_completed_by_user ? {
-          id: item.work_completed_by_user.id,
-          first_name: item.work_completed_by_user.first_name,
-          last_name: item.work_completed_by_user.last_name
-        } : null,
-        sort_order: item.sort_order,
-        created_at: item.created_at
-      }))
+      // Map repair items (NEW schema - derive rag_status from linked check_results)
+      response.repair_items = repairItems?.map(item => {
+        // Get linked check results and derive rag_status
+        const linkedCheckResults = item.check_results || []
+        const firstCheckResult = Array.isArray(linkedCheckResults) && linkedCheckResults.length > 0
+          ? linkedCheckResults[0]?.check_result
+          : null
+        // Derive rag_status: red takes priority over amber
+        let derivedRagStatus: 'red' | 'amber' | null = null
+        for (const link of linkedCheckResults) {
+          const cr = link?.check_result
+          if (cr?.rag_status === 'red') {
+            derivedRagStatus = 'red'
+            break
+          } else if (cr?.rag_status === 'amber' && derivedRagStatus !== 'red') {
+            derivedRagStatus = 'amber'
+          }
+        }
+        // Get first check_result_id for backward compatibility
+        const checkResultId = firstCheckResult?.id || null
+
+        return {
+          id: item.id,
+          health_check_id: item.health_check_id,
+          check_result_id: checkResultId,
+          title: item.name, // NEW schema uses 'name', map to 'title' for backward compat
+          description: item.description,
+          rag_status: derivedRagStatus,
+          parts_cost: parseFloat(item.parts_total) || 0,
+          labor_cost: parseFloat(item.labour_total) || 0,
+          total_price: parseFloat(item.total_inc_vat) || 0,
+          is_approved: item.customer_approved,
+          is_visible: true, // NEW schema doesn't have is_visible, default to true
+          is_mot_failure: false, // NEW schema doesn't have this on repair_items
+          follow_up_date: null, // NEW schema doesn't have this
+          work_completed_at: item.labour_completed_at || item.parts_completed_at,
+          work_completed_by: item.labour_completed_by || item.parts_completed_by,
+          work_completed_by_user: null, // Would need separate query
+          sort_order: 0, // NEW schema doesn't have sort_order
+          created_at: item.created_at,
+          // Group/parent-child fields for repair groups
+          is_group: item.is_group || false,
+          parent_repair_item_id: item.parent_repair_item_id || null
+        }
+      })
 
       // Map authorizations (customer decisions)
       response.authorizations = authorizations?.map(a => ({
@@ -1714,6 +1858,7 @@ healthChecks.get('/:id/results', authorize(['super_admin', 'org_admin', 'site_ad
 })
 
 // GET /api/v1/health-checks/:id/repair-items - Get all repair items for a health check
+// NOTE: This uses the NEW repair_items schema (Phase 6+) with junction table for check results
 healthChecks.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {
     const auth = c.get('auth')
@@ -1731,35 +1876,227 @@ healthChecks.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 'si
       return c.json({ error: 'Health check not found' }, 404)
     }
 
+    // Query using NEW schema - repair_items with junction table for check results
+    // Note: Using explicit FK hints because repair_items has two FKs to repair_options:
+    // 1. repair_options.repair_item_id -> repair_items.id (one-to-many)
+    // 2. repair_items.selected_option_id -> repair_options.id (many-to-one)
+    // Only return top-level items (parent_repair_item_id is null) - children are included in their parent
     const { data: items, error } = await supabaseAdmin
       .from('repair_items')
-      .select('*')
+      .select(`
+        *,
+        check_results:repair_item_check_results(
+          check_result:check_results(
+            id,
+            rag_status,
+            notes,
+            template_item:template_items(id, name)
+          )
+        ),
+        options:repair_options!repair_options_repair_item_id_fkey(
+          id,
+          name,
+          description,
+          labour_total,
+          parts_total,
+          subtotal,
+          vat_amount,
+          total_inc_vat,
+          is_recommended,
+          sort_order
+        ),
+        labour:repair_labour!repair_labour_repair_item_id_fkey(
+          id,
+          labour_code_id,
+          hours,
+          rate,
+          total,
+          is_vat_exempt,
+          notes,
+          labour_code:labour_codes(id, code, description)
+        ),
+        parts:repair_parts!repair_parts_repair_item_id_fkey(
+          id,
+          part_number,
+          description,
+          quantity,
+          supplier_id,
+          supplier_name,
+          cost_price,
+          sell_price,
+          line_total,
+          margin_percent,
+          markup_percent,
+          notes
+        )
+      `)
       .eq('health_check_id', id)
-      .order('sort_order', { ascending: true })
+      .is('parent_repair_item_id', null)
+      .order('created_at', { ascending: true })
+
+    // Get children for groups (items with parent_repair_item_id)
+    const { data: childItems } = await supabaseAdmin
+      .from('repair_items')
+      .select(`
+        *,
+        check_results:repair_item_check_results(
+          check_result:check_results(
+            id,
+            rag_status,
+            notes,
+            template_item:template_items(id, name)
+          )
+        ),
+        labour:repair_labour!repair_labour_repair_item_id_fkey(
+          id,
+          labour_code_id,
+          hours,
+          rate,
+          total,
+          is_vat_exempt,
+          notes,
+          labour_code:labour_codes(id, code, description)
+        )
+      `)
+      .eq('health_check_id', id)
+      .not('parent_repair_item_id', 'is', null)
+      .order('created_at', { ascending: true })
+
+    // Create a map of children by parent ID
+    const childrenByParent = new Map<string, typeof childItems>()
+    if (childItems) {
+      for (const child of childItems) {
+        const parentId = child.parent_repair_item_id
+        if (!childrenByParent.has(parentId)) {
+          childrenByParent.set(parentId, [])
+        }
+        childrenByParent.get(parentId)!.push(child)
+      }
+    }
 
     if (error) {
-      return c.json({ error: error.message }, 500)
+      console.error('Get repair items error:', error)
+      return c.json({ error: error.message, details: error.details }, 500)
     }
 
     return c.json({
-      repairItems: items?.map(item => ({
-        id: item.id,
-        health_check_id: item.health_check_id,
-        check_result_id: item.check_result_id,
-        title: item.title,
-        description: item.description,
-        rag_status: item.rag_status,
-        parts_cost: item.parts_cost,
-        labor_cost: item.labor_cost,
-        total_price: item.total_price,
-        is_approved: item.is_approved,
-        is_visible: item.is_visible,
-        sort_order: item.sort_order,
-        created_at: item.created_at
-      }))
+      repairItems: (items || []).map(item => {
+        // Get children for this item if it's a group
+        const children = childrenByParent.get(item.id) || []
+
+        return {
+          id: item.id,
+          healthCheckId: item.health_check_id,
+          name: item.name,
+          description: item.description,
+          isGroup: item.is_group,
+          parentRepairItemId: item.parent_repair_item_id || null,
+          labourTotal: parseFloat(item.labour_total) || 0,
+          partsTotal: parseFloat(item.parts_total) || 0,
+          subtotal: parseFloat(item.subtotal) || 0,
+          vatAmount: parseFloat(item.vat_amount) || 0,
+          totalIncVat: parseFloat(item.total_inc_vat) || 0,
+          priceOverride: item.price_override ? parseFloat(item.price_override) : null,
+          priceOverrideReason: item.price_override_reason,
+          labourStatus: item.labour_status,
+          partsStatus: item.parts_status,
+          quoteStatus: item.quote_status,
+          customerApproved: item.customer_approved,
+          customerApprovedAt: item.customer_approved_at,
+          customerDeclinedReason: item.customer_declined_reason,
+          selectedOptionId: item.selected_option_id,
+          createdBy: item.created_by,
+          createdAt: item.created_at,
+          updatedAt: item.updated_at,
+          checkResults: item.check_results?.map((cr: Record<string, unknown>) => {
+            const checkResult = cr.check_result as Record<string, unknown>
+            return {
+              id: checkResult?.id,
+              ragStatus: checkResult?.rag_status,
+              notes: checkResult?.notes,
+              templateItem: checkResult?.template_item
+            }
+          }) || [],
+          options: item.options?.map((opt: Record<string, unknown>) => ({
+            id: opt.id,
+            name: opt.name,
+            description: opt.description,
+            labourTotal: parseFloat(opt.labour_total as string) || 0,
+            partsTotal: parseFloat(opt.parts_total as string) || 0,
+            subtotal: parseFloat(opt.subtotal as string) || 0,
+            vatAmount: parseFloat(opt.vat_amount as string) || 0,
+            totalIncVat: parseFloat(opt.total_inc_vat as string) || 0,
+            isRecommended: opt.is_recommended,
+            sortOrder: opt.sort_order
+          })) || [],
+          labour: item.labour?.map((lab: Record<string, unknown>) => ({
+            id: lab.id,
+            labourCodeId: lab.labour_code_id,
+            labourCode: lab.labour_code,
+            hours: parseFloat(lab.hours as string),
+            rate: parseFloat(lab.rate as string),
+            total: parseFloat(lab.total as string),
+            isVatExempt: lab.is_vat_exempt,
+            notes: lab.notes
+          })) || [],
+          parts: item.parts?.map((part: Record<string, unknown>) => ({
+            id: part.id,
+            partNumber: part.part_number,
+            description: part.description,
+            quantity: parseFloat(part.quantity as string),
+            supplierId: part.supplier_id,
+            supplierName: part.supplier_name,
+            costPrice: parseFloat(part.cost_price as string),
+            sellPrice: parseFloat(part.sell_price as string),
+            lineTotal: parseFloat(part.line_total as string),
+            marginPercent: part.margin_percent ? parseFloat(part.margin_percent as string) : null,
+            markupPercent: part.markup_percent ? parseFloat(part.markup_percent as string) : null,
+            notes: part.notes
+          })) || [],
+          // Include children for groups
+          children: children.map((child: Record<string, unknown>) => ({
+            id: child.id,
+            healthCheckId: child.health_check_id,
+            name: child.name,
+            description: child.description,
+            isGroup: child.is_group,
+            parentRepairItemId: child.parent_repair_item_id,
+            labourTotal: parseFloat(child.labour_total as string) || 0,
+            partsTotal: parseFloat(child.parts_total as string) || 0,
+            subtotal: parseFloat(child.subtotal as string) || 0,
+            vatAmount: parseFloat(child.vat_amount as string) || 0,
+            totalIncVat: parseFloat(child.total_inc_vat as string) || 0,
+            labourStatus: child.labour_status,
+            partsStatus: child.parts_status,
+            quoteStatus: child.quote_status,
+            createdAt: child.created_at,
+            updatedAt: child.updated_at,
+            checkResults: (child.check_results as Array<Record<string, unknown>>)?.map((cr: Record<string, unknown>) => {
+              const checkResult = cr.check_result as Record<string, unknown>
+              return {
+                id: checkResult?.id,
+                ragStatus: checkResult?.rag_status,
+                notes: checkResult?.notes,
+                templateItem: checkResult?.template_item
+              }
+            }) || [],
+            labour: ((child.labour as Array<Record<string, unknown>>) || []).map((lab: Record<string, unknown>) => ({
+              id: lab.id,
+              labourCodeId: lab.labour_code_id,
+              labourCode: lab.labour_code,
+              hours: parseFloat(lab.hours as string),
+              rate: parseFloat(lab.rate as string),
+              total: parseFloat(lab.total as string),
+              isVatExempt: lab.is_vat_exempt,
+              notes: lab.notes
+            }))
+          }))
+        }
+      })
     })
   } catch (error) {
-    console.error('Get repair items error:', error)
+    console.error('=== REPAIR ITEMS ERROR DETAIL ===')
+    console.error('Full error:', JSON.stringify(error, Object.getOwnPropertyNames(error as object)))
     return c.json({ error: 'Failed to get repair items' }, 500)
   }
 })
@@ -1774,7 +2111,7 @@ healthChecks.post('/:id/repair-items/generate', authorize(['super_admin', 'org_a
     const { data: healthCheck } = await supabaseAdmin
       .from('health_checks')
       .select(`
-        id,
+        id, organization_id,
         results:check_results(
           id, rag_status, notes, is_mot_failure,
           template_item:template_items(name, description)
@@ -1788,13 +2125,13 @@ healthChecks.post('/:id/repair-items/generate', authorize(['super_admin', 'org_a
       return c.json({ error: 'Health check not found' }, 404)
     }
 
-    // Get existing repair items to avoid duplicates
-    const { data: existingItems } = await supabaseAdmin
-      .from('repair_items')
-      .select('check_result_id')
-      .eq('health_check_id', id)
+    // Get existing linked check results via junction table to avoid duplicates
+    const { data: existingLinks } = await supabaseAdmin
+      .from('repair_item_check_results')
+      .select('check_result_id, repair_item:repair_items!inner(health_check_id)')
+      .eq('repair_item.health_check_id', id)
 
-    const existingResultIds = new Set(existingItems?.map(i => i.check_result_id) || [])
+    const existingResultIds = new Set(existingLinks?.map(l => l.check_result_id) || [])
 
     // Filter to red/amber results that don't already have repair items
     const resultsToCreate = (healthCheck.results || []).filter(
@@ -1807,51 +2144,65 @@ healthChecks.post('/:id/repair-items/generate', authorize(['super_admin', 'org_a
       return c.json({ message: 'No new repair items to generate', created: 0 })
     }
 
-    // Get current max sort order
-    const { data: maxOrder } = await supabaseAdmin
-      .from('repair_items')
-      .select('sort_order')
-      .eq('health_check_id', id)
-      .order('sort_order', { ascending: false })
-      .limit(1)
-      .single()
+    // Create repair items with new schema (name, not title; no check_result_id)
+    const createdItems: { id: string; checkResultId: string }[] = []
 
-    let sortOrder = (maxOrder?.sort_order || 0) + 1
-
-    // Create repair items
-    const newItems = resultsToCreate.map((result: Record<string, unknown>) => {
+    for (const result of resultsToCreate) {
       // Handle template_item which may be object or array from Supabase
-      const templateItem = Array.isArray(result.template_item)
-        ? result.template_item[0]
-        : result.template_item
-      return {
-        health_check_id: id,
-        check_result_id: result.id as string,
-        title: (templateItem?.name as string) || 'Repair Item',
-        description: (result.notes as string) || (templateItem?.description as string) || null,
-        rag_status: result.rag_status as string,
-        parts_cost: 0,
-        labor_cost: 0,
-        total_price: 0,
-        is_visible: true,
-        is_mot_failure: result.is_mot_failure as boolean || false,
-        sort_order: sortOrder++
+      const templateItem = Array.isArray((result as Record<string, unknown>).template_item)
+        ? ((result as Record<string, unknown>).template_item as Record<string, unknown>[])[0]
+        : (result as Record<string, unknown>).template_item as Record<string, unknown>
+
+      // Create the repair item
+      const { data: repairItem, error: insertError } = await supabaseAdmin
+        .from('repair_items')
+        .insert({
+          health_check_id: id,
+          organization_id: healthCheck.organization_id,
+          name: (templateItem?.name as string) || 'Repair Item',
+          description: ((result as Record<string, unknown>).notes as string) ||
+            (templateItem?.description as string) || null,
+          is_group: false,
+          labour_total: 0,
+          parts_total: 0,
+          subtotal: 0,
+          vat_amount: 0,
+          total_inc_vat: 0,
+          labour_status: 'pending',
+          parts_status: 'pending',
+          quote_status: 'pending',
+          created_by: auth.user.id
+        })
+        .select('id')
+        .single()
+
+      if (insertError || !repairItem) {
+        console.error('Failed to create repair item:', insertError)
+        continue
       }
-    })
 
-    const { data: created, error } = await supabaseAdmin
-      .from('repair_items')
-      .insert(newItems)
-      .select()
+      // Create junction table entry to link repair item to check result
+      const { error: linkError } = await supabaseAdmin
+        .from('repair_item_check_results')
+        .insert({
+          repair_item_id: repairItem.id,
+          check_result_id: (result as { id: string }).id
+        })
 
-    if (error) {
-      return c.json({ error: error.message }, 500)
+      if (linkError) {
+        console.error('Failed to link repair item to check result:', linkError)
+      }
+
+      createdItems.push({
+        id: repairItem.id,
+        checkResultId: (result as { id: string }).id
+      })
     }
 
     return c.json({
-      message: `Generated ${created?.length || 0} repair items`,
-      created: created?.length || 0,
-      repairItems: created
+      message: `Generated ${createdItems.length} repair items`,
+      created: createdItems.length,
+      repairItems: createdItems
     })
   } catch (error) {
     console.error('Generate repair items error:', error)
@@ -2162,6 +2513,17 @@ healthChecks.post('/:id/close', authorize(['super_admin', 'org_admin', 'site_adm
 // Helper function to auto-generate repair items from check results
 async function autoGenerateRepairItems(healthCheckId: string) {
   try {
+    // Get health check to get organization_id
+    const { data: healthCheck } = await supabaseAdmin
+      .from('health_checks')
+      .select('organization_id')
+      .eq('id', healthCheckId)
+      .single()
+
+    if (!healthCheck) {
+      return { created: 0, error: 'Health check not found' }
+    }
+
     // Get check results with red/amber status
     const { data: results } = await supabaseAdmin
       .from('check_results')
@@ -2176,13 +2538,13 @@ async function autoGenerateRepairItems(healthCheckId: string) {
       return { created: 0 }
     }
 
-    // Get existing repair items to avoid duplicates
-    const { data: existingItems } = await supabaseAdmin
-      .from('repair_items')
-      .select('check_result_id')
-      .eq('health_check_id', healthCheckId)
+    // Get existing linked check results via junction table to avoid duplicates
+    const { data: existingLinks } = await supabaseAdmin
+      .from('repair_item_check_results')
+      .select('check_result_id, repair_item:repair_items!inner(health_check_id)')
+      .eq('repair_item.health_check_id', healthCheckId)
 
-    const existingResultIds = new Set(existingItems?.map(i => i.check_result_id) || [])
+    const existingResultIds = new Set(existingLinks?.map(l => l.check_result_id) || [])
 
     // Filter to results that don't already have repair items
     const resultsToCreate = results.filter(r => !existingResultIds.has(r.id))
@@ -2191,50 +2553,58 @@ async function autoGenerateRepairItems(healthCheckId: string) {
       return { created: 0 }
     }
 
-    // Get current max sort order
-    const { data: maxOrder } = await supabaseAdmin
-      .from('repair_items')
-      .select('sort_order')
-      .eq('health_check_id', healthCheckId)
-      .order('sort_order', { ascending: false })
-      .limit(1)
-      .single()
+    // Create repair items with new schema and link via junction table
+    let createdCount = 0
 
-    let sortOrder = (maxOrder?.sort_order || 0) + 1
-
-    // Create repair items
-    const newItems = resultsToCreate.map(result => {
+    for (const result of resultsToCreate) {
       // Handle template_item which may be object or array from Supabase
       const templateItem = Array.isArray(result.template_item)
         ? result.template_item[0]
         : result.template_item
-      return {
-        health_check_id: healthCheckId,
-        check_result_id: result.id,
-        title: templateItem?.name || 'Repair Item',
-        description: result.notes || templateItem?.description || null,
-        rag_status: result.rag_status,
-        parts_cost: 0,
-        labor_cost: 0,
-        total_price: 0,
-        is_visible: true,
-        is_mot_failure: result.is_mot_failure || false,
-        sort_order: sortOrder++
+
+      // Create the repair item with new schema columns
+      const { data: repairItem, error: insertError } = await supabaseAdmin
+        .from('repair_items')
+        .insert({
+          health_check_id: healthCheckId,
+          organization_id: healthCheck.organization_id,
+          name: (templateItem as { name?: string })?.name || 'Repair Item',
+          description: result.notes || (templateItem as { description?: string })?.description || null,
+          is_group: false,
+          labour_total: 0,
+          parts_total: 0,
+          subtotal: 0,
+          vat_amount: 0,
+          total_inc_vat: 0,
+          labour_status: 'pending',
+          parts_status: 'pending',
+          quote_status: 'pending'
+        })
+        .select('id')
+        .single()
+
+      if (insertError || !repairItem) {
+        console.error('Failed to create repair item:', insertError)
+        continue
       }
-    })
 
-    const { data: created, error } = await supabaseAdmin
-      .from('repair_items')
-      .insert(newItems)
-      .select()
+      // Create junction table entry to link repair item to check result
+      const { error: linkError } = await supabaseAdmin
+        .from('repair_item_check_results')
+        .insert({
+          repair_item_id: repairItem.id,
+          check_result_id: result.id
+        })
 
-    if (error) {
-      console.error('Auto-generate repair items error:', error)
-      return { created: 0, error: error.message }
+      if (linkError) {
+        console.error('Failed to link repair item to check result:', linkError)
+      } else {
+        createdCount++
+      }
     }
 
-    console.log(`Auto-generated ${created?.length || 0} repair items for health check ${healthCheckId}`)
-    return { created: created?.length || 0 }
+    console.log(`Auto-generated ${createdCount} repair items for health check ${healthCheckId}`)
+    return { created: createdCount }
   } catch (error) {
     console.error('Auto-generate repair items error:', error)
     return { created: 0, error: error instanceof Error ? error.message : 'Unknown error' }

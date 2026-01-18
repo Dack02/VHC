@@ -3,12 +3,14 @@
  * RAG-grouped sections view for the advisor health check detail
  */
 
-import { useMemo } from 'react'
-import { CheckResult, RepairItem, Authorization, TemplateSection } from '../../../lib/api'
+import { useMemo, useState, useEffect } from 'react'
+import { CheckResult, RepairItem, Authorization, TemplateSection, api } from '../../../lib/api'
+import { useAuth } from '../../../contexts/AuthContext'
 import { SectionHeader, SectionSubheader } from './SectionHeader'
 import { RepairItemRow, GreenItemRow } from './RepairItemRow'
 import { TyreSetDisplay } from './TyreDisplay'
 import { BrakeDisplay } from './BrakeDisplay'
+import { SelectedReason } from './ItemReasonsDisplay'
 
 interface HealthCheckTabContentProps {
   healthCheckId: string
@@ -31,6 +33,52 @@ export function HealthCheckTabContent({
 }: HealthCheckTabContentProps) {
   // Silence unused var warning - sections may be used in future for grouping
   void _sections
+
+  const { session } = useAuth()
+
+  // Batch-loaded reasons for all check results
+  const [reasonsByCheckResult, setReasonsByCheckResult] = useState<Record<string, SelectedReason[]>>({})
+  const [reasonsFetched, setReasonsFetched] = useState(false)
+
+  // Memoize check result IDs to prevent unnecessary re-fetches
+  const checkResultIdsKey = useMemo(() => {
+    const ids = results.map(r => r.id)
+    repairItems.forEach(item => {
+      if (item.check_result_id && !ids.includes(item.check_result_id)) {
+        ids.push(item.check_result_id)
+      }
+    })
+    return ids.sort().join(',')
+  }, [results, repairItems])
+
+  // Batch fetch all reasons ONCE when component mounts or IDs change
+  useEffect(() => {
+    // Skip if already fetched for these IDs
+    if (reasonsFetched || !session?.accessToken || !checkResultIdsKey) return
+
+    const checkResultIds = checkResultIdsKey.split(',').filter(Boolean)
+    if (checkResultIds.length === 0) return
+
+    const fetchAllReasons = async () => {
+      try {
+        const data = await api<{ reasonsByCheckResult: Record<string, SelectedReason[]> }>(
+          `/api/v1/check-results/batch-reasons`,
+          {
+            token: session.accessToken,
+            method: 'POST',
+            body: { checkResultIds }
+          }
+        )
+        setReasonsByCheckResult(data.reasonsByCheckResult || {})
+        setReasonsFetched(true)
+      } catch {
+        // Silently fail - reasons are optional enhancement
+        setReasonsFetched(true) // Mark as fetched to prevent retry loops
+      }
+    }
+
+    fetchAllReasons()
+  }, [session?.accessToken, checkResultIdsKey, reasonsFetched])
 
   const resultsById = useMemo(() =>
     new Map(results.map(r => [r.id, r])),
@@ -162,6 +210,7 @@ export function HealthCheckTabContent({
         >
           {redItems.map(item => {
             const result = getResultForRepairItem(item)
+            const checkResultId = result?.id || item.check_result_id
             return (
               <div key={item.id}>
                 <RepairItemRow
@@ -170,6 +219,7 @@ export function HealthCheckTabContent({
                   result={result}
                   onUpdate={onUpdate}
                   onPhotoClick={onPhotoClick}
+                  preloadedReasons={checkResultId ? reasonsByCheckResult[checkResultId] : undefined}
                 />
                 {renderSpecialDisplay(result)}
               </div>
@@ -188,6 +238,7 @@ export function HealthCheckTabContent({
         >
           {amberItems.map(item => {
             const result = getResultForRepairItem(item)
+            const checkResultId = result?.id || item.check_result_id
             return (
               <div key={item.id}>
                 <RepairItemRow
@@ -197,6 +248,7 @@ export function HealthCheckTabContent({
                   showFollowUp={true}
                   onUpdate={onUpdate}
                   onPhotoClick={onPhotoClick}
+                  preloadedReasons={checkResultId ? reasonsByCheckResult[checkResultId] : undefined}
                 />
                 {renderSpecialDisplay(result)}
               </div>
@@ -245,6 +297,8 @@ export function HealthCheckTabContent({
                       title={displayName}
                       notes={result.notes}
                       value={result.value}
+                      checkResultId={result.id}
+                      preloadedReasons={reasonsByCheckResult[result.id]}
                     />
                     {showDetails && renderSpecialDisplay(result)}
                   </div>
@@ -275,6 +329,7 @@ export function HealthCheckTabContent({
 
           {authorisedItems.map(item => {
             const result = getResultForRepairItem(item)
+            const checkResultId = result?.id || item.check_result_id
             return (
               <div key={item.id}>
                 <RepairItemRow
@@ -284,6 +339,7 @@ export function HealthCheckTabContent({
                   showWorkComplete={true}
                   onUpdate={onUpdate}
                   onPhotoClick={onPhotoClick}
+                  preloadedReasons={checkResultId ? reasonsByCheckResult[checkResultId] : undefined}
                 />
               </div>
             )

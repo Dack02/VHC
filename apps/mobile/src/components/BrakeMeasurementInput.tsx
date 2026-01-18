@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useCallback } from 'react'
 import { useThresholds } from '../context/ThresholdsContext'
 import { NumericPicker } from './NumericPicker'
 
@@ -21,8 +21,8 @@ interface BrakeMeasurementValue {
 
 interface BrakeMeasurementInputProps {
   value: BrakeMeasurementValue | undefined
-  onChange: (value: BrakeMeasurementValue) => void
-  onRAGChange: (status: 'green' | 'amber' | 'red' | null) => void
+  onChange: (value: BrakeMeasurementValue, ragStatus: 'green' | 'amber' | 'red' | null) => void
+  onRAGChange?: (status: 'green' | 'amber' | 'red' | null) => void  // Optional for backward compat
   config?: Record<string, unknown>
 }
 
@@ -58,105 +58,94 @@ export function BrakeMeasurementInput({
 
   void _config
 
-  const lastRAGRef = useRef<'green' | 'amber' | 'red' | null>(null)
-  const onRAGChangeRef = useRef(onRAGChange)
-  onRAGChangeRef.current = onRAGChange
-  const hasUserInteracted = useRef(false)
-
-  // Calculate RAG based on measurements
-  useEffect(() => {
+  // Calculate RAG status for a given measurement
+  const calculateRAG = useCallback((m: BrakeMeasurementValue): 'green' | 'amber' | 'red' | null => {
     const padValues: number[] = []
     let hasDiscBelowMinSpec = false
 
     // Collect pad measurements
-    if (measurement.nearside.pad !== null) padValues.push(measurement.nearside.pad)
-    if (measurement.offside.pad !== null) padValues.push(measurement.offside.pad)
+    if (m.nearside.pad !== null) padValues.push(m.nearside.pad)
+    if (m.offside.pad !== null) padValues.push(m.offside.pad)
 
     // Check disc measurements against min specs
-    if (measurement.brake_type === 'disc') {
-      if (measurement.nearside.disc !== null && measurement.nearside.disc_min !== null) {
-        if (measurement.nearside.disc < measurement.nearside.disc_min) {
+    if (m.brake_type === 'disc') {
+      if (m.nearside.disc !== null && m.nearside.disc_min !== null) {
+        if (m.nearside.disc < m.nearside.disc_min) {
           hasDiscBelowMinSpec = true
         }
       }
-      if (measurement.offside.disc !== null && measurement.offside.disc_min !== null) {
-        if (measurement.offside.disc < measurement.offside.disc_min) {
+      if (m.offside.disc !== null && m.offside.disc_min !== null) {
+        if (m.offside.disc < m.offside.disc_min) {
           hasDiscBelowMinSpec = true
         }
       }
     }
-
-    let newRAG: 'green' | 'amber' | 'red' | null = null
 
     const hasAnyMeasurement = padValues.length > 0 ||
-      measurement.nearside.disc !== null || measurement.offside.disc !== null
+      m.nearside.disc !== null || m.offside.disc !== null
 
     if (!hasAnyMeasurement) {
-      newRAG = null
-    } else {
-      const hasRedPad = padValues.some((v) => v < minPad)
-
-      if (hasRedPad || hasDiscBelowMinSpec) {
-        newRAG = 'red'
-      } else {
-        const hasAmberPad = padValues.some((v) => v < warnPad)
-        newRAG = hasAmberPad ? 'amber' : 'green'
-      }
+      return null
     }
 
-    if (newRAG !== lastRAGRef.current) {
-      lastRAGRef.current = newRAG
-      if (hasUserInteracted.current) {
-        onRAGChangeRef.current(newRAG)
-      }
+    const hasRedPad = padValues.some((v) => v < minPad)
+    if (hasRedPad || hasDiscBelowMinSpec) {
+      return 'red'
     }
-  }, [measurement, minPad, warnPad])
+
+    const hasAmberPad = padValues.some((v) => v < warnPad)
+    return hasAmberPad ? 'amber' : 'green'
+  }, [minPad, warnPad])
 
   const handleBrakeTypeChange = useCallback((type: BrakeType) => {
-    hasUserInteracted.current = true
     if ('vibrate' in navigator) navigator.vibrate(30)
     setMeasurement((prev) => {
       const newMeasurement = { ...prev, brake_type: type }
-      onChange(newMeasurement)
+      const ragStatus = calculateRAG(newMeasurement)
+      onChange(newMeasurement, ragStatus)
+      onRAGChange?.(ragStatus)
       return newMeasurement
     })
-  }, [onChange])
+  }, [onChange, onRAGChange, calculateRAG])
 
   const handlePadChange = useCallback((side: 'nearside' | 'offside', val: number) => {
-    hasUserInteracted.current = true
     setMeasurement((prev) => {
       const newMeasurement = {
         ...prev,
         [side]: { ...prev[side], pad: val }
       }
-      onChange(newMeasurement)
+      const ragStatus = calculateRAG(newMeasurement)
+      onChange(newMeasurement, ragStatus)
+      onRAGChange?.(ragStatus)
       return newMeasurement
     })
-  }, [onChange])
+  }, [onChange, onRAGChange, calculateRAG])
 
   const handleDiscChange = useCallback((side: 'nearside' | 'offside', val: number) => {
-    hasUserInteracted.current = true
     setMeasurement((prev) => {
       const newMeasurement = {
         ...prev,
         [side]: { ...prev[side], disc: val }
       }
-      onChange(newMeasurement)
+      const ragStatus = calculateRAG(newMeasurement)
+      onChange(newMeasurement, ragStatus)
+      onRAGChange?.(ragStatus)
       return newMeasurement
     })
-  }, [onChange])
+  }, [onChange, onRAGChange, calculateRAG])
 
   const handleDiscMinChange = useCallback((side: 'nearside' | 'offside', val: number) => {
-    hasUserInteracted.current = true
     setMeasurement((prev) => {
       const newMeasurement = {
         ...prev,
         [side]: { ...prev[side], disc_min: val }
       }
-      onChange(newMeasurement)
+      const ragStatus = calculateRAG(newMeasurement)
+      onChange(newMeasurement, ragStatus)
+      onRAGChange?.(ragStatus)
       return newMeasurement
     })
-  }, [onChange])
+  }, [onChange, onRAGChange, calculateRAG])
 
   return (
     <div className="space-y-4">

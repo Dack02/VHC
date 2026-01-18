@@ -56,11 +56,20 @@ interface HealthCheckData {
   mileageIn: number | null
 }
 
+interface SelectedReason {
+  id: string
+  reasonText: string
+  customerDescription: string | null
+  followUpDays: number | null
+  followUpText: string | null
+}
+
 interface CheckResult {
   id: string
   rag_status: string
   notes: string | null
   value: unknown
+  reasons?: SelectedReason[]
   template_item?: {
     id: string
     name: string
@@ -97,6 +106,7 @@ interface RepairItem {
   follow_up_date: string | null
   check_result?: CheckResult
   authorization: Authorization | null
+  reasons?: SelectedReason[]
 }
 
 interface PortalData {
@@ -479,41 +489,14 @@ export default function CustomerPortal() {
           </div>
         )}
 
-        {/* Passed Items Section */}
+        {/* Checked & All OK Section */}
         {healthCheck.greenCount > 0 && (
-          <div className="bg-white shadow-sm border border-gray-200">
-            <button
-              onClick={() => toggleSection('passed')}
-              className="w-full px-4 py-3 flex items-center justify-between bg-green-600 text-white"
-            >
-              <div className="flex items-center gap-2">
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                <span className="font-semibold">Passed Items</span>
-                <span className="bg-white bg-opacity-20 px-2 py-0.5 text-sm">{healthCheck.greenCount}</span>
-              </div>
-              <svg className={`w-5 h-5 transition-transform ${expandedSections.has('passed') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-            {expandedSections.has('passed') && (
-              <div className="p-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {checkResults
-                    .filter(r => r.rag_status === 'green')
-                    .map(result => (
-                      <div key={result.id} className="flex items-center gap-2 text-sm text-gray-700">
-                        <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                        </svg>
-                        {result.template_item?.name || 'Unknown Item'}
-                      </div>
-                    ))}
-                </div>
-              </div>
-            )}
-          </div>
+          <GreenItemsSection
+            checkResults={checkResults}
+            greenCount={healthCheck.greenCount}
+            isExpanded={expandedSections.has('passed')}
+            onToggle={() => toggleSection('passed')}
+          />
         )}
 
         {/* Photo Gallery */}
@@ -676,6 +659,17 @@ export default function CustomerPortal() {
   )
 }
 
+// Helper function to format follow-up recommendation
+function formatFollowUp(days?: number | null, text?: string | null): string | null {
+  if (text) return text
+  if (!days) return null
+  if (days <= 7) return 'Recommend addressing within 1 week'
+  if (days <= 30) return 'Recommend addressing within 1 month'
+  if (days <= 90) return 'Recommend addressing within 3 months'
+  if (days <= 180) return 'Recommend addressing within 6 months'
+  return `Recommend addressing within ${Math.round(days / 30)} months`
+}
+
 // Repair Item Card Component
 function RepairItemCard({
   item,
@@ -696,6 +690,11 @@ function RepairItemCard({
   const isDeclined = item.authorization?.decision === 'declined'
   const hasDecision = isAuthorized || isDeclined
 
+  // Get reasons from the item
+  const reasons = item.reasons || []
+  const hasReasons = reasons.length > 0
+  const followUpInfo = reasons.find(r => r.followUpDays || r.followUpText)
+
   return (
     <div className="p-4">
       <div className="flex justify-between items-start gap-4 mb-3">
@@ -708,7 +707,38 @@ function RepairItemCard({
               </span>
             )}
           </div>
-          {item.description && (
+
+          {/* Show reasons with customer descriptions */}
+          {hasReasons ? (
+            <div className="mt-2">
+              {reasons.length > 1 && (
+                <div className="text-sm text-gray-700 mb-1">
+                  {item.rag_status === 'red'
+                    ? 'We identified the following issues:'
+                    : 'We identified the following items to monitor:'}
+                </div>
+              )}
+              <ul className="space-y-1">
+                {reasons.map((reason) => (
+                  <li key={reason.id} className="text-sm text-gray-600 flex gap-2">
+                    {reasons.length > 1 && (
+                      <span className={item.rag_status === 'red' ? 'text-red-400' : 'text-amber-400'}>
+                        &bull;
+                      </span>
+                    )}
+                    <span>{reason.customerDescription || reason.reasonText}</span>
+                  </li>
+                ))}
+              </ul>
+              {followUpInfo && (
+                <div className={`mt-2 text-sm font-medium ${
+                  item.rag_status === 'red' ? 'text-red-600' : 'text-amber-600'
+                }`}>
+                  {formatFollowUp(followUpInfo.followUpDays, followUpInfo.followUpText)}
+                </div>
+              )}
+            </div>
+          ) : item.description && (
             <p className="text-sm text-gray-600 mt-1">{item.description}</p>
           )}
         </div>
@@ -968,6 +998,91 @@ function SignatureCapture({
           )}
         </button>
       </div>
+    </div>
+  )
+}
+
+// Green Items "Checked & All OK" Section Component
+function GreenItemsSection({
+  checkResults,
+  greenCount,
+  isExpanded,
+  onToggle
+}: {
+  checkResults: CheckResult[]
+  greenCount: number
+  isExpanded: boolean
+  onToggle: () => void
+}) {
+  const [showAll, setShowAll] = useState(false)
+  const INITIAL_DISPLAY_COUNT = 6
+
+  const greenResults = checkResults.filter(r => r.rag_status === 'green')
+  const hasMore = greenResults.length > INITIAL_DISPLAY_COUNT
+  const displayedItems = showAll ? greenResults : greenResults.slice(0, INITIAL_DISPLAY_COUNT)
+
+  return (
+    <div className="bg-white shadow-sm border border-gray-200">
+      <button
+        onClick={onToggle}
+        className="w-full px-4 py-3 flex items-center justify-between bg-green-600 text-white"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-lg">&#x1F7E2;</span>
+          <span className="font-semibold">CHECKED & ALL OK</span>
+          <span className="bg-white bg-opacity-20 px-2 py-0.5 text-sm">{greenCount}</span>
+        </div>
+        <svg className={`w-5 h-5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {isExpanded && (
+        <div className="p-4">
+          <p className="text-sm text-gray-600 mb-4">
+            We've thoroughly inspected these items and they're all in good condition:
+          </p>
+          <div className="space-y-2">
+            {displayedItems.map(result => {
+              const positiveReason = result.reasons?.find(r => r.customerDescription || r.reasonText)
+              return (
+                <div key={result.id} className="flex items-start gap-2">
+                  <span className="text-green-500 flex-shrink-0">&#x2713;</span>
+                  <span className="text-sm text-gray-700">
+                    <span className="font-medium">{result.template_item?.name || 'Unknown Item'}</span>
+                    {positiveReason && (
+                      <span className="text-green-600 ml-1">
+                        — {positiveReason.customerDescription || positiveReason.reasonText}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          {hasMore && !showAll && (
+            <button
+              onClick={() => setShowAll(true)}
+              className="mt-4 text-sm text-green-600 hover:text-green-700 font-medium flex items-center gap-1"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+              See all {greenResults.length} items checked...
+            </button>
+          )}
+          {showAll && hasMore && (
+            <button
+              onClick={() => setShowAll(false)}
+              className="mt-4 text-sm text-gray-500 hover:text-gray-700 font-medium flex items-center gap-1"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+              </svg>
+              Show less
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -24,14 +24,24 @@ import DMSIntegration from './pages/Settings/DMSIntegration'
 import NotificationSettings from './pages/Settings/NotificationSettings'
 import OrganizationSettings from './pages/Settings/OrganizationSettings'
 import Subscription from './pages/Settings/Subscription'
+import ReasonLibrary from './pages/Settings/ReasonLibrary'
+import ReasonTypes from './pages/Settings/ReasonTypes'
+import EditReasons from './pages/Settings/EditReasons'
+import ReasonSubmissions from './pages/Settings/ReasonSubmissions'
+import ReasonAnalytics from './pages/Settings/ReasonAnalytics'
+import AIUsage from './pages/Settings/AIUsage'
+import AIUsageHistory from './pages/Settings/AIUsageHistory'
 import CustomerPortal from './pages/CustomerPortal/CustomerPortal'
-import AdminLogin from './pages/admin/AdminLogin'
-import AdminDashboard from './pages/admin/AdminDashboard'
-import AdminOrganizations from './pages/admin/AdminOrganizations'
-import AdminOrganizationDetail from './pages/admin/AdminOrganizationDetail'
-import AdminPlans from './pages/admin/AdminPlans'
-import AdminActivity from './pages/admin/AdminActivity'
-import AdminSettings from './pages/admin/AdminSettings'
+import AdminLogin from './pages/Admin/AdminLogin'
+import AdminDashboard from './pages/Admin/AdminDashboard'
+import AdminOrganizations from './pages/Admin/AdminOrganizations'
+import AdminOrganizationDetail from './pages/Admin/AdminOrganizationDetail'
+import AdminPlans from './pages/Admin/AdminPlans'
+import AdminActivity from './pages/Admin/AdminActivity'
+import AdminSettings from './pages/Admin/AdminSettings'
+import AdminStarterTemplate from './pages/Admin/AdminStarterTemplate'
+import AIConfiguration from './pages/Admin/AIConfiguration'
+import AIUsageDashboard from './pages/Admin/AIUsageDashboard'
 import ImpersonationBanner from './components/admin/ImpersonationBanner'
 import SuspendedBanner from './components/SuspendedBanner'
 import Onboarding from './pages/Onboarding'
@@ -63,7 +73,11 @@ function App() {
                       <Route path="organizations/:id" element={<AdminOrganizationDetail />} />
                       <Route path="plans" element={<AdminPlans />} />
                       <Route path="activity" element={<AdminActivity />} />
+                      <Route path="ai-usage" element={<AIUsageDashboard />} />
                       <Route path="settings" element={<AdminSettings />} />
+                      <Route path="ai-configuration" element={<AIConfiguration />} />
+                      <Route path="starter-template" element={<AdminStarterTemplate />} />
+                      <Route path="reason-types" element={<ReasonTypes />} />
                     </Route>
 
                     {/* Onboarding route (protected but no dashboard layout) */}
@@ -92,6 +106,14 @@ function App() {
                         <Route path="/settings/notifications" element={<NotificationSettings />} />
                         <Route path="/settings/organization" element={<OrganizationSettings />} />
                         <Route path="/settings/subscription" element={<Subscription />} />
+                        <Route path="/settings/reasons" element={<ReasonLibrary />} />
+                        <Route path="/settings/reason-types" element={<ReasonTypes />} />
+                        <Route path="/settings/reasons/type/:type" element={<EditReasons />} />
+                        <Route path="/settings/reasons/item/:itemId" element={<EditReasons />} />
+                        <Route path="/settings/reason-submissions" element={<ReasonSubmissions />} />
+                        <Route path="/settings/reason-analytics" element={<ReasonAnalytics />} />
+                        <Route path="/settings/ai-usage" element={<AIUsage />} />
+                        <Route path="/settings/ai-usage/history" element={<AIUsageHistory />} />
                       </Route>
                     </Route>
 

@@ -12,6 +12,10 @@ healthChecks.use('*', authMiddleware)
 
 // Valid status transitions
 const validTransitions: Record<string, string[]> = {
+  // DMS Import arrival workflow (Phase D)
+  awaiting_arrival: ['created', 'no_show', 'cancelled'],  // Mark arrived → created, No show, or Cancel
+  no_show: ['awaiting_arrival', 'cancelled'],  // Can be rescheduled or cancelled
+  // Standard workflow
   created: ['assigned', 'cancelled'],
   assigned: ['in_progress', 'cancelled'],
   in_progress: ['paused', 'tech_completed', 'cancelled'],
@@ -292,6 +296,43 @@ healthChecks.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin'
       .select('repair_item_id, decision, signature_data, signed_at')
       .eq('health_check_id', id)
 
+    // Fetch selected reasons for all check results
+    const checkResultIds = (checkResults || []).map(r => r.id)
+    const reasonsByCheckResult: Record<string, Array<{ id: string; reasonText: string; customerDescription?: string | null; followUpDays?: number | null; followUpText?: string | null }>> = {}
+
+    if (checkResultIds.length > 0) {
+      const { data: allReasons } = await supabaseAdmin
+        .from('check_result_reasons')
+        .select(`
+          id,
+          check_result_id,
+          follow_up_days,
+          follow_up_text,
+          customer_description_override,
+          reason:item_reasons(
+            reason_text,
+            customer_description
+          )
+        `)
+        .in('check_result_id', checkResultIds)
+
+      // Group reasons by check result ID
+      for (const reasonData of allReasons || []) {
+        const checkResultId = reasonData.check_result_id
+        if (!reasonsByCheckResult[checkResultId]) {
+          reasonsByCheckResult[checkResultId] = []
+        }
+        const reasonItem = reasonData.reason as unknown as { reason_text: string; customer_description?: string | null } | null
+        reasonsByCheckResult[checkResultId].push({
+          id: reasonData.id,
+          reasonText: reasonItem?.reason_text || '',
+          customerDescription: reasonData.customer_description_override || reasonItem?.customer_description,
+          followUpDays: reasonData.follow_up_days,
+          followUpText: reasonData.follow_up_text
+        })
+      }
+    }
+
     // Calculate summary
     const redItems = repairItems?.filter(i => i.rag_status === 'red') || []
     const amberItems = repairItems?.filter(i => i.rag_status === 'amber') || []
@@ -329,6 +370,8 @@ healthChecks.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin'
         first_name: healthCheck.technician.first_name,
         last_name: healthCheck.technician.last_name
       } : undefined,
+
+      technician_signature: healthCheck.technician_signature,
 
       site: healthCheck.site ? {
         name: healthCheck.site.name,
@@ -386,6 +429,8 @@ healthChecks.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin'
         signature_data: a.signature_data,
         signed_at: a.signed_at
       })),
+
+      reasonsByCheckResult,
 
       summary: {
         red_count: redItems.length,
@@ -481,6 +526,18 @@ healthChecks.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 's
         first_opened_at: healthCheck.first_opened_at,
         closed_at: healthCheck.closed_at,
         closed_by: healthCheck.closed_by,
+        arrived_at: healthCheck.arrived_at,
+        external_id: healthCheck.external_id,
+        external_source: healthCheck.external_source,
+        // Phase 1 Quick Wins fields
+        due_date: healthCheck.due_date,
+        booked_date: healthCheck.booked_date,
+        customer_waiting: healthCheck.customer_waiting || false,
+        loan_car_required: healthCheck.loan_car_required || false,
+        is_internal: healthCheck.is_internal || false,
+        booked_repairs: healthCheck.booked_repairs || [],
+        jobsheet_number: healthCheck.jobsheet_number,
+        jobsheet_status: healthCheck.jobsheet_status,
         closed_by_user: healthCheck.closed_by_user ? {
           id: healthCheck.closed_by_user.id,
           first_name: healthCheck.closed_by_user.first_name,
@@ -503,7 +560,14 @@ healthChecks.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 's
             last_name: healthCheck.vehicle.customer.last_name,
             email: healthCheck.vehicle.customer.email,
             mobile: healthCheck.vehicle.customer.mobile,
-            external_id: healthCheck.vehicle.customer.external_id
+            external_id: healthCheck.vehicle.customer.external_id,
+            // Phase 1 Quick Wins - Address fields
+            title: healthCheck.vehicle.customer.title,
+            address_line1: healthCheck.vehicle.customer.address_line1,
+            address_line2: healthCheck.vehicle.customer.address_line2,
+            town: healthCheck.vehicle.customer.town,
+            county: healthCheck.vehicle.customer.county,
+            postcode: healthCheck.vehicle.customer.postcode
           } : null
         } : null,
         technician: healthCheck.technician ? {
@@ -681,6 +745,8 @@ healthChecks.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 
     // Support both camelCase and snake_case for mileage fields
     const mileageIn = body.mileageIn ?? body.mileage_in
     const mileageOut = body.mileageOut ?? body.mileage_out
+    const technicianNotes = body.technicianNotes ?? body.technician_notes
+    const technicianSignature = body.technicianSignature ?? body.technician_signature
     const { notes, customerNotes } = body
 
     // Technicians can only update health checks assigned to them
@@ -702,6 +768,8 @@ healthChecks.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 
     if (mileageOut !== undefined) updateData.mileage_out = mileageOut
     if (notes !== undefined) updateData.notes = notes
     if (customerNotes !== undefined) updateData.customer_notes = customerNotes
+    if (technicianNotes !== undefined) updateData.technician_notes = technicianNotes
+    if (technicianSignature !== undefined) updateData.technician_signature = technicianSignature
 
     const { data: healthCheck, error } = await supabaseAdmin
       .from('health_checks')
@@ -913,6 +981,146 @@ healthChecks.get('/:id/history', authorize(['super_admin', 'org_admin', 'site_ad
   } catch (error) {
     console.error('Get history error:', error)
     return c.json({ error: 'Failed to get status history' }, 500)
+  }
+})
+
+// POST /api/v1/health-checks/:id/mark-arrived - Mark vehicle as arrived (DMS workflow)
+healthChecks.post('/:id/mark-arrived', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    // Get current health check
+    const { data: current, error: fetchError } = await supabaseAdmin
+      .from('health_checks')
+      .select('id, status')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    if (fetchError || !current) {
+      return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Validate transition
+    if (current.status !== 'awaiting_arrival') {
+      return c.json({ error: `Can only mark arrived from awaiting_arrival status, current status is ${current.status}` }, 400)
+    }
+
+    const now = new Date().toISOString()
+
+    // Update status and record arrival time
+    const { data: healthCheck, error: updateError } = await supabaseAdmin
+      .from('health_checks')
+      .update({
+        status: 'created',
+        arrived_at: now,
+        updated_at: now
+      })
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .select()
+      .single()
+
+    if (updateError) {
+      return c.json({ error: updateError.message }, 500)
+    }
+
+    // Record status change in history
+    await supabaseAdmin
+      .from('health_check_status_history')
+      .insert({
+        health_check_id: id,
+        from_status: 'awaiting_arrival',
+        to_status: 'created',
+        changed_by: auth.user.id,
+        notes: 'Vehicle marked as arrived'
+      })
+
+    // Notify via WebSocket
+    await notifyHealthCheckStatusChanged(id, 'awaiting_arrival', 'created', auth.user.id, auth.orgId)
+
+    return c.json({
+      success: true,
+      healthCheck: {
+        id: healthCheck.id,
+        status: healthCheck.status,
+        arrivedAt: healthCheck.arrived_at
+      }
+    })
+  } catch (error) {
+    console.error('Mark arrived error:', error)
+    return c.json({ error: 'Failed to mark vehicle as arrived' }, 500)
+  }
+})
+
+// POST /api/v1/health-checks/:id/mark-no-show - Mark vehicle as no-show (DMS workflow)
+healthChecks.post('/:id/mark-no-show', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const body = await c.req.json().catch(() => ({}))
+    const notes = body.notes || 'Vehicle did not arrive'
+
+    // Get current health check
+    const { data: current, error: fetchError } = await supabaseAdmin
+      .from('health_checks')
+      .select('id, status')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    if (fetchError || !current) {
+      return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Validate transition
+    if (current.status !== 'awaiting_arrival') {
+      return c.json({ error: `Can only mark no-show from awaiting_arrival status, current status is ${current.status}` }, 400)
+    }
+
+    const now = new Date().toISOString()
+
+    // Update status to no_show
+    const { data: healthCheck, error: updateError } = await supabaseAdmin
+      .from('health_checks')
+      .update({
+        status: 'no_show',
+        updated_at: now
+      })
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .select()
+      .single()
+
+    if (updateError) {
+      return c.json({ error: updateError.message }, 500)
+    }
+
+    // Record status change in history
+    await supabaseAdmin
+      .from('health_check_status_history')
+      .insert({
+        health_check_id: id,
+        from_status: 'awaiting_arrival',
+        to_status: 'no_show',
+        changed_by: auth.user.id,
+        notes
+      })
+
+    // Notify via WebSocket
+    await notifyHealthCheckStatusChanged(id, 'awaiting_arrival', 'no_show', auth.user.id, auth.orgId)
+
+    return c.json({
+      success: true,
+      healthCheck: {
+        id: healthCheck.id,
+        status: healthCheck.status
+      }
+    })
+  } catch (error) {
+    console.error('Mark no-show error:', error)
+    return c.json({ error: 'Failed to mark vehicle as no-show' }, 500)
   }
 })
 

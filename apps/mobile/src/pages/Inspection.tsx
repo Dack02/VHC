@@ -16,6 +16,16 @@ import { SelectInput } from '../components/SelectInput'
 import { MultiSelectInput } from '../components/MultiSelectInput'
 import { Badge } from '../components/Badge'
 import { db } from '../lib/db'
+import { ReasonSelector } from '../components/ReasonSelector'
+
+// State for tracking which item has ReasonSelector open
+interface ReasonSelectorState {
+  itemKey: string
+  templateItemId: string
+  templateItemName: string
+  checkResultId?: string
+  currentRag: 'red' | 'amber' | 'green' | null
+}
 
 export function Inspection() {
   const { id } = useParams<{ id: string }>()
@@ -34,6 +44,9 @@ export function Inspection() {
   const [photoItemId, setPhotoItemId] = useState<string | null>(null)
   const [viewingPhoto, setViewingPhoto] = useState<{ url: string; caption?: string } | null>(null)
   const [creatingDuplicate, setCreatingDuplicate] = useState(false)
+  const [reasonSelectorItem, setReasonSelectorItem] = useState<ReasonSelectorState | null>(null)
+  // Track reason counts per check result (keyed by check result ID)
+  const [reasonCounts, setReasonCounts] = useState<Map<string, number>>(new Map())
 
   // Helper to generate result key
   const getResultKey = (templateItemId: string, instanceNumber: number = 1) =>
@@ -111,6 +124,27 @@ export function Inspection() {
       })
 
       setResults(resultsMap)
+
+      // Fetch reason counts for all results that have IDs
+      const countsMap = new Map<string, number>()
+      const resultsWithIds = apiResults.filter(r => r.id)
+
+      await Promise.all(
+        resultsWithIds.map(async (result) => {
+          try {
+            const { selectedReasons } = await api<{ selectedReasons: Array<{ id: string }> }>(
+              `/api/v1/check-results/${result.id}/reasons`,
+              { token: session.access_token }
+            )
+            if (selectedReasons && selectedReasons.length > 0) {
+              countsMap.set(result.id, selectedReasons.length)
+            }
+          } catch {
+            // Silently ignore errors
+          }
+        })
+      )
+      setReasonCounts(countsMap)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load inspection')
     } finally {
@@ -122,11 +156,14 @@ export function Inspection() {
 
   // Get all instances for a template item
   const getItemInstances = (templateItemId: string) => {
-    const instances: Array<{ instanceNumber: number; result: Partial<CheckResult> }> = []
+    const instances: Array<{ instanceNumber: number; result: Partial<CheckResult>; mapKey: string }> = []
     results.forEach((result, key) => {
       if (key.startsWith(`${templateItemId}-`)) {
-        const instanceNumber = result.instanceNumber || result.instance_number || 1
-        instances.push({ instanceNumber, result })
+        // Parse instanceNumber from the MAP KEY, not from result object
+        // This is more reliable as the result object might have corrupted values
+        const lastHyphen = key.lastIndexOf('-')
+        const instanceNumber = parseInt(key.substring(lastHyphen + 1), 10) || 1
+        instances.push({ instanceNumber, result, mapKey: key })
       }
     })
     // Sort by instance number
@@ -163,8 +200,10 @@ export function Inspection() {
     const newStatus = data.status || data.rag_status || existingResult?.status || existingResult?.rag_status
 
     // Parse itemKey to get templateItemId and instanceNumber
-    const [templateItemId, instanceStr] = itemKey.split('-')
-    const instanceNumber = parseInt(instanceStr, 10) || 1
+    // Must handle UUIDs which contain hyphens - take last part as instance, rest as templateId
+    const parts = itemKey.split('-')
+    const instanceNumber = parts.length > 1 ? parseInt(parts[parts.length - 1], 10) || 1 : 1
+    const templateItemId = parts.length > 1 ? parts.slice(0, -1).join('-') : itemKey
 
     const result = {
       ...existingResult,
@@ -275,12 +314,124 @@ export function Inspection() {
     }
   }
 
+  // Handle saving selected reasons for a check result
+  const handleSaveReasons = async (data: {
+    selectedReasonIds: string[]
+    followUpDays?: number
+    followUpText?: string
+    customNote?: string
+  }) => {
+    if (!reasonSelectorItem || !session || !id) return
+
+    const { itemKey, checkResultId } = reasonSelectorItem
+
+    try {
+      // First ensure we have a check result ID
+      let resultId = checkResultId
+      const result = results.get(itemKey)
+
+      if (!resultId && result?.id) {
+        resultId = result.id
+      }
+
+      // If still no result ID, we need to create the check result first
+      if (!resultId) {
+        const parts = itemKey.split('-')
+        const instanceNumber = parts.length > 1 ? parseInt(parts[parts.length - 1], 10) || 1 : 1
+        const templateItemId = parts.length > 1 ? parts.slice(0, -1).join('-') : itemKey
+
+        const savedResult = await api<{ id: string }>(
+          `/api/v1/health-checks/${id}/results`,
+          {
+            method: 'POST',
+            token: session.access_token,
+            body: JSON.stringify({
+              templateItemId,
+              instanceNumber,
+              status: result?.status || result?.rag_status || null
+            })
+          }
+        )
+        resultId = savedResult.id
+
+        // Update local state with the new check result ID
+        setResults((prev) => {
+          const newResults = new Map(prev)
+          const existingResult = newResults.get(itemKey) || {}
+          newResults.set(itemKey, {
+            ...existingResult,
+            id: resultId,
+            templateItemId,
+            template_item_id: templateItemId,
+            instanceNumber,
+            instance_number: instanceNumber
+          })
+          return newResults
+        })
+      }
+
+      // Now save the reasons to the check result
+      await api(`/api/v1/check-results/${resultId}/reasons`, {
+        method: 'PUT',
+        token: session.access_token,
+        body: JSON.stringify({
+          reasonIds: data.selectedReasonIds,
+          followUpDays: data.followUpDays,
+          followUpText: data.followUpText,
+          notes: data.customNote
+        })
+      })
+
+      // Update reason count for this check result
+      setReasonCounts((prev) => {
+        const newCounts = new Map(prev)
+        if (data.selectedReasonIds.length > 0) {
+          newCounts.set(resultId!, data.selectedReasonIds.length)
+        } else {
+          newCounts.delete(resultId!)
+        }
+        return newCounts
+      })
+
+      // Update local state with follow-up info if provided
+      if (data.followUpDays || data.followUpText) {
+        setResults((prev) => {
+          const newResults = new Map(prev)
+          const existingResult = newResults.get(itemKey)
+          if (existingResult) {
+            newResults.set(itemKey, {
+              ...existingResult,
+              // Store follow-up info in notes or a dedicated field
+              notes: data.customNote || existingResult.notes
+            })
+          }
+          return newResults
+        })
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save reasons')
+    }
+  }
+
+  // Handle RAG change from ReasonSelector
+  const handleReasonSelectorRagChange = (rag: 'red' | 'amber' | 'green') => {
+    if (!reasonSelectorItem) return
+
+    const { itemKey } = reasonSelectorItem
+    saveResult(itemKey, { status: rag, rag_status: rag })
+
+    // Update the reasonSelectorItem state with new RAG
+    setReasonSelectorItem((prev) => prev ? { ...prev, currentRag: rag } : null)
+  }
+
   const handlePhotoCapture = async (photoData: string) => {
     if (!photoItemId || !session) return
 
     // photoItemId is now a composite key: templateItemId-instanceNumber
-    const [templateItemId, instanceStr] = photoItemId.split('-')
-    const instanceNumber = parseInt(instanceStr, 10) || 1
+    // Must handle UUIDs which contain hyphens - take last part as instance, rest as templateId
+    const parts = photoItemId.split('-')
+    const instanceNumber = parts.length > 1 ? parseInt(parts[parts.length - 1], 10) || 1 : 1
+    const templateItemId = parts.length > 1 ? parts.slice(0, -1).join('-') : photoItemId
 
     setPhotoItemId(null)
 
@@ -462,6 +613,14 @@ export function Inspection() {
                   onAddPhoto={() => setPhotoItemId(key)}
                   onViewPhoto={(url, caption) => setViewingPhoto({ url, caption })}
                   onDuplicate={() => createDuplicate(item.id)}
+                  onOpenReasons={() => setReasonSelectorItem({
+                    itemKey: key,
+                    templateItemId: item.id,
+                    templateItemName: item.name,
+                    checkResultId: result?.id,
+                    currentRag: (result?.status || result?.rag_status) as 'red' | 'amber' | 'green' | null
+                  })}
+                  reasonCount={result?.id ? reasonCounts.get(result.id) : undefined}
                 />
               </div>
             )
@@ -470,26 +629,34 @@ export function Inspection() {
           // Render all instances
           return (
             <div key={item.id} className="space-y-2">
-              {instances.map(({ instanceNumber, result }, displayIndex) => {
-                const key = getResultKey(item.id, instanceNumber)
+              {instances.map(({ result, mapKey }, displayIndex) => {
+                // Use mapKey from the Map directly - this is the authoritative key
                 // Use displayIndex + 1 for display (1, 2, 3...) rather than raw instanceNumber
                 // This ensures sequential display even if database instance_numbers are non-sequential
                 const displayNumber = displayIndex + 1
                 return (
                   <InspectionItem
-                    key={key}
+                    key={mapKey}
                     item={item}
-                    itemKey={key}
+                    itemKey={mapKey}
                     instanceNumber={displayNumber}
                     totalInstances={instances.length}
                     result={result}
-                    expanded={expandedItem === key}
-                    onToggle={() => setExpandedItem(expandedItem === key ? null : key)}
-                    onSave={(data) => saveResult(key, data)}
-                    onAddPhoto={() => setPhotoItemId(key)}
+                    expanded={expandedItem === mapKey}
+                    onToggle={() => setExpandedItem(expandedItem === mapKey ? null : mapKey)}
+                    onSave={(data) => saveResult(mapKey, data)}
+                    onAddPhoto={() => setPhotoItemId(mapKey)}
                     onViewPhoto={(url, caption) => setViewingPhoto({ url, caption })}
                     onDuplicate={() => createDuplicate(item.id)}
-                    onDeleteDuplicate={displayIndex > 0 && result?.id ? () => deleteDuplicate(key, result.id!) : undefined}
+                    onDeleteDuplicate={displayIndex > 0 && result?.id ? () => deleteDuplicate(mapKey, result.id!) : undefined}
+                    onOpenReasons={() => setReasonSelectorItem({
+                      itemKey: mapKey,
+                      templateItemId: item.id,
+                      templateItemName: item.name,
+                      checkResultId: result?.id,
+                      currentRag: (result?.status || result?.rag_status) as 'red' | 'amber' | 'green' | null
+                    })}
+                    reasonCount={result?.id ? reasonCounts.get(result.id) : undefined}
                   />
                 )
               })}
@@ -560,6 +727,21 @@ export function Inspection() {
           </div>
         </div>
       )}
+
+      {/* Reason Selector modal */}
+      {reasonSelectorItem && id && (
+        <ReasonSelector
+          templateItemId={reasonSelectorItem.templateItemId}
+          templateItemName={reasonSelectorItem.templateItemName}
+          healthCheckId={id}
+          checkResultId={reasonSelectorItem.checkResultId}
+          currentRag={reasonSelectorItem.currentRag}
+          onRagChange={handleReasonSelectorRagChange}
+          onClose={() => setReasonSelectorItem(null)}
+          onSave={handleSaveReasons}
+          vehicleRegistration={job?.vehicle?.registration}
+        />
+      )}
     </div>
   )
 }
@@ -578,6 +760,8 @@ interface InspectionItemProps {
   onViewPhoto: (url: string, caption?: string) => void
   onDuplicate: () => void
   onDeleteDuplicate?: () => void
+  onOpenReasons: () => void
+  reasonCount?: number
 }
 
 function InspectionItem({
@@ -592,7 +776,9 @@ function InspectionItem({
   onAddPhoto,
   onViewPhoto,
   onDuplicate,
-  onDeleteDuplicate
+  onDeleteDuplicate,
+  onOpenReasons,
+  reasonCount
 }: InspectionItemProps) {
   void _itemKey // Suppress unused variable warning
   const handleRAGChange = (newStatus: 'green' | 'amber' | 'red' | null) => {
@@ -640,6 +826,9 @@ function InspectionItem({
           )}
         </div>
         <div className="flex items-center gap-2">
+          {reasonCount && reasonCount > 0 && (
+            <Badge variant="primary" size="sm">{reasonCount} 📋</Badge>
+          )}
           {result?.media && result.media.length > 0 && (
             <Badge variant="gray" size="sm">{result.media.length} 📷</Badge>
           )}
@@ -667,6 +856,10 @@ function InspectionItem({
               onClick={(e) => {
                 e.stopPropagation()
                 handleRAGChange(status)
+                // Auto-expand when selecting a concern (amber/red) to show Select Reasons button
+                if (status === 'amber' || status === 'red') {
+                  onToggle()
+                }
               }}
               className={`
                 flex-1 py-3 font-medium text-sm transition-colors flex flex-col items-center justify-center
@@ -702,8 +895,14 @@ function InspectionItem({
           {item.itemType === 'tyre_depth' && (
             <TyreDepthInput
               value={result?.value as any}
-              onChange={handleValueChange}
-              onRAGChange={handleRAGChange}
+              onChange={(value, ragStatus) => {
+                onSave({
+                  value,
+                  status: ragStatus,
+                  rag_status: ragStatus,
+                  is_mot_failure: ragStatus !== 'red' ? false : result?.is_mot_failure
+                })
+              }}
               config={item.config}
             />
           )}
@@ -711,8 +910,14 @@ function InspectionItem({
           {item.itemType === 'tyre_details' && (
             <TyreDetailsInput
               value={result?.value as any}
-              onChange={handleValueChange}
-              onRAGChange={handleRAGChange}
+              onChange={(value, ragStatus) => {
+                onSave({
+                  value,
+                  status: ragStatus,
+                  rag_status: ragStatus,
+                  is_mot_failure: ragStatus !== 'red' ? false : result?.is_mot_failure
+                })
+              }}
               config={item.config}
             />
           )}
@@ -720,8 +925,14 @@ function InspectionItem({
           {item.itemType === 'brake_measurement' && (
             <BrakeMeasurementInput
               value={result?.value as any}
-              onChange={handleValueChange}
-              onRAGChange={handleRAGChange}
+              onChange={(value, ragStatus) => {
+                onSave({
+                  value,
+                  status: ragStatus,
+                  rag_status: ragStatus,
+                  is_mot_failure: ragStatus !== 'red' ? false : result?.is_mot_failure
+                })
+              }}
               config={item.config}
             />
           )}
@@ -869,6 +1080,25 @@ function InspectionItem({
               ))}
             </div>
           )}
+
+          {/* Select Reasons button - always available */}
+          <div className="pt-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenReasons()
+              }}
+              fullWidth
+              className="flex items-center justify-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+              </svg>
+              Select Reasons
+            </Button>
+          </div>
 
           {/* Duplicate/Delete actions */}
           <div className="flex gap-2 pt-2 border-t border-gray-100 mt-4">

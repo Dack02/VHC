@@ -213,7 +213,7 @@ export function BrakeDisplay({ data, ragStatus }: BrakeDisplayProps) {
     }
 
     return (
-      <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 max-w-sm">
         <AxleCard title="Brakes" axle={axle} ragStatus={ragStatus} />
       </div>
     )
@@ -280,98 +280,81 @@ function AxleCard({ title, axle, ragStatus }: AxleCardProps) {
     ? 'bg-amber-50'
     : 'bg-gray-50'
 
-  // Get color classes for measurements
+  // Get text color classes for measurements (matching TyreDisplay getReadingColor style)
   const getPadColor = (value: number | null): string => {
-    if (value === null) return 'text-gray-400 bg-gray-100'
-    if (value < PAD_RED_THRESHOLD) return 'text-red-700 bg-red-100 border-red-300'
-    if (value < PAD_AMBER_THRESHOLD) return 'text-amber-700 bg-amber-100 border-amber-300'
-    return 'text-green-700 bg-green-100 border-green-300'
+    if (value === null) return 'text-gray-400'
+    if (value < PAD_RED_THRESHOLD) return 'text-red-600'
+    if (value < PAD_AMBER_THRESHOLD) return 'text-amber-600'
+    return 'text-green-600'
   }
 
   const getDiscColor = (actual: number | null, minSpec: number | null): string => {
-    if (actual === null) return 'text-gray-400 bg-gray-100'
-    if (minSpec !== null && actual < minSpec) return 'text-red-700 bg-red-100 border-red-300'
-    return 'text-green-700 bg-green-100 border-green-300'
+    if (actual === null) return 'text-gray-400'
+    if (minSpec !== null && actual < minSpec) return 'text-red-600'
+    return 'text-green-600'
+  }
+
+  const formatReading = (value: number | null): string => {
+    if (value === null) return '-'
+    return `${value}mm`
   }
 
   // Labels for brake type
   const frictionLabel = isDisc ? 'Pad' : 'Shoe'
-  const surfaceLabel = isDisc ? 'Disc' : 'Drum'
 
   return (
-    <div className={`${cardBgClass} ${cardBorderClass} rounded-lg p-3 text-sm`}>
+    <div className={`${cardBgClass} ${cardBorderClass} rounded-lg p-3 text-sm max-w-sm`}>
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <div className="font-semibold text-gray-700">{title} ({brakeTypeLabel})</div>
       </div>
 
-      {/* Warning Banner */}
-      {(isUrgent || isAdvisory) && (
-        <div className={`mb-3 p-2 rounded-lg flex items-center gap-2 ${
-          isUrgent
-            ? 'bg-red-100 border-2 border-red-400'
-            : 'bg-amber-100 border-2 border-amber-400'
-        }`}>
-          <span className="text-lg">{isUrgent ? '🚨' : '⚠️'}</span>
-          <div>
-            <div className={`font-semibold text-sm ${
-              isUrgent ? 'text-red-800' : 'text-amber-800'
-            }`}>
-              {isUrgent ? 'Below Minimum Specification' : 'Approaching Minimum'}
+      {/* Measurements - Simple grid like TyreDisplay */}
+      {isDisc ? (
+        // Disc brakes: 4-column grid (N/S Pad, N/S Disc, O/S Pad, O/S Disc)
+        <div className="grid grid-cols-4 gap-2 mb-2">
+          <div className="text-center">
+            <div className="text-xs text-gray-500">N/S {frictionLabel}</div>
+            <div className={`font-mono font-medium ${getPadColor(axle.ns_pad)}`}>
+              {formatReading(axle.ns_pad)}
             </div>
-            <div className={`text-xs font-medium ${
-              isUrgent ? 'text-red-600' : 'text-amber-600'
-            }`}>
-              {isUrgent ? 'Urgent - Replace' : 'Advisory - Monitor'}
+          </div>
+          <div className="text-center">
+            <div className="text-xs text-gray-500">N/S Disc</div>
+            <div className={`font-mono font-medium ${getDiscColor(axle.ns_disc, axle.ns_disc_min)}`}>
+              {formatReading(axle.ns_disc)}
+            </div>
+          </div>
+          <div className="text-center">
+            <div className="text-xs text-gray-500">O/S {frictionLabel}</div>
+            <div className={`font-mono font-medium ${getPadColor(axle.os_pad)}`}>
+              {formatReading(axle.os_pad)}
+            </div>
+          </div>
+          <div className="text-center">
+            <div className="text-xs text-gray-500">O/S Disc</div>
+            <div className={`font-mono font-medium ${getDiscColor(axle.os_disc, axle.os_disc_min)}`}>
+              {formatReading(axle.os_disc)}
+            </div>
+          </div>
+        </div>
+      ) : (
+        // Drum brakes: 2-column grid (N/S Shoe, O/S Shoe)
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <div className="text-center">
+            <div className="text-xs text-gray-500">N/S {frictionLabel}</div>
+            <div className={`font-mono font-medium ${getPadColor(axle.ns_pad)}`}>
+              {formatReading(axle.ns_pad)}
+            </div>
+          </div>
+          <div className="text-center">
+            <div className="text-xs text-gray-500">O/S {frictionLabel}</div>
+            <div className={`font-mono font-medium ${getPadColor(axle.os_pad)}`}>
+              {formatReading(axle.os_pad)}
             </div>
           </div>
         </div>
       )}
-
-      {/* Measurements - N/S and O/S side by side */}
-      <div className="grid grid-cols-2 gap-3 mb-3">
-        {/* N/S Column */}
-        <div className={`p-2 rounded ${isUrgent ? 'bg-red-100' : isAdvisory ? 'bg-amber-100' : 'bg-white'} border border-gray-200`}>
-          <div className="text-xs font-medium text-gray-500 mb-2 text-center">N/S</div>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-600">{frictionLabel}</span>
-              <span className={`px-2 py-0.5 rounded text-xs font-mono font-medium border ${getPadColor(axle.ns_pad)}`}>
-                {axle.ns_pad !== null ? `${axle.ns_pad}mm` : '-'}
-              </span>
-            </div>
-            {isDisc && (
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-600">{surfaceLabel}</span>
-                <span className={`px-2 py-0.5 rounded text-xs font-mono font-medium border ${getDiscColor(axle.ns_disc, axle.ns_disc_min)}`}>
-                  {axle.ns_disc !== null ? `${axle.ns_disc}mm` : '-'}
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* O/S Column */}
-        <div className={`p-2 rounded ${isUrgent ? 'bg-red-100' : isAdvisory ? 'bg-amber-100' : 'bg-white'} border border-gray-200`}>
-          <div className="text-xs font-medium text-gray-500 mb-2 text-center">O/S</div>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-600">{frictionLabel}</span>
-              <span className={`px-2 py-0.5 rounded text-xs font-mono font-medium border ${getPadColor(axle.os_pad)}`}>
-                {axle.os_pad !== null ? `${axle.os_pad}mm` : '-'}
-              </span>
-            </div>
-            {isDisc && (
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-600">{surfaceLabel}</span>
-                <span className={`px-2 py-0.5 rounded text-xs font-mono font-medium border ${getDiscColor(axle.os_disc, axle.os_disc_min)}`}>
-                  {axle.os_disc !== null ? `${axle.os_disc}mm` : '-'}
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
 
       {/* Summary Bar (like Remaining Legal Tread) */}
       {summary && (
@@ -384,11 +367,11 @@ function AxleCard({ title, axle, ragStatus }: AxleCardProps) {
         }`}>
           {summary.diff !== null && summary.diff < 0 ? (
             <span>
-              Min Spec: {summary.minSpec}mm • Lowest: {summary.lowest}mm • {Math.abs(summary.diff).toFixed(1)}mm under
+              {isUrgent ? '⚠️ ' : ''}Min: {summary.minSpec}mm • Lowest: {summary.lowest}mm • {Math.abs(summary.diff).toFixed(1)}mm under
             </span>
           ) : (
             <span>
-              Min Spec: {summary.minSpec}mm • Lowest: {summary.lowest}mm • {summary.diff?.toFixed(1)}mm above
+              Min: {summary.minSpec}mm • Lowest: {summary.lowest}mm • {summary.diff?.toFixed(1)}mm above
             </span>
           )}
         </div>

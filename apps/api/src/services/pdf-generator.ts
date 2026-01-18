@@ -44,6 +44,9 @@ interface HealthCheckPDFData {
     last_name: string
   }
 
+  // Technician signature (base64 PNG)
+  technician_signature?: string | null
+
   // Site/Dealer
   site?: {
     name: string
@@ -59,6 +62,9 @@ interface HealthCheckPDFData {
   results: ResultData[]
   repairItems: RepairItemData[]
   authorizations: AuthorizationData[]
+
+  // Selected reasons by check result ID
+  reasonsByCheckResult?: CheckResultReasonsMap
 
   // Summary
   summary: {
@@ -113,11 +119,23 @@ interface AuthorizationData {
   signed_at?: string | null
 }
 
+interface SelectedReasonData {
+  id: string
+  reasonText: string
+  customerDescription?: string | null
+  followUpDays?: number | null
+  followUpText?: string | null
+}
+
+interface CheckResultReasonsMap {
+  [checkResultId: string]: SelectedReasonData[]
+}
+
 /**
  * Generate HTML template for PDF
  */
 function generateHTML(data: HealthCheckPDFData): string {
-  const { vehicle, customer, technician, site, branding, results, repairItems, authorizations, summary } = data
+  const { vehicle, customer, technician, site, branding, results, repairItems, authorizations, summary, reasonsByCheckResult = {} } = data
 
   // Get branding colors with fallbacks
   const primaryColor = branding?.primaryColor || '#1a3a5c'
@@ -151,6 +169,47 @@ function generateHTML(data: HealthCheckPDFData): string {
       month: 'short',
       year: 'numeric'
     })
+  }
+
+  // Format follow-up text
+  const formatFollowUp = (days?: number | null, text?: string | null): string => {
+    if (text) return text
+    if (!days) return ''
+    if (days <= 7) return 'Recommend addressing within 1 week'
+    if (days <= 30) return 'Recommend addressing within 1 month'
+    if (days <= 90) return 'Recommend addressing within 3 months'
+    if (days <= 180) return 'Recommend addressing within 6 months'
+    return `Recommend addressing within ${Math.round(days / 30)} months`
+  }
+
+  // Generate reasons HTML for an item
+  const getReasonsHTML = (checkResultId: string, ragStatus: string): string => {
+    const reasons = reasonsByCheckResult[checkResultId]
+    if (!reasons || reasons.length === 0) return ''
+
+    const followUpInfo = reasons.find(r => r.followUpDays || r.followUpText)
+    const followUpText = followUpInfo ? formatFollowUp(followUpInfo.followUpDays, followUpInfo.followUpText) : ''
+    const bulletColor = ragStatus === 'red' ? '#dc2626' : '#d97706'
+
+    return `
+      <div class="reasons-section">
+        ${reasons.length > 1 ? `
+          <div class="reasons-intro">We identified the following ${ragStatus === 'red' ? 'issues' : 'items to monitor'}:</div>
+          <ul class="reasons-list">
+            ${reasons.map(r => `
+              <li style="color: ${bulletColor}">
+                <span style="color: #374151">${r.customerDescription || r.reasonText}</span>
+              </li>
+            `).join('')}
+          </ul>
+        ` : `
+          <div class="single-reason">${reasons[0].customerDescription || reasons[0].reasonText}</div>
+        `}
+        ${followUpText ? `
+          <div class="follow-up-note" style="color: ${bulletColor}">${followUpText}</div>
+        ` : ''}
+      </div>
+    `
   }
 
   // Generate tyre details HTML
@@ -233,11 +292,17 @@ function generateHTML(data: HealthCheckPDFData): string {
       details = getBrakeDetails(result?.value as Record<string, unknown>)
     }
 
+    // Get reasons for this item
+    const reasonsHTML = getReasonsHTML(item.check_result_id, item.rag_status)
+    // Only show description if no reasons are available
+    const showDescription = !reasonsHTML && item.description
+
     return `
       <tr class="item-row">
         <td class="item-cell">
           <div class="item-name">${item.title}</div>
-          ${item.description ? `<div class="item-description">${item.description}</div>` : ''}
+          ${showDescription ? `<div class="item-description">${item.description}</div>` : ''}
+          ${reasonsHTML}
           ${details}
           ${result?.notes ? `<div class="tech-notes">Notes: ${result.notes}</div>` : ''}
         </td>
@@ -532,6 +597,41 @@ function generateHTML(data: HealthCheckPDFData): string {
       border-radius: 3px;
     }
 
+    .reasons-section {
+      margin-top: 6px;
+      font-size: 10px;
+    }
+
+    .reasons-intro {
+      color: #374151;
+      margin-bottom: 4px;
+    }
+
+    .reasons-list {
+      margin: 0;
+      padding-left: 16px;
+    }
+
+    .reasons-list li {
+      margin-bottom: 2px;
+    }
+
+    .single-reason {
+      color: #374151;
+    }
+
+    .follow-up-note {
+      margin-top: 6px;
+      font-weight: 500;
+      font-size: 10px;
+    }
+
+    .green-reason {
+      color: #16a34a;
+      font-size: 10px;
+      margin-left: 4px;
+    }
+
     .mot-cell {
       width: 40px;
       text-align: center;
@@ -821,12 +921,17 @@ function generateHTML(data: HealthCheckPDFData): string {
       </div>
       <div class="section-content">
         <div class="green-list">
-          ${results.filter(r => r.rag_status === 'green').map(r => `
-            <div class="green-item">
-              <span class="green-check">✓</span>
-              <span>${r.template_item?.name || 'Item'}</span>
-            </div>
-          `).join('')}
+          ${results.filter(r => r.rag_status === 'green').map(r => {
+            const reasons = reasonsByCheckResult[r.id] || []
+            const positiveReason = reasons.find(reason => reason.customerDescription || reason.reasonText)
+            return `
+              <div class="green-item">
+                <span class="green-check">✓</span>
+                <span>${r.template_item?.name || 'Item'}</span>
+                ${positiveReason ? `<span class="green-reason">- ${positiveReason.customerDescription || positiveReason.reasonText}</span>` : ''}
+              </div>
+            `
+          }).join('')}
         </div>
       </div>
     </div>
@@ -943,7 +1048,29 @@ function generateHTML(data: HealthCheckPDFData): string {
     </table>
   </div>
 
-  <!-- Signature Section -->
+  <!-- Technician Signature Section -->
+  ${data.technician_signature || technician ? `
+    <div class="signature-section">
+      <div class="summary-title">Technician Sign-Off</div>
+      <div class="signature-box">
+        <div class="signature-image">
+          ${data.technician_signature ? `
+            <img src="${data.technician_signature}" alt="Technician Signature" />
+          ` : '<span style="color: #9ca3af">No signature</span>'}
+        </div>
+        <div class="signature-details">
+          <div class="signature-label">Inspected by</div>
+          <div class="info-value">${technician ? `${technician.first_name} ${technician.last_name}` : 'Unknown'}</div>
+          <div class="signature-label" style="margin-top: 8px">Inspection Date</div>
+          <div class="info-value">${formatDate(data.completed_at || data.created_at)}</div>
+          <div class="signature-label" style="margin-top: 8px">Items Inspected</div>
+          <div class="info-value">${summary.red_count + summary.amber_count + summary.green_count} items</div>
+        </div>
+      </div>
+    </div>
+  ` : ''}
+
+  <!-- Customer Signature Section -->
   ${signatureAuth ? `
     <div class="signature-section">
       <div class="summary-title">Customer Authorization</div>

@@ -30,8 +30,22 @@ export function PreCheck() {
       )
       setJob(data.healthCheck)
 
-      // Pre-fill mileage if vehicle has last known mileage
-      if (data.healthCheck.vehicle?.mileage) {
+      // Check if this is a paused job that already has mileage - skip straight to inspection
+      const existingMileage = data.healthCheck.mileage || data.healthCheck.mileage_in
+      if (data.healthCheck.status === 'paused' && existingMileage) {
+        // Resume directly - clock in and go to inspection
+        await api(`/api/v1/health-checks/${id}/clock-in`, {
+          method: 'POST',
+          token: session.access_token
+        })
+        navigate(`/job/${id}/inspection`, { replace: true })
+        return
+      }
+
+      // Pre-fill mileage: first from health check, then from vehicle's last known
+      if (existingMileage) {
+        setMileage(String(existingMileage))
+      } else if (data.healthCheck.vehicle?.mileage) {
         setMileage(String(data.healthCheck.vehicle.mileage))
       }
     } catch (err) {

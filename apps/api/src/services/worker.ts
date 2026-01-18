@@ -8,6 +8,7 @@ import { Worker, Job } from 'bullmq'
 import {
   redis,
   QUEUE_NAMES,
+  publishWebSocketEvent,
   type SendEmailJob,
   type SendSmsJob,
   type SendReminderJob,
@@ -22,14 +23,80 @@ import { runDmsImport } from '../jobs/dms-import.js'
 import { sendEmail, sendHealthCheckReadyEmail, sendReminderEmail } from './email.js'
 import { sendSms, sendHealthCheckReadySms, sendReminderSms } from './sms.js'
 import { supabaseAdmin } from '../lib/supabase.js'
-import {
-  notifyHealthCheckStatusChanged,
-  notifyCustomerViewing,
-  notifyCustomerAction,
-  notifyLinkExpiring,
-  notifyLinkExpired,
-  sendUserNotification
-} from './websocket.js'
+import { WS_EVENTS } from './websocket.js'
+
+// Worker-side WebSocket helpers that publish via Redis pub/sub
+// These allow the worker to emit events that the API server will receive and broadcast
+
+function notifyHealthCheckStatusChanged(
+  siteId: string,
+  healthCheckId: string,
+  data: Record<string, unknown>
+) {
+  const payload = { healthCheckId, ...data, timestamp: new Date().toISOString() }
+  publishWebSocketEvent({ type: 'emit_to_site', targetId: siteId, event: WS_EVENTS.HEALTH_CHECK_STATUS_CHANGED, data: payload })
+  publishWebSocketEvent({ type: 'emit_to_health_check', targetId: healthCheckId, event: WS_EVENTS.HEALTH_CHECK_STATUS_CHANGED, data: payload })
+}
+
+function notifyCustomerViewing(
+  siteId: string,
+  healthCheckId: string,
+  data: Record<string, unknown>
+) {
+  const payload = { healthCheckId, ...data, timestamp: new Date().toISOString() }
+  publishWebSocketEvent({ type: 'emit_to_site', targetId: siteId, event: WS_EVENTS.CUSTOMER_VIEWING, data: payload })
+}
+
+function notifyCustomerAction(
+  siteId: string,
+  healthCheckId: string,
+  data: { action: 'authorized' | 'declined' | 'signed'; [key: string]: unknown }
+) {
+  const event =
+    data.action === 'authorized'
+      ? WS_EVENTS.CUSTOMER_AUTHORIZED
+      : data.action === 'declined'
+      ? WS_EVENTS.CUSTOMER_DECLINED
+      : WS_EVENTS.CUSTOMER_SIGNED
+
+  const payload = { healthCheckId, ...data, timestamp: new Date().toISOString() }
+  publishWebSocketEvent({ type: 'emit_to_site', targetId: siteId, event, data: payload })
+  publishWebSocketEvent({ type: 'emit_to_health_check', targetId: healthCheckId, event, data: payload })
+}
+
+function notifyLinkExpiring(
+  siteId: string,
+  healthCheckId: string,
+  data: Record<string, unknown>
+) {
+  const payload = { healthCheckId, ...data, timestamp: new Date().toISOString() }
+  publishWebSocketEvent({ type: 'emit_to_site', targetId: siteId, event: WS_EVENTS.LINK_EXPIRING, data: payload })
+}
+
+function notifyLinkExpired(
+  siteId: string,
+  healthCheckId: string,
+  data: Record<string, unknown>
+) {
+  const payload = { healthCheckId, ...data, timestamp: new Date().toISOString() }
+  publishWebSocketEvent({ type: 'emit_to_site', targetId: siteId, event: WS_EVENTS.LINK_EXPIRED, data: payload })
+}
+
+function sendUserNotification(
+  userId: string,
+  notification: {
+    id: string
+    type: string
+    title: string
+    message: string
+    healthCheckId?: string
+    priority?: string
+    actionUrl?: string
+  }
+) {
+  const payload = { ...notification, timestamp: new Date().toISOString() }
+  publishWebSocketEvent({ type: 'emit_to_user', targetId: userId, event: WS_EVENTS.NOTIFICATION, data: payload })
+}
 
 console.log('Starting queue workers...')
 

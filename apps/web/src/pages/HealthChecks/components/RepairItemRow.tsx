@@ -6,6 +6,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../../../contexts/AuthContext'
 import { api, RepairItem, CheckResult } from '../../../lib/api'
+import { ItemReasonsDisplay, GreenReasonsDisplay } from './ItemReasonsDisplay'
 
 interface RepairItemRowProps {
   healthCheckId: string
@@ -15,6 +16,13 @@ interface RepairItemRowProps {
   showWorkComplete?: boolean // Show work complete checkbox (for authorised items)
   onUpdate: () => void
   onPhotoClick?: (resultId: string) => void
+  preloadedReasons?: Array<{
+    id: string
+    itemReasonId: string
+    reasonText: string
+    technicalDescription?: string
+    customerDescription?: string
+  }>
 }
 
 export function RepairItemRow({
@@ -24,7 +32,8 @@ export function RepairItemRow({
   showFollowUp = false,
   showWorkComplete = false,
   onUpdate: _onUpdate,
-  onPhotoClick
+  onPhotoClick,
+  preloadedReasons
 }: RepairItemRowProps) {
   void _onUpdate // Reserved for full refresh scenarios (e.g., error recovery)
   const { session } = useAuth()
@@ -688,6 +697,19 @@ export function RepairItemRow({
             </div>
           )}
 
+          {/* Selected reasons */}
+          {result?.id && (
+            <div className="mb-3">
+              <div className="text-xs font-medium text-gray-500 uppercase mb-1">Reasons</div>
+              <ItemReasonsDisplay
+                checkResultId={result.id}
+                ragStatus={item.rag_status as 'red' | 'amber' | 'green'}
+                itemName={item.title}
+                preloadedReasons={preloadedReasons}
+              />
+            </div>
+          )}
+
           {/* Work completion info */}
           {item.work_completed_at && (
             <div className="text-xs text-green-600">
@@ -721,26 +743,44 @@ interface GreenItemRowProps {
   title: string
   notes?: string | null
   value?: unknown
+  checkResultId?: string
+  preloadedReasons?: Array<{
+    id: string
+    itemReasonId: string
+    reasonText: string
+    technicalDescription?: string
+    customerDescription?: string
+  }>
 }
 
-export function GreenItemRow({ title, notes, value: _value }: GreenItemRowProps) {
+export function GreenItemRow({ title, notes, value: _value, checkResultId, preloadedReasons }: GreenItemRowProps) {
   // value reserved for displaying measurement data in future
   void _value
+
   return (
-    <div className="px-4 py-2 flex items-center gap-3 border-b border-gray-100 last:border-b-0">
-      {/* Check icon */}
-      <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-      </svg>
+    <div className="px-4 py-2 border-b border-gray-100 last:border-b-0">
+      <div className="flex items-center gap-3">
+        {/* Check icon */}
+        <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+        </svg>
 
-      {/* Item name */}
-      <span className="text-sm text-gray-700 flex-1">{title}</span>
+        {/* Item name */}
+        <span className="text-sm text-gray-700 flex-1">{title}</span>
 
-      {/* Notes indicator */}
-      {notes && (
-        <span className="text-xs text-gray-400" title={notes}>
-          (note)
-        </span>
+        {/* Notes indicator */}
+        {notes && (
+          <span className="text-xs text-gray-400" title={notes}>
+            (note)
+          </span>
+        )}
+      </div>
+
+      {/* Green reasons - positive findings */}
+      {checkResultId && (
+        <div className="ml-7">
+          <GreenReasonsDisplay checkResultId={checkResultId} compact={false} preloadedReasons={preloadedReasons} />
+        </div>
       )}
     </div>
   )

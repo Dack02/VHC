@@ -184,6 +184,23 @@ platformRoutes.patch('/settings', async (c) => {
         notificationSettings.resend_from_name = body.credentials.resendFromName
       }
 
+      // Auto-enable SMS if all Twilio credentials are provided
+      if (
+        notificationSettings.twilio_account_sid &&
+        notificationSettings.twilio_auth_token_encrypted &&
+        notificationSettings.twilio_phone_number
+      ) {
+        notificationSettings.sms_enabled = true
+      }
+
+      // Auto-enable Email if all Resend credentials are provided
+      if (
+        notificationSettings.resend_api_key_encrypted &&
+        notificationSettings.resend_from_email
+      ) {
+        notificationSettings.email_enabled = true
+      }
+
       await supabaseAdmin
         .from('platform_settings')
         .upsert({

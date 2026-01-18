@@ -29,11 +29,16 @@ import notifications from './routes/notifications.js'
 import platformAdmin from './routes/admin/platform.js'
 import adminOrganizations from './routes/admin/organizations.js'
 import adminStats from './routes/admin/stats.js'
+import starterReasons from './routes/admin/starter-reasons.js'
+import aiSettings from './routes/admin/ai-settings.js'
+import aiUsage from './routes/admin/ai-usage.js'
+import adminReasonTypes from './routes/admin/reason-types.js'
 import orgNotificationSettings from './routes/organization-notification-settings.js'
 import orgAdmin from './routes/org-admin.js'
 import onboarding from './routes/onboarding.js'
 import dashboard from './routes/dashboard.js'
 import reports from './routes/reports.js'
+import reasons from './routes/reasons.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
@@ -64,8 +69,18 @@ app.use('*', cors({
 }))
 
 // Rate limiting for API routes
-app.use('/api/v1/*', RateLimiters.standard())
+// Note: More specific routes must come BEFORE less specific ones
+// Auth routes (stricter, only counts failed attempts)
 app.use('/api/v1/auth/*', RateLimiters.auth())
+// Standard authenticated API routes
+app.use('/api/v1/*', RateLimiters.standard())
+
+// Public routes - apply rate limiting in order of specificity
+// Critical customer actions get very high limits (200/min per endpoint, 2000 in dev)
+app.use('/api/public/vhc/:token/authorize', RateLimiters.customerAction())
+app.use('/api/public/vhc/:token/decline', RateLimiters.customerAction())
+app.use('/api/public/vhc/:token/signature', RateLimiters.customerAction())
+// Other public endpoints get standard public limits (60/min per endpoint, 600 in dev)
 app.use('/api/public/*', RateLimiters.public())
 
 // Health endpoint
@@ -107,6 +122,10 @@ app.route('/api/v1/notifications', notifications)
 app.route('/api/v1/admin/platform', platformAdmin)
 app.route('/api/v1/admin/organizations', adminOrganizations)
 app.route('/api/v1/admin', adminStats)
+app.route('/api/v1/admin/starter-reasons', starterReasons)
+app.route('/api/v1/admin/ai-settings', aiSettings)
+app.route('/api/v1/admin/ai-usage', aiUsage)
+app.route('/api/v1/admin/reason-types', adminReasonTypes)
 
 // Organization notification settings (extends organizations routes)
 app.route('/api/v1/organizations', orgNotificationSettings)
@@ -122,6 +141,9 @@ app.route('/api/v1/dashboard', dashboard)
 
 // Reporting routes
 app.route('/api/v1/reports', reports)
+
+// Reasons routes (VHC reasons system)
+app.route('/api/v1', reasons)
 
 // Public routes (no auth required)
 app.route('/api/public', publicRoutes)

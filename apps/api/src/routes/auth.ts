@@ -22,6 +22,45 @@ auth.post('/login', async (c) => {
       return c.json({ error: error.message }, 401)
     }
 
+    // First check if this is a super admin
+    const { data: superAdmin } = await supabaseAdmin
+      .from('super_admins')
+      .select('*')
+      .eq('auth_user_id', data.user.id)
+      .single()
+
+    if (superAdmin) {
+      if (!superAdmin.is_active) {
+        return c.json({ error: 'Account is deactivated' }, 403)
+      }
+
+      // Update last login
+      await supabaseAdmin
+        .from('super_admins')
+        .update({ last_login_at: new Date().toISOString() })
+        .eq('id', superAdmin.id)
+
+      return c.json({
+        user: {
+          id: superAdmin.id,
+          email: superAdmin.email,
+          firstName: superAdmin.name.split(' ')[0] || superAdmin.name,
+          lastName: superAdmin.name.split(' ').slice(1).join(' ') || '',
+          role: 'super_admin',
+          isSuperAdmin: true,
+          isOrgAdmin: false,
+          isSiteAdmin: false,
+          organization: null,
+          site: null
+        },
+        session: {
+          accessToken: data.session.access_token,
+          refreshToken: data.session.refresh_token,
+          expiresAt: data.session.expires_at
+        }
+      })
+    }
+
     // Get the user record from our users table
     const { data: user, error: userError } = await supabaseAdmin
       .from('users')
@@ -58,6 +97,7 @@ auth.post('/login', async (c) => {
         firstName: user.first_name,
         lastName: user.last_name,
         role: user.role,
+        isSuperAdmin: false,
         isOrgAdmin: user.is_org_admin,
         isSiteAdmin: user.is_site_admin,
         organization: org ? {

@@ -223,6 +223,18 @@ export interface HealthCheck {
   technician?: { id: string; first_name: string; last_name: string }
   advisor?: { id: string; first_name: string; last_name: string }
   template?: Template
+  // Phase 1 Quick Wins - DMS Integration fields
+  arrived_at?: string | null
+  due_date?: string | null
+  booked_date?: string | null
+  customer_waiting?: boolean
+  loan_car_required?: boolean
+  is_internal?: boolean
+  booked_repairs?: Array<{ code?: string; description?: string; notes?: string }>
+  jobsheet_number?: string | null
+  jobsheet_status?: string | null
+  external_id?: string | null
+  external_source?: string | null
 }
 
 export interface Vehicle {
@@ -246,6 +258,13 @@ export interface Customer {
   email: string | null
   mobile: string | null
   external_id: string | null
+  // Phase 1 Quick Wins - Address fields
+  title?: string | null
+  address_line1?: string | null
+  address_line2?: string | null
+  town?: string | null
+  county?: string | null
+  postcode?: string | null
 }
 
 export interface Site {

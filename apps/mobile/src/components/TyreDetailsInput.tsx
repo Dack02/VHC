@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../lib/api'
 
@@ -23,8 +23,8 @@ interface TyreDetailsValue {
 
 interface TyreDetailsInputProps {
   value: TyreDetailsValue | undefined
-  onChange: (value: TyreDetailsValue) => void
-  onRAGChange: (status: 'green' | 'amber' | 'red' | null) => void
+  onChange: (value: TyreDetailsValue, ragStatus: 'green' | 'amber' | 'red' | null) => void
+  onRAGChange?: (status: 'green' | 'amber' | 'red' | null) => void  // Optional for backward compat
   config?: Record<string, unknown>
 }
 
@@ -80,9 +80,14 @@ export function TyreDetailsInput({
 
   void _config
 
-  const onRAGChangeRef = useRef(onRAGChange)
-  onRAGChangeRef.current = onRAGChange
-  const hasUserInteracted = useRef(false)
+  // Calculate RAG status - tyre details are always green once data is entered
+  const calculateRAG = useCallback((tyreData: TyreDetailsValue): 'green' | 'amber' | 'red' | null => {
+    const hasSomeData = TYRE_POSITIONS.some(({ key }) => {
+      const detail = tyreData[key]
+      return detail.manufacturerId || detail.sizeId
+    })
+    return hasSomeData ? 'green' : null
+  }, [])
 
   // Fetch reference data
   useEffect(() => {
@@ -112,26 +117,11 @@ export function TyreDetailsInput({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Tyre details are always green once filled in
-  useEffect(() => {
-    if (!hasUserInteracted.current) return
-
-    const hasSomeData = TYRE_POSITIONS.some(({ key }) => {
-      const detail = tyres[key]
-      return detail.manufacturerId || detail.sizeId
-    })
-
-    if (hasSomeData) {
-      onRAGChangeRef.current('green')
-    }
-  }, [tyres])
-
   const handleDetailsChange = useCallback((
     position: TyrePosition,
     field: keyof TyreDetail,
     newValue: string | boolean
   ) => {
-    hasUserInteracted.current = true
     setTyres((prev) => {
       const currentDetail = prev[position] || { ...DEFAULT_DETAIL }
       const details = { ...currentDetail }
@@ -152,16 +142,17 @@ export function TyreDetailsInput({
         ...prev,
         [position]: details
       }
-      onChange(newTyres)
+      const ragStatus = calculateRAG(newTyres)
+      onChange(newTyres, ragStatus)
+      onRAGChange?.(ragStatus)
       return newTyres
     })
-  }, [onChange, manufacturers, tyreSizes])
+  }, [onChange, onRAGChange, calculateRAG, manufacturers, tyreSizes])
 
   const handleCopyToAll = useCallback(() => {
     const sourceTyre = tyres.front_left // Copy from first tyre (Front Left)
     if (!sourceTyre) return
 
-    hasUserInteracted.current = true
     if ('vibrate' in navigator) {
       navigator.vibrate(100)
     }
@@ -173,10 +164,12 @@ export function TyreDetailsInput({
         rear_left: { ...sourceTyre },
         rear_right: { ...sourceTyre }
       }
-      onChange(newTyres)
+      const ragStatus = calculateRAG(newTyres)
+      onChange(newTyres, ragStatus)
+      onRAGChange?.(ragStatus)
       return newTyres
     })
-  }, [tyres, onChange])
+  }, [tyres, onChange, onRAGChange, calculateRAG])
 
   if (loadingRef) {
     return <div className="text-center py-8 text-gray-500">Loading tyre data...</div>

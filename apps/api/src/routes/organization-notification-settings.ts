@@ -52,44 +52,16 @@ orgNotificationSettingsRoutes.get('/:id/notification-settings', async (c) => {
     return c.json({ error: error.message }, 500)
   }
 
-  // Mask sensitive credentials
-  const maskedSettings = {
-    id: settings.id,
-    organization_id: settings.organization_id,
-    use_platform_sms: settings.use_platform_sms,
-    use_platform_email: settings.use_platform_email,
-    sms_enabled: settings.sms_enabled,
-    email_enabled: settings.email_enabled,
-    twilio_account_sid: settings.twilio_account_sid_encrypted ? '••••••••' : null,
-    twilio_auth_token_masked: null as string | null,
-    twilio_phone_number: settings.twilio_phone_number,
-    resend_api_key_masked: null as string | null,
-    resend_from_email: settings.resend_from_email,
-    resend_from_name: settings.resend_from_name,
-    default_link_expiry_hours: settings.default_link_expiry_hours,
-    default_reminder_enabled: settings.default_reminder_enabled,
-    default_reminder_intervals: settings.default_reminder_intervals,
-    has_custom_sms_credentials: !!(settings.twilio_account_sid_encrypted && settings.twilio_auth_token_encrypted),
-    has_custom_email_credentials: !!settings.resend_api_key_encrypted,
-    created_at: settings.created_at,
-    updated_at: settings.updated_at
-  }
+  // Build response in camelCase for frontend
+  let twilioAccountSidMasked: string | undefined
+  let resendApiKeyMasked: string | undefined
 
   // Try to show masked actual values
   if (isEncryptionConfigured()) {
     try {
       if (settings.twilio_account_sid_encrypted) {
         const decrypted = decrypt(settings.twilio_account_sid_encrypted)
-        maskedSettings.twilio_account_sid = maskString(decrypted)
-      }
-    } catch {
-      // Ignore decryption errors
-    }
-
-    try {
-      if (settings.twilio_auth_token_encrypted) {
-        const decrypted = decrypt(settings.twilio_auth_token_encrypted)
-        maskedSettings.twilio_auth_token_masked = maskString(decrypted)
+        twilioAccountSidMasked = maskString(decrypted)
       }
     } catch {
       // Ignore decryption errors
@@ -98,16 +70,30 @@ orgNotificationSettingsRoutes.get('/:id/notification-settings', async (c) => {
     try {
       if (settings.resend_api_key_encrypted) {
         const decrypted = decrypt(settings.resend_api_key_encrypted)
-        maskedSettings.resend_api_key_masked = maskString(decrypted)
+        resendApiKeyMasked = maskString(decrypted)
       }
     } catch {
       // Ignore decryption errors
     }
   }
 
+  // Return camelCase response matching frontend interface
   return c.json({
-    settings: maskedSettings,
-    encryption_configured: isEncryptionConfigured()
+    id: settings.id,
+    usePlatformSms: settings.use_platform_sms,
+    usePlatformEmail: settings.use_platform_email,
+    smsEnabled: settings.sms_enabled,
+    emailEnabled: settings.email_enabled,
+    twilioPhoneNumber: settings.twilio_phone_number,
+    resendFromEmail: settings.resend_from_email,
+    resendFromName: settings.resend_from_name,
+    defaultLinkExpiryHours: settings.default_link_expiry_hours,
+    defaultReminderEnabled: settings.default_reminder_enabled,
+    defaultReminderIntervals: settings.default_reminder_intervals,
+    hasTwilioCredentials: !!(settings.twilio_account_sid_encrypted && settings.twilio_auth_token_encrypted),
+    hasResendCredentials: !!settings.resend_api_key_encrypted,
+    twilioAccountSidMasked,
+    resendApiKeyMasked
   })
 })
 
@@ -161,21 +147,29 @@ orgNotificationSettingsRoutes.patch('/:id/notification-settings', requireOrgAdmi
     updateData.use_platform_email = body.use_platform_email
   }
 
+  // Check if encryption is configured when trying to save credentials
+  const hasCredentialUpdates = body.twilio_account_sid || body.twilio_auth_token || body.resend_api_key
+  if (hasCredentialUpdates && !isEncryptionConfigured()) {
+    return c.json({
+      error: 'Cannot save credentials: ENCRYPTION_KEY environment variable is not configured on the server'
+    }, 500)
+  }
+
   // Update SMS settings
   if (body.sms_enabled !== undefined) {
     updateData.sms_enabled = body.sms_enabled
   }
   if (body.twilio_account_sid !== undefined) {
-    if (body.twilio_account_sid && isEncryptionConfigured()) {
+    if (body.twilio_account_sid) {
       updateData.twilio_account_sid_encrypted = encrypt(body.twilio_account_sid)
-    } else if (body.twilio_account_sid === null || body.twilio_account_sid === '') {
+    } else {
       updateData.twilio_account_sid_encrypted = null
     }
   }
   if (body.twilio_auth_token !== undefined) {
-    if (body.twilio_auth_token && isEncryptionConfigured()) {
+    if (body.twilio_auth_token) {
       updateData.twilio_auth_token_encrypted = encrypt(body.twilio_auth_token)
-    } else if (body.twilio_auth_token === null || body.twilio_auth_token === '') {
+    } else {
       updateData.twilio_auth_token_encrypted = null
     }
   }
@@ -188,9 +182,9 @@ orgNotificationSettingsRoutes.patch('/:id/notification-settings', requireOrgAdmi
     updateData.email_enabled = body.email_enabled
   }
   if (body.resend_api_key !== undefined) {
-    if (body.resend_api_key && isEncryptionConfigured()) {
+    if (body.resend_api_key) {
       updateData.resend_api_key_encrypted = encrypt(body.resend_api_key)
-    } else if (body.resend_api_key === null || body.resend_api_key === '') {
+    } else {
       updateData.resend_api_key_encrypted = null
     }
   }
@@ -212,16 +206,59 @@ orgNotificationSettingsRoutes.patch('/:id/notification-settings', requireOrgAdmi
     updateData.default_reminder_intervals = body.default_reminder_intervals
   }
 
-  const { error: updateError } = await supabaseAdmin
+  const { data: updatedSettings, error: updateError } = await supabaseAdmin
     .from('organization_notification_settings')
     .update(updateData)
     .eq('id', settings.id)
+    .select()
+    .single()
 
   if (updateError) {
     return c.json({ error: updateError.message }, 500)
   }
 
-  return c.json({ success: true })
+  // Build response in camelCase for frontend
+  let twilioAccountSidMasked: string | undefined
+  let resendApiKeyMasked: string | undefined
+
+  if (isEncryptionConfigured()) {
+    try {
+      if (updatedSettings.twilio_account_sid_encrypted) {
+        const decrypted = decrypt(updatedSettings.twilio_account_sid_encrypted)
+        twilioAccountSidMasked = maskString(decrypted)
+      }
+    } catch {
+      // Ignore decryption errors
+    }
+
+    try {
+      if (updatedSettings.resend_api_key_encrypted) {
+        const decrypted = decrypt(updatedSettings.resend_api_key_encrypted)
+        resendApiKeyMasked = maskString(decrypted)
+      }
+    } catch {
+      // Ignore decryption errors
+    }
+  }
+
+  // Return camelCase response matching frontend interface
+  return c.json({
+    id: updatedSettings.id,
+    usePlatformSms: updatedSettings.use_platform_sms,
+    usePlatformEmail: updatedSettings.use_platform_email,
+    smsEnabled: updatedSettings.sms_enabled,
+    emailEnabled: updatedSettings.email_enabled,
+    twilioPhoneNumber: updatedSettings.twilio_phone_number,
+    resendFromEmail: updatedSettings.resend_from_email,
+    resendFromName: updatedSettings.resend_from_name,
+    defaultLinkExpiryHours: updatedSettings.default_link_expiry_hours,
+    defaultReminderEnabled: updatedSettings.default_reminder_enabled,
+    defaultReminderIntervals: updatedSettings.default_reminder_intervals,
+    hasTwilioCredentials: !!(updatedSettings.twilio_account_sid_encrypted && updatedSettings.twilio_auth_token_encrypted),
+    hasResendCredentials: !!updatedSettings.resend_api_key_encrypted,
+    twilioAccountSidMasked,
+    resendApiKeyMasked
+  })
 })
 
 /**

@@ -56,7 +56,23 @@ interface ActivityItem {
   createdAt: string
 }
 
-type TabType = 'overview' | 'sites' | 'users' | 'billing' | 'activity'
+interface AISettings {
+  id: string
+  organizationId: string
+  aiEnabled: boolean
+  monthlyLimit: number | null
+  effectiveLimit: number
+  currentPeriodGenerations: number
+  currentPeriodTokens: number
+  currentPeriodCost: number
+  lifetimeGenerations: number
+  lifetimeTokens: number
+  lifetimeCost: number
+  periodStart: string
+  periodEnd: string
+}
+
+type TabType = 'overview' | 'sites' | 'users' | 'billing' | 'activity' | 'ai'
 
 export default function AdminOrganizationDetail() {
   const { id } = useParams<{ id: string }>()
@@ -67,9 +83,12 @@ export default function AdminOrganizationDetail() {
   const [sites, setSites] = useState<Site[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [activity, setActivity] = useState<ActivityItem[]>([])
+  const [aiSettings, setAiSettings] = useState<AISettings | null>(null)
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
+  const [aiSaving, setAiSaving] = useState(false)
+  const [aiMessage, setAiMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   useEffect(() => {
     fetchOrganization()
@@ -79,6 +98,7 @@ export default function AdminOrganizationDetail() {
     if (activeTab === 'sites') fetchSites()
     if (activeTab === 'users') fetchUsers()
     if (activeTab === 'activity') fetchActivity()
+    if (activeTab === 'ai') fetchAiSettings()
   }, [activeTab])
 
   const fetchOrganization = async () => {
@@ -125,6 +145,64 @@ export default function AdminOrganizationDetail() {
       setActivity(data.activities || [])
     } catch (error) {
       console.error('Failed to fetch activity:', error)
+    }
+  }
+
+  const fetchAiSettings = async () => {
+    if (!session?.accessToken || !id) return
+    try {
+      const data = await api<AISettings>(`/api/v1/admin/organizations/${id}/ai-settings`, { token: session.accessToken })
+      setAiSettings(data)
+    } catch (error) {
+      console.error('Failed to fetch AI settings:', error)
+    }
+  }
+
+  const handleSaveAiSettings = async () => {
+    if (!session?.accessToken || !id || !aiSettings) return
+
+    setAiSaving(true)
+    setAiMessage(null)
+
+    try {
+      await api(`/api/v1/admin/organizations/${id}/ai-settings`, {
+        method: 'PATCH',
+        token: session.accessToken,
+        body: {
+          aiEnabled: aiSettings.aiEnabled,
+          monthlyLimit: aiSettings.monthlyLimit
+        }
+      })
+      setAiMessage({ type: 'success', text: 'AI settings saved successfully' })
+      fetchAiSettings()
+      setTimeout(() => setAiMessage(null), 3000)
+    } catch (error) {
+      console.error('Failed to save AI settings:', error)
+      setAiMessage({ type: 'error', text: 'Failed to save AI settings' })
+    } finally {
+      setAiSaving(false)
+    }
+  }
+
+  const handleResetAiPeriod = async () => {
+    if (!session?.accessToken || !id || !confirm('Reset the current AI usage period? This will set the generation count back to 0.')) return
+
+    setAiSaving(true)
+    setAiMessage(null)
+
+    try {
+      await api(`/api/v1/admin/organizations/${id}/ai-settings/reset-period`, {
+        method: 'POST',
+        token: session.accessToken
+      })
+      setAiMessage({ type: 'success', text: 'Period reset successfully' })
+      fetchAiSettings()
+      setTimeout(() => setAiMessage(null), 3000)
+    } catch (error) {
+      console.error('Failed to reset period:', error)
+      setAiMessage({ type: 'error', text: 'Failed to reset period' })
+    } finally {
+      setAiSaving(false)
     }
   }
 
@@ -209,6 +287,7 @@ export default function AdminOrganizationDetail() {
     { id: 'sites', label: 'Sites' },
     { id: 'users', label: 'Users' },
     { id: 'billing', label: 'Billing' },
+    { id: 'ai', label: 'AI Settings' },
     { id: 'activity', label: 'Activity' }
   ]
 
@@ -441,6 +520,149 @@ export default function AdminOrganizationDetail() {
               <dd className="text-gray-900">{org.subscription?.limits?.maxStorageGb || 0} GB</dd>
             </div>
           </dl>
+        </div>
+      )}
+
+      {activeTab === 'ai' && (
+        <div className="space-y-6">
+          {aiMessage && (
+            <div className={`px-4 py-3 rounded-lg ${
+              aiMessage.type === 'success'
+                ? 'bg-green-50 border border-green-200 text-green-700'
+                : 'bg-red-50 border border-red-200 text-red-700'
+            }`}>
+              {aiMessage.text}
+            </div>
+          )}
+
+          {/* Current Period Usage */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h3 className="font-semibold text-gray-900 mb-4">
+              Current Period ({aiSettings?.periodStart ? new Date(aiSettings.periodStart).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : 'Loading...'})
+            </h3>
+            {aiSettings && (
+              <div className="space-y-4">
+                <div>
+                  <div className="flex justify-between text-sm mb-2">
+                    <span className="text-gray-600">AI Generations</span>
+                    <span className={`font-medium ${
+                      aiSettings.currentPeriodGenerations / aiSettings.effectiveLimit >= 0.9 ? 'text-red-600' : 'text-gray-900'
+                    }`}>
+                      {aiSettings.currentPeriodGenerations} / {aiSettings.effectiveLimit}
+                    </span>
+                  </div>
+                  <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        aiSettings.currentPeriodGenerations / aiSettings.effectiveLimit >= 0.9 ? 'bg-red-500' :
+                        aiSettings.currentPeriodGenerations / aiSettings.effectiveLimit >= 0.7 ? 'bg-amber-500' : 'bg-indigo-500'
+                      }`}
+                      style={{ width: `${Math.min((aiSettings.currentPeriodGenerations / aiSettings.effectiveLimit) * 100, 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {Math.round((aiSettings.currentPeriodGenerations / aiSettings.effectiveLimit) * 100)}% used
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4 pt-4 border-t border-gray-100">
+                  <div>
+                    <p className="text-sm text-gray-500">Generations</p>
+                    <p className="text-xl font-semibold text-gray-900">{aiSettings.currentPeriodGenerations}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Tokens</p>
+                    <p className="text-xl font-semibold text-gray-900">{aiSettings.currentPeriodTokens.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-500">Est. Cost</p>
+                    <p className="text-xl font-semibold text-gray-900">${aiSettings.currentPeriodCost.toFixed(2)}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Limits Configuration */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h3 className="font-semibold text-gray-900 mb-4">Limits</h3>
+            {aiSettings && (
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Monthly Generation Limit</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={aiSettings.monthlyLimit ?? ''}
+                    onChange={(e) => setAiSettings({
+                      ...aiSettings,
+                      monthlyLimit: e.target.value ? parseInt(e.target.value) : null
+                    })}
+                    placeholder={`Platform default (${aiSettings.effectiveLimit})`}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <p className="mt-1 text-sm text-gray-500">
+                    Leave blank to use platform default ({aiSettings.effectiveLimit})
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                  <div>
+                    <p className="font-medium text-gray-900">AI Features Enabled</p>
+                    <p className="text-sm text-gray-500">Uncheck to disable AI for this organization</p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={aiSettings.aiEnabled}
+                      onChange={(e) => setAiSettings({ ...aiSettings, aiEnabled: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Lifetime Totals */}
+          {aiSettings && (
+            <div className="bg-gray-50 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-gray-700 mb-2">Lifetime Totals</h4>
+              <div className="flex gap-8 text-sm">
+                <div>
+                  <span className="text-gray-500">Generations:</span>{' '}
+                  <span className="font-medium text-gray-900">{aiSettings.lifetimeGenerations}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Tokens:</span>{' '}
+                  <span className="font-medium text-gray-900">{aiSettings.lifetimeTokens.toLocaleString()}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Est. Cost:</span>{' '}
+                  <span className="font-medium text-gray-900">${aiSettings.lifetimeCost.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex items-center justify-between">
+            <button
+              onClick={handleResetAiPeriod}
+              disabled={aiSaving}
+              className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+            >
+              Reset Current Period
+            </button>
+            <button
+              onClick={handleSaveAiSettings}
+              disabled={aiSaving}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {aiSaving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
         </div>
       )}
 

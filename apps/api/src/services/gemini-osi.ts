@@ -14,6 +14,13 @@
 import { decrypt, isEncryptionConfigured } from '../lib/encryption.js'
 import { logger } from '../lib/logger.js'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { writeFileSync, mkdirSync, existsSync } from 'fs'
+import { join, dirname } from 'path'
+import { fileURLToPath } from 'url'
+
+// Get __dirname equivalent in ES modules
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 // ============================================
 // Types
@@ -40,6 +47,12 @@ export interface GeminiBooking {
   customerEmail?: string
   customerPhone?: string
   customerMobile?: string
+  // Customer address fields (Phase 1 Quick Wins)
+  customerAddressLine1?: string
+  customerAddressLine2?: string
+  customerTown?: string
+  customerCounty?: string
+  customerPostcode?: string
 
   // Vehicle
   vehicleId: string
@@ -59,6 +72,18 @@ export interface GeminiBooking {
 
   // Jobsheet info
   jobsheetNumber?: string
+  jobsheetStatus?: string
+
+  // Phase 1 Quick Wins - Additional fields
+  customerWaiting: boolean
+  loanCarRequired: boolean
+  isInternal: boolean
+  dueDateTime?: string  // Full DueDateTime from API
+  bookedRepairs: Array<{
+    code?: string
+    description?: string
+    notes?: string
+  }>
 
   // Status (derived from ArrivalStatus)
   status: string
@@ -262,10 +287,28 @@ async function makeRequest<T>(
       if (response.status >= 500) {
         const delay = RETRY_DELAY_BASE * Math.pow(2, attempt - 1)
 
+        // Try to get response body for debugging - Gemini returns JSON errors even with 500
+        let responseBody = ''
+        let geminiError: { error?: { message?: string; code?: number } } | null = null
+        try {
+          responseBody = await response.text()
+          console.log('[Gemini] Server error response body:', responseBody.substring(0, 500))
+          geminiError = JSON.parse(responseBody)
+        } catch {
+          // Ignore parse errors
+        }
+
+        // Check if it's actually an auth error disguised as 500
+        if (geminiError?.error?.code === 3 || geminiError?.error?.message?.toLowerCase().includes('not authorised')) {
+          console.log('[Gemini] Authentication error detected in 500 response')
+          throw createApiError('Authentication failed - check username and password', 401, false)
+        }
+
         logger.warn('Gemini API server error', {
           status: response.status,
           attempt,
-          retryIn: delay / 1000
+          retryIn: delay / 1000,
+          responseBody: responseBody.substring(0, 200)
         })
 
         if (attempt < retries) {
@@ -273,7 +316,9 @@ async function makeRequest<T>(
           continue
         }
 
-        throw createApiError(`Gemini API server error: ${response.status}`, response.status, true)
+        // Include response body in error message if available
+        const errorDetail = geminiError?.error?.message || (responseBody ? responseBody.substring(0, 100) : '')
+        throw createApiError(`Gemini API server error: ${response.status}${errorDetail ? ': ' + errorDetail : ''}`, response.status, true)
       }
 
       // Handle client errors (not retryable)
@@ -359,11 +404,12 @@ export async function fetchDiaryBookings(
   try {
     // Build query string for GET request
     // Gemini API uses GET with query parameters, not POST
-    const queryParams = new URLSearchParams({
-      StartTime: `${date}T00:00:00`,
-      EndTime: `${endDate || date}T23:59:59`,
-      Site: siteId.toString()
-    })
+    // Note: Build manually to avoid URL-encoding colons in time - some APIs don't decode %3A properly
+    const startTime = `${date}T00:00:00`
+    const endTime = `${endDate || date}T23:59:59`
+    const queryString = `StartTime=${startTime}&EndTime=${endTime}&Site=${siteId}`
+
+    console.log('[Gemini] Query string:', queryString)
 
     // GET request with query parameters
     const response = await makeRequest<{
@@ -430,9 +476,28 @@ export async function fetchDiaryBookings(
           }
         }>
       }
-    }>(credentials, `api/v2/workshop/get-diary-bookings?${queryParams}`, {
+    }>(credentials, `api/v2/workshop/get-diary-bookings?${queryString}`, {
       method: 'GET'
     })
+
+    // Log the full raw response for debugging
+    try {
+      // Navigate up from src/services to project root, then to docs folder
+      const docsDir = join(__dirname, '..', '..', '..', '..', 'docs')
+      const outputPath = join(docsDir, 'gemini-full-response-sample.json')
+
+      console.log('[Gemini] Saving full raw response to:', outputPath)
+
+      // Create docs directory if it doesn't exist
+      if (!existsSync(docsDir)) {
+        mkdirSync(docsDir, { recursive: true })
+      }
+
+      writeFileSync(outputPath, JSON.stringify(response, null, 2), 'utf-8')
+      console.log('[Gemini] Raw response saved successfully')
+    } catch (saveError) {
+      console.warn('[Gemini] Failed to save raw response:', saveError)
+    }
 
     // Check for API-level errors
     if (response.error && response.error.code !== 0) {
@@ -441,6 +506,10 @@ export async function fetchDiaryBookings(
 
     // Extract bookings from result wrapper
     const rawBookings = response.result?.Bookings || []
+    console.log('[Gemini] Raw bookings count:', rawBookings.length)
+    if (rawBookings.length > 0) {
+      console.log('[Gemini] First raw booking:', JSON.stringify(rawBookings[0], null, 2))
+    }
 
     // Transform bookings to our format
     // Note: Gemini API field names from actual response
@@ -459,6 +528,12 @@ export async function fetchDiaryBookings(
       customerEmail: b.InvoiceTo?.Email || undefined,
       customerPhone: b.InvoiceTo?.Telephone,
       customerMobile: b.InvoiceTo?.Mobile,
+      // Customer address fields (Phase 1 Quick Wins)
+      customerAddressLine1: b.InvoiceTo?.Street1 || undefined,
+      customerAddressLine2: b.InvoiceTo?.Street2 || undefined,
+      customerTown: b.InvoiceTo?.Town || undefined,
+      customerCounty: b.InvoiceTo?.County || undefined,
+      customerPostcode: b.InvoiceTo?.Postcode || undefined,
 
       // Vehicle
       vehicleId: b.Vehicle?.Registration || '', // Use registration as ID since no separate ID
@@ -478,6 +553,19 @@ export async function fetchDiaryBookings(
 
       // Jobsheet info
       jobsheetNumber: b.Jobsheet?.Number ? String(b.Jobsheet.Number) : undefined,
+      jobsheetStatus: b.Jobsheet?.Status || undefined,
+
+      // Phase 1 Quick Wins - Additional fields
+      customerWaiting: b.CustomerWaiting || false,
+      loanCarRequired: b.LoanCar || false,
+      isInternal: b.Internal || false,
+      dueDateTime: b.DueDateTime || undefined,
+      bookedRepairs: (b.Jobsheet?.Repairs || []).map(r => ({
+        code: r.Code || undefined,
+        description: r.Description || undefined,
+        notes: r.Notes || undefined
+      })),
+
       status: b.ArrivalStatus || 'PENDING'
     }))
 
@@ -520,6 +608,12 @@ export async function testConnection(credentials: GeminiCredentials): Promise<{
   message: string
   dealerName?: string
 }> {
+  console.log('[Gemini] Testing connection to:', credentials.apiUrl)
+  console.log('[Gemini] Using credentials:', {
+    username: credentials.username.substring(0, 3) + '***',
+    passwordLength: credentials.password?.length || 0
+  })
+
   logger.info('Testing Gemini API connection', {
     apiUrl: credentials.apiUrl
   })
@@ -529,23 +623,31 @@ export async function testConnection(credentials: GeminiCredentials): Promise<{
     // This verifies the API URL and credentials are correct
     const today = new Date().toISOString().split('T')[0]
 
-    // Build query string - Gemini API uses GET, not POST
-    const queryParams = new URLSearchParams({
-      StartTime: `${today}T00:00:00`,
-      EndTime: `${today}T23:59:59`,
-      Site: '1'
-    })
+    // Build query string manually - avoid URL-encoding colons
+    const queryString = `StartTime=${today}T00:00:00&EndTime=${today}T23:59:59&Site=1`
+
+    const fullUrl = `${credentials.apiUrl.replace(/\/$/, '')}/api/v2/workshop/get-diary-bookings?${queryString}`
+    console.log('[Gemini] Full request URL:', fullUrl)
+    console.log('[Gemini] Method: GET with Basic Auth')
 
     const response = await makeRequest<{
       error: { message: string; code: number }
       result: { Bookings: unknown[] } | null
-    }>(credentials, `api/v2/workshop/get-diary-bookings?${queryParams}`, {
+    }>(credentials, `api/v2/workshop/get-diary-bookings?${queryString}`, {
       method: 'GET',
       retries: 1
     })
 
+    console.log('[Gemini] Response received:', {
+      hasError: !!response.error,
+      errorCode: response.error?.code,
+      hasResult: !!response.result,
+      bookingCount: response.result?.Bookings?.length
+    })
+
     // Check for API-level errors
     if (response.error && response.error.code !== 0) {
+      console.log('[Gemini] API returned error:', response.error)
       return {
         success: false,
         message: response.error.message || 'API returned error'
@@ -555,6 +657,7 @@ export async function testConnection(credentials: GeminiCredentials): Promise<{
     // Count bookings from result
     const bookingCount = response.result?.Bookings?.length || 0
 
+    console.log('[Gemini] Connection successful, bookings found:', bookingCount)
     return {
       success: true,
       message: `Connection successful - found ${bookingCount} booking(s) for today`
@@ -562,6 +665,12 @@ export async function testConnection(credentials: GeminiCredentials): Promise<{
 
   } catch (err) {
     const apiError = err as GeminiApiError
+    console.error('[Gemini] Connection test failed:', {
+      message: apiError.message,
+      statusCode: apiError.statusCode,
+      retryable: apiError.retryable
+    })
+
     logger.error('Gemini connection test failed', {
       apiUrl: credentials.apiUrl,
       error: apiError.message,

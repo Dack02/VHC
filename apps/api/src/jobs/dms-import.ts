@@ -57,6 +57,15 @@ async function findOrCreateCustomer(
   booking: GeminiBooking,
   externalSource: string
 ): Promise<{ customerId: string; created: boolean }> {
+  console.log('[DMS Import] findOrCreateCustomer called with:', {
+    organizationId,
+    customerId: booking.customerId,
+    firstName: booking.customerFirstName,
+    lastName: booking.customerLastName,
+    email: booking.customerEmail,
+    mobile: booking.customerMobile
+  })
+
   // First, try to find by external_id
   const { data: existingByExternal } = await supabaseAdmin
     .from('customers')
@@ -80,12 +89,19 @@ async function findOrCreateCustomer(
       .single()
 
     if (existingByEmail) {
-      // Update with external_id for future matches
+      // Update with external_id and address fields (Phase 1 Quick Wins)
       await supabaseAdmin
         .from('customers')
         .update({
           external_id: booking.customerId,
-          external_source: externalSource
+          external_source: externalSource,
+          // Update address fields if not already set
+          title: booking.customerTitle || undefined,
+          address_line1: booking.customerAddressLine1 || undefined,
+          address_line2: booking.customerAddressLine2 || undefined,
+          town: booking.customerTown || undefined,
+          county: booking.customerCounty || undefined,
+          postcode: booking.customerPostcode || undefined
         })
         .eq('id', existingByEmail.id)
 
@@ -104,12 +120,19 @@ async function findOrCreateCustomer(
       .single()
 
     if (existingByMobile) {
-      // Update with external_id
+      // Update with external_id and address fields (Phase 1 Quick Wins)
       await supabaseAdmin
         .from('customers')
         .update({
           external_id: booking.customerId,
-          external_source: externalSource
+          external_source: externalSource,
+          // Update address fields if not already set
+          title: booking.customerTitle || undefined,
+          address_line1: booking.customerAddressLine1 || undefined,
+          address_line2: booking.customerAddressLine2 || undefined,
+          town: booking.customerTown || undefined,
+          county: booking.customerCounty || undefined,
+          postcode: booking.customerPostcode || undefined
         })
         .eq('id', existingByMobile.id)
 
@@ -117,7 +140,7 @@ async function findOrCreateCustomer(
     }
   }
 
-  // Create new customer
+  // Create new customer with address fields (Phase 1 Quick Wins)
   const { data: newCustomer, error } = await supabaseAdmin
     .from('customers')
     .insert({
@@ -126,6 +149,13 @@ async function findOrCreateCustomer(
       last_name: booking.customerLastName,
       email: booking.customerEmail?.toLowerCase() || null,
       mobile: booking.customerMobile?.replace(/\s+/g, '') || booking.customerPhone || null,
+      // Address fields (Phase 1 Quick Wins)
+      title: booking.customerTitle || null,
+      address_line1: booking.customerAddressLine1 || null,
+      address_line2: booking.customerAddressLine2 || null,
+      town: booking.customerTown || null,
+      county: booking.customerCounty || null,
+      postcode: booking.customerPostcode || null,
       external_id: booking.customerId,
       external_source: externalSource
     })
@@ -133,9 +163,11 @@ async function findOrCreateCustomer(
     .single()
 
   if (error || !newCustomer) {
+    console.error('[DMS Import] Failed to create customer:', error)
     throw new Error(`Failed to create customer: ${error?.message}`)
   }
 
+  console.log('[DMS Import] Created new customer:', newCustomer.id)
   return { customerId: newCustomer.id, created: true }
 }
 
@@ -148,8 +180,24 @@ async function findOrCreateVehicle(
   booking: GeminiBooking,
   externalSource: string
 ): Promise<{ vehicleId: string; created: boolean }> {
+  console.log('[DMS Import] findOrCreateVehicle called with:', {
+    organizationId,
+    customerId,
+    vehicleId: booking.vehicleId,
+    vehicleReg: booking.vehicleReg,
+    vehicleVin: booking.vehicleVin,
+    vehicleMake: booking.vehicleMake,
+    vehicleModel: booking.vehicleModel
+  })
+
+  // Validate required fields
+  if (!booking.vehicleReg) {
+    console.error('[DMS Import] Missing vehicleReg in booking - cannot create vehicle')
+    throw new Error('Vehicle registration is required')
+  }
+
   // First, try to find by external_id
-  const { data: existingByExternal } = await supabaseAdmin
+  const { data: existingByExternal, error: externalError } = await supabaseAdmin
     .from('vehicles')
     .select('id')
     .eq('organization_id', organizationId)
@@ -157,22 +205,29 @@ async function findOrCreateVehicle(
     .eq('external_id', booking.vehicleId)
     .single()
 
+  console.log('[DMS Import] Search by external_id result:', { found: !!existingByExternal, error: externalError?.message })
+
   if (existingByExternal) {
+    console.log('[DMS Import] Found existing vehicle by external_id:', existingByExternal.id)
     return { vehicleId: existingByExternal.id, created: false }
   }
 
   // Try to find by registration
   const normalizedReg = booking.vehicleReg.replace(/\s+/g, '').toUpperCase()
-  const { data: existingByReg } = await supabaseAdmin
+  console.log('[DMS Import] Normalized registration:', normalizedReg)
+  const { data: existingByReg, error: regError } = await supabaseAdmin
     .from('vehicles')
     .select('id')
     .eq('organization_id', organizationId)
     .eq('registration', normalizedReg)
     .single()
 
+  console.log('[DMS Import] Search by registration result:', { found: !!existingByReg, error: regError?.message })
+
   if (existingByReg) {
+    console.log('[DMS Import] Found existing vehicle by registration:', existingByReg.id)
     // Update with external_id and any missing data
-    await supabaseAdmin
+    const { error: updateError } = await supabaseAdmin
       .from('vehicles')
       .update({
         external_id: booking.vehicleId,
@@ -188,6 +243,10 @@ async function findOrCreateVehicle(
         mileage: booking.vehicleMileage || undefined
       })
       .eq('id', existingByReg.id)
+
+    if (updateError) {
+      console.warn('[DMS Import] Failed to update existing vehicle:', updateError)
+    }
 
     return { vehicleId: existingByReg.id, created: false }
   }
@@ -218,6 +277,17 @@ async function findOrCreateVehicle(
   }
 
   // Create new vehicle
+  console.log('[DMS Import] Creating new vehicle with data:', {
+    organization_id: organizationId,
+    customer_id: customerId,
+    registration: normalizedReg,
+    vin: booking.vehicleVin?.toUpperCase() || null,
+    make: booking.vehicleMake || null,
+    model: booking.vehicleModel || null,
+    external_id: booking.vehicleId,
+    external_source: externalSource
+  })
+
   const { data: newVehicle, error } = await supabaseAdmin
     .from('vehicles')
     .insert({
@@ -238,9 +308,11 @@ async function findOrCreateVehicle(
     .single()
 
   if (error || !newVehicle) {
+    console.error('[DMS Import] Failed to create vehicle:', error)
     throw new Error(`Failed to create vehicle: ${error?.message}`)
   }
 
+  console.log('[DMS Import] Created new vehicle:', newVehicle.id)
   return { vehicleId: newVehicle.id, created: true }
 }
 
@@ -277,39 +349,76 @@ async function createHealthCheck(
   importBatchId: string,
   externalSource: string
 ): Promise<string> {
+  console.log('[DMS Import] createHealthCheck called with:', {
+    organizationId,
+    siteId,
+    customerId,
+    vehicleId,
+    templateId,
+    importBatchId,
+    bookingId: booking.bookingId
+  })
+
   // Parse promise time from booking
   let promiseTime: string | null = null
   if (booking.bookingDate && booking.bookingTime) {
     try {
       promiseTime = new Date(`${booking.bookingDate}T${booking.bookingTime}`).toISOString()
-    } catch {
-      // Ignore invalid dates
+      console.log('[DMS Import] Parsed promise time:', promiseTime)
+    } catch (e) {
+      console.warn('[DMS Import] Failed to parse promise time:', e)
     }
   }
 
+  // Parse due_date from booking
+  let dueDate: string | null = null
+  if (booking.dueDateTime) {
+    try {
+      dueDate = new Date(booking.dueDateTime).toISOString()
+    } catch (e) {
+      console.warn('[DMS Import] Failed to parse due date:', e)
+    }
+  }
+
+  const insertData = {
+    organization_id: organizationId,
+    site_id: siteId,
+    customer_id: customerId,
+    vehicle_id: vehicleId,
+    template_id: templateId,
+    status: 'awaiting_arrival',  // DMS imports start in awaiting_arrival status
+    mileage_in: booking.vehicleMileage || null,
+    promise_time: promiseTime,
+    notes: booking.description || null,
+    external_id: booking.bookingId,
+    external_source: externalSource,
+    import_batch_id: importBatchId,
+    // Phase 1 Quick Wins - Additional fields
+    customer_waiting: booking.customerWaiting || false,
+    loan_car_required: booking.loanCarRequired || false,
+    is_internal: booking.isInternal || false,
+    due_date: dueDate,
+    booked_date: new Date().toISOString(), // Record when booking was imported
+    jobsheet_number: booking.jobsheetNumber || null,
+    jobsheet_status: booking.jobsheetStatus || null,
+    booked_repairs: booking.bookedRepairs && booking.bookedRepairs.length > 0
+      ? booking.bookedRepairs
+      : []
+  }
+  console.log('[DMS Import] Creating health check with data:', insertData)
+
   const { data, error } = await supabaseAdmin
     .from('health_checks')
-    .insert({
-      organization_id: organizationId,
-      site_id: siteId,
-      customer_id: customerId,
-      vehicle_id: vehicleId,
-      template_id: templateId,
-      status: 'created',
-      mileage_in: booking.vehicleMileage || null,
-      promise_time: promiseTime,
-      notes: booking.description || null,
-      external_id: booking.bookingId,
-      external_source: externalSource,
-      import_batch_id: importBatchId
-    })
+    .insert(insertData)
     .select('id')
     .single()
 
   if (error || !data) {
+    console.error('[DMS Import] Failed to create health check:', error)
     throw new Error(`Failed to create health check: ${error?.message}`)
   }
 
+  console.log('[DMS Import] Created health check:', data.id)
   return data.id
 }
 
@@ -403,6 +512,24 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
       templateId = defaultTemplate.id
     }
 
+    // Get default site if not provided
+    let effectiveSiteId = siteId
+    if (!effectiveSiteId) {
+      const { data: defaultSite } = await supabaseAdmin
+        .from('sites')
+        .select('id')
+        .eq('organization_id', organizationId)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .single()
+
+      if (!defaultSite) {
+        throw new Error('No site found for organization')
+      }
+      effectiveSiteId = defaultSite.id
+      console.log('[DMS Import] Using default site:', effectiveSiteId)
+    }
+
     // Fetch bookings from DMS
     const serviceTypes = dmsSettings?.import_service_types as string[] | undefined
     const diaryResponse = await fetchDiaryBookings(credentials, date, {
@@ -415,14 +542,20 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
     }
 
     result.bookingsFound = diaryResponse.bookings.length
+    console.log('[DMS Import] Bookings found:', result.bookingsFound)
 
     // Process each booking
     const externalSource = 'gemini_osi'
 
-    for (const booking of diaryResponse.bookings) {
+    for (let i = 0; i < diaryResponse.bookings.length; i++) {
+      const booking = diaryResponse.bookings[i]
+      console.log(`\n[DMS Import] ========== Processing booking ${i + 1}/${diaryResponse.bookings.length} ==========`)
+      console.log('[DMS Import] Booking raw data:', JSON.stringify(booking, null, 2))
+
       try {
         // Skip cancelled/completed bookings
         if (['cancelled', 'completed'].includes(booking.status.toLowerCase())) {
+          console.log('[DMS Import] Skipping - status is:', booking.status)
           result.bookingsSkipped++
           continue
         }
@@ -430,16 +563,20 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
         // Check if already imported
         const exists = await healthCheckExists(organizationId, externalSource, booking.bookingId)
         if (exists) {
+          console.log('[DMS Import] Skipping - already imported')
           result.bookingsSkipped++
           continue
         }
 
+        console.log('[DMS Import] Step 1: Finding or creating customer...')
         // Find or create customer
         const customerResult = await findOrCreateCustomer(organizationId, booking, externalSource)
+        console.log('[DMS Import] Customer result:', customerResult)
         if (customerResult.created) {
           result.customersCreated++
         }
 
+        console.log('[DMS Import] Step 2: Finding or creating vehicle...')
         // Find or create vehicle
         const vehicleResult = await findOrCreateVehicle(
           organizationId,
@@ -447,14 +584,16 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
           booking,
           externalSource
         )
+        console.log('[DMS Import] Vehicle result:', vehicleResult)
         if (vehicleResult.created) {
           result.vehiclesCreated++
         }
 
+        console.log('[DMS Import] Step 3: Creating health check...')
         // Create health check
-        await createHealthCheck(
+        const healthCheckId = await createHealthCheck(
           organizationId,
-          siteId || null,
+          effectiveSiteId,
           customerResult.customerId,
           vehicleResult.vehicleId,
           booking,
@@ -462,15 +601,20 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
           result.importId,
           externalSource
         )
+        console.log('[DMS Import] Health check created:', healthCheckId)
 
         result.bookingsImported++
         result.healthChecksCreated++
+        console.log('[DMS Import] Booking imported successfully!')
 
       } catch (bookingError) {
         result.bookingsFailed++
+        const errorMessage = bookingError instanceof Error ? bookingError.message : 'Unknown error'
+        console.error('[DMS Import] FAILED to import booking:', errorMessage)
+        console.error('[DMS Import] Full error:', bookingError)
         result.errors.push({
           bookingId: booking.bookingId,
-          error: bookingError instanceof Error ? bookingError.message : 'Unknown error'
+          error: errorMessage
         })
         logger.error('Failed to import booking', {
           ...logContext,
@@ -478,6 +622,15 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
         }, bookingError as Error)
       }
     }
+
+    console.log('\n[DMS Import] ========== Import Summary ==========')
+    console.log('[DMS Import] Bookings found:', result.bookingsFound)
+    console.log('[DMS Import] Bookings imported:', result.bookingsImported)
+    console.log('[DMS Import] Bookings skipped:', result.bookingsSkipped)
+    console.log('[DMS Import] Bookings failed:', result.bookingsFailed)
+    console.log('[DMS Import] Customers created:', result.customersCreated)
+    console.log('[DMS Import] Vehicles created:', result.vehiclesCreated)
+    console.log('[DMS Import] Health checks created:', result.healthChecksCreated)
 
     // Update import record with results
     await supabaseAdmin
@@ -496,13 +649,14 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
       })
       .eq('id', result.importId)
 
-    // Update DMS settings with last import info
+    // Update DMS settings with last import info and sync timestamp
     await supabaseAdmin
       .from('organization_dms_settings')
       .update({
         last_import_at: new Date().toISOString(),
         last_import_status: result.bookingsFailed > 0 ? 'partial' : 'completed',
-        last_error: result.errors.length > 0 ? result.errors[0].error : null
+        last_error: result.errors.length > 0 ? result.errors[0].error : null,
+        last_sync_at: new Date().toISOString()  // Update sync timestamp for Awaiting Arrival display
       })
       .eq('organization_id', organizationId)
 
@@ -511,14 +665,16 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
     const periodStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
       .toISOString().split('T')[0]
 
-    await supabaseAdmin.rpc('increment_usage', {
-      p_organization_id: organizationId,
-      p_period_start: periodStart,
-      p_dms_imports: 1,
-      p_dms_bookings_imported: result.bookingsImported
-    }).catch(() => {
+    try {
+      await supabaseAdmin.rpc('increment_usage', {
+        p_organization_id: organizationId,
+        p_period_start: periodStart,
+        p_dms_imports: 1,
+        p_dms_bookings_imported: result.bookingsImported
+      })
+    } catch {
       // RPC may not exist, that's okay
-    })
+    }
 
     result.success = true
     logger.info('DMS import completed', {

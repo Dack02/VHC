@@ -1,10 +1,33 @@
+import { useState, useEffect } from 'react'
 import { Link, Outlet, useNavigate, useLocation, Navigate } from 'react-router-dom'
 import { useSuperAdmin } from '../contexts/SuperAdminContext'
+import { api } from '../lib/api'
 
 export default function AdminLayout() {
-  const { superAdmin, logout, loading, isSuperAdmin } = useSuperAdmin()
+  const { superAdmin, session, logout, loading, isSuperAdmin } = useSuperAdmin()
   const navigate = useNavigate()
   const location = useLocation()
+  const [alertCount, setAlertCount] = useState(0)
+
+  // Fetch unacknowledged alert count
+  useEffect(() => {
+    const fetchAlertCount = async () => {
+      if (!session?.accessToken) return
+      try {
+        const data = await api<{ count: number }>('/api/v1/admin/ai-usage/alerts/count', {
+          token: session.accessToken
+        })
+        setAlertCount(data.count || 0)
+      } catch (err) {
+        // Silently fail
+      }
+    }
+
+    fetchAlertCount()
+    // Refresh every 60 seconds
+    const interval = setInterval(fetchAlertCount, 60000)
+    return () => clearInterval(interval)
+  }, [session?.accessToken])
 
   const handleLogout = async () => {
     await logout()
@@ -84,6 +107,18 @@ export default function AdminLayout() {
             Activity Log
           </Link>
 
+          <Link to="/admin/ai-usage" className={navLinkClass('/admin/ai-usage')}>
+            <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+            </svg>
+            <span className="flex-1">AI Usage</span>
+            {alertCount > 0 && (
+              <span className="ml-2 px-2 py-0.5 bg-red-500 text-white text-xs font-medium rounded-full">
+                {alertCount}
+              </span>
+            )}
+          </Link>
+
           <div className="pt-4 mt-4 border-t border-gray-800">
             <p className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
               Settings
@@ -94,6 +129,24 @@ export default function AdminLayout() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
               Platform Settings
+            </Link>
+            <Link to="/admin/ai-configuration" className={navLinkClass('/admin/ai-configuration')}>
+              <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+              AI Configuration
+            </Link>
+            <Link to="/admin/starter-template" className={navLinkClass('/admin/starter-template')}>
+              <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+              </svg>
+              Starter Template
+            </Link>
+            <Link to="/admin/reason-types" className={navLinkClass('/admin/reason-types')}>
+              <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+              </svg>
+              Reason Types
             </Link>
           </div>
         </nav>

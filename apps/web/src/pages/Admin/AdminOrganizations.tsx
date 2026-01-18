@@ -9,14 +9,15 @@ interface Organization {
   name: string
   slug: string
   status: string
-  planId: string
-  planName: string
   createdAt: string
-  stats: {
-    sites: number
-    users: number
-    healthChecks: number
-  }
+  subscription?: {
+    planId: string
+    planName: string
+    status: string
+    currentPeriodEnd: string
+  } | null
+  sitesCount: number
+  usersCount: number
 }
 
 export default function AdminOrganizations() {
@@ -49,12 +50,12 @@ export default function AdminOrganizations() {
       if (search) params.set('search', search)
       if (status) params.set('status', status)
 
-      const data = await api<{ organizations: Organization[], total: number }>(
+      const data = await api<{ organizations: Organization[], pagination: { total: number, limit: number, offset: number } }>(
         `/api/v1/admin/organizations?${params}`,
         { token: session.accessToken }
       )
       setOrganizations(data.organizations)
-      setTotal(data.total)
+      setTotal(data.pagination.total)
     } catch (error) {
       console.error('Failed to fetch organizations:', error)
     } finally {
@@ -178,9 +179,6 @@ export default function AdminOrganizations() {
                   Users
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Health Checks
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Status
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -198,16 +196,13 @@ export default function AdminOrganizations() {
                     </Link>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {org.planName || 'No plan'}
+                    {org.subscription?.planName || 'No plan'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {org.stats?.sites || 0}
+                    {org.sitesCount || 0}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {org.stats?.users || 0}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {org.stats?.healthChecks || 0}
+                    {org.usersCount || 0}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${

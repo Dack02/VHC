@@ -26,11 +26,16 @@ export default function Step3InviteTeam({ token, onNext, onBack }: Props) {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [members, setMembers] = useState<TeamMember[]>([])
-  const [newMember, setNewMember] = useState({
+  const [newMember, setNewMember] = useState<{
+    firstName: string
+    lastName: string
+    email: string
+    role: TeamMember['role']
+  }>({
     firstName: '',
     lastName: '',
     email: '',
-    role: 'technician' as const
+    role: 'technician'
   })
 
   const handleAddMember = () => {

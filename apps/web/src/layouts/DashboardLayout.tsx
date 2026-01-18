@@ -1,7 +1,10 @@
+import { useState, useEffect } from 'react'
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useBranding } from '../contexts/BrandingContext'
 import NotificationBell from '../components/NotificationBell'
+import AILimitWarningBanner from '../components/AILimitWarningBanner'
+import { api } from '../lib/api'
 
 type UserRole = 'super_admin' | 'org_admin' | 'site_admin' | 'service_advisor' | 'technician'
 
@@ -10,13 +13,17 @@ interface NavItem {
   label: string
   icon: React.ReactNode
   roles: UserRole[]
+  badge?: number
 }
 
 export default function DashboardLayout() {
-  const { user, logout } = useAuth()
+  const { user, logout, session } = useAuth()
   const { branding } = useBranding()
   const navigate = useNavigate()
   const location = useLocation()
+
+  const [pendingSubmissionsCount, setPendingSubmissionsCount] = useState(0)
+  const [isAiEnabled, setIsAiEnabled] = useState(false)
 
   const handleLogout = async () => {
     await logout()
@@ -26,6 +33,50 @@ export default function DashboardLayout() {
   const userRole = (user?.role || 'technician') as UserRole
   const isOrgAdmin = user?.isOrgAdmin || user?.role === 'org_admin'
   const isSiteAdmin = user?.isSiteAdmin || user?.role === 'site_admin'
+  const orgId = user?.organization?.id
+
+  // Fetch pending submissions count for the badge
+  useEffect(() => {
+    const fetchPendingCount = async () => {
+      if (!orgId || !session?.accessToken) return
+      if (!isOrgAdmin && !isSiteAdmin) return
+
+      try {
+        const data = await api<{ count: number }>(
+          `/api/v1/organizations/${orgId}/reason-submissions/count?status=pending`,
+          { token: session.accessToken }
+        )
+        setPendingSubmissionsCount(data.count)
+      } catch (err) {
+        // Silently fail
+      }
+    }
+
+    fetchPendingCount()
+    // Refresh every 60 seconds
+    const interval = setInterval(fetchPendingCount, 60000)
+    return () => clearInterval(interval)
+  }, [orgId, session?.accessToken, isOrgAdmin, isSiteAdmin])
+
+  // Fetch AI enabled status for the organization
+  useEffect(() => {
+    const fetchAiStatus = async () => {
+      if (!orgId || !session?.accessToken || !isOrgAdmin) return
+
+      try {
+        const data = await api<{ aiEnabled: boolean }>(
+          `/api/v1/organizations/${orgId}/ai-usage/can-generate`,
+          { token: session.accessToken }
+        )
+        setIsAiEnabled(data.aiEnabled !== false)
+      } catch (err) {
+        // Silently fail - assume AI is not enabled
+        setIsAiEnabled(false)
+      }
+    }
+
+    fetchAiStatus()
+  }, [orgId, session?.accessToken, isOrgAdmin])
 
   // Define navigation items with role-based access
   const mainNavItems: NavItem[] = [
@@ -131,6 +182,26 @@ export default function DashboardLayout() {
         </svg>
       ),
       roles: ['super_admin', 'org_admin']
+    },
+    {
+      to: '/settings/reasons',
+      label: 'Reason Library',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/reason-types',
+      label: 'Reason Types',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
     }
   ]
 
@@ -190,6 +261,32 @@ export default function DashboardLayout() {
                   {item.label}
                 </Link>
               ))}
+              {/* Reason Submissions with badge */}
+              {(isOrgAdmin || isSiteAdmin) && (
+                <>
+                  <Link to="/settings/reason-submissions" className={navLinkClass('/settings/reason-submissions')}>
+                    <span className="mr-3">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                    </span>
+                    <span className="flex-1">Reason Submissions</span>
+                    {pendingSubmissionsCount > 0 && (
+                      <span className="ml-2 px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-medium rounded-full">
+                        {pendingSubmissionsCount}
+                      </span>
+                    )}
+                  </Link>
+                  <Link to="/settings/reason-analytics" className={navLinkClass('/settings/reason-analytics')}>
+                    <span className="mr-3">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                      </svg>
+                    </span>
+                    Reason Analytics
+                  </Link>
+                </>
+              )}
             </div>
           )}
 
@@ -215,6 +312,16 @@ export default function DashboardLayout() {
                 </span>
                 Subscription
               </Link>
+              {isAiEnabled && (
+                <Link to="/settings/ai-usage" className={navLinkClass('/settings/ai-usage')}>
+                  <span className="mr-3">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                    </svg>
+                  </span>
+                  AI Usage
+                </Link>
+              )}
             </div>
           )}
         </nav>
@@ -250,6 +357,9 @@ export default function DashboardLayout() {
 
       {/* Main content */}
       <main className="flex-1 flex flex-col">
+        {/* AI Limit Warning Banner */}
+        <AILimitWarningBanner />
+
         <header className="bg-white border-b border-gray-200 px-6 py-4">
           <div className="flex items-center justify-between">
             <div>

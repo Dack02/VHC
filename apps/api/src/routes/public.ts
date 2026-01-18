@@ -177,6 +177,49 @@ publicRoutes.get('/vhc/:token', async (c) => {
     .eq('health_check_id', healthCheck.id)
     .order('created_at')
 
+  // Fetch selected reasons for all check results
+  const checkResultIds = (checkResults || []).map(r => r.id)
+  const reasonsByCheckResult: Record<string, Array<{
+    id: string
+    reasonText: string
+    customerDescription: string | null
+    followUpDays: number | null
+    followUpText: string | null
+  }>> = {}
+
+  if (checkResultIds.length > 0) {
+    const { data: allReasons } = await supabaseAdmin
+      .from('check_result_reasons')
+      .select(`
+        id,
+        check_result_id,
+        follow_up_days,
+        follow_up_text,
+        customer_description_override,
+        reason:item_reasons(
+          reason_text,
+          customer_description
+        )
+      `)
+      .in('check_result_id', checkResultIds)
+
+    // Group reasons by check result ID
+    for (const crr of allReasons || []) {
+      const checkResultId = crr.check_result_id
+      if (!reasonsByCheckResult[checkResultId]) {
+        reasonsByCheckResult[checkResultId] = []
+      }
+      const reason = crr.reason as { reason_text?: string; customer_description?: string } | null
+      reasonsByCheckResult[checkResultId].push({
+        id: crr.id,
+        reasonText: reason?.reason_text || 'Unknown',
+        customerDescription: crr.customer_description_override || reason?.customer_description || null,
+        followUpDays: crr.follow_up_days,
+        followUpText: crr.follow_up_text
+      })
+    }
+  }
+
   // Get authorizations
   const { data: authorizations } = await supabaseAdmin
     .from('authorizations')
@@ -188,11 +231,15 @@ publicRoutes.get('/vhc/:token', async (c) => {
     (authorizations || []).map(auth => [auth.repair_item_id, auth])
   )
 
-  // Enhance repair items with authorization status
-  const enhancedRepairItems = (repairItems || []).map(item => ({
-    ...item,
-    authorization: authMap.get(item.id) || null
-  }))
+  // Enhance repair items with authorization status and reasons
+  const enhancedRepairItems = (repairItems || []).map(item => {
+    const checkResultId = (item.check_result as { id?: string } | null)?.id
+    return {
+      ...item,
+      authorization: authMap.get(item.id) || null,
+      reasons: checkResultId ? reasonsByCheckResult[checkResultId] || [] : []
+    }
+  })
 
   // Track activity
   await trackActivity(healthCheck.id, 'viewed', null, c)
@@ -228,6 +275,7 @@ publicRoutes.get('/vhc/:token', async (c) => {
         ...result,
         instance_number: instanceNum,
         display_name: displayName,
+        reasons: reasonsByCheckResult[result.id] || [],
         media: result.media
           ?.filter((m: Record<string, unknown>) => m.include_in_report !== false)
           .map((m: Record<string, unknown>) => {
@@ -319,6 +367,9 @@ publicRoutes.post('/vhc/:token/authorize', async (c) => {
   // Track activity
   await trackActivity(healthCheck.id, 'authorized', repairItemId, c)
 
+  // Update reason approval stats
+  await updateReasonApprovalStats(repairItemId, true)
+
   // Check if all items have been actioned and update status
   await updateHealthCheckStatus(healthCheck.id, 'authorized')
 
@@ -398,6 +449,9 @@ publicRoutes.post('/vhc/:token/decline', async (c) => {
 
   // Track activity
   await trackActivity(healthCheck.id, 'declined', repairItemId, c)
+
+  // Update reason approval stats
+  await updateReasonApprovalStats(repairItemId, false)
 
   // Check if all items have been actioned and update status
   await updateHealthCheckStatus(healthCheck.id, 'declined')
@@ -618,6 +672,39 @@ async function updateHealthCheckStatus(healthCheckId: string, action: 'authorize
       .from('health_checks')
       .update(updateData)
       .eq('id', healthCheckId)
+  }
+}
+
+/**
+ * Helper: Update reason approval stats when customer approves/declines
+ * This updates the customer_approved field on check_result_reasons
+ * which triggers the approval stats update via database trigger
+ */
+async function updateReasonApprovalStats(repairItemId: string, approved: boolean) {
+  try {
+    // Get the repair item to find its check_result_id
+    const { data: repairItem } = await supabaseAdmin
+      .from('repair_items')
+      .select('check_result_id')
+      .eq('id', repairItemId)
+      .single()
+
+    if (!repairItem?.check_result_id) return
+
+    // Update all reasons for this check result with the customer's decision
+    const { error } = await supabaseAdmin
+      .from('check_result_reasons')
+      .update({
+        customer_approved: approved,
+        customer_responded_at: new Date().toISOString()
+      })
+      .eq('check_result_id', repairItem.check_result_id)
+
+    if (error) {
+      console.error('Failed to update reason approval stats:', error)
+    }
+  } catch (err) {
+    console.error('Error updating reason approval stats:', err)
   }
 }
 

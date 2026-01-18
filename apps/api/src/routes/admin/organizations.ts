@@ -4,7 +4,7 @@
  */
 
 import { Hono } from 'hono'
-import { supabaseAdmin, supabaseAuth } from '../../lib/supabase.js'
+import { supabaseAdmin } from '../../lib/supabase.js'
 import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
 import crypto from 'crypto'
 
@@ -249,17 +249,42 @@ adminOrgRoutes.post('/', async (c) => {
 
     // 8. Initialize usage tracking for current period
     const usagePeriodStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+    const usagePeriodEnd = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)
     await supabaseAdmin
       .from('organization_usage')
       .insert({
         organization_id: org.id,
-        period_start: usagePeriodStart.toISOString(),
+        period_start: usagePeriodStart.toISOString().split('T')[0],
+        period_end: usagePeriodEnd.toISOString().split('T')[0],
         health_checks_created: 0,
         health_checks_completed: 0,
         sms_sent: 0,
         emails_sent: 0,
         storage_used_bytes: 0
       })
+
+    // 9. Auto-copy starter reasons if enabled
+    let starterReasonsCopied = 0
+    try {
+      const { data: starterSettings } = await supabaseAdmin
+        .from('platform_settings')
+        .select('settings')
+        .eq('id', 'starter_reasons')
+        .single()
+
+      const starterConfig = starterSettings?.settings as { auto_copy_on_create?: boolean; source_organization_id?: string } | null
+      if (starterConfig?.auto_copy_on_create !== false) {
+        // Copy starter reasons to new organization
+        const { data: copyResult } = await supabaseAdmin.rpc('copy_starter_reasons_to_org', {
+          target_org_id: org.id,
+          source_org_id: starterConfig?.source_organization_id || null
+        })
+        starterReasonsCopied = copyResult || 0
+      }
+    } catch (starterError) {
+      console.error('Failed to copy starter reasons:', starterError)
+      // Non-blocking error - organization creation should still succeed
+    }
 
     // Log activity
     await logSuperAdminActivity(
@@ -289,7 +314,8 @@ adminOrgRoutes.post('/', async (c) => {
         id: site.id,
         name: site.name
       } : null,
-      temporaryPassword: adminPassword ? undefined : tempPassword
+      temporaryPassword: adminPassword ? undefined : tempPassword,
+      starterReasonsCopied
     }, 201)
   } catch (error) {
     console.error('Create organization error:', error)
@@ -776,7 +802,8 @@ adminOrgRoutes.get('/:id/usage', async (c) => {
     .eq('organization_id', orgId)
     .single()
 
-  const plan = subscription?.plan as Record<string, unknown> | null
+  const planData = subscription?.plan
+  const plan = (Array.isArray(planData) ? planData[0] : planData) as Record<string, unknown> | null
 
   return c.json({
     periodStart,
@@ -833,6 +860,308 @@ adminOrgRoutes.get('/:id/usage/history', async (c) => {
       storageUsedBytes: period.storage_used_bytes
     }))
   })
+})
+
+// =============================================================================
+// AI SETTINGS
+// =============================================================================
+
+/**
+ * Helper: Get or create organization AI settings (lazy init)
+ */
+async function getOrCreateOrgAiSettings(orgId: string) {
+  // Try to get existing settings
+  let { data: settings, error } = await supabaseAdmin
+    .from('organization_ai_settings')
+    .select('*')
+    .eq('organization_id', orgId)
+    .single()
+
+  if (error && error.code === 'PGRST116') {
+    // Not found - create default settings
+    const { data: newSettings, error: createError } = await supabaseAdmin
+      .from('organization_ai_settings')
+      .insert({
+        organization_id: orgId,
+        monthly_generation_limit: null, // Use platform default
+        is_ai_enabled: true,
+        current_period_start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
+        current_period_generations: 0,
+        current_period_tokens: 0,
+        current_period_cost_usd: 0,
+        total_generations: 0,
+        total_tokens: 0,
+        total_cost_usd: 0
+      })
+      .select()
+      .single()
+
+    if (createError) {
+      // Might have been created by another request - try to fetch again
+      const { data: retrySettings } = await supabaseAdmin
+        .from('organization_ai_settings')
+        .select('*')
+        .eq('organization_id', orgId)
+        .single()
+
+      if (retrySettings) {
+        return retrySettings
+      }
+
+      throw new Error(`Failed to create AI settings: ${createError.message}`)
+    }
+
+    return newSettings
+  }
+
+  if (error) {
+    throw new Error(`Failed to fetch AI settings: ${error.message}`)
+  }
+
+  return settings
+}
+
+/**
+ * Helper: Get effective AI limit for an organization
+ */
+async function getEffectiveLimit(orgId: string, orgLimit: number | null): Promise<number> {
+  if (orgLimit !== null) {
+    return orgLimit
+  }
+
+  // Get platform default
+  const { data: defaultSetting } = await supabaseAdmin
+    .from('platform_ai_settings')
+    .select('value')
+    .eq('key', 'default_monthly_ai_limit')
+    .single()
+
+  return parseInt(defaultSetting?.value || '100')
+}
+
+/**
+ * GET /api/v1/admin/organizations/:id/ai-settings
+ * Get organization AI settings
+ */
+adminOrgRoutes.get('/:id/ai-settings', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const orgId = c.req.param('id')
+
+  try {
+    // Verify org exists
+    const { data: org } = await supabaseAdmin
+      .from('organizations')
+      .select('id, name')
+      .eq('id', orgId)
+      .single()
+
+    if (!org) {
+      return c.json({ error: 'Organization not found' }, 404)
+    }
+
+    // Get or create AI settings
+    const settings = await getOrCreateOrgAiSettings(orgId)
+
+    // Get effective limit
+    const effectiveLimit = await getEffectiveLimit(orgId, settings.monthly_generation_limit)
+
+    // Check if current period needs reset (new month)
+    const currentMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
+    const settingsPeriodStart = settings.current_period_start
+
+    let currentPeriod = {
+      start: settings.current_period_start,
+      generations: settings.current_period_generations || 0,
+      tokens: settings.current_period_tokens || 0,
+      costUsd: parseFloat(String(settings.current_period_cost_usd || 0))
+    }
+
+    // If we're in a new month, show zeros for current period
+    if (settingsPeriodStart < currentMonthStart) {
+      currentPeriod = {
+        start: currentMonthStart,
+        generations: 0,
+        tokens: 0,
+        costUsd: 0
+      }
+    }
+
+    // Log activity
+    await logSuperAdminActivity(
+      superAdmin.id,
+      'view_org_ai_settings',
+      'organization_ai_settings',
+      orgId,
+      {},
+      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      c.req.header('User-Agent')
+    )
+
+    return c.json({
+      organizationId: orgId,
+      organizationName: org.name,
+      monthlyGenerationLimit: settings.monthly_generation_limit,
+      effectiveLimit,
+      isAiEnabled: settings.is_ai_enabled,
+      currentPeriod,
+      lifetime: {
+        generations: settings.total_generations || 0,
+        tokens: settings.total_tokens || 0,
+        costUsd: parseFloat(String(settings.total_cost_usd || 0))
+      }
+    })
+  } catch (error) {
+    console.error('Get org AI settings error:', error)
+    const message = error instanceof Error ? error.message : 'Failed to get AI settings'
+    return c.json({ error: message }, 500)
+  }
+})
+
+/**
+ * PATCH /api/v1/admin/organizations/:id/ai-settings
+ * Update organization AI settings
+ */
+adminOrgRoutes.patch('/:id/ai-settings', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const orgId = c.req.param('id')
+
+  try {
+    const body = await c.req.json()
+    const { monthly_generation_limit, is_ai_enabled } = body
+
+    // Verify org exists
+    const { data: org } = await supabaseAdmin
+      .from('organizations')
+      .select('id, name')
+      .eq('id', orgId)
+      .single()
+
+    if (!org) {
+      return c.json({ error: 'Organization not found' }, 404)
+    }
+
+    // Validate limit
+    if (monthly_generation_limit !== undefined && monthly_generation_limit !== null) {
+      const limit = parseInt(monthly_generation_limit)
+      if (isNaN(limit) || limit < 0) {
+        return c.json({ error: 'monthly_generation_limit must be a non-negative integer or null' }, 400)
+      }
+    }
+
+    // Ensure settings record exists
+    await getOrCreateOrgAiSettings(orgId)
+
+    // Build update data
+    const updateData: Record<string, unknown> = {
+      updated_at: new Date().toISOString()
+    }
+
+    if (monthly_generation_limit !== undefined) {
+      updateData.monthly_generation_limit = monthly_generation_limit === null ? null : parseInt(monthly_generation_limit)
+    }
+    if (is_ai_enabled !== undefined) {
+      updateData.is_ai_enabled = is_ai_enabled
+    }
+
+    // Update
+    const { error } = await supabaseAdmin
+      .from('organization_ai_settings')
+      .update(updateData)
+      .eq('organization_id', orgId)
+
+    if (error) {
+      throw new Error(`Failed to update AI settings: ${error.message}`)
+    }
+
+    // Log activity
+    await logSuperAdminActivity(
+      superAdmin.id,
+      'update_org_ai_settings',
+      'organization_ai_settings',
+      orgId,
+      { changes: Object.keys(updateData).filter(k => k !== 'updated_at'), organizationName: org.name },
+      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      c.req.header('User-Agent')
+    )
+
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Update org AI settings error:', error)
+    const message = error instanceof Error ? error.message : 'Failed to update AI settings'
+    return c.json({ error: message }, 500)
+  }
+})
+
+/**
+ * POST /api/v1/admin/organizations/:id/ai-settings/reset-period
+ * Reset organization's current AI usage period
+ */
+adminOrgRoutes.post('/:id/ai-settings/reset-period', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const orgId = c.req.param('id')
+
+  try {
+    // Verify org exists
+    const { data: org } = await supabaseAdmin
+      .from('organizations')
+      .select('id, name')
+      .eq('id', orgId)
+      .single()
+
+    if (!org) {
+      return c.json({ error: 'Organization not found' }, 404)
+    }
+
+    // Get current settings
+    const settings = await getOrCreateOrgAiSettings(orgId)
+
+    // Store previous values
+    const previous = {
+      periodStart: settings.current_period_start,
+      generations: settings.current_period_generations || 0,
+      tokens: settings.current_period_tokens || 0,
+      costUsd: parseFloat(String(settings.current_period_cost_usd || 0))
+    }
+
+    // Reset
+    const now = new Date().toISOString().split('T')[0]
+    const { error } = await supabaseAdmin
+      .from('organization_ai_settings')
+      .update({
+        current_period_start: now,
+        current_period_generations: 0,
+        current_period_tokens: 0,
+        current_period_cost_usd: 0,
+        limit_warning_sent_at: null,
+        limit_reached_sent_at: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('organization_id', orgId)
+
+    if (error) {
+      throw new Error(`Failed to reset period: ${error.message}`)
+    }
+
+    // Log activity
+    await logSuperAdminActivity(
+      superAdmin.id,
+      'reset_org_ai_period',
+      'organization_ai_settings',
+      orgId,
+      { organizationName: org.name, previous },
+      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      c.req.header('User-Agent')
+    )
+
+    return c.json({
+      success: true,
+      previous
+    })
+  } catch (error) {
+    console.error('Reset org AI period error:', error)
+    const message = error instanceof Error ? error.message : 'Failed to reset period'
+    return c.json({ error: message }, 500)
+  }
 })
 
 export default adminOrgRoutes

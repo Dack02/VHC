@@ -137,3 +137,20 @@ export function useSuperAdmin() {
   }
   return context
 }
+
+// Safe version that can be used outside the provider - returns default values if not in admin context
+export function useSuperAdminSafe() {
+  const context = useContext(SuperAdminContext)
+  if (context === undefined) {
+    return {
+      superAdmin: null,
+      session: null,
+      loading: false,
+      isSuperAdmin: false,
+      login: async () => {},
+      logout: async () => {},
+      refreshSession: async () => {}
+    }
+  }
+  return context
+}

@@ -8,14 +8,42 @@ interface DmsSettings {
   apiUrl: string
   defaultTemplateId: string | null
   autoImportEnabled: boolean
-  importScheduleHour: number
+  importScheduleHours: number[]
   importScheduleDays: number[]
   importServiceTypes: string[]
+  dailyImportLimit: number
   lastImportAt: string | null
   lastImportStatus: string | null
+  lastSyncAt: string | null
   lastError: string | null
   credentialsConfigured: boolean
   usernameMasked: string | null
+}
+
+interface PreviewBooking {
+  bookingId: string
+  vehicleReg: string
+  customerName: string
+  scheduledTime?: string
+  serviceType?: string
+  reason?: string
+}
+
+interface PreviewResponse {
+  success: boolean
+  date: string
+  summary: {
+    totalBookings: number
+    willImport: number
+    willSkip: number
+    alreadyImportedToday: number
+    dailyLimit: number
+    remainingCapacity: number
+    limitWouldBeExceeded: boolean
+  }
+  willImport: PreviewBooking[]
+  willSkip: PreviewBooking[]
+  warnings: string[]
 }
 
 interface ImportHistory {
@@ -61,10 +89,15 @@ const DAYS_OF_WEEK = [
   { value: 6, label: 'Sat' }
 ]
 
-const HOURS = Array.from({ length: 24 }, (_, i) => ({
-  value: i,
-  label: i.toString().padStart(2, '0') + ':00'
-}))
+// Default import hours (6am, 10am, 2pm, 8pm)
+const DEFAULT_IMPORT_HOURS = [6, 10, 14, 20]
+
+const IMPORT_HOUR_OPTIONS = [
+  { value: 6, label: '06:00 (Early morning)' },
+  { value: 10, label: '10:00 (Mid-morning)' },
+  { value: 14, label: '14:00 (Afternoon)' },
+  { value: 20, label: '20:00 (Evening)' }
+]
 
 export default function DMSIntegration() {
   const { session, user } = useAuth()
@@ -76,8 +109,15 @@ export default function DMSIntegration() {
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+
+  // Preview modal state
+  const [showPreviewModal, setShowPreviewModal] = useState(false)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewData, setPreviewData] = useState<PreviewResponse | null>(null)
+  const [previewConfirmed, setPreviewConfirmed] = useState(false)
 
   // Credential form state
   const [apiUrl, setApiUrl] = useState('')
@@ -155,9 +195,10 @@ export default function DMSIntegration() {
         apiUrl,
         defaultTemplateId: settings.defaultTemplateId,
         autoImportEnabled: settings.autoImportEnabled,
-        importScheduleHour: settings.importScheduleHour,
+        importScheduleHours: settings.importScheduleHours,
         importScheduleDays: settings.importScheduleDays,
-        importServiceTypes: settings.importServiceTypes
+        importServiceTypes: settings.importServiceTypes,
+        dailyImportLimit: settings.dailyImportLimit
       }
 
       // Only include credentials if they were changed
@@ -185,6 +226,122 @@ export default function DMSIntegration() {
       setError(err instanceof Error ? err.message : 'Failed to save settings')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handlePreviewImport = async () => {
+    try {
+      setPreviewLoading(true)
+      setError('')
+      setPreviewConfirmed(false)
+
+      const today = new Date().toISOString().split('T')[0]
+      const data = await api<PreviewResponse>(`/api/v1/dms-settings/preview?date=${today}`, {
+        token: session?.accessToken
+      })
+
+      setPreviewData(data)
+      setShowPreviewModal(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch preview')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const handleConfirmImport = async () => {
+    if (!previewConfirmed) return
+
+    try {
+      setImporting(true)
+      setShowPreviewModal(false)
+      setError('')
+      setSuccess('')
+
+      const today = new Date().toISOString().split('T')[0]
+      const result = await api<{ success: boolean; message?: string; importId?: string }>(
+        '/api/v1/dms-settings/import',
+        {
+          method: 'POST',
+          body: { date: today },
+          token: session?.accessToken
+        }
+      )
+
+      if (result.success) {
+        setSuccess(result.message || 'Import started')
+        setTimeout(() => {
+          fetchImportHistory()
+          fetchUnactionedHealthChecks()
+          setSuccess('')
+        }, 3000)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start import')
+    } finally {
+      setImporting(false)
+      setPreviewData(null)
+      setPreviewConfirmed(false)
+    }
+  }
+
+  const handleRefreshAwaiting = async () => {
+    try {
+      setRefreshing(true)
+      setError('')
+
+      const today = new Date().toISOString().split('T')[0]
+      const result = await api<{ success: boolean; message?: string }>(
+        '/api/v1/dms-settings/import',
+        {
+          method: 'POST',
+          body: { date: today },
+          token: session?.accessToken
+        }
+      )
+
+      if (result.success) {
+        setSuccess('Syncing bookings from DMS...')
+        setTimeout(() => {
+          fetchUnactionedHealthChecks()
+          fetchSettings()
+          setSuccess('')
+        }, 3000)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to refresh bookings')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  // Mark a vehicle as arrived (DMS workflow)
+  const handleMarkArrived = async (healthCheckId: string) => {
+    try {
+      await api(`/api/v1/health-checks/${healthCheckId}/mark-arrived`, {
+        method: 'POST',
+        token: session?.accessToken
+      })
+      setSuccess('Vehicle marked as arrived')
+      fetchUnactionedHealthChecks()
+      setTimeout(() => setSuccess(''), 3000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to mark vehicle as arrived')
+    }
+  }
+
+  // Mark a vehicle as no-show (DMS workflow)
+  const handleMarkNoShow = async (healthCheckId: string) => {
+    try {
+      await api(`/api/v1/health-checks/${healthCheckId}/mark-no-show`, {
+        method: 'POST',
+        token: session?.accessToken
+      })
+      setSuccess('Vehicle marked as no-show')
+      fetchUnactionedHealthChecks()
+      setTimeout(() => setSuccess(''), 3000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to mark vehicle as no-show')
     }
   }
 
@@ -225,37 +382,6 @@ export default function DMSIntegration() {
     }
   }
 
-  const handleManualImport = async () => {
-    try {
-      setImporting(true)
-      setError('')
-      setSuccess('')
-
-      const today = new Date().toISOString().split('T')[0]
-      const result = await api<{ success: boolean; message?: string; importId?: string }>(
-        '/api/v1/dms-settings/import',
-        {
-          method: 'POST',
-          body: { date: today },
-          token: session?.accessToken
-        }
-      )
-
-      if (result.success) {
-        setSuccess(result.message || 'Import started')
-        // Refresh import history after a delay
-        setTimeout(() => {
-          fetchImportHistory()
-          setSuccess('')
-        }, 3000)
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start import')
-    } finally {
-      setImporting(false)
-    }
-  }
-
   const handleClearCredentials = async () => {
     if (!confirm('Are you sure you want to remove your DMS credentials?')) return
 
@@ -289,6 +415,33 @@ export default function DMSIntegration() {
       days.sort()
     }
     setSettings({ ...settings, importScheduleDays: days })
+  }
+
+  const toggleImportHour = (hour: number) => {
+    if (!settings) return
+    const hours = [...(settings.importScheduleHours || DEFAULT_IMPORT_HOURS)]
+    const index = hours.indexOf(hour)
+    if (index > -1) {
+      hours.splice(index, 1)
+    } else {
+      hours.push(hour)
+      hours.sort((a, b) => a - b)
+    }
+    setSettings({ ...settings, importScheduleHours: hours })
+  }
+
+  const formatLastSync = (timestamp: string | null) => {
+    if (!timestamp) return 'Never'
+    const date = new Date(timestamp)
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMins / 60)
+
+    if (diffMins < 1) return 'Just now'
+    if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`
+    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`
+    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   }
 
   if (loading) {
@@ -487,23 +640,48 @@ export default function DMSIntegration() {
             </label>
           </div>
 
+          {/* Warning when enabling auto-import */}
+          {settings?.autoImportEnabled && (
+            <div className="px-6 py-3 bg-amber-50 border-b border-amber-200">
+              <div className="flex items-start gap-3">
+                <svg className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div className="text-sm text-amber-800">
+                  <p className="font-medium">Automatic imports enabled</p>
+                  <p className="mt-1">
+                    Health checks will be automatically created from DMS bookings at the scheduled times.
+                    Use Preview Import to see what will be imported before enabling.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {settings?.autoImportEnabled && (
             <div className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Import Time
+                  Import Times
                 </label>
-                <select
-                  value={settings?.importScheduleHour || 20}
-                  onChange={(e) => settings && setSettings({ ...settings, importScheduleHour: parseInt(e.target.value) })}
-                  className="w-48 px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  {HOURS.map(hour => (
-                    <option key={hour.value} value={hour.value}>{hour.label}</option>
+                <div className="flex flex-wrap gap-2">
+                  {IMPORT_HOUR_OPTIONS.map(hour => (
+                    <button
+                      key={hour.value}
+                      type="button"
+                      onClick={() => toggleImportHour(hour.value)}
+                      className={`px-3 py-1.5 text-sm font-medium border ${
+                        (settings?.importScheduleHours || DEFAULT_IMPORT_HOURS).includes(hour.value)
+                          ? 'bg-primary text-white border-primary'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      {hour.label}
+                    </button>
                   ))}
-                </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  Time to run the daily import (UK timezone)
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Select when to automatically import bookings (UK timezone)
                 </p>
               </div>
 
@@ -531,6 +709,23 @@ export default function DMSIntegration() {
                   Select which days to automatically import bookings
                 </p>
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Daily Import Limit
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="500"
+                  value={settings?.dailyImportLimit || 100}
+                  onChange={(e) => settings && setSettings({ ...settings, dailyImportLimit: parseInt(e.target.value) || 100 })}
+                  className="w-24 px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Maximum health checks to import per day (safety limit)
+                </p>
+              </div>
             </div>
           )}
         </div>
@@ -540,7 +735,7 @@ export default function DMSIntegration() {
           <div className="px-6 py-4 border-b border-gray-200">
             <h2 className="text-lg font-semibold text-gray-900">Manual Import</h2>
             <p className="text-sm text-gray-500 mt-1">
-              Manually trigger an import for today's bookings
+              Preview and import today's bookings from your DMS
             </p>
           </div>
           <div className="p-6">
@@ -564,35 +759,55 @@ export default function DMSIntegration() {
                 )}
               </div>
               <button
-                onClick={handleManualImport}
-                disabled={importing || !settings?.credentialsConfigured}
+                onClick={handlePreviewImport}
+                disabled={previewLoading || importing || !settings?.credentialsConfigured}
                 className="bg-primary text-white px-4 py-2 font-semibold hover:bg-primary-dark disabled:opacity-50"
               >
-                {importing ? 'Importing...' : 'Import Now'}
+                {previewLoading ? 'Loading...' : importing ? 'Importing...' : 'Preview Import'}
               </button>
             </div>
           </div>
         </div>
 
-        {/* Unactioned Health Checks */}
-        {unactionedHealthChecks.length > 0 && (
-          <div className="bg-white border border-gray-200 shadow-sm">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Unactioned Health Checks</h2>
-                  <p className="text-sm text-gray-500 mt-1">
-                    DMS-imported health checks that haven't been started
-                  </p>
-                </div>
-                <a
-                  href="/health-checks?status=created"
-                  className="text-primary hover:underline text-sm font-medium"
+        {/* Awaiting Arrival */}
+        <div className="bg-white border border-gray-200 shadow-sm">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Awaiting Arrival</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  {unactionedHealthChecks.length > 0
+                    ? `${unactionedHealthChecks.length} health check${unactionedHealthChecks.length !== 1 ? 's' : ''} waiting for vehicle arrival`
+                    : 'No vehicles awaiting arrival'
+                  }
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Last synced: {formatLastSync(settings?.lastSyncAt || null)}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleRefreshAwaiting}
+                  disabled={refreshing || !settings?.credentialsConfigured}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
                 >
-                  View All
-                </a>
+                  <svg className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  {refreshing ? 'Syncing...' : 'Refresh'}
+                </button>
+                {unactionedHealthChecks.length > 0 && (
+                  <a
+                    href="/health-checks?status=created"
+                    className="text-primary hover:underline text-sm font-medium"
+                  >
+                    View All
+                  </a>
+                )}
               </div>
             </div>
+          </div>
+          {unactionedHealthChecks.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -602,7 +817,7 @@ export default function DMSIntegration() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Promise Time</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Imported</th>
-                    <th className="px-6 py-3"></th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -624,20 +839,44 @@ export default function DMSIntegration() {
                         {new Date(hc.importedAt).toLocaleDateString()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                        <a
-                          href={`/health-checks/${hc.id}`}
-                          className="text-primary hover:underline font-medium"
-                        >
-                          Open
-                        </a>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => handleMarkArrived(hc.id)}
+                            className="px-2 py-1 bg-green-600 text-white text-xs font-medium hover:bg-green-700"
+                            title="Mark vehicle as arrived"
+                          >
+                            Arrived
+                          </button>
+                          <button
+                            onClick={() => handleMarkNoShow(hc.id)}
+                            className="px-2 py-1 bg-gray-500 text-white text-xs font-medium hover:bg-gray-600"
+                            title="Mark as no-show"
+                          >
+                            No Show
+                          </button>
+                          <a
+                            href={`/health-checks/${hc.id}`}
+                            className="text-primary hover:underline font-medium"
+                          >
+                            Open
+                          </a>
+                        </div>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="p-6 text-center text-gray-500">
+              <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+              </svg>
+              <p className="mt-2 text-sm">No vehicles awaiting arrival</p>
+              <p className="text-xs text-gray-400 mt-1">Import bookings from your DMS to see them here</p>
+            </div>
+          )}
+        </div>
 
         {/* Import History */}
         {importHistory.length > 0 && (
@@ -715,6 +954,162 @@ export default function DMSIntegration() {
           </button>
         </div>
       </div>
+
+      {/* Preview Import Modal */}
+      {showPreviewModal && previewData && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex min-h-screen items-center justify-center p-4">
+            {/* Backdrop */}
+            <div
+              className="fixed inset-0 bg-black bg-opacity-50 transition-opacity"
+              onClick={() => setShowPreviewModal(false)}
+            />
+
+            {/* Modal */}
+            <div className="relative bg-white w-full max-w-2xl shadow-xl">
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Preview Import</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Bookings for {new Date(previewData.date).toLocaleDateString()}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowPreviewModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Summary */}
+              <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                  <div>
+                    <p className="text-2xl font-bold text-gray-900">{previewData.summary.totalBookings}</p>
+                    <p className="text-xs text-gray-500">Total in DMS</p>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-green-600">{previewData.summary.willImport}</p>
+                    <p className="text-xs text-gray-500">Will Import</p>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-gray-400">{previewData.summary.willSkip}</p>
+                    <p className="text-xs text-gray-500">Will Skip</p>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-blue-600">{previewData.summary.alreadyImportedToday}</p>
+                    <p className="text-xs text-gray-500">Already Imported</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Warnings */}
+              {previewData.warnings.length > 0 && (
+                <div className="px-6 py-3 bg-amber-50 border-b border-amber-200">
+                  {previewData.warnings.map((warning, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm text-amber-800">
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      {warning}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Content */}
+              <div className="px-6 py-4 max-h-80 overflow-y-auto">
+                {/* Will Import Section */}
+                {previewData.willImport.length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="text-sm font-semibold text-green-700 mb-2 flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Will Import ({previewData.willImport.length})
+                    </h4>
+                    <div className="space-y-1">
+                      {previewData.willImport.map((booking) => (
+                        <div key={booking.bookingId} className="flex items-center justify-between text-sm py-1 px-2 bg-green-50 border border-green-100">
+                          <span className="font-medium text-gray-900">{booking.vehicleReg}</span>
+                          <span className="text-gray-600">{booking.customerName}</span>
+                          <span className="text-gray-500 text-xs">{booking.scheduledTime}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Will Skip Section */}
+                {previewData.willSkip.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-500 mb-2 flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                      </svg>
+                      Will Skip ({previewData.willSkip.length})
+                    </h4>
+                    <div className="space-y-1">
+                      {previewData.willSkip.map((booking) => (
+                        <div key={booking.bookingId} className="flex items-center justify-between text-sm py-1 px-2 bg-gray-50 border border-gray-100">
+                          <span className="font-medium text-gray-500">{booking.vehicleReg}</span>
+                          <span className="text-gray-400">{booking.customerName}</span>
+                          <span className="text-xs text-gray-400 italic">{booking.reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {previewData.willImport.length === 0 && previewData.willSkip.length === 0 && (
+                  <div className="text-center py-8 text-gray-500">
+                    <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    <p className="mt-2">No bookings found for today</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+                {previewData.willImport.length > 0 && (
+                  <label className="flex items-center gap-3 mb-4 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={previewConfirmed}
+                      onChange={(e) => setPreviewConfirmed(e.target.checked)}
+                      className="w-4 h-4 text-primary border-gray-300 rounded focus:ring-primary"
+                    />
+                    <span className="text-sm text-gray-700">
+                      I confirm I want to import {previewData.willImport.length} booking{previewData.willImport.length !== 1 ? 's' : ''} as health checks
+                    </span>
+                  </label>
+                )}
+                <div className="flex justify-end gap-3">
+                  <button
+                    onClick={() => setShowPreviewModal(false)}
+                    className="px-4 py-2 text-gray-700 border border-gray-300 font-medium hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleConfirmImport}
+                    disabled={!previewConfirmed || previewData.willImport.length === 0}
+                    className="bg-primary text-white px-4 py-2 font-semibold hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Import {previewData.willImport.length} Booking{previewData.willImport.length !== 1 ? 's' : ''}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useCallback } from 'react'
 import { useThresholds } from '../context/ThresholdsContext'
 import { TreadDepthSlider } from './TreadDepthSlider'
 
@@ -20,8 +20,8 @@ const DAMAGE_OPTIONS = ['None', 'Cut', 'Bulge', 'Cracking', 'Sidewall Damage', '
 
 interface TyreDepthInputProps {
   value: TyreDepthValue | undefined
-  onChange: (value: TyreDepthValue) => void
-  onRAGChange: (status: 'green' | 'amber' | 'red' | null) => void
+  onChange: (value: TyreDepthValue, ragStatus: 'green' | 'amber' | 'red' | null) => void
+  onRAGChange?: (status: 'green' | 'amber' | 'red' | null) => void  // Optional for backward compat
   config?: Record<string, unknown>
 }
 
@@ -63,64 +63,47 @@ export function TyreDepthInput({
 
   void _config
 
-  const lastRAGRef = useRef<'green' | 'amber' | 'red' | null>(null)
-  const onRAGChangeRef = useRef(onRAGChange)
-  onRAGChangeRef.current = onRAGChange
-  const hasUserInteracted = useRef(false)
-
-  // Calculate RAG based on lowest value and damage severity
-  useEffect(() => {
+  // Calculate RAG status for a given measurement
+  const calculateRAG = useCallback((m: TyreDepthValue): 'green' | 'amber' | 'red' | null => {
     // Get all measured values (filter out nulls)
-    const measuredValues = [measurement.outer, measurement.middle, measurement.inner]
+    const measuredValues = [m.outer, m.middle, m.inner]
       .filter((v): v is number => v !== null)
 
-    const hasDamage = measurement.damage && measurement.damage !== 'None'
-    const damageIsUrgent = hasDamage && measurement.damageSeverity === 'urgent'
-    const damageIsAdvisory = hasDamage && measurement.damageSeverity === 'advisory'
-
-    let newRAG: 'green' | 'amber' | 'red' | null
+    const hasDamage = m.damage && m.damage !== 'None'
+    const damageIsUrgent = hasDamage && m.damageSeverity === 'urgent'
+    const damageIsAdvisory = hasDamage && m.damageSeverity === 'advisory'
 
     // If no measurements yet, RAG is null (incomplete)
     if (measuredValues.length === 0) {
-      newRAG = null
-    } else {
-      const lowest = Math.min(...measuredValues)
-
-      // Tread depth takes priority
-      if (lowest < redBelowMm) {
-        newRAG = 'red'
-      } else if (lowest < amberBelowMm) {
-        newRAG = 'amber'
-      } else if (damageIsUrgent) {
-        // Damage severity: urgent = red
-        newRAG = 'red'
-      } else if (damageIsAdvisory) {
-        // Damage severity: advisory = amber
-        newRAG = 'amber'
-      } else {
-        newRAG = 'green'
-      }
+      return null
     }
 
-    if (newRAG !== lastRAGRef.current) {
-      lastRAGRef.current = newRAG
-      if (hasUserInteracted.current) {
-        onRAGChangeRef.current(newRAG)
-      }
+    const lowest = Math.min(...measuredValues)
+
+    // Tread depth takes priority
+    if (lowest < redBelowMm) {
+      return 'red'
+    } else if (lowest < amberBelowMm) {
+      return 'amber'
+    } else if (damageIsUrgent) {
+      return 'red'
+    } else if (damageIsAdvisory) {
+      return 'amber'
     }
-  }, [measurement, redBelowMm, amberBelowMm])
+    return 'green'
+  }, [redBelowMm, amberBelowMm])
 
   const handleDepthChange = (point: 'outer' | 'middle' | 'inner', newValue: number) => {
-    hasUserInteracted.current = true
     setMeasurement((prev) => {
       const updated = { ...prev, [point]: newValue }
-      onChange(updated)
+      const ragStatus = calculateRAG(updated)
+      onChange(updated, ragStatus)
+      onRAGChange?.(ragStatus)
       return updated
     })
   }
 
   const handleDamageChange = (damage: string) => {
-    hasUserInteracted.current = true
     setMeasurement((prev) => {
       // Clear severity if damage is set to 'None'
       const updated = {
@@ -128,17 +111,20 @@ export function TyreDepthInput({
         damage,
         damageSeverity: damage === 'None' ? undefined : prev.damageSeverity
       }
-      onChange(updated)
+      const ragStatus = calculateRAG(updated)
+      onChange(updated, ragStatus)
+      onRAGChange?.(ragStatus)
       return updated
     })
   }
 
   const handleSeverityChange = (severity: DamageSeverity) => {
-    hasUserInteracted.current = true
     if ('vibrate' in navigator) navigator.vibrate(30)
     setMeasurement((prev) => {
       const updated = { ...prev, damageSeverity: severity }
-      onChange(updated)
+      const ragStatus = calculateRAG(updated)
+      onChange(updated, ragStatus)
+      onRAGChange?.(ragStatus)
       return updated
     })
   }

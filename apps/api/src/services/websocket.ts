@@ -5,6 +5,7 @@
 import { Server as HttpServer } from 'http'
 import { Server, Socket } from 'socket.io'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { getSubClient, PUBSUB_CHANNELS, type WebSocketPubSubEvent } from './queue.js'
 
 let io: Server | null = null
 
@@ -65,8 +66,61 @@ export function initializeWebSocket(httpServer: HttpServer): Server {
 
   io.on('connection', handleConnection)
 
+  // Subscribe to Redis pub/sub for cross-process WebSocket events
+  // This allows the worker to emit events via the API server's WebSocket
+  subscribeToWebSocketEvents()
+
   console.log('WebSocket server initialized')
   return io
+}
+
+/**
+ * Subscribe to Redis pub/sub for WebSocket events from worker
+ */
+async function subscribeToWebSocketEvents() {
+  try {
+    const sub = getSubClient()
+
+    sub.subscribe(PUBSUB_CHANNELS.WEBSOCKET_EVENT, (err) => {
+      if (err) {
+        console.error('Failed to subscribe to WebSocket events channel:', err)
+        return
+      }
+      console.log('Subscribed to Redis pub/sub for WebSocket events')
+    })
+
+    sub.on('message', (channel, message) => {
+      if (channel === PUBSUB_CHANNELS.WEBSOCKET_EVENT) {
+        try {
+          const event: WebSocketPubSubEvent = JSON.parse(message)
+          handlePubSubEvent(event)
+        } catch (err) {
+          console.error('Error parsing pub/sub message:', err)
+        }
+      }
+    })
+  } catch (error) {
+    console.error('Error setting up WebSocket pub/sub:', error)
+  }
+}
+
+/**
+ * Handle pub/sub event and emit via WebSocket
+ */
+function handlePubSubEvent(event: WebSocketPubSubEvent) {
+  if (!io) return
+
+  switch (event.type) {
+    case 'emit_to_site':
+      io.to(`site:${event.targetId}`).emit(event.event, event.data)
+      break
+    case 'emit_to_user':
+      io.to(`user:${event.targetId}`).emit(event.event, event.data)
+      break
+    case 'emit_to_health_check':
+      io.to(`hc:${event.targetId}`).emit(event.event, event.data)
+      break
+  }
 }
 
 /**

@@ -32,7 +32,7 @@ interface OrganizationSettingsData {
 }
 
 export default function OrganizationSettings() {
-  const { user, token } = useAuth()
+  const { user, session } = useAuth()
   const [settings, setSettings] = useState<OrganizationSettingsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -57,7 +57,7 @@ export default function OrganizationSettings() {
 
     try {
       const response = await fetch(`/api/v1/organizations/${orgId}/settings`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${session?.accessToken}` }
       })
 
       if (!response.ok) throw new Error('Failed to fetch settings')
@@ -83,7 +83,7 @@ export default function OrganizationSettings() {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${session?.accessToken}`
         },
         body: JSON.stringify({
           // Branding
@@ -138,7 +138,7 @@ export default function OrganizationSettings() {
 
       const response = await fetch(`/api/v1/organizations/${orgId}/settings/logo`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${session?.accessToken}` },
         body: formData
       })
 

@@ -5,9 +5,9 @@ import { api } from '../../lib/api'
 interface Plan {
   id: string
   name: string
-  maxSites: number
-  maxUsersPerSite: number
-  maxHealthChecksPerMonth: number
+  maxSites: number | null
+  maxUsers: number | null
+  maxHealthChecksPerMonth: number | null
 }
 
 interface CreateOrganizationModalProps {
@@ -212,11 +212,11 @@ export default function CreateOrganizationModal({ onClose, onCreated }: CreateOr
                       </div>
                     </div>
                     <div className="mt-2 ml-7 text-sm text-gray-500">
-                      <span>{plan.maxSites} sites</span>
+                      <span>{plan.maxSites ?? 'Unlimited'} sites</span>
                       <span className="mx-2">•</span>
-                      <span>{plan.maxUsersPerSite} users/site</span>
+                      <span>{plan.maxUsers ?? 'Unlimited'} users</span>
                       <span className="mx-2">•</span>
-                      <span>{plan.maxHealthChecksPerMonth.toLocaleString()} checks/month</span>
+                      <span>{plan.maxHealthChecksPerMonth?.toLocaleString() ?? 'Unlimited'} checks/month</span>
                     </div>
                   </label>
                 ))}

@@ -20,6 +20,14 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
+interface ReasonType {
+  id: string
+  name: string
+  description: string | null
+  isSystem: boolean
+  isCustom: boolean
+}
+
 interface TemplateItem {
   id: string
   name: string
@@ -28,6 +36,7 @@ interface TemplateItem {
   config: Record<string, unknown>
   isRequired: boolean
   sortOrder: number
+  reasonType?: string | null
 }
 
 interface TemplateSection {
@@ -59,6 +68,10 @@ export default function TemplateBuilder() {
   const [editingItem, setEditingItem] = useState<string | null>(null)
   const [showAddSectionModal, setShowAddSectionModal] = useState(false)
   const [addItemToSection, setAddItemToSection] = useState<string | null>(null)
+  const [itemReasonCounts, setItemReasonCounts] = useState<Record<string, { reasonCount: number; reasonType: string | null }>>({})
+  const [generatingReasons, setGeneratingReasons] = useState(false)
+  const [generateResult, setGenerateResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [reasonTypes, setReasonTypes] = useState<ReasonType[]>([])
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -69,7 +82,20 @@ export default function TemplateBuilder() {
 
   useEffect(() => {
     fetchTemplate()
+    fetchReasonCounts()
+    fetchReasonTypes()
   }, [id])
+
+  const fetchReasonTypes = async () => {
+    try {
+      const data = await api<{ reasonTypes: ReasonType[] }>('/api/v1/reason-types', {
+        token: session?.accessToken
+      })
+      setReasonTypes(data.reasonTypes || [])
+    } catch (err) {
+      console.error('Failed to fetch reason types:', err)
+    }
+  }
 
   const fetchTemplate = async () => {
     try {
@@ -82,6 +108,48 @@ export default function TemplateBuilder() {
       setError(err instanceof Error ? err.message : 'Failed to load template')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchReasonCounts = async () => {
+    try {
+      const data = await api<{ itemReasonCounts: Record<string, { reasonCount: number; reasonType: string | null }> }>(
+        `/api/v1/templates/${id}/item-reason-counts`,
+        { token: session?.accessToken }
+      )
+      setItemReasonCounts(data.itemReasonCounts || {})
+    } catch (err) {
+      console.error('Failed to fetch reason counts:', err)
+    }
+  }
+
+  const handleGenerateAllReasons = async () => {
+    if (!confirm('Generate reasons for all items that don\'t have any? This may take a moment.')) return
+
+    setGeneratingReasons(true)
+    setGenerateResult(null)
+    try {
+      const data = await api<{
+        success: boolean
+        itemsProcessed: number
+        typesProcessed: number
+        reasonsCreated: number
+      }>(`/api/v1/templates/${id}/generate-all-reasons`, {
+        method: 'POST',
+        token: session?.accessToken
+      })
+      setGenerateResult({
+        success: true,
+        message: `Generated ${data.reasonsCreated} reasons for ${data.itemsProcessed} items and ${data.typesProcessed} types`
+      })
+      fetchReasonCounts()
+    } catch (err) {
+      setGenerateResult({
+        success: false,
+        message: err instanceof Error ? err.message : 'Failed to generate reasons'
+      })
+    } finally {
+      setGeneratingReasons(false)
     }
   }
 
@@ -206,7 +274,7 @@ export default function TemplateBuilder() {
     }
   }
 
-  const handleAddItem = async (sectionId: string, itemData: { name: string; itemType: string; config?: Record<string, unknown> }) => {
+  const handleAddItem = async (sectionId: string, itemData: { name: string; itemType: string; reasonType?: string; config?: Record<string, unknown> }) => {
     try {
       const item = await api<TemplateItem>(`/api/v1/sections/${sectionId}/items`, {
         method: 'POST',
@@ -220,12 +288,13 @@ export default function TemplateBuilder() {
         )
       })
       setAddItemToSection(null)
+      fetchReasonCounts()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add item')
     }
   }
 
-  const handleUpdateItem = async (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown> }) => {
+  const handleUpdateItem = async (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null }) => {
     try {
       await api(`/api/v1/items/${itemId}`, {
         method: 'PATCH',
@@ -240,8 +309,33 @@ export default function TemplateBuilder() {
         }))
       })
       setEditingItem(null)
+      // Refresh reason counts if reason type changed
+      if (updates.reasonType !== undefined) {
+        fetchReasonCounts()
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update item')
+    }
+  }
+
+  const handleGenerateReasonsForItem = async (itemId: string, reasonType?: string | null) => {
+    try {
+      if (reasonType) {
+        // Generate for the reason type
+        await api(`/api/v1/reasons/by-type/${reasonType}/generate`, {
+          method: 'POST',
+          token: session?.accessToken
+        })
+      } else {
+        // Generate for the specific item
+        await api(`/api/v1/template-items/${itemId}/reasons/generate`, {
+          method: 'POST',
+          token: session?.accessToken
+        })
+      }
+      fetchReasonCounts()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate reasons')
     }
   }
 
@@ -302,6 +396,19 @@ export default function TemplateBuilder() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={handleGenerateAllReasons}
+            disabled={generatingReasons}
+            className="px-3 py-1.5 text-sm font-medium border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 disabled:opacity-50"
+          >
+            {generatingReasons ? 'Generating...' : 'Generate All Missing Reasons'}
+          </button>
+          <button
+            onClick={() => navigate(`/settings/reason-library?templateId=${id}`)}
+            className="px-3 py-1.5 text-sm font-medium border border-gray-300 text-gray-600 hover:bg-gray-50"
+          >
+            Reason Library
+          </button>
+          <button
             onClick={() => handleUpdateTemplate({ isDefault: !template.isDefault })}
             disabled={saving}
             className={`px-3 py-1.5 text-sm font-medium border ${
@@ -314,6 +421,16 @@ export default function TemplateBuilder() {
           </button>
         </div>
       </div>
+
+      {/* Generate Result Banner */}
+      {generateResult && (
+        <div className={`mb-4 px-4 py-3 border ${generateResult.success ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+          {generateResult.message}
+          <button onClick={() => setGenerateResult(null)} className="ml-2 font-semibold">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 mb-6">
@@ -345,6 +462,10 @@ export default function TemplateBuilder() {
                 onDeleteItem={(itemId) => handleDeleteItem(section.id, itemId)}
                 onItemDragEnd={(event) => handleItemDragEnd(section.id, event)}
                 sensors={sensors}
+                itemReasonCounts={itemReasonCounts}
+                onGenerateReasons={handleGenerateReasonsForItem}
+                templateId={id!}
+                reasonTypes={reasonTypes}
               />
             ))}
           </div>
@@ -374,6 +495,7 @@ export default function TemplateBuilder() {
         <AddItemModal
           onClose={() => setAddItemToSection(null)}
           onSave={(itemData) => handleAddItem(addItemToSection, itemData)}
+          reasonTypes={reasonTypes}
         />
       )}
     </div>
@@ -390,11 +512,15 @@ interface SortableSectionProps {
   onAddItem: () => void
   editingItemId: string | null
   onEditItem: (itemId: string) => void
-  onSaveItem: (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown> }) => void
+  onSaveItem: (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null }) => void
   onCancelEditItem: () => void
   onDeleteItem: (itemId: string) => void
   onItemDragEnd: (event: DragEndEvent) => void
   sensors: ReturnType<typeof useSensors>
+  itemReasonCounts: Record<string, { reasonCount: number; reasonType: string | null }>
+  onGenerateReasons: (itemId: string, reasonType?: string | null) => Promise<void>
+  templateId: string
+  reasonTypes: ReasonType[]
 }
 
 function SortableSection({
@@ -411,11 +537,16 @@ function SortableSection({
   onCancelEditItem,
   onDeleteItem,
   onItemDragEnd,
-  sensors
+  sensors,
+  itemReasonCounts,
+  onGenerateReasons,
+  templateId,
+  reasonTypes
 }: SortableSectionProps) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: section.id })
   const [editName, setEditName] = useState(section.name)
   const [editDescription, setEditDescription] = useState(section.description || '')
+  const [showMenu, setShowMenu] = useState(false)
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -423,7 +554,7 @@ function SortableSection({
   }
 
   return (
-    <div ref={setNodeRef} style={style} className="bg-white border border-gray-200 shadow-sm">
+    <div ref={setNodeRef} style={style} className="bg-white border border-gray-200 shadow-sm rounded-lg overflow-hidden">
       {/* Section Header */}
       <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -433,65 +564,100 @@ function SortableSection({
             </svg>
           </button>
           {isEditing ? (
-            <div className="flex-1">
+            <div className="flex-1 flex items-center gap-2">
               <input
                 type="text"
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
-                className="w-full px-2 py-1 border border-gray-300 text-sm font-semibold"
+                className="px-2 py-1 border border-gray-300 text-sm font-semibold rounded"
                 autoFocus
               />
               <input
                 type="text"
                 value={editDescription}
                 onChange={(e) => setEditDescription(e.target.value)}
-                className="w-full px-2 py-1 border border-gray-300 text-sm mt-1"
+                className="px-2 py-1 border border-gray-300 text-sm rounded"
                 placeholder="Description (optional)"
               />
-            </div>
-          ) : (
-            <div>
-              <h3 className="font-semibold text-gray-900">{section.name}</h3>
-              {section.description && (
-                <p className="text-xs text-gray-500">{section.description}</p>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {isEditing ? (
-            <>
               <button
                 onClick={() => {
                   onSave({ name: editName, description: editDescription || undefined })
                 }}
-                className="text-xs px-2 py-1 bg-primary text-white"
+                className="text-xs px-3 py-1 bg-primary text-white rounded"
               >
                 Save
               </button>
               <button onClick={onCancel} className="text-xs px-2 py-1 text-gray-600">
                 Cancel
               </button>
-            </>
+            </div>
           ) : (
-            <>
-              <span className="text-xs text-gray-400">{section.items.length} items</span>
-              <button onClick={onEdit} className="text-xs px-2 py-1 text-gray-600 hover:bg-gray-100">
-                Edit
-              </button>
-              <button onClick={onDelete} className="text-xs px-2 py-1 text-red-600 hover:bg-red-50">
-                Delete
-              </button>
-            </>
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold text-gray-900">{section.name}</h3>
+              <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
+                {section.items.length} {section.items.length === 1 ? 'item' : 'items'}
+              </span>
+              {section.description && (
+                <span className="text-xs text-gray-500">— {section.description}</span>
+              )}
+            </div>
           )}
         </div>
+        {!isEditing && (
+          <div className="relative">
+            <button
+              onClick={() => setShowMenu(!showMenu)}
+              className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+            >
+              <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+              </svg>
+            </button>
+            {showMenu && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
+                <div className="absolute right-0 mt-1 w-36 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1">
+                  <button
+                    onClick={() => { onEdit(); setShowMenu(false); }}
+                    className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                    Edit Section
+                  </button>
+                  <button
+                    onClick={() => { onDelete(); setShowMenu(false); }}
+                    className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Delete Section
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Column Headers */}
+      {section.items.length > 0 && (
+        <div className="hidden sm:grid grid-cols-[32px_1fr_120px_100px_140px] gap-2 px-4 py-2 bg-gray-100 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
+          <div></div>
+          <div>Item Name</div>
+          <div>Type</div>
+          <div>Reasons</div>
+          <div className="text-right">Actions</div>
+        </div>
+      )}
 
       {/* Section Items */}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onItemDragEnd}>
         <SortableContext items={section.items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-          <div className="divide-y divide-gray-100">
-            {section.items.map((item) => (
+          <div>
+            {section.items.map((item, index) => (
               <SortableItem
                 key={item.id}
                 item={item}
@@ -500,6 +666,11 @@ function SortableSection({
                 onSave={(updates) => onSaveItem(item.id, updates)}
                 onCancel={onCancelEditItem}
                 onDelete={() => onDeleteItem(item.id)}
+                reasonInfo={itemReasonCounts[item.id]}
+                onGenerateReasons={() => onGenerateReasons(item.id, item.reasonType)}
+                templateId={templateId}
+                isEven={index % 2 === 0}
+                reasonTypes={reasonTypes}
               />
             ))}
           </div>
@@ -507,10 +678,10 @@ function SortableSection({
       </DndContext>
 
       {/* Add Item Button */}
-      <div className="px-4 py-2 border-t border-gray-100">
+      <div className="px-4 py-3 border-t border-gray-100">
         <button
           onClick={onAddItem}
-          className="text-sm text-primary hover:text-primary-dark"
+          className="text-sm text-primary hover:text-primary-dark font-medium"
         >
           + Add Item
         </button>
@@ -523,87 +694,234 @@ interface SortableItemProps {
   item: TemplateItem
   isEditing: boolean
   onEdit: () => void
-  onSave: (updates: { name?: string; itemType?: string; config?: Record<string, unknown> }) => void
+  onSave: (updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null }) => void
   onCancel: () => void
   onDelete: () => void
+  reasonInfo?: { reasonCount: number; reasonType: string | null }
+  onGenerateReasons: () => Promise<void>
+  templateId: string
+  isEven?: boolean
+  reasonTypes: ReasonType[]
 }
 
-function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete }: SortableItemProps) {
+function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, reasonInfo, onGenerateReasons, isEven, reasonTypes }: SortableItemProps) {
+  const navigate = useNavigate()
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: item.id })
   const [editName, setEditName] = useState(item.name)
-  const [editType, setEditType] = useState(item.itemType)
+  const [editReasonType, setEditReasonType] = useState(item.reasonType || '')
+  const [generating, setGenerating] = useState(false)
+  const [showMenu, setShowMenu] = useState(false)
 
   const style = {
     transform: CSS.Transform.toString(transform),
     transition
   }
 
-  const getItemTypeBadge = (type: string) => {
-    const colors: Record<string, string> = {
-      rag: 'bg-green-100 text-green-800',
-      tyre_depth: 'bg-blue-100 text-blue-800',
-      brake_measurement: 'bg-orange-100 text-orange-800',
-      fluid_level: 'bg-purple-100 text-purple-800',
-      measurement: 'bg-yellow-100 text-yellow-800',
-      yes_no: 'bg-gray-100 text-gray-800'
+  const handleSave = () => {
+    const oldReasonType = item.reasonType
+    const newReasonType = editReasonType || null
+
+    // Warn if changing from blank to a type and item has specific reasons
+    if (!oldReasonType && newReasonType && reasonInfo && reasonInfo.reasonCount > 0 && !reasonInfo.reasonType) {
+      const confirmed = confirm(
+        `This item has ${reasonInfo.reasonCount} specific reasons. Changing to '${newReasonType}' will use shared reasons instead. Continue?`
+      )
+      if (!confirmed) return
     }
-    return colors[type] || 'bg-gray-100 text-gray-800'
+
+    onSave({ name: editName, reasonType: newReasonType })
+  }
+
+  const handleManageReasons = () => {
+    if (item.reasonType) {
+      navigate(`/settings/reason-library?reasonType=${item.reasonType}`)
+    } else {
+      navigate(`/settings/reason-library?templateItemId=${item.id}`)
+    }
+  }
+
+  const handleGenerateReasons = async () => {
+    setGenerating(true)
+    try {
+      await onGenerateReasons()
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const reasonCount = reasonInfo?.reasonCount ?? 0
+  const hasNoReasons = reasonCount === 0
+
+  // Get reason type display label
+  const getReasonTypeLabel = (type: string) => {
+    const found = reasonTypes.find(rt => rt.id === type)
+    return found?.name || type
   }
 
   return (
-    <div ref={setNodeRef} style={style} className="px-4 py-2 flex items-center gap-3 hover:bg-gray-50">
-      <button {...attributes} {...listeners} className="cursor-grab text-gray-300 hover:text-gray-500">
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`h-12 px-4 flex sm:grid sm:grid-cols-[32px_1fr_120px_100px_140px] gap-2 items-center border-b border-gray-100 last:border-b-0 ${
+        isEven ? 'bg-white' : 'bg-gray-50/50'
+      } ${hasNoReasons ? '!bg-amber-50/50' : ''} hover:bg-blue-50/30`}
+    >
+      {/* Drag Handle */}
+      <button {...attributes} {...listeners} className="cursor-grab text-gray-300 hover:text-gray-500 flex-shrink-0">
         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
           <path d="M7 2a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 2zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 8zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 14zm6-12a2 2 0 1 0 .001 4.001A2 2 0 0 0 13 2zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 13 8zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 13 14z" />
         </svg>
       </button>
 
       {isEditing ? (
-        <div className="flex-1 flex items-center gap-2">
+        /* Inline Edit Mode - spans remaining columns */
+        <div className="col-span-4 flex items-center gap-2 flex-1 min-w-0">
           <input
             type="text"
             value={editName}
             onChange={(e) => setEditName(e.target.value)}
-            className="flex-1 px-2 py-1 border border-gray-300 text-sm"
+            className="flex-1 min-w-0 px-2 py-1 border border-gray-300 text-sm rounded"
+            placeholder="Item name"
             autoFocus
           />
           <select
-            value={editType}
-            onChange={(e) => setEditType(e.target.value)}
-            className="px-2 py-1 border border-gray-300 text-sm"
+            value={editReasonType}
+            onChange={(e) => setEditReasonType(e.target.value)}
+            className="w-32 px-2 py-1 border border-gray-300 text-sm rounded"
           >
-            <option value="rag">RAG</option>
-            <option value="tyre_depth">Tyre Depth</option>
-            <option value="brake_measurement">Brake Measurement</option>
-            <option value="fluid_level">Fluid Level</option>
-            <option value="measurement">Measurement</option>
-            <option value="yes_no">Yes/No</option>
-            <option value="text">Text</option>
-            <option value="number">Number</option>
-            <option value="select">Select</option>
+            <option value="">None (unique)</option>
+            {reasonTypes.map((rt) => (
+              <option key={rt.id} value={rt.id}>
+                {rt.name}
+              </option>
+            ))}
           </select>
           <button
-            onClick={() => onSave({ name: editName, itemType: editType })}
-            className="text-xs px-2 py-1 bg-primary text-white"
+            onClick={handleSave}
+            className="text-xs px-3 py-1.5 bg-primary text-white rounded font-medium"
           >
             Save
           </button>
-          <button onClick={onCancel} className="text-xs px-2 py-1 text-gray-600">
+          <button onClick={onCancel} className="text-xs px-2 py-1.5 text-gray-600 hover:text-gray-800">
             Cancel
           </button>
         </div>
       ) : (
         <>
-          <span className="flex-1 text-sm text-gray-700">{item.name}</span>
-          <span className={`text-xs px-2 py-0.5 ${getItemTypeBadge(item.itemType)}`}>
-            {item.itemType.replace('_', ' ')}
-          </span>
-          <button onClick={onEdit} className="text-xs text-gray-500 hover:text-gray-700">
-            Edit
-          </button>
-          <button onClick={onDelete} className="text-xs text-red-500 hover:text-red-700">
-            Delete
-          </button>
+          {/* Item Name */}
+          <div className="flex-1 min-w-0 truncate">
+            <span className="text-sm text-gray-800">{item.name}</span>
+          </div>
+
+          {/* Reason Type - muted pill badge */}
+          <div className="hidden sm:flex items-center">
+            {item.reasonType ? (
+              <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full">
+                {getReasonTypeLabel(item.reasonType)}
+              </span>
+            ) : (
+              <span className="text-xs text-gray-400">—</span>
+            )}
+          </div>
+
+          {/* Reasons Count with icon */}
+          <div className="hidden sm:flex items-center">
+            {hasNoReasons ? (
+              <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full inline-flex items-center gap-1">
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+                0
+              </span>
+            ) : (
+              <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full inline-flex items-center gap-1">
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                {reasonCount}
+              </span>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center justify-end gap-1 flex-shrink-0">
+            {/* Mobile: Show reasons badge inline */}
+            <span className="sm:hidden text-xs">
+              {hasNoReasons ? (
+                <span className="text-amber-600">0</span>
+              ) : (
+                <span className="text-green-600">{reasonCount}</span>
+              )}
+            </span>
+
+            {hasNoReasons ? (
+              <button
+                onClick={handleGenerateReasons}
+                disabled={generating}
+                className="text-xs px-2 py-1 bg-purple-100 text-purple-700 hover:bg-purple-200 rounded disabled:opacity-50 font-medium"
+              >
+                {generating ? '...' : 'Generate'}
+              </button>
+            ) : null}
+
+            <button
+              onClick={onEdit}
+              className="text-xs px-2 py-1 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded"
+            >
+              Edit
+            </button>
+
+            {/* Overflow menu for additional actions */}
+            <div className="relative">
+              <button
+                onClick={() => setShowMenu(!showMenu)}
+                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+              >
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+                </svg>
+              </button>
+              {showMenu && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
+                  <div className="absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1">
+                    {!hasNoReasons && (
+                      <button
+                        onClick={() => { handleManageReasons(); setShowMenu(false); }}
+                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                        </svg>
+                        Manage Reasons
+                      </button>
+                    )}
+                    {hasNoReasons && (
+                      <button
+                        onClick={() => { handleGenerateReasons(); setShowMenu(false); }}
+                        disabled={generating}
+                        className="w-full px-3 py-2 text-left text-sm text-purple-700 hover:bg-purple-50 flex items-center gap-2 disabled:opacity-50"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        Generate Reasons
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { onDelete(); setShowMenu(false); }}
+                      className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Delete Item
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </>
       )}
     </div>
@@ -660,9 +978,10 @@ function AddSectionModal({ onClose, onSave }: { onClose: () => void; onSave: (na
   )
 }
 
-function AddItemModal({ onClose, onSave }: { onClose: () => void; onSave: (itemData: { name: string; itemType: string; config?: Record<string, unknown> }) => void }) {
+function AddItemModal({ onClose, onSave, reasonTypes }: { onClose: () => void; onSave: (itemData: { name: string; itemType: string; reasonType?: string; config?: Record<string, unknown> }) => void; reasonTypes: ReasonType[] }) {
   const [name, setName] = useState('')
   const [itemType, setItemType] = useState('rag')
+  const [reasonType, setReasonType] = useState('')
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -700,12 +1019,30 @@ function AddItemModal({ onClose, onSave }: { onClose: () => void; onSave: (itemD
               <option value="select">Select</option>
             </select>
           </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Reason Type</label>
+            <select
+              value={reasonType}
+              onChange={(e) => setReasonType(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300"
+            >
+              <option value="">None (unique item reasons)</option>
+              {reasonTypes.map((rt) => (
+                <option key={rt.id} value={rt.id}>
+                  {rt.name}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 mt-1">
+              Items with the same reason type share the same reason library
+            </p>
+          </div>
           <div className="flex justify-end gap-2 pt-4">
             <button onClick={onClose} className="px-4 py-2 text-gray-600">
               Cancel
             </button>
             <button
-              onClick={() => onSave({ name, itemType })}
+              onClick={() => onSave({ name, itemType, reasonType: reasonType || undefined })}
               disabled={!name.trim()}
               className="px-4 py-2 bg-primary text-white font-semibold disabled:opacity-50"
             >

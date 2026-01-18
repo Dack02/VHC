@@ -1,24 +1,38 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { api, HealthCheck, CheckResult, TemplateSection } from '../lib/api'
+import { api, HealthCheck, CheckResult, TemplateSection, TemplateItem } from '../lib/api'
 import { Card, CardHeader, CardContent } from '../components/Card'
 import { Button } from '../components/Button'
 import { TextArea } from '../components/Input'
 import { RAGIndicator } from '../components/RAGSelector'
+import { SignaturePad } from '../components/SignaturePad'
+import { useThresholds } from '../context/ThresholdsContext'
+
+// Type for reasons attached to a check result
+interface SelectedReason {
+  id: string
+  reasonText: string
+  customerDescription?: string | null
+  followUpDays?: number | null
+  followUpText?: string | null
+}
 
 export function Summary() {
   const { id } = useParams<{ id: string }>()
   const { session } = useAuth()
   const navigate = useNavigate()
+  const { thresholds } = useThresholds()
 
   const [job, setJob] = useState<HealthCheck | null>(null)
   const [sections, setSections] = useState<TemplateSection[]>([])
   const [results, setResults] = useState<CheckResult[]>([])
+  const [reasonsByResult, setReasonsByResult] = useState<Record<string, SelectedReason[]>>({})
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
+  const [technicianSignature, setTechnicianSignature] = useState<string | null>(null)
 
   useEffect(() => {
     fetchData()
@@ -46,11 +60,34 @@ export function Summary() {
       }
 
       // Fetch results
-      const { results } = await api<{ results: CheckResult[] }>(
+      const { results: fetchedResults } = await api<{ results: CheckResult[] }>(
         `/api/v1/health-checks/${id}/results`,
         { token: session.access_token }
       )
-      setResults(results)
+      setResults(fetchedResults)
+
+      // Fetch reasons for each result that has a status (red/amber/green)
+      const reasonsMap: Record<string, SelectedReason[]> = {}
+      const resultsWithId = fetchedResults.filter((r) => r.id)
+
+      // Fetch reasons in parallel for all results
+      await Promise.all(
+        resultsWithId.map(async (result) => {
+          try {
+            const { selectedReasons } = await api<{ selectedReasons: SelectedReason[] }>(
+              `/api/v1/check-results/${result.id}/reasons`,
+              { token: session.access_token }
+            )
+            if (selectedReasons && selectedReasons.length > 0) {
+              reasonsMap[result.id] = selectedReasons
+            }
+          } catch {
+            // Silently ignore errors for individual reason fetches
+          }
+        })
+      )
+
+      setReasonsByResult(reasonsMap)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load summary')
     } finally {
@@ -91,21 +128,100 @@ export function Summary() {
     }).filter((x) => x.item)
   }
 
+  // Helper to render brake measurement summary
+  const renderBrakeMeasurement = (result: CheckResult, item: TemplateItem | null) => {
+    if (item?.itemType !== 'brake_measurement' || !result.value) return null
+
+    const data = result.value as {
+      brake_type?: string
+      nearside?: { pad: number | null; disc: number | null; disc_min: number | null }
+      offside?: { pad: number | null; disc: number | null; disc_min: number | null }
+    }
+
+    if (!data.nearside && !data.offside) return null
+
+    const minPad = thresholds.brakePadRedBelowMm
+    const warnPad = thresholds.brakePadAmberBelowMm
+
+    const getPadColor = (val: number | null) => {
+      if (val === null) return 'text-gray-400'
+      if (val < minPad) return 'text-rag-red font-bold'
+      if (val < warnPad) return 'text-rag-amber'
+      return 'text-rag-green'
+    }
+
+    const getDiscStatus = (actual: number | null, min: number | null) => {
+      if (actual === null || min === null) return null
+      return actual < min ? 'below' : 'ok'
+    }
+
+    const ns = data.nearside
+    const os = data.offside
+
+    return (
+      <div className="mt-2 p-2 bg-white rounded border border-gray-200 text-xs">
+        <div className="grid grid-cols-2 gap-2">
+          {/* Nearside */}
+          {ns && (
+            <div>
+              <div className="font-medium text-gray-600 mb-1">N/S</div>
+              {ns.pad !== null && (
+                <div className={getPadColor(ns.pad)}>
+                  Pad: {ns.pad}mm
+                </div>
+              )}
+              {data.brake_type === 'disc' && ns.disc !== null && (
+                <div className={getDiscStatus(ns.disc, ns.disc_min) === 'below' ? 'text-rag-red font-bold' : 'text-gray-600'}>
+                  Disc: {ns.disc}mm
+                  {ns.disc_min !== null && ` (min: ${ns.disc_min}mm)`}
+                </div>
+              )}
+            </div>
+          )}
+          {/* Offside */}
+          {os && (
+            <div>
+              <div className="font-medium text-gray-600 mb-1">O/S</div>
+              {os.pad !== null && (
+                <div className={getPadColor(os.pad)}>
+                  Pad: {os.pad}mm
+                </div>
+              )}
+              {data.brake_type === 'disc' && os.disc !== null && (
+                <div className={getDiscStatus(os.disc, os.disc_min) === 'below' ? 'text-rag-red font-bold' : 'text-gray-600'}>
+                  Disc: {os.disc}mm
+                  {os.disc_min !== null && ` (min: ${os.disc_min}mm)`}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   const handleComplete = async () => {
     if (!session || !id) return
+
+    // Validate signature is provided
+    if (!technicianSignature) {
+      setError('Please provide your signature to complete the inspection')
+      return
+    }
 
     setSubmitting(true)
     setError(null)
 
     try {
-      // Save technician notes
-      if (notes !== job?.technician_notes) {
-        await api(`/api/v1/health-checks/${id}`, {
-          method: 'PATCH',
-          token: session.access_token,
-          body: JSON.stringify({ technician_notes: notes })
+      // Save technician notes and signature
+      await api(`/api/v1/health-checks/${id}`, {
+        method: 'PATCH',
+        token: session.access_token,
+        body: JSON.stringify({
+          technician_notes: notes,
+          technician_signature: technicianSignature
         })
-      }
+      })
 
       // Clock out
       await api(`/api/v1/health-checks/${id}/clock-out`, {
@@ -173,21 +289,40 @@ export function Summary() {
             />
             <CardContent>
               <div className="space-y-2">
-                {redItems.map(({ item, section, result }) => (
-                  <div
-                    key={result.id}
-                    className="flex items-start gap-3 p-2 bg-rag-red-bg"
-                  >
-                    <RAGIndicator status="red" />
-                    <div>
-                      <p className="font-medium text-gray-900">{item?.name}</p>
-                      <p className="text-xs text-gray-500">{section}</p>
-                      {result.notes && (
-                        <p className="text-sm text-gray-600 mt-1">{result.notes}</p>
-                      )}
+                {redItems.map(({ item, section, result }) => {
+                  const reasons = reasonsByResult[result.id] || []
+                  return (
+                    <div
+                      key={result.id}
+                      className="p-2 bg-rag-red-bg"
+                    >
+                      <div className="flex items-start gap-3">
+                        <RAGIndicator status="red" />
+                        <div className="flex-1">
+                          <p className="font-medium text-gray-900">{item?.name}</p>
+                          <p className="text-xs text-gray-500">{section}</p>
+                          {/* Display selected reasons */}
+                          {reasons.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {reasons.map((reason) => (
+                                <div key={reason.id} className="text-sm">
+                                  <span className="font-medium text-rag-red">• {reason.reasonText}</span>
+                                  {reason.customerDescription && (
+                                    <p className="text-gray-600 ml-3 text-xs">{reason.customerDescription}</p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {result.notes && (
+                            <p className="text-sm text-gray-600 mt-1">{result.notes}</p>
+                          )}
+                        </div>
+                      </div>
+                      {renderBrakeMeasurement(result, item)}
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </CardContent>
           </Card>
@@ -202,21 +337,40 @@ export function Summary() {
             />
             <CardContent>
               <div className="space-y-2">
-                {amberItems.map(({ item, section, result }) => (
-                  <div
-                    key={result.id}
-                    className="flex items-start gap-3 p-2 bg-rag-amber-bg"
-                  >
-                    <RAGIndicator status="amber" />
-                    <div>
-                      <p className="font-medium text-gray-900">{item?.name}</p>
-                      <p className="text-xs text-gray-500">{section}</p>
-                      {result.notes && (
-                        <p className="text-sm text-gray-600 mt-1">{result.notes}</p>
-                      )}
+                {amberItems.map(({ item, section, result }) => {
+                  const reasons = reasonsByResult[result.id] || []
+                  return (
+                    <div
+                      key={result.id}
+                      className="p-2 bg-rag-amber-bg"
+                    >
+                      <div className="flex items-start gap-3">
+                        <RAGIndicator status="amber" />
+                        <div className="flex-1">
+                          <p className="font-medium text-gray-900">{item?.name}</p>
+                          <p className="text-xs text-gray-500">{section}</p>
+                          {/* Display selected reasons */}
+                          {reasons.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {reasons.map((reason) => (
+                                <div key={reason.id} className="text-sm">
+                                  <span className="font-medium text-rag-amber">• {reason.reasonText}</span>
+                                  {reason.customerDescription && (
+                                    <p className="text-gray-600 ml-3 text-xs">{reason.customerDescription}</p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {result.notes && (
+                            <p className="text-sm text-gray-600 mt-1">{result.notes}</p>
+                          )}
+                        </div>
+                      </div>
+                      {renderBrakeMeasurement(result, item)}
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </CardContent>
           </Card>
@@ -234,6 +388,21 @@ export function Summary() {
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Any additional notes..."
               rows={4}
+            />
+          </CardContent>
+        </Card>
+
+        {/* Technician signature */}
+        <Card>
+          <CardHeader
+            title="Sign Off"
+            subtitle="Confirm your inspection is complete"
+          />
+          <CardContent>
+            <SignaturePad
+              onSignatureChange={setTechnicianSignature}
+              label="Technician Signature"
+              required
             />
           </CardContent>
         </Card>

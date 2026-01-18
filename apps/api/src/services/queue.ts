@@ -11,6 +11,43 @@ export const redis = new IORedis(redisUrl, {
   maxRetriesPerRequest: null // Required for BullMQ
 })
 
+// Redis pub/sub for cross-process WebSocket communication
+// Worker publishes events, API server subscribes and emits via WebSocket
+export const PUBSUB_CHANNELS = {
+  WEBSOCKET_EVENT: 'vhc:websocket:event'
+} as const
+
+export interface WebSocketPubSubEvent {
+  type: 'emit_to_site' | 'emit_to_user' | 'emit_to_health_check'
+  targetId: string  // siteId, userId, or healthCheckId
+  event: string     // WebSocket event name
+  data: unknown     // Event payload
+}
+
+// Separate Redis connection for pub/sub (required by ioredis)
+let pubClient: IORedis | null = null
+let subClient: IORedis | null = null
+
+export function getPubClient(): IORedis {
+  if (!pubClient) {
+    pubClient = new IORedis(redisUrl)
+  }
+  return pubClient
+}
+
+export function getSubClient(): IORedis {
+  if (!subClient) {
+    subClient = new IORedis(redisUrl)
+  }
+  return subClient
+}
+
+// Publish WebSocket event from worker to API server
+export async function publishWebSocketEvent(event: WebSocketPubSubEvent) {
+  const pub = getPubClient()
+  await pub.publish(PUBSUB_CHANNELS.WEBSOCKET_EVENT, JSON.stringify(event))
+}
+
 // Queue names
 export const QUEUE_NAMES = {
   NOTIFICATIONS: 'notifications',

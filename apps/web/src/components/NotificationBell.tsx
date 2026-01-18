@@ -65,7 +65,7 @@ export default function NotificationBell() {
 
     setIsLoading(true)
     try {
-      const data = await api<NotificationsResponse>('/api/notifications?limit=10', {
+      const data = await api<NotificationsResponse>('/api/v1/notifications?limit=10', {
         token: session.accessToken
       })
       setNotifications(data.notifications)
@@ -82,7 +82,7 @@ export default function NotificationBell() {
     if (!session?.accessToken) return
 
     try {
-      await api(`/api/notifications/${notificationId}/read`, {
+      await api(`/api/v1/notifications/${notificationId}/read`, {
         method: 'PUT',
         token: session.accessToken
       })
@@ -101,7 +101,7 @@ export default function NotificationBell() {
     if (!session?.accessToken) return
 
     try {
-      await api('/api/notifications/read-all', {
+      await api('/api/v1/notifications/read-all', {
         method: 'PUT',
         token: session.accessToken
       })

@@ -17,6 +17,7 @@
     "test": "tsx src/tests/health-check.test.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
     "@hono/node-server": "^1.8.0",
     "@supabase/supabase-js": "^2.90.1",
     "bullmq": "^5.66.5",

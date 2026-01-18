@@ -13,15 +13,15 @@ async function resetPassword() {
 
   console.log('Found auth user:', authUser.id)
 
-  // Reset password to 'admin123'
+  // Reset password to 'admin1234'
   const { data, error } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, {
-    password: 'admin123'
+    password: 'admin1234'
   })
 
   if (error) {
     console.log('Error resetting password:', error.message)
   } else {
-    console.log('Password reset to: admin123')
+    console.log('Password reset to: admin1234')
   }
 }
 

@@ -31,7 +31,7 @@ interface UsageData {
 }
 
 export default function Subscription() {
-  const { user, token } = useAuth()
+  const { user, session } = useAuth()
   const [subscription, setSubscription] = useState<SubscriptionData | null>(null)
   const [usage, setUsage] = useState<UsageData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -51,10 +51,10 @@ export default function Subscription() {
     try {
       const [subResponse, usageResponse] = await Promise.all([
         fetch(`/api/v1/organizations/${orgId}/subscription`, {
-          headers: { Authorization: `Bearer ${token}` }
+          headers: { Authorization: `Bearer ${session?.accessToken}` }
         }),
         fetch(`/api/v1/organizations/${orgId}/usage`, {
-          headers: { Authorization: `Bearer ${token}` }
+          headers: { Authorization: `Bearer ${session?.accessToken}` }
         })
       ])
 

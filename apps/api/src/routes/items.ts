@@ -6,13 +6,70 @@ const items = new Hono()
 
 items.use('*', authMiddleware)
 
+// GET /api/v1/template-items/:id - Get single template item
+items.get('/template-items/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    // Fetch the template item with its section and template to verify org ownership
+    const { data: item, error } = await supabaseAdmin
+      .from('template_items')
+      .select(`
+        id,
+        name,
+        description,
+        item_type,
+        reason_type,
+        config,
+        is_required,
+        sort_order,
+        section:template_sections(
+          id,
+          name,
+          template:check_templates(
+            id,
+            name,
+            organization_id
+          )
+        )
+      `)
+      .eq('id', id)
+      .single()
+
+    if (error || !item) {
+      return c.json({ error: 'Template item not found' }, 404)
+    }
+
+    // Verify the item belongs to the user's organization
+    const section = item.section as { template: { organization_id: string } } | null
+    if (!section?.template || section.template.organization_id !== auth.orgId) {
+      return c.json({ error: 'Template item not found' }, 404)
+    }
+
+    return c.json({
+      id: item.id,
+      name: item.name,
+      description: item.description,
+      itemType: item.item_type,
+      reasonType: item.reason_type,
+      config: item.config,
+      isRequired: item.is_required,
+      sortOrder: item.sort_order
+    })
+  } catch (error) {
+    console.error('Get template item error:', error)
+    return c.json({ error: 'Failed to get template item' }, 500)
+  }
+})
+
 // POST /api/v1/sections/:sectionId/items - Add item to section
 items.post('/sections/:sectionId/items', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
   try {
     const auth = c.get('auth')
     const { sectionId } = c.req.param()
     const body = await c.req.json()
-    const { name, description, itemType, config, isRequired } = body
+    const { name, description, itemType, config, isRequired, reasonType } = body
 
     if (!name) {
       return c.json({ error: 'Item name is required' }, 400)
@@ -49,7 +106,8 @@ items.post('/sections/:sectionId/items', authorize(['super_admin', 'org_admin', 
         item_type: itemType || 'rag',
         config: config || {},
         is_required: isRequired ?? true,
-        sort_order: sortOrder
+        sort_order: sortOrder,
+        reason_type: reasonType || null
       })
       .select()
       .single()
@@ -65,7 +123,8 @@ items.post('/sections/:sectionId/items', authorize(['super_admin', 'org_admin', 
       itemType: item.item_type,
       config: item.config,
       isRequired: item.is_required,
-      sortOrder: item.sort_order
+      sortOrder: item.sort_order,
+      reasonType: item.reason_type
     }, 201)
   } catch (error) {
     console.error('Add item error:', error)
@@ -79,7 +138,7 @@ items.patch('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admin
     const auth = c.get('auth')
     const { itemId } = c.req.param()
     const body = await c.req.json()
-    const { name, description, itemType, config, isRequired } = body
+    const { name, description, itemType, config, isRequired, reasonType } = body
 
     // Verify item belongs to a template in this org
     const { data: existingItem } = await supabaseAdmin
@@ -103,6 +162,7 @@ items.patch('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admin
     if (itemType !== undefined) updateData.item_type = itemType
     if (config !== undefined) updateData.config = config
     if (isRequired !== undefined) updateData.is_required = isRequired
+    if (reasonType !== undefined) updateData.reason_type = reasonType || null
 
     const { data: item, error } = await supabaseAdmin
       .from('template_items')
@@ -122,7 +182,8 @@ items.patch('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admin
       itemType: item.item_type,
       config: item.config,
       isRequired: item.is_required,
-      sortOrder: item.sort_order
+      sortOrder: item.sort_order,
+      reasonType: item.reason_type
     })
   } catch (error) {
     console.error('Update item error:', error)

@@ -11,13 +11,16 @@ import { encrypt, decrypt, isEncryptionConfigured, maskString } from '../lib/enc
 import { authMiddleware, requireOrgAdmin } from '../middleware/auth.js'
 import { logger } from '../lib/logger.js'
 import { runDmsImport } from '../jobs/dms-import.js'
-import { testConnection, isDmsAvailable } from '../services/gemini-osi.js'
+import { testConnection, isDmsAvailable, getDmsCredentials, fetchDiaryBookings } from '../services/gemini-osi.js'
 import {
   queueDmsImport,
   scheduleDmsImport,
   cancelDmsSchedule,
   checkRedisConnection
 } from '../services/queue.js'
+
+// Default import hours (6am, 10am, 2pm, 8pm UK time)
+const DEFAULT_IMPORT_HOURS = [6, 10, 14, 20]
 
 const dmsSettings = new Hono()
 
@@ -57,11 +60,13 @@ dmsSettings.get('/settings', async (c) => {
         apiUrl: '',
         defaultTemplateId: null,
         autoImportEnabled: false,
-        importScheduleHour: 20,
+        importScheduleHours: DEFAULT_IMPORT_HOURS,
         importScheduleDays: [1, 2, 3, 4, 5, 6],
         importServiceTypes: ['service', 'mot', 'repair'],
+        dailyImportLimit: 100,
         lastImportAt: null,
         lastImportStatus: null,
+        lastSyncAt: null,
         lastError: null
       })
     }
@@ -97,11 +102,13 @@ dmsSettings.get('/settings', async (c) => {
       apiUrl: settings.api_url || '',
       defaultTemplateId: settings.default_template_id,
       autoImportEnabled: settings.auto_import_enabled,
-      importScheduleHour: settings.import_schedule_hour,
+      importScheduleHours: settings.import_schedule_hours || DEFAULT_IMPORT_HOURS,
       importScheduleDays: settings.import_schedule_days,
       importServiceTypes: settings.import_service_types,
+      dailyImportLimit: settings.daily_import_limit || 100,
       lastImportAt: settings.last_import_at,
       lastImportStatus: settings.last_import_status,
+      lastSyncAt: settings.last_sync_at,
       lastError: settings.last_error
     })
   } catch (err) {
@@ -132,8 +139,8 @@ dmsSettings.patch('/settings', requireOrgAdmin(), async (c) => {
     if (body.autoImportEnabled !== undefined || body.auto_import_enabled !== undefined) {
       updateData.auto_import_enabled = body.autoImportEnabled ?? body.auto_import_enabled
     }
-    if (body.importScheduleHour !== undefined || body.import_schedule_hour !== undefined) {
-      updateData.import_schedule_hour = body.importScheduleHour ?? body.import_schedule_hour
+    if (body.importScheduleHours || body.import_schedule_hours) {
+      updateData.import_schedule_hours = body.importScheduleHours || body.import_schedule_hours
     }
     if (body.importScheduleDays || body.import_schedule_days) {
       updateData.import_schedule_days = body.importScheduleDays || body.import_schedule_days
@@ -143,6 +150,9 @@ dmsSettings.patch('/settings', requireOrgAdmin(), async (c) => {
     }
     if (body.minBookingDurationMinutes !== undefined || body.min_booking_duration_minutes !== undefined) {
       updateData.min_booking_duration_minutes = body.minBookingDurationMinutes ?? body.min_booking_duration_minutes
+    }
+    if (body.dailyImportLimit !== undefined || body.daily_import_limit !== undefined) {
+      updateData.daily_import_limit = body.dailyImportLimit ?? body.daily_import_limit
     }
 
     // Encrypt username and password if provided
@@ -194,7 +204,7 @@ dmsSettings.patch('/settings', requireOrgAdmin(), async (c) => {
 
     // Update scheduled import if auto-import settings changed
     if (body.autoImportEnabled !== undefined || body.auto_import_enabled !== undefined ||
-        body.importScheduleHour !== undefined || body.import_schedule_hour !== undefined ||
+        body.importScheduleHours || body.import_schedule_hours ||
         body.importScheduleDays || body.import_schedule_days) {
       const redisAvailable = await checkRedisConnection()
 
@@ -202,18 +212,24 @@ dmsSettings.patch('/settings', requireOrgAdmin(), async (c) => {
         // Cancel existing schedule
         await cancelDmsSchedule(organizationId)
 
-        // Create new schedule if enabled
+        // Create new schedules if enabled (one per hour)
         if (savedSettings.auto_import_enabled && savedSettings.enabled) {
-          const days = savedSettings.import_schedule_days as number[] || [1, 2, 3, 4, 5, 6]
-          await scheduleDmsImport(
+          const hours = (savedSettings.import_schedule_hours as number[]) || DEFAULT_IMPORT_HOURS
+          const days = (savedSettings.import_schedule_days as number[]) || [1, 2, 3, 4, 5, 6]
+
+          // Schedule for each hour
+          for (const hour of hours) {
+            await scheduleDmsImport(
+              organizationId,
+              undefined,
+              hour,
+              days
+            )
+          }
+
+          logger.info('Scheduled DMS auto-imports', {
             organizationId,
-            undefined,
-            savedSettings.import_schedule_hour || 20,
-            days
-          )
-          logger.info('Scheduled DMS auto-import', {
-            organizationId,
-            hour: savedSettings.import_schedule_hour,
+            hours,
             days
           })
         }
@@ -251,11 +267,13 @@ dmsSettings.patch('/settings', requireOrgAdmin(), async (c) => {
       apiUrl: savedSettings.api_url || '',
       defaultTemplateId: savedSettings.default_template_id,
       autoImportEnabled: savedSettings.auto_import_enabled,
-      importScheduleHour: savedSettings.import_schedule_hour,
+      importScheduleHours: savedSettings.import_schedule_hours || DEFAULT_IMPORT_HOURS,
       importScheduleDays: savedSettings.import_schedule_days,
       importServiceTypes: savedSettings.import_service_types,
+      dailyImportLimit: savedSettings.daily_import_limit || 100,
       lastImportAt: savedSettings.last_import_at,
       lastImportStatus: savedSettings.last_import_status,
+      lastSyncAt: savedSettings.last_sync_at,
       lastError: savedSettings.last_error
     })
   } catch (err) {
@@ -279,12 +297,21 @@ dmsSettings.post('/test-connection', requireOrgAdmin(), async (c) => {
     let username: string
     let password: string
 
+    console.log('[DMS Test] Starting connection test for org:', organizationId)
+    console.log('[DMS Test] Body credentials provided:', {
+      hasApiUrl: !!body.apiUrl,
+      hasUsername: !!body.username,
+      hasPassword: !!body.password
+    })
+
     // If credentials provided in request body, use those (for testing before save)
     if (body.apiUrl && body.username && body.password) {
       apiUrl = body.apiUrl
       username = body.username
       password = body.password
+      console.log('[DMS Test] Using credentials from request body')
     } else {
+      console.log('[DMS Test] Fetching credentials from database...')
       // Otherwise get from saved settings
       const { data: settings, error } = await supabaseAdmin
         .from('organization_dms_settings')
@@ -293,8 +320,15 @@ dmsSettings.post('/test-connection', requireOrgAdmin(), async (c) => {
         .single()
 
       if (error || !settings) {
+        console.log('[DMS Test] No settings found in database:', error?.message)
         return c.json({ success: false, message: 'DMS settings not configured. Please enter credentials first.' }, 400)
       }
+
+      console.log('[DMS Test] Settings found:', {
+        hasApiUrl: !!settings.api_url,
+        hasUsernameEncrypted: !!settings.username_encrypted,
+        hasPasswordEncrypted: !!settings.password_encrypted
+      })
 
       if (!settings.api_url || !settings.username_encrypted || !settings.password_encrypted) {
         return c.json({ success: false, message: 'DMS credentials incomplete. Please fill in all fields.' }, 400)
@@ -304,12 +338,27 @@ dmsSettings.post('/test-connection', requireOrgAdmin(), async (c) => {
 
       // Decrypt username and password
       try {
+        console.log('[DMS Test] Attempting to decrypt credentials...')
+        console.log('[DMS Test] Encryption configured:', isEncryptionConfigured())
         username = decrypt(settings.username_encrypted)
         password = decrypt(settings.password_encrypted)
-      } catch {
-        return c.json({ success: false, message: 'Failed to decrypt credentials' }, 500)
+        console.log('[DMS Test] Decryption successful, username length:', username.length)
+      } catch (decryptErr) {
+        console.error('[DMS Test] Decryption failed:', decryptErr)
+        return c.json({
+          success: false,
+          message: `Failed to decrypt credentials: ${decryptErr instanceof Error ? decryptErr.message : 'Unknown error'}`
+        }, 500)
       }
     }
+
+    console.log('[DMS Test] Testing connection with:', {
+      apiUrl,
+      username: username.substring(0, 3) + '***',
+      method: 'GET',
+      endpoint: '/api/v2/workshop/get-diary-bookings',
+      authType: 'Basic Auth'
+    })
 
     logger.info('Testing DMS connection', {
       organizationId,
@@ -325,6 +374,8 @@ dmsSettings.post('/test-connection', requireOrgAdmin(), async (c) => {
       password
     })
 
+    console.log('[DMS Test] Connection test result:', result)
+
     logger.info('DMS connection test result', {
       organizationId,
       success: result.success,
@@ -333,8 +384,180 @@ dmsSettings.post('/test-connection', requireOrgAdmin(), async (c) => {
 
     return c.json(result)
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+    const errorStack = err instanceof Error ? err.stack : ''
+    console.error('[DMS Test] Connection test failed:', errorMessage)
+    console.error('[DMS Test] Stack:', errorStack)
     logger.error('DMS connection test failed', { organizationId }, err as Error)
-    return c.json({ success: false, message: 'Connection test failed' }, 500)
+    return c.json({
+      success: false,
+      message: `Connection test failed: ${errorMessage}`
+    }, 500)
+  }
+})
+
+/**
+ * GET /preview
+ * Preview what would be imported WITHOUT creating any data
+ * Returns bookings categorized into: willImport, willSkip (with reasons)
+ */
+dmsSettings.get('/preview', async (c) => {
+  const auth = c.get('auth')
+  const organizationId = auth.orgId
+
+  try {
+    const date = c.req.query('date') || new Date().toISOString().split('T')[0]
+
+    // Get DMS credentials
+    const credResult = await getDmsCredentials(organizationId)
+    if (!credResult.configured || !credResult.credentials) {
+      return c.json({ error: credResult.error || 'DMS not configured' }, 400)
+    }
+
+    // Get settings for filtering
+    const { data: settings } = await supabaseAdmin
+      .from('organization_dms_settings')
+      .select('import_service_types, daily_import_limit')
+      .eq('organization_id', organizationId)
+      .single()
+
+    const dailyLimit = settings?.daily_import_limit || 100
+
+    // Check daily limit
+    const { data: todayImports } = await supabaseAdmin
+      .from('health_checks')
+      .select('id', { count: 'exact' })
+      .eq('organization_id', organizationId)
+      .eq('external_source', 'gemini_osi')
+      .gte('created_at', `${date}T00:00:00`)
+      .lte('created_at', `${date}T23:59:59`)
+      .is('deleted_at', null)
+
+    const importsToday = todayImports?.length || 0
+    const remainingCapacity = Math.max(0, dailyLimit - importsToday)
+
+    // Fetch bookings from Gemini API
+    logger.info('Fetching preview bookings', { organizationId, date })
+
+    const response = await fetchDiaryBookings(credResult.credentials, date)
+
+    if (!response.success) {
+      return c.json({
+        error: response.error || 'Failed to fetch bookings from DMS',
+        success: false
+      }, 500)
+    }
+
+    // Get existing external_ids to check for duplicates
+    const { data: existingChecks } = await supabaseAdmin
+      .from('health_checks')
+      .select('external_id')
+      .eq('organization_id', organizationId)
+      .eq('external_source', 'gemini_osi')
+      .not('external_id', 'is', null)
+
+    const existingExternalIds = new Set(existingChecks?.map(hc => hc.external_id) || [])
+
+    // Categorize bookings
+    const willImport: Array<{
+      bookingId: string
+      vehicleReg: string
+      customerName: string
+      scheduledTime: string
+      serviceType: string
+    }> = []
+
+    const willSkip: Array<{
+      bookingId: string
+      vehicleReg: string
+      customerName: string
+      reason: string
+    }> = []
+
+    for (const booking of response.bookings) {
+      const customerName = `${booking.customerFirstName} ${booking.customerLastName}`.trim()
+
+      // Check if already imported
+      if (existingExternalIds.has(booking.bookingId)) {
+        willSkip.push({
+          bookingId: booking.bookingId,
+          vehicleReg: booking.vehicleReg,
+          customerName,
+          reason: 'Already imported'
+        })
+        continue
+      }
+
+      // Check if no vehicle registration
+      if (!booking.vehicleReg) {
+        willSkip.push({
+          bookingId: booking.bookingId,
+          vehicleReg: 'N/A',
+          customerName,
+          reason: 'No vehicle registration'
+        })
+        continue
+      }
+
+      // Check arrival status (skip completed/cancelled)
+      if (['COMPLETED', 'CANCELLED', 'NO SHOW'].includes(booking.arrivalStatus?.toUpperCase() || '')) {
+        willSkip.push({
+          bookingId: booking.bookingId,
+          vehicleReg: booking.vehicleReg,
+          customerName,
+          reason: `Status: ${booking.arrivalStatus}`
+        })
+        continue
+      }
+
+      // Would be imported
+      willImport.push({
+        bookingId: booking.bookingId,
+        vehicleReg: booking.vehicleReg,
+        customerName,
+        scheduledTime: booking.bookingTime || 'Not set',
+        serviceType: booking.serviceType || 'Service'
+      })
+    }
+
+    // Check if would exceed daily limit
+    const limitExceeded = willImport.length > remainingCapacity
+    const actualWillImport = limitExceeded ? willImport.slice(0, remainingCapacity) : willImport
+    const wouldExceedLimit = limitExceeded ? willImport.slice(remainingCapacity) : []
+
+    // Add limit-exceeded bookings to skip list
+    for (const booking of wouldExceedLimit) {
+      willSkip.push({
+        bookingId: booking.bookingId,
+        vehicleReg: booking.vehicleReg,
+        customerName: booking.customerName,
+        reason: 'Would exceed daily import limit'
+      })
+    }
+
+    return c.json({
+      success: true,
+      date,
+      summary: {
+        totalBookings: response.totalCount,
+        willImport: actualWillImport.length,
+        willSkip: willSkip.length,
+        alreadyImportedToday: importsToday,
+        dailyLimit,
+        remainingCapacity,
+        limitWouldBeExceeded: limitExceeded
+      },
+      willImport: actualWillImport,
+      willSkip,
+      // Safety warning if auto-import would do something unexpected
+      warnings: limitExceeded
+        ? [`Import would be limited to ${remainingCapacity} bookings due to daily limit of ${dailyLimit}`]
+        : []
+    })
+
+  } catch (err) {
+    logger.error('Failed to preview import', { organizationId }, err as Error)
+    return c.json({ error: 'Failed to preview import' }, 500)
   }
 })
 
@@ -394,11 +617,41 @@ dmsSettings.post('/import', async (c) => {
     const body = await c.req.json()
     const date = body.date || new Date().toISOString().split('T')[0]
     const siteId = body.site_id
+    const skipLimitCheck = body.skipLimitCheck === true  // Allow override with confirmation
 
     // Check if DMS is available
     const available = await isDmsAvailable(organizationId)
     if (!available) {
       return c.json({ error: 'DMS integration not configured' }, 400)
+    }
+
+    // Check daily import limit (unless explicitly skipped with confirmation)
+    if (!skipLimitCheck) {
+      const { data: settings } = await supabaseAdmin
+        .from('organization_dms_settings')
+        .select('daily_import_limit')
+        .eq('organization_id', organizationId)
+        .single()
+
+      const dailyLimit = settings?.daily_import_limit || 100
+
+      const { count: importsToday } = await supabaseAdmin
+        .from('health_checks')
+        .select('id', { count: 'exact', head: true })
+        .eq('organization_id', organizationId)
+        .eq('external_source', 'gemini_osi')
+        .gte('created_at', `${date}T00:00:00`)
+        .lte('created_at', `${date}T23:59:59`)
+        .is('deleted_at', null)
+
+      if ((importsToday || 0) >= dailyLimit) {
+        return c.json({
+          error: 'Daily import limit reached',
+          dailyLimit,
+          importsToday: importsToday || 0,
+          message: `You have reached the daily import limit of ${dailyLimit} health checks. Use preview to see pending bookings.`
+        }, 429)  // Too Many Requests
+      }
     }
 
     // Check if Redis is available for queueing
@@ -433,7 +686,6 @@ dmsSettings.post('/import', async (c) => {
       })
 
       return c.json({
-        success: result.success,
         queued: false,
         ...result
       })
@@ -622,17 +874,21 @@ dmsSettings.get('/import/:id', async (c) => {
           ? `${importRecord.triggered_by_user.first_name} ${importRecord.triggered_by_user.last_name}`
           : importRecord.import_type === 'scheduled' ? 'System' : null
       },
-      healthChecks: healthChecks?.map(hc => ({
-        id: hc.id,
-        status: hc.status,
-        createdAt: hc.created_at,
-        vehicle: hc.vehicle
-          ? `${hc.vehicle.registration} - ${hc.vehicle.make || ''} ${hc.vehicle.model || ''}`
-          : null,
-        customer: hc.customer
-          ? `${hc.customer.first_name} ${hc.customer.last_name}`
-          : null
-      })) || []
+      healthChecks: healthChecks?.map(hc => {
+        const vehicle = hc.vehicle as unknown as { registration: string; make: string | null; model: string | null } | null
+        const customer = hc.customer as unknown as { first_name: string; last_name: string } | null
+        return {
+          id: hc.id,
+          status: hc.status,
+          createdAt: hc.created_at,
+          vehicle: vehicle
+            ? `${vehicle.registration} - ${vehicle.make || ''} ${vehicle.model || ''}`
+            : null,
+          customer: customer
+            ? `${customer.first_name} ${customer.last_name}`
+            : null
+        }
+      }) || []
     })
   } catch (err) {
     logger.error('Failed to get import details', { organizationId, importId }, err as Error)
@@ -646,7 +902,8 @@ dmsSettings.get('/import/:id', async (c) => {
 
 /**
  * GET /unactioned
- * Get health checks still in 'created' status (from DMS import)
+ * Get health checks in 'awaiting_arrival' status (from DMS import, waiting for vehicle)
+ * Sorted: waiting customers first (prioritized), then by due_date/promise_time
  */
 dmsSettings.get('/unactioned', async (c) => {
   const auth = c.get('auth')
@@ -658,7 +915,8 @@ dmsSettings.get('/unactioned', async (c) => {
     const limit = parseInt(c.req.query('limit') || '50')
     const offset = (page - 1) * limit
 
-    // Build query
+    // Build query - look for awaiting_arrival status (DMS imports)
+    // Include Phase 1 Quick Wins fields: customer_waiting, loan_car_required, due_date, booked_repairs
     let query = supabaseAdmin
       .from('health_checks')
       .select(`
@@ -668,11 +926,17 @@ dmsSettings.get('/unactioned', async (c) => {
         external_source,
         created_at,
         promise_time,
+        due_date,
+        arrived_at,
+        customer_waiting,
+        loan_car_required,
+        booked_repairs,
+        jobsheet_number,
         vehicle:vehicles(id, registration, make, model),
         customer:customers(id, first_name, last_name, mobile)
       `, { count: 'exact' })
       .eq('organization_id', organizationId)
-      .eq('status', 'created')
+      .eq('status', 'awaiting_arrival')
       .is('deleted_at', null)
       .not('external_id', 'is', null)
 
@@ -681,7 +945,10 @@ dmsSettings.get('/unactioned', async (c) => {
     }
 
     // Get paginated results
+    // Sort: customer_waiting DESC (waiting customers first), then by due_date/promise_time
     const { data: healthChecks, error, count } = await query
+      .order('customer_waiting', { ascending: false })
+      .order('due_date', { ascending: true, nullsFirst: false })
       .order('promise_time', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)
@@ -690,30 +957,38 @@ dmsSettings.get('/unactioned', async (c) => {
       throw error
     }
 
-    // Calculate time since import
+    // Calculate time since import and map to flat structure for frontend
     const now = new Date()
     const results = healthChecks.map(hc => {
       const createdAt = new Date(hc.created_at)
       const hoursSinceImport = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60))
+      const vehicle = hc.vehicle as unknown as { id: string; registration: string; make: string | null; model: string | null } | null
+      const customer = hc.customer as unknown as { id: string; first_name: string; last_name: string; mobile: string | null } | null
 
+      // Return flat structure matching frontend AwaitingArrivalItem interface
       return {
         id: hc.id,
         status: hc.status,
         externalId: hc.external_id,
         externalSource: hc.external_source,
-        createdAt: hc.created_at,
+        // Flat fields for table display
+        registration: vehicle?.registration || '',
+        make: vehicle?.make || '',
+        model: vehicle?.model || '',
+        customerName: customer ? `${customer.first_name} ${customer.last_name}`.trim() : '',
         promiseTime: hc.promise_time,
+        dueDate: hc.due_date,
+        importedAt: hc.created_at,
+        // Phase 1 Quick Wins - Priority indicators
+        customerWaiting: hc.customer_waiting || false,
+        loanCarRequired: hc.loan_car_required || false,
+        bookedRepairs: hc.booked_repairs || [],
+        jobsheetNumber: hc.jobsheet_number || null,
+        // Additional useful fields
         hoursSinceImport,
-        vehicle: hc.vehicle ? {
-          id: hc.vehicle.id,
-          registration: hc.vehicle.registration,
-          description: `${hc.vehicle.make || ''} ${hc.vehicle.model || ''}`.trim()
-        } : null,
-        customer: hc.customer ? {
-          id: hc.customer.id,
-          name: `${hc.customer.first_name} ${hc.customer.last_name}`,
-          mobile: hc.customer.mobile
-        } : null
+        vehicleId: vehicle?.id || null,
+        customerId: customer?.id || null,
+        customerMobile: customer?.mobile || null
       }
     })
 

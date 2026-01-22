@@ -16,6 +16,17 @@ interface Supplier {
   isActive: boolean
   isQuickAdd: boolean
   sortOrder: number
+  supplierTypeId: string | null
+  supplierTypeName: string | null
+}
+
+interface SupplierType {
+  id: string
+  name: string
+  description: string | null
+  isActive: boolean
+  isSystem: boolean
+  sortOrder: number
 }
 
 interface SupplierFormData {
@@ -27,6 +38,7 @@ interface SupplierFormData {
   contactPhone: string
   address: string
   notes: string
+  supplierTypeId: string
 }
 
 const initialFormData: SupplierFormData = {
@@ -38,12 +50,14 @@ const initialFormData: SupplierFormData = {
   contactPhone: '',
   address: '',
   notes: '',
+  supplierTypeId: '',
 }
 
 export default function Suppliers() {
   const { session, user } = useAuth()
   const toast = useToast()
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [supplierTypes, setSupplierTypes] = useState<SupplierType[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [showModal, setShowModal] = useState(false)
@@ -56,8 +70,24 @@ export default function Suppliers() {
   useEffect(() => {
     if (organizationId) {
       fetchSuppliers()
+      fetchSupplierTypes()
     }
   }, [organizationId])
+
+  const fetchSupplierTypes = async () => {
+    if (!organizationId) return
+
+    try {
+      const data = await api<{ supplierTypes: SupplierType[] }>(
+        `/api/v1/organizations/${organizationId}/supplier-types`,
+        { token: session?.accessToken }
+      )
+      setSupplierTypes(data.supplierTypes || [])
+    } catch (err) {
+      // Silently fail - types are optional
+      console.error('Failed to load supplier types:', err)
+    }
+  }
 
   const fetchSuppliers = async () => {
     if (!organizationId) return
@@ -88,6 +118,7 @@ export default function Suppliers() {
         contactPhone: supplier.contactPhone || '',
         address: supplier.address || '',
         notes: supplier.notes || '',
+        supplierTypeId: supplier.supplierTypeId || '',
       })
     } else {
       setEditingSupplier(null)
@@ -127,6 +158,7 @@ export default function Suppliers() {
         contact_phone: formData.contactPhone.trim() || null,
         address: formData.address.trim() || null,
         notes: formData.notes.trim() || null,
+        supplier_type_id: formData.supplierTypeId || null,
         is_quick_add: false, // Full add from settings page
       }
 
@@ -239,6 +271,9 @@ export default function Suppliers() {
                 Name
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Type
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Code
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -255,7 +290,7 @@ export default function Suppliers() {
           <tbody className="bg-white divide-y divide-gray-200">
             {suppliers.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
                   No suppliers found. Click "Add New" to create one.
                 </td>
               </tr>
@@ -274,6 +309,9 @@ export default function Suppliers() {
                         </span>
                       )}
                     </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-gray-700">
+                    {supplier.supplierTypeName || <span className="text-gray-400">-</span>}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-gray-700">
                     {supplier.code || <span className="text-gray-400">-</span>}
@@ -348,6 +386,24 @@ export default function Suppliers() {
                       maxLength={255}
                       className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary"
                     />
+                  </div>
+
+                  <div className="col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Type
+                    </label>
+                    <select
+                      value={formData.supplierTypeId}
+                      onChange={(e) => setFormData({ ...formData, supplierTypeId: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                      <option value="">Select type...</option>
+                      {supplierTypes.map((type) => (
+                        <option key={type.id} value={type.id}>
+                          {type.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div>

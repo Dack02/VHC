@@ -42,8 +42,9 @@ items.get('/template-items/:id', authorize(['super_admin', 'org_admin', 'site_ad
     }
 
     // Verify the item belongs to the user's organization
-    const section = item.section as { template: { organization_id: string } } | null
-    if (!section?.template || section.template.organization_id !== auth.orgId) {
+    const section = (item.section as { template: { organization_id: string }[] }[] | null)?.[0]
+    const template = section?.template?.[0]
+    if (!template || template.organization_id !== auth.orgId) {
       return c.json({ error: 'Template item not found' }, 404)
     }
 
@@ -82,7 +83,8 @@ items.post('/sections/:sectionId/items', authorize(['super_admin', 'org_admin', 
       .eq('id', sectionId)
       .single()
 
-    if (!section || (section.template as { organization_id: string })?.organization_id !== auth.orgId) {
+    const sectionTemplate = (section?.template as { organization_id: string }[] | null)?.[0]
+    if (!section || sectionTemplate?.organization_id !== auth.orgId) {
       return c.json({ error: 'Section not found' }, 404)
     }
 
@@ -151,8 +153,9 @@ items.patch('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admin
       return c.json({ error: 'Item not found' }, 404)
     }
 
-    const template = (existingItem.section as { template: { organization_id: string } })?.template
-    if (template?.organization_id !== auth.orgId) {
+    const existingSection = (existingItem.section as { template: { organization_id: string }[] }[] | null)?.[0]
+    const existingTemplate = existingSection?.template?.[0]
+    if (existingTemplate?.organization_id !== auth.orgId) {
       return c.json({ error: 'Item not found' }, 404)
     }
 
@@ -208,8 +211,9 @@ items.delete('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admi
       return c.json({ error: 'Item not found' }, 404)
     }
 
-    const template = (existingItem.section as { template: { organization_id: string } })?.template
-    if (template?.organization_id !== auth.orgId) {
+    const deleteSection = (existingItem.section as { template: { organization_id: string }[] }[] | null)?.[0]
+    const deleteTemplate = deleteSection?.template?.[0]
+    if (deleteTemplate?.organization_id !== auth.orgId) {
       return c.json({ error: 'Item not found' }, 404)
     }
 
@@ -248,7 +252,8 @@ items.post('/sections/:sectionId/items/reorder', authorize(['super_admin', 'org_
       .eq('id', sectionId)
       .single()
 
-    if (!section || (section.template as { organization_id: string })?.organization_id !== auth.orgId) {
+    const reorderTemplate = (section?.template as { organization_id: string }[] | null)?.[0]
+    if (!section || reorderTemplate?.organization_id !== auth.orgId) {
       return c.json({ error: 'Section not found' }, 404)
     }
 

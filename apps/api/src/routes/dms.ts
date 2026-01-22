@@ -1,7 +1,14 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 
-const dms = new Hono()
+type DmsContext = {
+  Variables: {
+    orgId: string
+    orgName: string
+  }
+}
+
+const dms = new Hono<DmsContext>()
 
 // DMS API Key authentication middleware
 async function dmsAuth(c: any, next: any) {

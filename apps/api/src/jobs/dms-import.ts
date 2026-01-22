@@ -237,7 +237,7 @@ async function findOrCreateVehicle(
         vin: booking.vehicleVin || undefined,
         make: booking.vehicleMake || undefined,
         model: booking.vehicleModel || undefined,
-        year: booking.vehicleYear || undefined,
+        // year is not available from Gemini booking
         color: booking.vehicleColor || undefined,
         fuel_type: booking.vehicleFuelType || undefined,
         mileage: booking.vehicleMileage || undefined
@@ -297,7 +297,7 @@ async function findOrCreateVehicle(
       vin: booking.vehicleVin?.toUpperCase() || null,
       make: booking.vehicleMake || null,
       model: booking.vehicleModel || null,
-      year: booking.vehicleYear || null,
+      year: null,  // not available from Gemini booking
       color: booking.vehicleColor || null,
       fuel_type: booking.vehicleFuelType || null,
       mileage: booking.vehicleMileage || null,
@@ -513,7 +513,7 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
     }
 
     // Get default site if not provided
-    let effectiveSiteId = siteId
+    let effectiveSiteId: string | null = siteId ?? null
     if (!effectiveSiteId) {
       const { data: defaultSite } = await supabaseAdmin
         .from('sites')
@@ -531,11 +531,8 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
     }
 
     // Fetch bookings from DMS
-    const serviceTypes = dmsSettings?.import_service_types as string[] | undefined
-    const diaryResponse = await fetchDiaryBookings(credentials, date, {
-      siteId,
-      serviceTypes
-    })
+    // Note: serviceTypes filtering is not yet supported by fetchDiaryBookings
+    const diaryResponse = await fetchDiaryBookings(credentials, date)
 
     if (!diaryResponse.success) {
       throw new Error(diaryResponse.error || 'Failed to fetch bookings from DMS')

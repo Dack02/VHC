@@ -223,6 +223,11 @@ export interface HealthCheck {
   technician?: { id: string; first_name: string; last_name: string }
   advisor?: { id: string; first_name: string; last_name: string }
   template?: Template
+  // VHC Reference Number (format: VHC00001)
+  vhc_reference?: string | null
+  // Technician inspection timestamps
+  tech_started_at?: string | null
+  tech_completed_at?: string | null
   // Phase 1 Quick Wins - DMS Integration fields
   arrived_at?: string | null
   due_date?: string | null
@@ -354,6 +359,30 @@ export interface RepairItem {
   is_group?: boolean
   parent_repair_item_id?: string | null
   children?: RepairItem[]
+  // Outcome tracking fields
+  outcome_status?: 'incomplete' | 'ready' | 'authorised' | 'deferred' | 'declined' | 'deleted' | null
+  outcome_set_by?: string | null
+  outcome_set_at?: string | null
+  outcome_source?: 'manual' | 'online' | null
+  outcome_set_by_user?: { first_name: string; last_name: string } | null
+  // Deferred fields
+  deferred_until?: string | null
+  deferred_notes?: string | null
+  // Declined fields
+  declined_reason_id?: string | null
+  declined_reason?: { reason: string } | null
+  declined_notes?: string | null
+  // Deleted fields
+  deleted_at?: string | null
+  deleted_by?: string | null
+  deleted_reason_id?: string | null
+  deleted_reason?: { reason: string } | null
+  deleted_notes?: string | null
+  // Workflow status (for outcome calculation)
+  labour_status?: 'pending' | 'in_progress' | 'complete'
+  parts_status?: 'pending' | 'in_progress' | 'complete'
+  no_labour_required?: boolean
+  no_parts_required?: boolean
 }
 
 export interface StatusHistoryEntry {
@@ -429,6 +458,19 @@ export interface Supplier {
   isActive: boolean
   isQuickAdd: boolean
   sortOrder: number
+  supplierTypeId: string | null
+  supplierTypeName: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SupplierType {
+  id: string
+  name: string
+  description: string | null
+  isActive: boolean
+  isSystem: boolean
+  sortOrder: number
   createdAt: string
   updatedAt: string
 }
@@ -463,6 +505,7 @@ export interface RepairPart {
   marginPercent: number | null
   markupPercent: number | null
   notes: string | null
+  allocationType: 'shared' | 'direct'
   createdAt?: string
 }
 
@@ -490,8 +533,13 @@ export interface RepairItemChild {
   isGroup: boolean
   parentRepairItemId: string | null
   labourStatus: 'pending' | 'in_progress' | 'complete'
+  partsStatus: 'pending' | 'in_progress' | 'complete'
   noLabourRequired: boolean
+  noPartsRequired: boolean
+  noPartsRequiredBy: string | null
+  noPartsRequiredAt: string | null
   labour?: RepairLabour[]
+  parts?: RepairPart[]
   checkResults?: Array<{
     id: string
     ragStatus: string
@@ -521,16 +569,22 @@ export interface NewRepairItem {
   customerApprovedAt: string | null
   customerDeclinedReason: string | null
   selectedOptionId: string | null
+  followUpDate: string | null
   createdBy: string | null
   createdAt: string
   updatedAt: string
   labourCompletedBy: string | null
   labourCompletedAt: string | null
+  labourCompletedByUser?: { first_name: string; last_name: string } | null
   partsCompletedBy: string | null
   partsCompletedAt: string | null
+  partsCompletedByUser?: { first_name: string; last_name: string } | null
   noLabourRequired: boolean
   noLabourRequiredBy: string | null
   noLabourRequiredAt: string | null
+  noPartsRequired: boolean
+  noPartsRequiredBy: string | null
+  noPartsRequiredAt: string | null
   checkResults?: Array<{
     id: string
     ragStatus: string

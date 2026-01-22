@@ -17,9 +17,9 @@ import customers from './routes/customers.js'
 import vehicles from './routes/vehicles.js'
 import templates from './routes/templates.js'
 import items from './routes/items.js'
-import healthChecks from './routes/health-checks.js'
+import healthChecks from './routes/health-checks/index.js'
 import results from './routes/results.js'
-import repairItems from './routes/repair-items.js'
+import repairItems from './routes/repair-items/index.js'
 import media from './routes/media.js'
 import dms from './routes/dms.js'
 import dmsSettings from './routes/dms-settings.js'
@@ -38,10 +38,13 @@ import orgAdmin from './routes/org-admin.js'
 import onboarding from './routes/onboarding.js'
 import dashboard from './routes/dashboard.js'
 import reports from './routes/reports.js'
-import reasons from './routes/reasons.js'
+import reasons from './routes/reasons/index.js'
 import labourCodes from './routes/labour-codes.js'
 import suppliers from './routes/suppliers.js'
 import pricing from './routes/pricing.js'
+import declinedReasons from './routes/declined-reasons.js'
+import deletedReasons from './routes/deleted-reasons.js'
+import supplierTypes from './routes/supplier-types.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
@@ -153,6 +156,15 @@ app.route('/api/v1/organizations/:orgId/labour-codes', labourCodes)
 
 // Suppliers routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/suppliers', suppliers)
+
+// Declined reasons routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/declined-reasons', declinedReasons)
+
+// Deleted reasons routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/deleted-reasons', deletedReasons)
+
+// Supplier types routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/supplier-types', supplierTypes)
 
 // Pricing calculator routes
 app.route('/api/v1/pricing', pricing)

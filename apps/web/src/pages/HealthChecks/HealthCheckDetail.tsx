@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
-import { api, HealthCheck, CheckResult, RepairItem, StatusHistoryEntry, TemplateSection, Authorization, HealthCheckSummary, FullHealthCheckResponse, NewRepairItem } from '../../lib/api'
-import { WorkflowBadges, WorkflowStatus, calculateWorkflowStatus } from '../../components/WorkflowBadges'
+import { api, HealthCheck, CheckResult, RepairItem, StatusHistoryEntry, TemplateSection, HealthCheckSummary, FullHealthCheckResponse, NewRepairItem } from '../../lib/api'
+import { WorkflowBadges, WorkflowStatus, calculateWorkflowStatus, CompletionInfo } from '../../components/WorkflowBadges'
 import { PhotosTab } from './tabs/PhotosTab'
 import { TimelineTab } from './tabs/TimelineTab'
 import { LabourTab } from './tabs/LabourTab'
@@ -12,6 +12,7 @@ import { PublishModal } from './PublishModal'
 import { CustomerPreviewModal } from './CustomerPreviewModal'
 import { HealthCheckTabContent } from './components/HealthCheckTabContent'
 import { CloseHealthCheckModal } from './components/CloseHealthCheckModal'
+import { AdvisorSelectionModal } from './components/AdvisorSelectionModal'
 
 // Hook for online/offline detection
 function useOnlineStatus() {
@@ -75,18 +76,23 @@ type Tab = 'summary' | 'health-check' | 'labour' | 'parts' | 'photos' | 'timelin
 
 export default function HealthCheckDetail() {
   const { id } = useParams<{ id: string }>()
-  const { session } = useAuth()
+  const { session, user } = useAuth()
   const navigate = useNavigate()
   const isOnline = useOnlineStatus()
+
+  // Permission check for changing advisor
+  const canChangeAdvisor = user && ['super_admin', 'org_admin', 'site_admin', 'service_advisor'].includes(user.role)
 
   const [healthCheck, setHealthCheck] = useState<HealthCheck | null>(null)
   const [sections, setSections] = useState<TemplateSection[]>([])
   const [results, setResults] = useState<CheckResult[]>([])
   const [repairItems, setRepairItems] = useState<RepairItem[]>([])
-  const [authorizations, setAuthorizations] = useState<Authorization[]>([])
+  const [newRepairItems, setNewRepairItems] = useState<NewRepairItem[]>([])
   const [summary, setSummary] = useState<HealthCheckSummary | null>(null)
   const [history, setHistory] = useState<StatusHistoryEntry[]>([])
   const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatus | null>(null)
+  const [labourCompletion, setLabourCompletion] = useState<CompletionInfo | undefined>(undefined)
+  const [partsCompletion, setPartsCompletion] = useState<CompletionInfo | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
@@ -94,6 +100,7 @@ export default function HealthCheckDetail() {
   const [showPublishModal, setShowPublishModal] = useState(false)
   const [showPreviewModal, setShowPreviewModal] = useState(false)
   const [showCloseModal, setShowCloseModal] = useState(false)
+  const [showAdvisorModal, setShowAdvisorModal] = useState(false)
   const [generatingPDF, setGeneratingPDF] = useState(false)
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -122,7 +129,6 @@ export default function HealthCheckDetail() {
       setHealthCheck(hcData.healthCheck)
       setResults(hcData.check_results || [])
       setRepairItems(hcData.repair_items || [])
-      setAuthorizations(hcData.authorizations || [])
       setSummary(hcData.summary || null)
 
       // Fetch template sections
@@ -148,13 +154,63 @@ export default function HealthCheckDetail() {
           { token: session.accessToken }
         )
         const items = repairItemsData.repairItems || []
+        setNewRepairItems(items)
 
-        // Calculate workflow status from repair items
-        const calculatedStatus = calculateWorkflowStatus(items, hcData.healthCheck.sent_at)
+        // Calculate workflow status from repair items (with tech timestamps)
+        const calculatedStatus = calculateWorkflowStatus(items, hcData.healthCheck.sent_at, {
+          tech_started_at: hcData.healthCheck.tech_started_at,
+          tech_completed_at: hcData.healthCheck.tech_completed_at
+        })
         setWorkflowStatus(calculatedStatus)
+
+        // Aggregate completion info from repair items for L/P badge tooltips
+        // Find the latest labour and parts completion times across all items
+        let latestLabour: NewRepairItem | null = null
+        let latestParts: NewRepairItem | null = null
+
+        for (const item of items) {
+          if (item.labourCompletedAt) {
+            if (!latestLabour || new Date(item.labourCompletedAt) > new Date(latestLabour.labourCompletedAt!)) {
+              latestLabour = item
+            }
+          }
+          if (item.partsCompletedAt) {
+            if (!latestParts || new Date(item.partsCompletedAt) > new Date(latestParts.partsCompletedAt!)) {
+              latestParts = item
+            }
+          }
+        }
+
+        // Set labour completion info
+        if (latestLabour?.labourCompletedAt) {
+          const userName = latestLabour.labourCompletedByUser
+            ? `${latestLabour.labourCompletedByUser.first_name} ${latestLabour.labourCompletedByUser.last_name}`
+            : undefined
+          setLabourCompletion({
+            completedAt: latestLabour.labourCompletedAt,
+            completedBy: userName
+          })
+        } else {
+          setLabourCompletion(undefined)
+        }
+
+        // Set parts completion info
+        if (latestParts?.partsCompletedAt) {
+          const userName = latestParts.partsCompletedByUser
+            ? `${latestParts.partsCompletedByUser.first_name} ${latestParts.partsCompletedByUser.last_name}`
+            : undefined
+          setPartsCompletion({
+            completedAt: latestParts.partsCompletedAt,
+            completedBy: userName
+          })
+        } else {
+          setPartsCompletion(undefined)
+        }
       } catch {
         // Workflow status is optional, don't fail the whole page
         setWorkflowStatus(null)
+        setLabourCompletion(undefined)
+        setPartsCompletion(undefined)
       }
 
       // Reset retry count on success
@@ -421,7 +477,20 @@ export default function HealthCheckDetail() {
       </div>
 
       {/* Vehicle Info Bar */}
-      <VehicleInfoBar healthCheck={healthCheck} workflowStatus={workflowStatus} />
+      <VehicleInfoBar
+        healthCheck={healthCheck}
+        workflowStatus={workflowStatus}
+        technicianCompletion={{
+          startedAt: healthCheck.tech_started_at,
+          startedBy: healthCheck.technician ? `${healthCheck.technician.first_name} ${healthCheck.technician.last_name}` : undefined,
+          completedAt: healthCheck.tech_completed_at,
+          completedBy: healthCheck.technician ? `${healthCheck.technician.first_name} ${healthCheck.technician.last_name}` : undefined
+        }}
+        labourCompletion={labourCompletion}
+        partsCompletion={partsCompletion}
+        canChangeAdvisor={canChangeAdvisor || undefined}
+        onAdvisorClick={() => setShowAdvisorModal(true)}
+      />
 
       {/* Tab Navigation */}
       <div className="bg-white border-b border-gray-200">
@@ -457,6 +526,7 @@ export default function HealthCheckDetail() {
           <SummaryTab
             healthCheckId={id!}
             sentAt={healthCheck.sent_at ?? null}
+            bookedRepairs={healthCheck.booked_repairs}
             onUpdate={silentRefresh}
           />
         )}
@@ -466,7 +536,6 @@ export default function HealthCheckDetail() {
             sections={sections}
             results={results}
             repairItems={repairItems}
-            authorizations={authorizations}
             onUpdate={silentRefresh}
           />
         )}
@@ -507,6 +576,7 @@ export default function HealthCheckDetail() {
         <CustomerPreviewModal
           healthCheck={healthCheck}
           repairItems={repairItems}
+          newRepairItems={newRepairItems}
           checkResults={results}
           onClose={() => setShowPreviewModal(false)}
           onSend={() => {
@@ -519,10 +589,20 @@ export default function HealthCheckDetail() {
         <CloseHealthCheckModal
           healthCheckId={id!}
           repairItems={repairItems}
-          authorizations={authorizations}
           summary={summary}
           onClose={() => setShowCloseModal(false)}
           onClosed={handleClosed}
+        />
+      )}
+      {showAdvisorModal && healthCheck && (
+        <AdvisorSelectionModal
+          healthCheckId={healthCheck.id}
+          currentAdvisor={healthCheck.advisor || null}
+          onClose={() => setShowAdvisorModal(false)}
+          onAdvisorChanged={(advisor) => {
+            setHealthCheck({ ...healthCheck, advisor: advisor || undefined })
+            setShowAdvisorModal(false)
+          }}
         />
       )}
     </div>
@@ -549,9 +629,14 @@ function calculateDaysOnSite(arrivedAt: string | null): { days: number; color: s
 interface VehicleInfoBarProps {
   healthCheck: HealthCheck
   workflowStatus: WorkflowStatus | null
+  technicianCompletion?: CompletionInfo
+  labourCompletion?: CompletionInfo
+  partsCompletion?: CompletionInfo
+  canChangeAdvisor?: boolean
+  onAdvisorClick?: () => void
 }
 
-function VehicleInfoBar({ healthCheck, workflowStatus }: VehicleInfoBarProps) {
+function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, labourCompletion, partsCompletion, canChangeAdvisor, onAdvisorClick }: VehicleInfoBarProps) {
   const vehicle = healthCheck.vehicle
   const customer = healthCheck.vehicle?.customer
   const [vinExpanded, setVinExpanded] = useState(false)
@@ -572,9 +657,14 @@ function VehicleInfoBar({ healthCheck, workflowStatus }: VehicleInfoBarProps) {
     <div className="bg-white border-b border-gray-200 px-4 md:px-6 py-4">
       {/* Mobile Layout - Stacked with priority info */}
       <div className="md:hidden space-y-4">
-        {/* Top row: Registration + Status */}
+        {/* Top row: VHC Ref + Registration + Status */}
         <div className="flex items-start justify-between gap-4">
-          <div className="flex-shrink-0">
+          <div className="flex-shrink-0 space-y-1">
+            {healthCheck.vhc_reference && (
+              <div className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                {healthCheck.vhc_reference}
+              </div>
+            )}
             <div className="text-2xl font-bold text-gray-900 bg-yellow-100 px-3 py-1 rounded border-2 border-yellow-400">
               {vehicle?.registration || '-'}
             </div>
@@ -583,7 +673,7 @@ function VehicleInfoBar({ healthCheck, workflowStatus }: VehicleInfoBarProps) {
             <span className={`inline-block px-3 py-1 text-sm font-medium rounded ${statusColors[healthCheck.status]}`}>
               {statusLabels[healthCheck.status]}
             </span>
-            {workflowStatus && <WorkflowBadges status={workflowStatus} compact />}
+            {workflowStatus && <WorkflowBadges status={workflowStatus} compact technicianCompletion={technicianCompletion} labourCompletion={labourCompletion} partsCompletion={partsCompletion} />}
           </div>
         </div>
 
@@ -653,6 +743,16 @@ function VehicleInfoBar({ healthCheck, workflowStatus }: VehicleInfoBarProps) {
 
       {/* Desktop Layout - Original horizontal flex-wrap */}
       <div className="hidden md:flex flex-wrap items-start gap-x-8 gap-y-3">
+        {/* VHC Reference */}
+        {healthCheck.vhc_reference && (
+          <div className="flex-shrink-0">
+            <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">VHC Ref</div>
+            <div className="text-sm font-bold text-primary bg-blue-50 px-3 py-2 rounded border border-blue-200">
+              {healthCheck.vhc_reference}
+            </div>
+          </div>
+        )}
+
         {/* Registration - Large */}
         <div className="flex-shrink-0">
           <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Registration</div>
@@ -745,6 +845,24 @@ function VehicleInfoBar({ healthCheck, workflowStatus }: VehicleInfoBarProps) {
           </div>
         </div>
 
+        {/* Service Advisor */}
+        <div>
+          <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Service Advisor</div>
+          <div
+            className={`text-sm text-gray-900 ${canChangeAdvisor ? 'cursor-pointer hover:text-orange-600' : ''}`}
+            onClick={() => canChangeAdvisor && onAdvisorClick?.()}
+          >
+            {healthCheck.advisor
+              ? `${healthCheck.advisor.first_name} ${healthCheck.advisor.last_name}`
+              : '-'}
+            {canChangeAdvisor && (
+              <svg className="w-3 h-3 inline ml-1 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+            )}
+          </div>
+        </div>
+
         {/* Date Completed */}
         <div>
           <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Date</div>
@@ -774,7 +892,7 @@ function VehicleInfoBar({ healthCheck, workflowStatus }: VehicleInfoBarProps) {
         {workflowStatus && (
           <div>
             <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Workflow</div>
-            <WorkflowBadges status={workflowStatus} />
+            <WorkflowBadges status={workflowStatus} technicianCompletion={technicianCompletion} labourCompletion={labourCompletion} partsCompletion={partsCompletion} />
           </div>
         )}
 

@@ -10,11 +10,13 @@
  */
 
 import { useMemo } from 'react'
+import { Tooltip } from './ui/Tooltip'
 
 // Status types
 export type BadgeStatus = 'pending' | 'in_progress' | 'complete' | 'na'
 
 export interface WorkflowStatus {
+  technician: BadgeStatus
   labour: BadgeStatus
   parts: BadgeStatus
   quote: BadgeStatus
@@ -22,6 +24,8 @@ export interface WorkflowStatus {
 }
 
 export interface CompletionInfo {
+  startedAt?: string | null
+  startedBy?: string | null
   completedAt?: string | null
   completedBy?: string | null
 }
@@ -37,6 +41,7 @@ interface WorkflowBadgeProps {
 interface WorkflowBadgesProps {
   status: WorkflowStatus
   compact?: boolean
+  technicianCompletion?: CompletionInfo
   labourCompletion?: CompletionInfo
   partsCompletion?: CompletionInfo
   quoteCompletion?: CompletionInfo
@@ -62,51 +67,74 @@ const statusText: Record<BadgeStatus, string> = {
   na: 'Not applicable'
 }
 
-// Format timestamp for tooltip
-function formatCompletionInfo(completionInfo?: CompletionInfo): string {
-  if (!completionInfo?.completedAt) return ''
-
-  const date = new Date(completionInfo.completedAt)
-  const formatted = date.toLocaleDateString('en-GB', {
+// Format a single timestamp
+function formatTimestamp(dateStr: string): string {
+  const date = new Date(dateStr)
+  return date.toLocaleDateString('en-GB', {
     day: 'numeric',
-    month: 'short',
-    year: 'numeric'
+    month: 'short'
   }) + ', ' + date.toLocaleTimeString('en-GB', {
     hour: '2-digit',
     minute: '2-digit'
   })
+}
 
-  if (completionInfo.completedBy) {
-    return ` - ${formatted} by ${completionInfo.completedBy}`
+// Format timestamp for tooltip - shows start and/or finish times
+function formatCompletionInfo(completionInfo?: CompletionInfo, status?: BadgeStatus): string {
+  if (!completionInfo) return ''
+
+  const parts: string[] = []
+
+  // Show start time if available
+  if (completionInfo.startedAt) {
+    const startFormatted = formatTimestamp(completionInfo.startedAt)
+    if (completionInfo.startedBy) {
+      parts.push(`Started ${startFormatted} by ${completionInfo.startedBy}`)
+    } else {
+      parts.push(`Started ${startFormatted}`)
+    }
   }
-  return ` - ${formatted}`
+
+  // Show finish time if completed
+  if (completionInfo.completedAt && status === 'complete') {
+    const finishFormatted = formatTimestamp(completionInfo.completedAt)
+    if (completionInfo.completedBy) {
+      parts.push(`Finished ${finishFormatted} by ${completionInfo.completedBy}`)
+    } else {
+      parts.push(`Finished ${finishFormatted}`)
+    }
+  }
+
+  if (parts.length === 0) return ''
+  return ' - ' + parts.join('. ')
 }
 
 // Individual Workflow Badge
 export function WorkflowBadge({ label, status, title, compact, completionInfo }: WorkflowBadgeProps) {
-  const completionText = status === 'complete' ? formatCompletionInfo(completionInfo) : ''
+  // Show completion info for in_progress and complete states
+  const completionText = (status === 'complete' || status === 'in_progress')
+    ? formatCompletionInfo(completionInfo, status)
+    : ''
   const tooltipText = `${title}: ${statusText[status]}${completionText}`
 
   const sizeClass = compact ? 'w-5 h-5 text-[10px]' : 'w-7 h-7 text-xs'
 
   return (
-    <span className="relative group">
+    <Tooltip content={tooltipText}>
       <span
         className={`${sizeClass} rounded font-semibold flex items-center justify-center cursor-default ${badgeColors[status]}`}
       >
         {label}
       </span>
-      <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-xs text-white bg-gray-800 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-        {tooltipText}
-      </span>
-    </span>
+    </Tooltip>
   )
 }
 
-// Grouped Workflow Badges L P Q S
+// Grouped Workflow Badges T L P Q S
 export function WorkflowBadges({
   status,
   compact,
+  technicianCompletion,
   labourCompletion,
   partsCompletion,
   quoteCompletion,
@@ -114,6 +142,13 @@ export function WorkflowBadges({
 }: WorkflowBadgesProps) {
   return (
     <div className="inline-flex items-center gap-1">
+      <WorkflowBadge
+        label="T"
+        status={status.technician}
+        title="Tech Inspection"
+        compact={compact}
+        completionInfo={technicianCompletion}
+      />
       <WorkflowBadge
         label="L"
         status={status.labour}
@@ -182,6 +217,7 @@ export function WorkflowLegend({ className = '' }: WorkflowLegendProps) {
     <div className={`flex flex-wrap items-center gap-4 text-xs text-gray-500 ${className}`}>
       <span className="font-medium text-gray-600">Legend:</span>
       <div className="flex items-center gap-2">
+        <span>T = Tech Inspection</span>
         <span>L = Labour</span>
         <span>P = Parts</span>
         <span>Q = Quoted</span>
@@ -219,12 +255,38 @@ export interface RepairItemForWorkflow {
   quote_status?: string
 }
 
+export interface TechTimestamps {
+  techStartedAt?: string | null
+  techCompletedAt?: string | null
+  // Alternative snake_case names
+  tech_started_at?: string | null
+  tech_completed_at?: string | null
+}
+
 export function calculateWorkflowStatus(
   repairItems: RepairItemForWorkflow[],
-  sentAt: string | null | undefined
+  sentAt: string | null | undefined,
+  techTimestamps?: TechTimestamps
 ): WorkflowStatus {
+  // Calculate technician status from timestamps
+  const techStartedAt = techTimestamps?.techStartedAt || techTimestamps?.tech_started_at
+  const techCompletedAt = techTimestamps?.techCompletedAt || techTimestamps?.tech_completed_at
+
+  let technicianStatus: BadgeStatus = 'pending'
+  if (techCompletedAt) {
+    technicianStatus = 'complete'
+  } else if (techStartedAt) {
+    technicianStatus = 'in_progress'
+  }
+
   if (repairItems.length === 0) {
-    return { labour: 'na', parts: 'na', quote: 'na', sent: sentAt ? 'complete' : 'na' }
+    return {
+      technician: technicianStatus,
+      labour: 'na',
+      parts: 'na',
+      quote: 'na',
+      sent: sentAt ? 'complete' : 'na'
+    }
   }
 
   // Helper to get status from either camelCase or snake_case
@@ -248,10 +310,14 @@ export function calculateWorkflowStatus(
   const quoteReady = repairItems.every(i => getQuoteStatus(i) === 'ready')
   const isSent = !!sentAt
 
+  // Quote is only complete when Labour AND Parts are both complete
+  const quoteComplete = quoteReady && labourComplete && partsComplete
+
   return {
+    technician: technicianStatus,
     labour: labourComplete ? 'complete' : labourStarted ? 'in_progress' : 'pending',
     parts: partsComplete ? 'complete' : partsStarted ? 'in_progress' : 'pending',
-    quote: quoteReady ? 'complete' : 'pending',
+    quote: quoteComplete ? 'complete' : 'pending',
     sent: isSent ? 'complete' : 'na'
   }
 }
@@ -259,10 +325,11 @@ export function calculateWorkflowStatus(
 // Hook to calculate workflow status from repair items
 export function useWorkflowStatus(
   repairItems: RepairItemForWorkflow[],
-  sentAt: string | null | undefined
+  sentAt: string | null | undefined,
+  techTimestamps?: TechTimestamps
 ): WorkflowStatus {
   return useMemo(
-    () => calculateWorkflowStatus(repairItems, sentAt),
-    [repairItems, sentAt]
+    () => calculateWorkflowStatus(repairItems, sentAt, techTimestamps),
+    [repairItems, sentAt, techTimestamps]
   )
 }

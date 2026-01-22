@@ -109,7 +109,6 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
     // update the first instance instead of creating a new duplicate
     // This prevents accidental duplicates when client has stale instance_number
     let effectiveExisting = existing
-    let effectiveInstanceNumber = targetInstanceNumber
     if (!existing && targetInstanceNumber !== 1) {
       // Check if ANY results exist for this template_item
       const { data: anyExisting } = await supabaseAdmin
@@ -125,7 +124,6 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
         // Update the existing result instead of creating a new one
         console.warn(`Safeguard: Redirecting save from instance ${targetInstanceNumber} to ${anyExisting.instance_number} for template_item ${templateItemId}`)
         effectiveExisting = anyExisting
-        effectiveInstanceNumber = anyExisting.instance_number
       }
     }
 
@@ -178,14 +176,14 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
 
     // Auto-create repair item if is_mot_failure is true
     if (result.is_mot_failure && result.rag_status === 'red') {
-      // Check if repair item already exists for this result
-      const { data: existingRepairItem } = await supabaseAdmin
-        .from('repair_items')
-        .select('id')
+      // Check if repair item already exists for this result via junction table
+      const { data: existingLink } = await supabaseAdmin
+        .from('repair_item_check_results')
+        .select('repair_item_id')
         .eq('check_result_id', result.id)
         .single()
 
-      if (!existingRepairItem) {
+      if (!existingLink) {
         // Get template item name for description
         const { data: templateItem } = await supabaseAdmin
           .from('template_items')
@@ -200,35 +198,46 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
           .eq('health_check_id', id)
           .eq('template_item_id', templateItemId)
 
-        // Get max sort order
-        const { data: maxOrderResult } = await supabaseAdmin
-          .from('repair_items')
-          .select('sort_order')
-          .eq('health_check_id', id)
-          .order('sort_order', { ascending: false })
-          .limit(1)
+        // Get organization_id from health check
+        const { data: hcData } = await supabaseAdmin
+          .from('health_checks')
+          .select('organization_id')
+          .eq('id', id)
           .single()
 
-        const sortOrder = (maxOrderResult?.sort_order || 0) + 1
         const baseName = templateItem?.name || 'Unknown Item'
         // Include instance number in name if there are multiple instances
         const itemName = (instanceCount && instanceCount > 1) ? `${baseName} (${targetInstanceNumber})` : baseName
 
-        // Create repair item with is_mot_failure flag
-        await supabaseAdmin
+        // Create repair item with new schema columns
+        const { data: newRepairItem } = await supabaseAdmin
           .from('repair_items')
           .insert({
             health_check_id: id,
-            check_result_id: result.id,
-            title: itemName,
+            organization_id: hcData?.organization_id,
+            name: itemName,
             description: `MOT FAILURE: ${itemName} requires immediate attention`,
-            labour_cost: 0,
-            parts_cost: 0,
-            total_cost: 0,
-            sort_order: sortOrder,
-            is_authorized: false,
-            is_mot_failure: true
+            labour_total: 0,
+            parts_total: 0,
+            subtotal: 0,
+            vat_amount: 0,
+            total_inc_vat: 0,
+            outcome_status: 'incomplete',
+            labour_status: 'pending',
+            parts_status: 'pending'
           })
+          .select('id')
+          .single()
+
+        // Link repair item to check result via junction table
+        if (newRepairItem) {
+          await supabaseAdmin
+            .from('repair_item_check_results')
+            .insert({
+              repair_item_id: newRepairItem.id,
+              check_result_id: result.id
+            })
+        }
       }
     }
 

@@ -334,7 +334,7 @@ export default function Dashboard() {
           </div>
           {/* Quick Links */}
           <Link
-            to="/dashboard/board"
+            to="/health-checks"
             className="px-4 py-2 bg-primary text-white text-sm font-medium hover:bg-primary/90"
           >
             Kanban Board
@@ -405,23 +405,23 @@ export default function Dashboard() {
 
       {/* Board Column Summary */}
       <div className="grid grid-cols-5 gap-4">
-        <Link to="/dashboard/board?column=technician" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
+        <Link to="/health-checks" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
           <div className="text-2xl font-bold text-gray-900">{data?.columnCounts.technician || 0}</div>
           <div className="text-sm text-gray-500">Technician Queue</div>
         </Link>
-        <Link to="/dashboard/board?column=tech_done" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
+        <Link to="/health-checks" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
           <div className="text-2xl font-bold text-rag-amber">{data?.columnCounts.tech_done || 0}</div>
           <div className="text-sm text-gray-500">Tech Done / Review</div>
         </Link>
-        <Link to="/dashboard/board?column=advisor" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
+        <Link to="/health-checks" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
           <div className="text-2xl font-bold text-primary">{data?.columnCounts.advisor || 0}</div>
           <div className="text-sm text-gray-500">Ready to Send</div>
         </Link>
-        <Link to="/dashboard/board?column=customer" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
+        <Link to="/health-checks" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
           <div className="text-2xl font-bold text-purple-600">{data?.columnCounts.customer || 0}</div>
           <div className="text-sm text-gray-500">With Customer</div>
         </Link>
-        <Link to="/dashboard/board?column=actioned" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
+        <Link to="/health-checks" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
           <div className="text-2xl font-bold text-rag-green">{data?.columnCounts.actioned || 0}</div>
           <div className="text-sm text-gray-500">Actioned</div>
         </Link>

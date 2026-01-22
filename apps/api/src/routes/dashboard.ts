@@ -52,6 +52,7 @@ dashboard.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
       .from('health_checks')
       .select('id, status, created_at, sent_at, first_opened_at, technician_id, advisor_id, promised_at')
       .eq('organization_id', auth.orgId)
+      .is('deleted_at', null) // Exclude soft-deleted records
       .gte('created_at', startDate)
       .lt('created_at', endDate)
 
@@ -82,6 +83,7 @@ dashboard.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
       .from('health_checks')
       .select('id, status')
       .eq('organization_id', auth.orgId)
+      .is('deleted_at', null) // Exclude soft-deleted records
       .not('status', 'in', '(completed,cancelled,expired)')
 
     if (site_id) activeQuery = activeQuery.eq('site_id', site_id)
@@ -138,6 +140,7 @@ dashboard.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
       .from('health_checks')
       .select('id')
       .eq('organization_id', auth.orgId)
+      .is('deleted_at', null) // Exclude soft-deleted records
       .not('status', 'in', '(completed,cancelled,expired)')
       .lt('promised_at', now)
       .not('promised_at', 'is', null)
@@ -148,6 +151,7 @@ dashboard.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
       .from('health_checks')
       .select('id')
       .eq('organization_id', auth.orgId)
+      .is('deleted_at', null) // Exclude soft-deleted records
       .in('status', ['sent', 'delivered', 'opened', 'partial_response'])
       .lt('token_expires_at', in24Hours)
       .gt('token_expires_at', now)
@@ -205,12 +209,15 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         customer_waiting,
         loan_car_required,
         booked_repairs,
+        tech_started_at,
+        tech_completed_at,
         vehicle:vehicles(id, registration, make, model),
         customer:customers(id, first_name, last_name),
         technician:users!health_checks_technician_id_fkey(id, first_name, last_name),
         advisor:users!health_checks_advisor_id_fkey(id, first_name, last_name)
       `)
       .eq('organization_id', auth.orgId)
+      .is('deleted_at', null) // Exclude soft-deleted records
       // Exclude terminal states AND DMS pre-arrival states (awaiting_arrival has its own UI section)
       .not('status', 'in', '(completed,cancelled,expired,awaiting_arrival,no_show)')
       .gte('created_at', startDate)
@@ -239,19 +246,209 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     const now = new Date()
     const in24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000)
 
-    // Fetch total amounts from repair_items for each health check
+    // Fetch total amounts, workflow status data, and outcome aggregations from repair_items for each health check
     const healthCheckIds = healthChecks?.map(hc => hc.id) || []
     let repairTotals: Record<string, number> = {}
+    let repairItemsByHc: Record<string, Array<{ labour_status: string; parts_status: string; quote_status: string }>> = {}
+
+    // Outcome aggregation data per health check
+    interface OutcomeAggregation {
+      identified_total: number
+      authorised_total: number
+      red_identified: number
+      red_authorised: number
+      amber_identified: number
+      amber_authorised: number
+      green_identified: number
+      green_authorised: number
+    }
+    let outcomesByHc: Record<string, OutcomeAggregation> = {}
 
     if (healthCheckIds.length > 0) {
-      const { data: repairData } = await supabaseAdmin
+      // Query ALL repair items - use stored totals directly (labour_total, parts_total, total_inc_vat)
+      // These are the source of truth, same as crud.ts endpoint
+      const { data: repairData, error: repairError } = await supabaseAdmin
         .from('repair_items')
-        .select('health_check_id, total_price')
+        .select(`
+          health_check_id,
+          labour_total,
+          parts_total,
+          total_inc_vat,
+          labour_status,
+          parts_status,
+          quote_status,
+          outcome_status,
+          deleted_at,
+          customer_approved,
+          is_group,
+          parent_repair_item_id,
+          check_results:repair_item_check_results(
+            check_result:check_results(rag_status)
+          )
+        `)
         .in('health_check_id', healthCheckIds)
 
+      if (repairError) {
+        console.error('Error fetching repair items for workflow:', repairError)
+      }
+
+      // Default VAT rate for calculating total when total_inc_vat is 0 but labour/parts exist
+      const VAT_RATE = 0.20
+
       repairData?.forEach(item => {
-        repairTotals[item.health_check_id] = (repairTotals[item.health_check_id] || 0) + (item.total_price || 0)
+        // Use stored total_inc_vat, or calculate from labour_total + parts_total if not set
+        let totalIncVat = parseFloat(String(item.total_inc_vat ?? 0)) || 0
+
+        // If total_inc_vat is 0 but labour_total/parts_total exist, calculate total
+        if (totalIncVat === 0) {
+          const labourTotal = parseFloat(String(item.labour_total ?? 0)) || 0
+          const partsTotal = parseFloat(String(item.parts_total ?? 0)) || 0
+
+          if (labourTotal > 0 || partsTotal > 0) {
+            const subtotal = labourTotal + partsTotal
+            const vatAmount = subtotal * VAT_RATE
+            totalIncVat = subtotal + vatAmount
+          }
+        }
+        // deleted_at being truthy (any non-null/undefined value) means item is deleted
+        const isDeleted = !!item.deleted_at
+        // Check customer_approved for authorisation (customer approved this item)
+        const isAuthorised = item.customer_approved === true
+        // Check if this is a child item (has a parent) or a group (is_group=true)
+        const isChild = !!item.parent_repair_item_id
+        const isGroup = item.is_group === true
+
+        // Derive RAG status from linked check_results (red > amber > green)
+        // Supabase returns nested relations as arrays
+        let derivedRagStatus: string | null = null
+        const checkResultLinks = item.check_results as unknown as Array<{ check_result: { rag_status: string } | { rag_status: string }[] | null }> | null
+        if (checkResultLinks && Array.isArray(checkResultLinks)) {
+          for (const link of checkResultLinks) {
+            // Handle both single object and array returns from Supabase
+            const checkResult = Array.isArray(link?.check_result) ? link.check_result[0] : link?.check_result
+            const ragStatus = checkResult?.rag_status
+            if (ragStatus === 'red') {
+              derivedRagStatus = 'red'
+              break
+            } else if (ragStatus === 'amber' && derivedRagStatus !== 'red') {
+              derivedRagStatus = 'amber'
+            } else if (ragStatus === 'green' && !derivedRagStatus) {
+              derivedRagStatus = 'green'
+            }
+          }
+        }
+
+        // For totals and outcome aggregations: only count top-level items (not children) to avoid double-counting
+        // Children's pricing rolls up to parent groups
+        if (!isChild) {
+          // Initialize totals if needed
+          repairTotals[item.health_check_id] = (repairTotals[item.health_check_id] || 0) + totalIncVat
+
+          // Initialize outcome aggregation if needed
+          if (!outcomesByHc[item.health_check_id]) {
+            outcomesByHc[item.health_check_id] = {
+              identified_total: 0,
+              authorised_total: 0,
+              red_identified: 0,
+              red_authorised: 0,
+              amber_identified: 0,
+              amber_authorised: 0,
+              green_identified: 0,
+              green_authorised: 0
+            }
+          }
+
+          const outcomes = outcomesByHc[item.health_check_id]
+
+          // Identified = non-deleted items
+          if (!isDeleted) {
+            outcomes.identified_total += totalIncVat
+
+            if (derivedRagStatus === 'red') {
+              outcomes.red_identified++
+            } else if (derivedRagStatus === 'amber') {
+              outcomes.amber_identified++
+            } else if (derivedRagStatus === 'green') {
+              outcomes.green_identified++
+            }
+          }
+
+          // Authorised = items with outcome_status = 'authorised'
+          if (isAuthorised) {
+            outcomes.authorised_total += totalIncVat
+
+            if (derivedRagStatus === 'red') {
+              outcomes.red_authorised++
+            } else if (derivedRagStatus === 'amber') {
+              outcomes.amber_authorised++
+            } else if (derivedRagStatus === 'green') {
+              outcomes.green_authorised++
+            }
+          }
+        }
+
+        // For workflow status: include non-group items (standalone items and children)
+        // Groups don't track their own labour/parts status - their children do
+        if (!isGroup) {
+          if (!repairItemsByHc[item.health_check_id]) {
+            repairItemsByHc[item.health_check_id] = []
+          }
+          repairItemsByHc[item.health_check_id].push({
+            labour_status: item.labour_status || 'pending',
+            parts_status: item.parts_status || 'pending',
+            quote_status: item.quote_status || 'pending'
+          })
+        }
       })
+    }
+
+    // Helper function to calculate workflow status
+    function calculateWorkflowStatus(
+      repairItems: Array<{ labour_status: string; parts_status: string; quote_status: string }>,
+      sentAt: string | null | undefined,
+      techStartedAt: string | null | undefined,
+      techCompletedAt: string | null | undefined
+    ) {
+      // Calculate technician status from timestamps
+      let technicianStatus: 'pending' | 'in_progress' | 'complete' = 'pending'
+      if (techCompletedAt) {
+        technicianStatus = 'complete'
+      } else if (techStartedAt) {
+        technicianStatus = 'in_progress'
+      }
+
+      if (repairItems.length === 0) {
+        return {
+          technician: technicianStatus,
+          labour: 'na' as const,
+          parts: 'na' as const,
+          quote: 'na' as const,
+          sent: sentAt ? 'complete' as const : 'na' as const
+        }
+      }
+
+      const labourComplete = repairItems.every(i => i.labour_status === 'complete')
+      const labourStarted = repairItems.some(i =>
+        i.labour_status === 'in_progress' || i.labour_status === 'complete'
+      )
+
+      const partsComplete = repairItems.every(i => i.parts_status === 'complete')
+      const partsStarted = repairItems.some(i =>
+        i.parts_status === 'in_progress' || i.parts_status === 'complete'
+      )
+
+      const quoteReady = repairItems.every(i => i.quote_status === 'ready')
+      // Quote is only complete when Labour AND Parts are both complete
+      const quoteComplete = quoteReady && labourComplete && partsComplete
+      const isSent = !!sentAt
+
+      return {
+        technician: technicianStatus,
+        labour: labourComplete ? 'complete' as const : labourStarted ? 'in_progress' as const : 'pending' as const,
+        parts: partsComplete ? 'complete' as const : partsStarted ? 'in_progress' as const : 'pending' as const,
+        quote: quoteComplete ? 'complete' as const : 'pending' as const,
+        sent: isSent ? 'complete' as const : 'na' as const
+      }
     }
 
     healthChecks?.forEach(hc => {
@@ -263,13 +460,42 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       else if (statusGroups.actioned.includes(hc.status)) column = 'actioned'
 
       // Add SLA warnings and computed fields
+      const workflowStatus = calculateWorkflowStatus(
+        repairItemsByHc[hc.id] || [],
+        hc.sent_at,
+        hc.tech_started_at,
+        hc.tech_completed_at
+      )
+
+      // Get outcome aggregations for this health check
+      const outcomes = outcomesByHc[hc.id] || {
+        identified_total: 0,
+        authorised_total: 0,
+        red_identified: 0,
+        red_authorised: 0,
+        amber_identified: 0,
+        amber_authorised: 0,
+        green_identified: 0,
+        green_authorised: 0
+      }
+
       const card = {
         ...hc,
         promise_time: hc.promised_at, // Map for frontend compatibility
         total_amount: repairTotals[hc.id] || 0,
         isOverdue: hc.promised_at && new Date(hc.promised_at) < now,
         isExpiringSoon: hc.token_expires_at && new Date(hc.token_expires_at) < in24Hours && new Date(hc.token_expires_at) > now,
-        validTransitions: validDragTransitions[hc.status] || []
+        validTransitions: validDragTransitions[hc.status] || [],
+        workflowStatus,
+        // Outcome aggregations for identified vs authorised
+        identified_total: outcomes.identified_total,
+        authorised_total: outcomes.authorised_total,
+        red_identified: outcomes.red_identified,
+        red_authorised: outcomes.red_authorised,
+        amber_identified: outcomes.amber_identified,
+        amber_authorised: outcomes.amber_authorised,
+        green_identified: outcomes.green_identified,
+        green_authorised: outcomes.green_authorised
       }
 
       columns[column]?.push(card)
@@ -357,6 +583,7 @@ dashboard.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin
         .eq('organization_id', auth.orgId)
         .eq('technician_id', tech.id)
         .eq('status', 'in_progress')
+        .is('deleted_at', null) // Exclude soft-deleted records
         .single()
 
       // Get current time entry (clocked in)
@@ -374,6 +601,7 @@ dashboard.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin
         .eq('organization_id', auth.orgId)
         .eq('technician_id', tech.id)
         .eq('status', 'assigned')
+        .is('deleted_at', null) // Exclude soft-deleted records
 
       // Get today's completed count
       const { count: completedToday } = await supabaseAdmin
@@ -381,6 +609,7 @@ dashboard.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin
         .select('id', { count: 'exact' })
         .eq('organization_id', auth.orgId)
         .eq('technician_id', tech.id)
+        .is('deleted_at', null) // Exclude soft-deleted records
         .in('status', ['tech_completed', 'awaiting_review', 'awaiting_pricing', 'awaiting_parts', 'ready_to_send', 'sent', 'delivered', 'opened', 'partial_response', 'authorized', 'declined', 'completed'])
         .gte('updated_at', todayISO)
 
@@ -584,6 +813,7 @@ dashboard.get('/queues', authorize(['super_admin', 'org_admin', 'site_admin', 's
         advisor:users!health_checks_advisor_id_fkey(first_name, last_name)
       `)
       .eq('organization_id', auth.orgId)
+      .is('deleted_at', null) // Exclude soft-deleted records
       .not('status', 'in', '(completed,cancelled,expired)')
 
     if (site_id) baseQuery = baseQuery.eq('site_id', site_id)

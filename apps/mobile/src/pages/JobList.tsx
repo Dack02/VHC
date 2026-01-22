@@ -224,6 +224,11 @@ function JobCard({ job, onClick }: JobCardProps) {
     >
       <div className="flex items-start justify-between mb-2">
         <div>
+          {job.vhc_reference && (
+            <p className="text-xs font-medium text-primary mb-0.5">
+              {job.vhc_reference}
+            </p>
+          )}
           <h3 className="text-lg font-bold text-gray-900">
             {vehicle?.registration || 'No Reg'}
           </h3>

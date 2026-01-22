@@ -38,6 +38,16 @@ export type AuditAction =
   | 'customer.sign'
   | 'customer.view'
 
+  // Repair item outcomes
+  | 'repair_item.authorise'
+  | 'repair_item.defer'
+  | 'repair_item.decline'
+  | 'repair_item.delete'
+  | 'repair_item.reset'
+  | 'repair_item.bulk_authorise'
+  | 'repair_item.bulk_defer'
+  | 'repair_item.bulk_decline'
+
   // Admin actions
   | 'admin.impersonate_start'
   | 'admin.impersonate_end'

@@ -261,7 +261,10 @@ export function Summary() {
           </button>
           <div>
             <h1 className="text-lg font-bold">Inspection Summary</h1>
-            <p className="text-sm text-blue-200">{job?.vehicle?.registration}</p>
+            <p className="text-sm text-blue-200">
+              {job?.vhc_reference && <span className="mr-2">{job.vhc_reference}</span>}
+              {job?.vehicle?.registration}
+            </p>
           </div>
         </div>
       </header>

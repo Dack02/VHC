@@ -58,8 +58,9 @@ export const QUEUE_NAMES = {
 } as const
 
 // Create queues
+// Note: Type assertion needed due to ioredis version mismatch between app and bullmq
 export const notificationQueue = new Queue(QUEUE_NAMES.NOTIFICATIONS, {
-  connection: redis,
+  connection: redis as any,
   defaultJobOptions: {
     attempts: 3,
     backoff: {
@@ -72,7 +73,7 @@ export const notificationQueue = new Queue(QUEUE_NAMES.NOTIFICATIONS, {
 })
 
 export const reminderQueue = new Queue(QUEUE_NAMES.REMINDERS, {
-  connection: redis,
+  connection: redis as any,
   defaultJobOptions: {
     attempts: 3,
     backoff: {
@@ -85,7 +86,7 @@ export const reminderQueue = new Queue(QUEUE_NAMES.REMINDERS, {
 })
 
 export const emailQueue = new Queue(QUEUE_NAMES.EMAILS, {
-  connection: redis,
+  connection: redis as any,
   defaultJobOptions: {
     attempts: 3,
     backoff: {
@@ -98,7 +99,7 @@ export const emailQueue = new Queue(QUEUE_NAMES.EMAILS, {
 })
 
 export const smsQueue = new Queue(QUEUE_NAMES.SMS, {
-  connection: redis,
+  connection: redis as any,
   defaultJobOptions: {
     attempts: 3,
     backoff: {
@@ -111,7 +112,7 @@ export const smsQueue = new Queue(QUEUE_NAMES.SMS, {
 })
 
 export const dmsImportQueue = new Queue(QUEUE_NAMES.DMS_IMPORT, {
-  connection: redis,
+  connection: redis as any,
   defaultJobOptions: {
     attempts: 2,
     backoff: {

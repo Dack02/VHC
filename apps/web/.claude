@@ -1,0 +1,248 @@
+# VHC Web Dashboard
+
+## Project Overview
+Vehicle Health Check (VHC) Web - a React dashboard for service advisors and managers. Handles health check management, pricing/quoting, customer communication, and organization settings. Features real-time updates via WebSocket and dynamic branding.
+
+## Technology Stack
+- **Framework:** React 18 + TypeScript (strict mode)
+- **Build:** Vite 5
+- **Styling:** Tailwind CSS with CSS variables for theming
+- **Routing:** React Router v6 with protected routes
+- **Auth:** Supabase Auth (session-based, localStorage persistence)
+- **Real-time:** Socket.io client
+- **API:** Custom fetch wrapper with retry logic and exponential backoff
+
+## Critical Conventions
+
+### Component Pattern
+Functional components with hooks and TypeScript:
+```tsx
+interface UserCardProps {
+  user: User
+  onEdit?: (id: string) => void
+}
+
+export default function UserCard({ user, onEdit }: UserCardProps) {
+  const { session } = useAuth()
+  const toast = useToast()
+  // ...
+}
+```
+
+### State Management
+React Context for global state (no Redux):
+```tsx
+import { useAuth } from '../contexts/AuthContext'
+import { useToast } from '../contexts/ToastContext'
+import { useBranding } from '../contexts/BrandingContext'
+import { useSocket } from '../contexts/SocketContext'
+
+const { session, user, logout } = useAuth()
+const toast = useToast()
+const { branding } = useBranding()
+```
+
+### API Calls
+Use the typed `api` function from `lib/api.ts`:
+```tsx
+import { api, HealthCheck } from '../lib/api'
+
+const data = await api<HealthCheck[]>('/api/v1/health-checks', {
+  token: session?.accessToken,
+  method: 'GET',
+  retry: true,        // Enable retry logic (default)
+  retryCount: 3,      // Max attempts
+  timeout: 30000      // 30s timeout
+})
+```
+
+### Error Handling
+Use ApiError class and toast notifications:
+```tsx
+try {
+  const result = await api<T>('/endpoint', { token: session?.accessToken })
+  toast.success('Operation completed')
+} catch (err) {
+  if (err instanceof ApiError) {
+    toast.error(err.message)
+  } else {
+    toast.error('Something went wrong')
+  }
+}
+```
+
+### Loading States
+Always show loading indicators:
+```tsx
+const [loading, setLoading] = useState(true)
+const [data, setData] = useState<DataType[]>([])
+
+if (loading) return <LoadingSkeleton />
+```
+
+### Real-time Updates
+Use SocketContext for WebSocket events:
+```tsx
+const { on, off, joinHealthCheck, leaveHealthCheck } = useSocket()
+
+useEffect(() => {
+  const handleStatusChange = (data: StatusChangeEvent) => {
+    // Update local state
+  }
+  on('HEALTH_CHECK_STATUS_CHANGED', handleStatusChange)
+  return () => off('HEALTH_CHECK_STATUS_CHANGED', handleStatusChange)
+}, [])
+```
+
+## Project Structure
+```
+src/
+├── main.tsx              # React DOM entry
+├── App.tsx               # Router & provider hierarchy
+├── index.css             # Tailwind + CSS variables
+├── components/           # Reusable UI components
+│   ├── ui/               # Basic components (Tooltip, etc.)
+│   ├── admin/            # Admin-specific components
+│   ├── WorkflowBadges.tsx
+│   ├── PageErrorBoundary.tsx
+│   └── ...
+├── contexts/             # React Context providers
+│   ├── AuthContext.tsx
+│   ├── ToastContext.tsx
+│   ├── BrandingContext.tsx
+│   ├── SocketContext.tsx
+│   └── SuperAdminContext.tsx
+├── layouts/              # Layout wrappers
+│   ├── ProtectedLayout.tsx   # Auth guard
+│   ├── DashboardLayout.tsx   # Main layout with sidebar
+│   └── AdminLayout.tsx       # Super admin layout
+├── pages/                # Route components
+│   ├── Dashboard/
+│   ├── HealthChecks/     # HC list, detail, tabs
+│   │   ├── tabs/         # SummaryTab, PartsTab, LabourTab
+│   │   └── components/   # RepairItemRow, modals, etc.
+│   ├── Settings/         # 19 settings modules
+│   ├── Admin/            # Super admin pages
+│   ├── CustomerPortal/   # Token-based customer view
+│   └── ...
+├── lib/                  # Utilities
+│   ├── api.ts            # HTTP client + types
+│   └── supabase.ts       # Auth client
+└── hooks/                # Custom hooks (if any)
+```
+
+## Key Files
+- `src/App.tsx` - Router setup, provider hierarchy
+- `src/contexts/AuthContext.tsx` - Session management, localStorage persistence
+- `src/contexts/BrandingContext.tsx` - Dynamic theming with CSS variables
+- `src/contexts/SocketContext.tsx` - WebSocket event handling
+- `src/lib/api.ts` - API client with retry logic, ApiError class
+- `src/layouts/DashboardLayout.tsx` - Main app layout with navigation
+- `src/pages/HealthChecks/HealthCheckDetail.tsx` - Complex tabbed detail view
+- `tailwind.config.js` - Custom colors, RAG status colors
+
+## Provider Hierarchy
+```tsx
+<PageErrorBoundary>
+  <ToastProvider>
+    <AuthProvider>
+      <SocketProvider>
+        <SuperAdminProvider>
+          <BrandingProvider>
+            <BrowserRouter>
+              {/* Routes */}
+            </BrowserRouter>
+          </BrandingProvider>
+        </SuperAdminProvider>
+      </SocketProvider>
+    </AuthProvider>
+  </ToastProvider>
+</PageErrorBoundary>
+```
+
+## Routing Structure
+```
+Public:
+  /login                    # User login
+  /admin/login              # Super admin login
+  /view/:token              # Customer portal (token-based)
+
+Protected (DashboardLayout):
+  /                         # Dashboard
+  /dashboard/technicians    # Technician workload
+  /health-checks            # HC list
+  /health-checks/:id        # HC detail (tabbed)
+  /customers                # Customer list
+  /reports                  # Reports
+  /users                    # User management
+  /templates/:id            # Template builder
+  /settings/*               # 19 settings pages
+
+Super Admin (AdminLayout):
+  /admin/                   # Admin dashboard
+  /admin/organizations      # Organization management
+  /admin/plans              # Subscription plans
+  /admin/ai-usage           # AI usage tracking
+  /admin/settings           # Admin settings
+```
+
+## Styling Conventions
+
+### Tailwind + CSS Variables
+Dynamic theming via CSS variables:
+```tsx
+// Tailwind classes reference CSS vars
+<button className="bg-primary hover:bg-primary-hover">
+
+// CSS variables set by BrandingContext
+--brand-primary: #0066cc;
+--brand-primary-hover: #0052a3;
+--brand-primary-light: rgba(0, 102, 204, 0.1);
+```
+
+### RAG Colors
+Status indicators for workflow:
+```tsx
+bg-rag-green text-white      // Complete/Green status
+bg-rag-amber text-white      // In Progress/Amber status
+bg-rag-red text-white        // Pending/Red status
+bg-rag-green-bg text-rag-green  // Light background variants
+```
+
+### Square Edges
+Automotive aesthetic (no rounded corners):
+```tsx
+<div className="rounded-none">  // All buttons/cards have square edges
+```
+
+### Workflow Status Pattern
+```tsx
+type WorkflowStatus = 'pending' | 'in_progress' | 'complete' | 'na'
+
+interface CompletionInfo {
+  startedAt?: string
+  startedBy?: string
+  completedAt?: string
+  completedBy?: string
+}
+```
+
+## Commands
+```bash
+npm run dev       # Vite dev server (port 5181)
+npm run build     # TypeScript check + production build
+npm run preview   # Preview production build
+npm run lint      # TypeScript type checking (tsc --noEmit)
+```
+
+## Environment
+- `VITE_API_URL` - Backend API (default: http://localhost:5180)
+- `VITE_SUPABASE_URL` - Supabase project URL
+- `VITE_SUPABASE_ANON_KEY` - Supabase anon key
+
+## Testing Changes
+1. Run `npm run dev` in `apps/web`
+2. Open http://localhost:5181 in browser
+3. Login with test credentials
+4. Test real-time: Open multiple tabs, make changes
+5. Test branding: Switch organization settings

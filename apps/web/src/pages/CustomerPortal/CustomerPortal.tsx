@@ -141,6 +141,10 @@ interface NewRepairItem {
   selectedOptionId: string | null
   options: RepairOption[]
   linkedCheckResults: string[]
+  children?: Array<{
+    name: string
+    ragStatus: 'red' | 'amber' | null
+  }>
 }
 
 interface PortalData {
@@ -224,23 +228,24 @@ export default function CustomerPortal() {
     }
   }, [data?.site?.organization?.settings])
 
-  // Handle authorize
+  // Handle authorize (using new repair-items endpoint)
   const handleAuthorize = async (repairItemId: string) => {
     if (!token || saving) return
     setSaving(repairItemId)
 
     try {
-      const response = await fetch(`${API_URL}/api/public/vhc/${token}/authorize`, {
+      const response = await fetch(`${API_URL}/api/public/vhc/${token}/repair-items/${repairItemId}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repairItemId })
+        body: JSON.stringify({})
       })
 
       if (!response.ok) {
-        throw new Error('Failed to authorize')
+        const result = await response.json()
+        throw new Error(result.error || 'Failed to authorize')
       }
 
-      // Update local state
+      // Update local state - update is_approved field (maps from customer_approved)
       setData(prev => {
         if (!prev) return prev
         return {
@@ -249,6 +254,7 @@ export default function CustomerPortal() {
             item.id === repairItemId
               ? {
                   ...item,
+                  is_approved: true,
                   authorization: {
                     repair_item_id: repairItemId,
                     decision: 'approved',
@@ -261,29 +267,29 @@ export default function CustomerPortal() {
         }
       })
     } catch (err) {
-      alert('Failed to save. Please try again.')
+      alert(err instanceof Error ? err.message : 'Failed to save. Please try again.')
     } finally {
       setSaving(null)
     }
   }
 
-  // Handle decline
+  // Handle decline (using new repair-items endpoint)
   const handleDecline = async (repairItemId: string) => {
     if (!token || saving) return
     setSaving(repairItemId)
 
     try {
-      const response = await fetch(`${API_URL}/api/public/vhc/${token}/decline`, {
+      const response = await fetch(`${API_URL}/api/public/vhc/${token}/repair-items/${repairItemId}/decline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repairItemId })
+        body: JSON.stringify({})
       })
 
       if (!response.ok) {
         throw new Error('Failed to decline')
       }
 
-      // Update local state
+      // Update local state - update is_approved field (maps from customer_approved)
       setData(prev => {
         if (!prev) return prev
         return {
@@ -292,6 +298,7 @@ export default function CustomerPortal() {
             item.id === repairItemId
               ? {
                   ...item,
+                  is_approved: false,
                   authorization: {
                     repair_item_id: repairItemId,
                     decision: 'declined',
@@ -1370,7 +1377,8 @@ function SignatureCapture({
     try {
       const signatureData = canvas.toDataURL('image/png')
 
-      const response = await fetch(`${API_URL}/api/public/vhc/${token}/signature`, {
+      // Use new repair-items/sign endpoint
+      const response = await fetch(`${API_URL}/api/public/vhc/${token}/repair-items/sign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ signatureData })
@@ -1604,6 +1612,33 @@ function NewRepairItemCard({
         {/* Description */}
         {item.description && (
           <p className="text-sm text-gray-600 mt-2">{item.description}</p>
+        )}
+
+        {/* Group Badge and Children */}
+        {item.isGroup && (
+          <div className="mt-3">
+            <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700 rounded">
+              GROUP
+            </span>
+            {item.children && item.children.length > 0 && (
+              <div className="mt-2 p-3 bg-purple-50 border-l-3 border-purple-500 rounded">
+                <div className="text-xs font-semibold text-purple-700 uppercase mb-2">
+                  Grouped Items ({item.children.length})
+                </div>
+                <div className="space-y-1">
+                  {item.children.map((child, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm">
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                        child.ragStatus === 'red' ? 'bg-red-500' :
+                        child.ragStatus === 'amber' ? 'bg-amber-500' : 'bg-gray-400'
+                      }`} />
+                      <span className="text-gray-700">{child.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
 

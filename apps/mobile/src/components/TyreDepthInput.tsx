@@ -94,39 +94,33 @@ export function TyreDepthInput({
   }, [redBelowMm, amberBelowMm])
 
   const handleDepthChange = (point: 'outer' | 'middle' | 'inner', newValue: number) => {
-    setMeasurement((prev) => {
-      const updated = { ...prev, [point]: newValue }
-      const ragStatus = calculateRAG(updated)
-      onChange(updated, ragStatus)
-      onRAGChange?.(ragStatus)
-      return updated
-    })
+    const updated = { ...measurement, [point]: newValue }
+    const ragStatus = calculateRAG(updated)
+    setMeasurement(updated)
+    onChange(updated, ragStatus)
+    onRAGChange?.(ragStatus)
   }
 
   const handleDamageChange = (damage: string) => {
-    setMeasurement((prev) => {
-      // Clear severity if damage is set to 'None'
-      const updated = {
-        ...prev,
-        damage,
-        damageSeverity: damage === 'None' ? undefined : prev.damageSeverity
-      }
-      const ragStatus = calculateRAG(updated)
-      onChange(updated, ragStatus)
-      onRAGChange?.(ragStatus)
-      return updated
-    })
+    // Clear severity if damage is set to 'None'
+    const updated = {
+      ...measurement,
+      damage,
+      damageSeverity: damage === 'None' ? undefined : measurement.damageSeverity
+    }
+    const ragStatus = calculateRAG(updated)
+    setMeasurement(updated)
+    onChange(updated, ragStatus)
+    onRAGChange?.(ragStatus)
   }
 
   const handleSeverityChange = (severity: DamageSeverity) => {
     if ('vibrate' in navigator) navigator.vibrate(30)
-    setMeasurement((prev) => {
-      const updated = { ...prev, damageSeverity: severity }
-      const ragStatus = calculateRAG(updated)
-      onChange(updated, ragStatus)
-      onRAGChange?.(ragStatus)
-      return updated
-    })
+    const updated = { ...measurement, damageSeverity: severity }
+    const ragStatus = calculateRAG(updated)
+    setMeasurement(updated)
+    onChange(updated, ragStatus)
+    onRAGChange?.(ragStatus)
   }
 
   // Calculate lowest for display (only from measured values)

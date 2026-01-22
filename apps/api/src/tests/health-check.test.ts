@@ -272,3 +272,6 @@ async function runTests() {
 }
 
 runTests().catch(console.error)
+
+// Export empty to make this a module (prevents global scope conflicts with other test files)
+export {}

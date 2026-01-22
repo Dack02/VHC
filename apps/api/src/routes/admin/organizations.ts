@@ -924,7 +924,7 @@ async function getOrCreateOrgAiSettings(orgId: string) {
 /**
  * Helper: Get effective AI limit for an organization
  */
-async function getEffectiveLimit(orgId: string, orgLimit: number | null): Promise<number> {
+async function getEffectiveLimit(_orgId: string, orgLimit: number | null): Promise<number> {
   if (orgLimit !== null) {
     return orgLimit
   }

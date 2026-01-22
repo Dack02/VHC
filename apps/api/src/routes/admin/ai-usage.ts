@@ -360,8 +360,8 @@ aiUsage.get('/logs', async (c) => {
 
     // Transform logs
     const transformedLogs = (logs || []).map(log => {
-      const org = log.organizations as { name: string } | null
-      const user = log.users as { first_name: string | null; last_name: string | null; email: string } | null
+      const org = (log.organizations as { name: string }[] | null)?.[0] ?? null
+      const user = (log.users as { first_name: string | null; last_name: string | null; email: string }[] | null)?.[0] ?? null
 
       return {
         id: log.id,
@@ -456,8 +456,8 @@ aiUsage.get('/export', async (c) => {
     // Build CSV
     const headers = ['date', 'organization', 'user', 'action', 'model', 'input_tokens', 'output_tokens', 'cost_usd', 'success']
     const rows = (logs || []).map(log => {
-      const org = log.organizations as { name: string } | null
-      const user = log.users as { first_name: string | null; last_name: string | null; email: string } | null
+      const org = (log.organizations as { name: string }[] | null)?.[0] ?? null
+      const user = (log.users as { first_name: string | null; last_name: string | null; email: string }[] | null)?.[0] ?? null
       const userName = user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email : 'System'
 
       return [
@@ -551,7 +551,7 @@ aiUsage.get('/alerts', async (c) => {
 
     return c.json({
       alerts: (alerts || []).map(alert => {
-        const org = alert.organizations as { name: string } | null
+        const org = (alert.organizations as { name: string }[] | null)?.[0] ?? null
         return {
           id: alert.id,
           type: alert.alert_type,

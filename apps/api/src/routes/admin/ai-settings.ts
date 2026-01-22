@@ -7,7 +7,7 @@ import { Hono } from 'hono'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
-import { encrypt, decrypt, maskString, isEncryptionConfigured } from '../../lib/encryption.js'
+import { encrypt, decrypt, isEncryptionConfigured } from '../../lib/encryption.js'
 import { logger } from '../../lib/logger.js'
 import { clearSettingsCache } from '../../services/ai-reasons.js'
 

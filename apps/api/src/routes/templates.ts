@@ -117,14 +117,14 @@ templates.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'serv
 
     // Sort sections and items by sort_order
     const sortedSections = (template.sections || [])
-      .sort((a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order)
+      .sort((a: Record<string, unknown>, b: Record<string, unknown>) => (a.sort_order as number) - (b.sort_order as number))
       .map((section: Record<string, unknown>) => ({
         id: section.id,
         name: section.name,
         description: section.description,
         sortOrder: section.sort_order,
         items: ((section.items as Record<string, unknown>[]) || [])
-          .sort((a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order)
+          .sort((a: Record<string, unknown>, b: Record<string, unknown>) => (a.sort_order as number) - (b.sort_order as number))
           .map((item: Record<string, unknown>) => ({
             id: item.id,
             name: item.name,

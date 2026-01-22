@@ -31,7 +31,7 @@ export function PreCheck() {
       setJob(data.healthCheck)
 
       // Check if this is a paused job that already has mileage - skip straight to inspection
-      const existingMileage = data.healthCheck.mileage || data.healthCheck.mileage_in
+      const existingMileage = data.healthCheck.mileage_in
       if (data.healthCheck.status === 'paused' && existingMileage) {
         // Resume directly - clock in and go to inspection
         await api(`/api/v1/health-checks/${id}/clock-in`, {
@@ -140,7 +140,10 @@ export function PreCheck() {
           </button>
           <div>
             <h1 className="text-lg font-bold">Pre-Check</h1>
-            <p className="text-sm text-blue-200">{vehicle?.registration}</p>
+            <p className="text-sm text-blue-200">
+              {job.vhc_reference && <span className="mr-2">{job.vhc_reference}</span>}
+              {vehicle?.registration}
+            </p>
           </div>
         </div>
       </header>

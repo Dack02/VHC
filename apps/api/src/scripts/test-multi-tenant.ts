@@ -206,7 +206,7 @@ async function testCredentialHierarchy() {
 
   // Test platform settings exist
   try {
-    const { data: settings, error } = await supabaseAdmin
+    const { error } = await supabaseAdmin
       .from('platform_settings')
       .select('*')
       .eq('id', 'notifications')
@@ -221,7 +221,7 @@ async function testCredentialHierarchy() {
 
   // Test organization notification settings table exists
   try {
-    const { data, error } = await supabaseAdmin
+    const { error } = await supabaseAdmin
       .from('organization_notification_settings')
       .select('id, organization_id, use_platform_sms, use_platform_email')
       .limit(5)
@@ -358,7 +358,7 @@ async function testOnboardingState() {
 
     if (error) throw error
 
-    const org1 = orgs?.find(o => o.id === ORG_1_ID)
+    // const org1 = orgs?.find(o => o.id === ORG_1_ID) // Reserved for future tests
     const org2 = orgs?.find(o => o.id === ORG_2_ID)
     const org3 = orgs?.find(o => o.id === ORG_3_ID)
 
@@ -405,7 +405,7 @@ async function testImpersonationFlow() {
   // Test activity logging for impersonation
   try {
     // Check that activity log table can record impersonation events
-    const { data: activityFields, error } = await supabaseAdmin
+    const { error } = await supabaseAdmin
       .from('super_admin_activity_log')
       .select('action')
       .in('action', ['start_impersonation', 'end_impersonation'])
@@ -555,7 +555,7 @@ async function testRLSPolicies() {
   // Test that RLS is enabled on key tables
   try {
     // Check users table has RLS
-    const { data: users, error } = await supabaseAdmin
+    const { error } = await supabaseAdmin
       .from('users')
       .select('id')
       .limit(1)

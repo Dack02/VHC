@@ -168,6 +168,10 @@ orgAdminRoutes.patch('/:id/settings', requireOrgAdmin(), async (c) => {
   // Features
   if (body.featuresEnabled !== undefined) updateData.features_enabled = body.featuresEnabled
 
+  if (!settings) {
+    return c.json({ error: 'Settings not found' }, 404)
+  }
+
   const { error: updateError } = await supabaseAdmin
     .from('organization_settings')
     .update(updateData)
@@ -218,7 +222,7 @@ orgAdminRoutes.post('/:id/settings/logo', requireOrgAdmin(), async (c) => {
     const fileName = `${orgId}/${type}-${Date.now()}.${fileExt}`
 
     // Upload to Supabase Storage
-    const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+    const { error: uploadError } = await supabaseAdmin.storage
       .from('organization-assets')
       .upload(fileName, fileBuffer, {
         contentType: file.type,

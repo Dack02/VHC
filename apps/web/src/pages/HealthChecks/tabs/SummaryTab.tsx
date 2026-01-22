@@ -16,10 +16,11 @@ import {
 interface SummaryTabProps {
   healthCheckId: string
   sentAt: string | null
+  bookedRepairs?: Array<{ code?: string; description?: string; notes?: string }>
   onUpdate: () => void
 }
 
-export function SummaryTab({ healthCheckId, sentAt, onUpdate }: SummaryTabProps) {
+export function SummaryTab({ healthCheckId, sentAt, bookedRepairs, onUpdate }: SummaryTabProps) {
   const { session, user } = useAuth()
   const [repairItems, setRepairItems] = useState<NewRepairItem[]>([])
   const [checkResults, setCheckResults] = useState<CheckResult[]>([])
@@ -210,6 +211,39 @@ export function SummaryTab({ healthCheckId, sentAt, onUpdate }: SummaryTabProps)
         <span className="text-sm text-gray-500 mr-2">Status:</span>
         <WorkflowBadges status={workflowStatus} />
       </div>
+
+      {/* Pre-Booked Work Section */}
+      {bookedRepairs && bookedRepairs.length > 0 && (
+        <div className="bg-white border border-gray-200 rounded-lg">
+          <div className="px-4 py-3 border-b border-gray-200 bg-blue-50">
+            <h3 className="font-semibold text-gray-900">PRE-BOOKED WORK</h3>
+            <p className="text-xs text-gray-500 mt-1">
+              Work booked in the DMS before vehicle arrival
+            </p>
+          </div>
+          <div className="divide-y divide-gray-200">
+            {bookedRepairs.map((repair, index) => (
+              <div key={index} className="px-4 py-3">
+                <div className="flex items-start gap-3">
+                  {repair.code && (
+                    <span className="px-2 py-0.5 text-xs font-mono bg-gray-100 text-gray-700 rounded">
+                      {repair.code}
+                    </span>
+                  )}
+                  <div className="flex-1">
+                    <div className="font-medium text-gray-900">
+                      {repair.description || 'No description'}
+                    </div>
+                    {repair.notes && (
+                      <div className="text-sm text-gray-500 mt-1">{repair.notes}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Repair Groups & Items Section */}
       <div className="bg-white border border-gray-200 rounded-lg">

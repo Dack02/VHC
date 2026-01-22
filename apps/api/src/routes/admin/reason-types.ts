@@ -120,7 +120,7 @@ adminReasonTypes.delete('/:id', async (c) => {
       superAdmin.id,
       'delete_reason_type',
       `Deleted reason type: ${existing.name} (${id})`,
-      null,
+      undefined,
       { reasonTypeId: id, wasSystem: existing.is_system }
     )
 

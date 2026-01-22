@@ -13,6 +13,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useAuth } from '../../../contexts/AuthContext'
 import { api, NewRepairItem, RepairLabour, LabourCode, RepairItemChild } from '../../../lib/api'
+import { Tooltip } from '../../../components/ui/Tooltip'
 
 interface LabourTabProps {
   healthCheckId: string
@@ -48,7 +49,7 @@ interface RowEditState {
 }
 
 export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
-  const { session, user } = useAuth()
+  const { session, user, refreshSession } = useAuth()
   const [repairItems, setRepairItems] = useState<NewRepairItem[]>([])
   const [labourCodes, setLabourCodes] = useState<LabourCode[]>([])
   const [loading, setLoading] = useState(true)
@@ -310,10 +311,12 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
 
   const refetchData = useCallback(async () => {
     if (!session?.accessToken) return
+    console.log('Refetching repair items...')
     const itemsRes = await api<{ repairItems: NewRepairItem[] }>(
       `/api/v1/health-checks/${healthCheckId}/repair-items`,
       { token: session.accessToken }
     )
+    console.log('Refetched items:', itemsRes.repairItems?.map(i => ({ id: i.id, name: i.name, noLabourRequired: i.noLabourRequired })))
     setRepairItems(itemsRes.repairItems || [])
     onUpdate()
   }, [session?.accessToken, healthCheckId, onUpdate])
@@ -419,34 +422,62 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
   }, [session?.accessToken, updateEditState, refetchData])
 
   const handleMarkNoLabourRequired = async (repairItemId: string) => {
-    if (!session?.accessToken) return
+    console.log('handleMarkNoLabourRequired called with:', repairItemId)
+    console.log('session exists:', !!session, 'accessToken exists:', !!session?.accessToken)
+
+    if (!session?.accessToken) {
+      console.error('No session token for marking no labour required')
+      return
+    }
+
+    console.log('Setting action loading for:', repairItemId)
     setActionLoading(repairItemId)
 
     try {
+      console.log('Making API call...')
       await api(`/api/v1/repair-items/${repairItemId}/no-labour-required`, {
         method: 'POST',
         token: session.accessToken
       })
+      console.log('API call succeeded')
       clearEditState(repairItemId)
       await refetchData()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to mark as no labour required')
+      console.error('Mark no labour required error:', err)
+      // If token expired, refresh session and let user retry
+      if (err instanceof Error && (err.message.includes('expired') || err.message.includes('Invalid'))) {
+        try {
+          await refreshSession()
+          setError('Session refreshed. Please try again.')
+        } catch (refreshErr) {
+          setError('Session expired. Please refresh the page.')
+        }
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to mark as no labour required')
+      }
     } finally {
       setActionLoading(null)
     }
   }
 
   const handleRemoveNoLabourRequired = async (repairItemId: string) => {
-    if (!session?.accessToken) return
+    console.log('handleRemoveNoLabourRequired called with:', repairItemId)
+    if (!session?.accessToken) {
+      console.error('No session token')
+      return
+    }
     setActionLoading(repairItemId)
 
     try {
+      console.log('Making DELETE API call...')
       await api(`/api/v1/repair-items/${repairItemId}/no-labour-required`, {
         method: 'DELETE',
         token: session.accessToken
       })
+      console.log('DELETE succeeded')
       await refetchData()
     } catch (err) {
+      console.error('Remove no labour required error:', err)
       setError(err instanceof Error ? err.message : 'Failed to remove no labour required')
     } finally {
       setActionLoading(null)
@@ -684,8 +715,8 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
                     editState={getEditState(repairItem.id, item.labourEntries[0])}
                     isLoading={actionLoading === repairItem.id}
                     onUpdateEditState={(updates) => updateEditState(repairItem.id, updates)}
-                    onSave={(labourCodeId, hours, existingLabourId) =>
-                      saveRowLabour(repairItem.id, labourCodeId, hours, existingLabourId)
+                    onSave={(labourCodeId, hours, existingLabourId, discountPercent) =>
+                      saveRowLabour(repairItem.id, labourCodeId, hours, existingLabourId, discountPercent)
                     }
                     onMarkNA={() => handleMarkNoLabourRequired(repairItem.id)}
                     onRemoveNA={() => handleRemoveNoLabourRequired(repairItem.id)}
@@ -709,8 +740,8 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
                     editState={getEditState(repairItem.id, item.labourEntries[0])}
                     isLoading={actionLoading === repairItem.id}
                     onUpdateEditState={(updates) => updateEditState(repairItem.id, updates)}
-                    onSave={(labourCodeId, hours, existingLabourId) =>
-                      saveRowLabour(repairItem.id, labourCodeId, hours, existingLabourId)
+                    onSave={(labourCodeId, hours, existingLabourId, discountPercent) =>
+                      saveRowLabour(repairItem.id, labourCodeId, hours, existingLabourId, discountPercent)
                     }
                     onMarkNA={() => handleMarkNoLabourRequired(repairItem.id)}
                     onRemoveNA={() => handleRemoveNoLabourRequired(repairItem.id)}
@@ -733,8 +764,8 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
                   editState={getEditState(repairItem.id, item.labourEntries[0])}
                   isLoading={actionLoading === repairItem.id}
                   onUpdateEditState={(updates) => updateEditState(repairItem.id, updates)}
-                  onSave={(labourCodeId, hours, existingLabourId) =>
-                    saveRowLabour(repairItem.id, labourCodeId, hours, existingLabourId)
+                  onSave={(labourCodeId, hours, existingLabourId, discountPercent) =>
+                    saveRowLabour(repairItem.id, labourCodeId, hours, existingLabourId, discountPercent)
                   }
                   onMarkNA={() => handleMarkNoLabourRequired(repairItem.id)}
                   onRemoveNA={() => handleRemoveNoLabourRequired(repairItem.id)}
@@ -1130,22 +1161,41 @@ function GroupLabourRow({
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
+              {/* Fix 4: N/A button shown when no labour saved yet */}
+              {!hasLabour && (
+                <Tooltip content="No labour required">
+                  <button
+                    onClick={onMarkNA}
+                    disabled={isLoading}
+                    className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded disabled:opacity-50"
+                  >
+                    {isLoading ? (
+                      <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full" />
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                      </svg>
+                    )}
+                  </button>
+                </Tooltip>
+              )}
             </>
           ) : (
-            <button
-              onClick={onMarkNA}
-              disabled={isLoading}
-              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded disabled:opacity-50"
-              title="No labour required"
-            >
-              {isLoading ? (
-                <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full" />
-              ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                </svg>
-              )}
-            </button>
+            <Tooltip content="No labour required">
+              <button
+                onClick={onMarkNA}
+                disabled={isLoading}
+                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded disabled:opacity-50"
+              >
+                {isLoading ? (
+                  <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full" />
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                  </svg>
+                )}
+              </button>
+            </Tooltip>
           )}
         </div>
         {editState.error && (
@@ -1483,22 +1533,41 @@ function ChildLabourRow({
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
+              {/* Fix 4: N/A button shown when no labour saved yet */}
+              {!hasLabour && (
+                <Tooltip content="No labour required">
+                  <button
+                    onClick={onMarkNA}
+                    disabled={isLoading}
+                    className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded disabled:opacity-50"
+                  >
+                    {isLoading ? (
+                      <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full" />
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                      </svg>
+                    )}
+                  </button>
+                </Tooltip>
+              )}
             </>
           ) : (
-            <button
-              onClick={onMarkNA}
-              disabled={isLoading}
-              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded disabled:opacity-50"
-              title="No labour required"
-            >
-              {isLoading ? (
-                <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full" />
-              ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                </svg>
-              )}
-            </button>
+            <Tooltip content="No labour required">
+              <button
+                onClick={onMarkNA}
+                disabled={isLoading}
+                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded disabled:opacity-50"
+              >
+                {isLoading ? (
+                  <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full" />
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                  </svg>
+                )}
+              </button>
+            </Tooltip>
           )}
         </div>
         {editState.error && (
@@ -1700,14 +1769,17 @@ function InlineLabourRow({
         <td className="px-3 py-3 text-sm text-gray-900">
           {item.repairItem.name}
         </td>
-        <td className="px-3 py-3 text-sm text-gray-400 italic" colSpan={4}>
+        <td className="px-3 py-3 text-sm text-gray-400 italic" colSpan={5}>
           No labour required
         </td>
         <td className="px-3 py-3 text-center">
           <button
-            onClick={onRemoveNA}
+            onClick={() => {
+              console.log('Undo clicked')
+              onRemoveNA()
+            }}
             disabled={isLoading}
-            className="text-sm text-gray-500 hover:text-gray-700 disabled:opacity-50"
+            className="px-2 py-1 text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded border border-gray-300 disabled:opacity-50"
           >
             {isLoading ? '...' : 'Undo'}
           </button>
@@ -1855,23 +1927,54 @@ function InlineLabourRow({
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
+              {/* Fix 4: N/A button shown when no labour saved yet */}
+              {!hasLabour && (
+                <Tooltip content="No labour required">
+                  <button
+                    onClick={() => {
+                      console.log('N/A button clicked (isDirty branch)')
+                      console.log('onMarkNA type:', typeof onMarkNA)
+                      try {
+                        onMarkNA()
+                        console.log('onMarkNA called successfully')
+                      } catch (err) {
+                        console.error('Error calling onMarkNA:', err)
+                      }
+                    }}
+                    disabled={isLoading}
+                    className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded disabled:opacity-50"
+                  >
+                    {isLoading ? (
+                      <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full" />
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                      </svg>
+                    )}
+                  </button>
+                </Tooltip>
+              )}
             </>
           ) : (
-            /* Fix 4: N/A button always visible when no data */
-            <button
-              onClick={onMarkNA}
-              disabled={isLoading}
-              className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded disabled:opacity-50"
-              title="No labour required"
-            >
-              {isLoading ? (
-                <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full" />
-              ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                </svg>
-              )}
-            </button>
+            /* N/A button shown when no activity */
+            <Tooltip content="No labour required">
+              <button
+                onClick={() => {
+                  console.log('N/A button clicked (else branch)')
+                  onMarkNA()
+                }}
+                disabled={isLoading}
+                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded disabled:opacity-50"
+              >
+                {isLoading ? (
+                  <div className="animate-spin h-4 w-4 border-2 border-gray-400 border-t-transparent rounded-full" />
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                  </svg>
+                )}
+              </button>
+            </Tooltip>
           )}
         </div>
         {/* Error tooltip */}

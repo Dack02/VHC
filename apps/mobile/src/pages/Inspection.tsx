@@ -527,7 +527,14 @@ export function Inspection() {
       <header className="bg-primary text-white safe-area-inset-top">
         <div className="px-4 py-3 flex items-center justify-between">
           <div>
-            <p className="text-lg font-bold">{job.vehicle?.registration}</p>
+            <div className="flex items-center gap-2">
+              {job.vhc_reference && (
+                <span className="text-xs font-medium text-blue-200 bg-blue-800 px-2 py-0.5 rounded">
+                  {job.vhc_reference}
+                </span>
+              )}
+              <p className="text-lg font-bold">{job.vehicle?.registration}</p>
+            </div>
             <p className="text-sm text-blue-200">
               {completedItems}/{totalItems} items completed
             </p>

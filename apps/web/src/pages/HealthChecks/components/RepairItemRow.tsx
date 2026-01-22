@@ -5,8 +5,11 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../../../contexts/AuthContext'
+import { useToast } from '../../../contexts/ToastContext'
 import { api, RepairItem, CheckResult } from '../../../lib/api'
 import { ItemReasonsDisplay, GreenReasonsDisplay } from './ItemReasonsDisplay'
+import { OutcomeButton, calculateOutcomeStatus, OutcomeStatus } from './OutcomeButton'
+import { DeferModal, DeclineModal, DeleteModal } from './OutcomeModals'
 
 interface RepairItemRowProps {
   healthCheckId: string
@@ -16,6 +19,7 @@ interface RepairItemRowProps {
   showWorkComplete?: boolean // Show work complete checkbox (for authorised items)
   onUpdate: () => void
   onPhotoClick?: (resultId: string) => void
+  onUngroup?: () => void     // Callback to ungroup a grouped item
   preloadedReasons?: Array<{
     id: string
     itemReasonId: string
@@ -23,25 +27,34 @@ interface RepairItemRowProps {
     technicalDescription?: string
     customerDescription?: string
   }>
+  specialDisplay?: React.ReactNode  // Tyre/brake display shown when expanded
 }
 
 export function RepairItemRow({
   healthCheckId,
   item: initialItem,
   result,
-  showFollowUp = false,
+  showFollowUp: _showFollowUp = false,
   showWorkComplete = false,
-  onUpdate: _onUpdate,
+  onUpdate,
   onPhotoClick,
-  preloadedReasons
+  onUngroup,
+  preloadedReasons,
+  specialDisplay
 }: RepairItemRowProps) {
-  void _onUpdate // Reserved for full refresh scenarios (e.g., error recovery)
   const { session } = useAuth()
+  const toast = useToast()
   const [expanded, setExpanded] = useState(false)
   const [editingField, setEditingField] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [savingField, setSavingField] = useState<string | null>(null) // Track which field is saving
   const [error, setError] = useState<string | null>(null)
+
+  // Outcome modal states
+  const [showDeferModal, setShowDeferModal] = useState(false)
+  const [showDeclineModal, setShowDeclineModal] = useState(false)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [outcomeLoading, setOutcomeLoading] = useState(false)
 
   // Local copy of item for optimistic updates
   const [item, setItem] = useState(initialItem)
@@ -52,18 +65,13 @@ export function RepairItemRow({
     setPartsPrice(initialItem.parts_cost?.toString() || '0')
     setLaborPrice(initialItem.labor_cost?.toString() || '0')
     setTotalPrice(initialItem.total_price?.toString() || '0')
-    setFollowUpDate(initialItem.follow_up_date || '')
   }, [initialItem])
 
   // Editable values
   const [partsPrice, setPartsPrice] = useState(initialItem.parts_cost?.toString() || '0')
   const [laborPrice, setLaborPrice] = useState(initialItem.labor_cost?.toString() || '0')
   const [totalPrice, setTotalPrice] = useState(initialItem.total_price?.toString() || '0')
-  const [followUpDate, setFollowUpDate] = useState(initialItem.follow_up_date || '')
-  const [showDatePicker, setShowDatePicker] = useState(false)
-
   const inputRef = useRef<HTMLInputElement>(null)
-  const datePickerRef = useRef<HTMLDivElement>(null)
 
   // Focus input when editing starts
   useEffect(() => {
@@ -72,19 +80,6 @@ export function RepairItemRow({
       inputRef.current.select()
     }
   }, [editingField])
-
-  // Close date picker when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (datePickerRef.current && !datePickerRef.current.contains(event.target as Node)) {
-        setShowDatePicker(false)
-      }
-    }
-    if (showDatePicker) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [showDatePicker])
 
   const mediaCount = result?.media?.length || 0
 
@@ -195,18 +190,19 @@ export function RepairItemRow({
     try {
       if (item.work_completed_at) {
         // Uncomplete
-        await api(`/api/v1/health-checks/${healthCheckId}/repair-items/${item.id}/complete`, {
+        await api(`/api/v1/health-checks/${healthCheckId}/repair-items/${item.id}/work-done`, {
           method: 'DELETE',
           token: session.accessToken
         })
       } else {
         // Complete
-        await api(`/api/v1/health-checks/${healthCheckId}/repair-items/${item.id}/complete`, {
+        await api(`/api/v1/health-checks/${healthCheckId}/repair-items/${item.id}/work-done`, {
           method: 'POST',
           token: session.accessToken
         })
       }
-      // Don't call onUpdate() - use optimistic update instead
+      // Refresh parent data so Close Health Check modal shows correct counts
+      onUpdate()
     } catch (err) {
       // Revert on error
       setItem(initialItem)
@@ -217,29 +213,171 @@ export function RepairItemRow({
     }
   }
 
-  const handleFollowUpChange = async (date: string) => {
-    setFollowUpDate(date)
-    setShowDatePicker(false)
-    setSavingField('follow_up')
-    await saveField('follow_up_date', date || null, { follow_up_date: date || null })
-  }
-
-  // Quick date options
-  const getQuickDateOptions = () => {
-    const today = new Date()
-    const options = [
-      { label: '1 Month', date: new Date(today.getFullYear(), today.getMonth() + 1, today.getDate()) },
-      { label: '3 Months', date: new Date(today.getFullYear(), today.getMonth() + 3, today.getDate()) },
-      { label: '6 Months', date: new Date(today.getFullYear(), today.getMonth() + 6, today.getDate()) },
-      { label: '1 Year', date: new Date(today.getFullYear() + 1, today.getMonth(), today.getDate()) }
-    ]
-    return options.map(opt => ({
-      ...opt,
-      dateStr: opt.date.toISOString().split('T')[0]
-    }))
-  }
-
   const formatCurrency = (amount: number) => `£${amount.toFixed(2)}`
+
+  // Calculate outcome status
+  const outcomeStatus: OutcomeStatus = calculateOutcomeStatus({
+    deletedAt: item.deleted_at,
+    outcomeStatus: item.outcome_status,
+    isApproved: item.is_approved, // Legacy field for backward compatibility
+    labourStatus: item.labour_status,
+    partsStatus: item.parts_status,
+    noLabourRequired: item.no_labour_required,
+    noPartsRequired: item.no_parts_required
+  })
+
+  // Get outcome set by name
+  const getOutcomeSetByName = () => {
+    if (item.outcome_source === 'online') return 'Customer online'
+    if (item.outcome_set_by_user) {
+      return `${item.outcome_set_by_user.first_name} ${item.outcome_set_by_user.last_name}`
+    }
+    return null
+  }
+
+  // Outcome action handlers
+  const handleAuthorise = async () => {
+    if (!session?.accessToken) return
+    setOutcomeLoading(true)
+    try {
+      await api(`/api/v1/repair-items/${item.id}/authorise`, {
+        method: 'POST',
+        token: session.accessToken,
+        body: {}
+      })
+      // Optimistic update
+      setItem(prev => ({
+        ...prev,
+        outcome_status: 'authorised',
+        outcome_set_at: new Date().toISOString(),
+        outcome_source: 'manual'
+      }))
+      toast.success('Item authorised')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to authorise')
+    } finally {
+      setOutcomeLoading(false)
+    }
+  }
+
+  const handleDefer = async (deferredUntil: string, notes: string) => {
+    if (!session?.accessToken) return
+    setOutcomeLoading(true)
+    try {
+      await api(`/api/v1/repair-items/${item.id}/defer`, {
+        method: 'POST',
+        token: session.accessToken,
+        body: { deferred_until: deferredUntil, notes }
+      })
+      // Optimistic update
+      setItem(prev => ({
+        ...prev,
+        outcome_status: 'deferred',
+        outcome_set_at: new Date().toISOString(),
+        outcome_source: 'manual',
+        deferred_until: deferredUntil,
+        deferred_notes: notes
+      }))
+      toast.success('Item deferred')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to defer')
+      throw err
+    } finally {
+      setOutcomeLoading(false)
+    }
+  }
+
+  const handleDecline = async (declinedReasonId: string, notes: string) => {
+    if (!session?.accessToken) return
+    setOutcomeLoading(true)
+    try {
+      await api(`/api/v1/repair-items/${item.id}/decline`, {
+        method: 'POST',
+        token: session.accessToken,
+        body: { declined_reason_id: declinedReasonId, notes }
+      })
+      // Optimistic update
+      setItem(prev => ({
+        ...prev,
+        outcome_status: 'declined',
+        outcome_set_at: new Date().toISOString(),
+        outcome_source: 'manual',
+        declined_reason_id: declinedReasonId,
+        declined_notes: notes
+      }))
+      toast.success('Item declined')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to decline')
+      throw err
+    } finally {
+      setOutcomeLoading(false)
+    }
+  }
+
+  const handleDelete = async (deletedReasonId: string, notes: string) => {
+    if (!session?.accessToken) return
+    setOutcomeLoading(true)
+    try {
+      await api(`/api/v1/repair-items/${item.id}/delete`, {
+        method: 'POST',
+        token: session.accessToken,
+        body: { deleted_reason_id: deletedReasonId, notes }
+      })
+      // Optimistic update
+      setItem(prev => ({
+        ...prev,
+        outcome_status: 'deleted',
+        deleted_at: new Date().toISOString(),
+        deleted_reason_id: deletedReasonId,
+        deleted_notes: notes
+      }))
+      toast.success('Item deleted')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete')
+      throw err
+    } finally {
+      setOutcomeLoading(false)
+    }
+  }
+
+  const handleReset = async () => {
+    if (!session?.accessToken) return
+    if (!confirm('Are you sure you want to reset this item? This will clear the outcome status.')) return
+    setOutcomeLoading(true)
+    try {
+      await api(`/api/v1/repair-items/${item.id}/reset`, {
+        method: 'POST',
+        token: session.accessToken
+      })
+      // Optimistic update - recalculate status based on L&P
+      const labourComplete = item.labour_status === 'complete' || item.no_labour_required
+      const partsComplete = item.parts_status === 'complete' || item.no_parts_required
+      const newStatus = labourComplete && partsComplete ? 'ready' : 'incomplete'
+      setItem(prev => ({
+        ...prev,
+        outcome_status: newStatus as OutcomeStatus,
+        outcome_set_at: new Date().toISOString(),
+        outcome_source: 'manual',
+        deferred_until: null,
+        deferred_notes: null,
+        declined_reason_id: null,
+        declined_notes: null,
+        deleted_at: null,
+        deleted_reason_id: null,
+        deleted_notes: null
+      }))
+      toast.success('Item reset')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to reset')
+    } finally {
+      setOutcomeLoading(false)
+    }
+  }
+
+  // Hide deleted items
+  if (item.deleted_at || outcomeStatus === 'deleted') {
+    return null
+  }
 
   // Loading spinner component
   const LoadingSpinner = () => (
@@ -398,59 +536,6 @@ export function RepairItemRow({
             <div className="text-xs text-gray-400">Total</div>
           </div>
 
-          {/* Follow-up date (for amber items) */}
-          {showFollowUp && (
-            <div className="w-36 relative" ref={datePickerRef}>
-              {savingField === 'follow_up' ? (
-                <div className="flex justify-center py-1"><LoadingSpinner /></div>
-              ) : (
-                <>
-                  <button
-                    onClick={() => setShowDatePicker(!showDatePicker)}
-                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded hover:border-primary focus:outline-none focus:ring-1 focus:ring-primary text-left"
-                  >
-                    {followUpDate ? new Date(followUpDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'Set date'}
-                  </button>
-
-                  {/* Date picker dropdown */}
-                  {showDatePicker && (
-                    <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10 p-2 w-48">
-                      {/* Quick options */}
-                      <div className="space-y-1 mb-2">
-                        {getQuickDateOptions().map(opt => (
-                          <button
-                            key={opt.label}
-                            onClick={() => handleFollowUpChange(opt.dateStr)}
-                            className="w-full text-left px-2 py-1 text-sm hover:bg-gray-100 rounded"
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="border-t border-gray-200 pt-2">
-                        <input
-                          type="date"
-                          value={followUpDate}
-                          onChange={(e) => handleFollowUpChange(e.target.value)}
-                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
-                        />
-                      </div>
-                      {followUpDate && (
-                        <button
-                          onClick={() => handleFollowUpChange('')}
-                          className="w-full mt-2 px-2 py-1 text-sm text-red-600 hover:bg-red-50 rounded"
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-              <div className="text-xs text-gray-400 text-center">Follow-up</div>
-            </div>
-          )}
-
           {/* Work complete checkbox (for authorised items) */}
           {showWorkComplete && (
             <label className="flex flex-col items-center gap-0.5 cursor-pointer">
@@ -467,6 +552,24 @@ export function RepairItemRow({
               )}
               <span className="text-xs text-gray-400">Done</span>
             </label>
+          )}
+
+          {/* Outcome Button - only for parent items (not children within groups) */}
+          {!item.parent_repair_item_id && (
+            <OutcomeButton
+              status={outcomeStatus}
+              outcomeSetBy={getOutcomeSetByName()}
+              outcomeSetAt={item.outcome_set_at}
+              outcomeSource={item.outcome_source}
+              deferredUntil={item.deferred_until}
+              declinedReason={item.declined_reason?.reason}
+              onAuthorise={handleAuthorise}
+              onDefer={() => setShowDeferModal(true)}
+              onDecline={() => setShowDeclineModal(true)}
+              onDelete={() => setShowDeleteModal(true)}
+              onReset={handleReset}
+              loading={outcomeLoading}
+            />
           )}
         </div>
 
@@ -618,57 +721,6 @@ export function RepairItemRow({
               </div>
             </div>
 
-            {/* Follow-up date (for amber items) */}
-            {showFollowUp && (
-              <div className="relative" ref={datePickerRef}>
-                {savingField === 'follow_up' ? (
-                  <div className="flex justify-center py-1"><LoadingSpinner /></div>
-                ) : (
-                  <>
-                    <button
-                      onClick={() => setShowDatePicker(!showDatePicker)}
-                      className="px-2 py-1 text-sm border border-gray-300 rounded hover:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                    >
-                      {followUpDate ? new Date(followUpDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'Set date'}
-                    </button>
-
-                    {showDatePicker && (
-                      <div className="absolute top-full right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10 p-2 w-48">
-                        <div className="space-y-1 mb-2">
-                          {getQuickDateOptions().map(opt => (
-                            <button
-                              key={opt.label}
-                              onClick={() => handleFollowUpChange(opt.dateStr)}
-                              className="w-full text-left px-2 py-1 text-sm hover:bg-gray-100 rounded"
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
-                        </div>
-                        <div className="border-t border-gray-200 pt-2">
-                          <input
-                            type="date"
-                            value={followUpDate}
-                            onChange={(e) => handleFollowUpChange(e.target.value)}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
-                          />
-                        </div>
-                        {followUpDate && (
-                          <button
-                            onClick={() => handleFollowUpChange('')}
-                            className="w-full mt-2 px-2 py-1 text-sm text-red-600 hover:bg-red-50 rounded"
-                          >
-                            Clear
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
-                <div className="text-xs text-gray-400 text-center">Follow-up</div>
-              </div>
-            )}
-
             {/* Work complete checkbox (for authorised items) */}
             {showWorkComplete && (
               <label className="flex flex-col items-center gap-0.5 cursor-pointer">
@@ -685,6 +737,24 @@ export function RepairItemRow({
                 )}
                 <span className="text-xs text-gray-400">Done</span>
               </label>
+            )}
+
+            {/* Outcome Button - only for parent items (not children within groups) */}
+            {!item.parent_repair_item_id && (
+              <OutcomeButton
+                status={outcomeStatus}
+                outcomeSetBy={getOutcomeSetByName()}
+                outcomeSetAt={item.outcome_set_at}
+                outcomeSource={item.outcome_source}
+                deferredUntil={item.deferred_until}
+                declinedReason={item.declined_reason?.reason}
+                onAuthorise={handleAuthorise}
+                onDefer={() => setShowDeferModal(true)}
+                onDecline={() => setShowDeclineModal(true)}
+                onDelete={() => setShowDeleteModal(true)}
+                onReset={handleReset}
+                loading={outcomeLoading}
+              />
             )}
           </div>
         </div>
@@ -712,6 +782,14 @@ export function RepairItemRow({
                   </div>
                 ))}
               </div>
+              {onUngroup && (
+                <button
+                  onClick={onUngroup}
+                  className="mt-2 px-3 py-1.5 text-sm text-amber-600 border border-amber-300 rounded hover:bg-amber-50"
+                >
+                  Ungroup Items
+                </button>
+              )}
             </div>
           )}
 
@@ -746,6 +824,13 @@ export function RepairItemRow({
             </div>
           )}
 
+          {/* Special display (tyre/brake measurements) */}
+          {specialDisplay && (
+            <div className="mb-3">
+              {specialDisplay}
+            </div>
+          )}
+
           {/* Work completion info */}
           {item.work_completed_at && (
             <div className="text-xs text-green-600">
@@ -768,12 +853,33 @@ export function RepairItemRow({
           )}
         </div>
       )}
+
+      {/* Outcome Modals */}
+      <DeferModal
+        isOpen={showDeferModal}
+        itemName={item.title}
+        onClose={() => setShowDeferModal(false)}
+        onConfirm={handleDefer}
+      />
+      <DeclineModal
+        isOpen={showDeclineModal}
+        itemName={item.title}
+        onClose={() => setShowDeclineModal(false)}
+        onConfirm={handleDecline}
+      />
+      <DeleteModal
+        isOpen={showDeleteModal}
+        itemName={item.title}
+        onClose={() => setShowDeleteModal(false)}
+        onConfirm={handleDelete}
+      />
     </div>
   )
 }
 
 /**
  * GreenItemRow - Simplified row for passed items
+ * Supports expandable tyre/brake displays
  */
 interface GreenItemRowProps {
   title: string
@@ -787,22 +893,50 @@ interface GreenItemRowProps {
     technicalDescription?: string
     customerDescription?: string
   }>
+  specialDisplay?: React.ReactNode  // Tyre/brake display shown when expanded
 }
 
-export function GreenItemRow({ title, notes, value: _value, checkResultId, preloadedReasons }: GreenItemRowProps) {
+export function GreenItemRow({ title, notes, value: _value, checkResultId, preloadedReasons, specialDisplay }: GreenItemRowProps) {
   // value reserved for displaying measurement data in future
   void _value
+
+  const [expanded, setExpanded] = useState(false)
+  const hasExpandableContent = !!specialDisplay
 
   return (
     <div className="px-4 py-2 border-b border-gray-100 last:border-b-0">
       <div className="flex items-center gap-3">
-        {/* Check icon */}
-        <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-        </svg>
+        {/* Expand toggle (only for items with special display) */}
+        {hasExpandableContent ? (
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="text-gray-400 hover:text-gray-600 flex-shrink-0"
+          >
+            <svg
+              className={`w-4 h-4 transition-transform ${expanded ? 'transform rotate-90' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        ) : (
+          /* Check icon for non-expandable items */
+          <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+          </svg>
+        )}
 
         {/* Item name */}
         <span className="text-sm text-gray-700 flex-1">{title}</span>
+
+        {/* Green check for expandable items (shown inline) */}
+        {hasExpandableContent && (
+          <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+          </svg>
+        )}
 
         {/* Notes indicator */}
         {notes && (
@@ -816,6 +950,13 @@ export function GreenItemRow({ title, notes, value: _value, checkResultId, prelo
       {checkResultId && (
         <div className="ml-7">
           <GreenReasonsDisplay checkResultId={checkResultId} compact={false} preloadedReasons={preloadedReasons} />
+        </div>
+      )}
+
+      {/* Expanded section with special display */}
+      {expanded && specialDisplay && (
+        <div className="mt-2 ml-7 bg-gray-50 rounded-lg p-3 border border-gray-200">
+          {specialDisplay}
         </div>
       )}
     </div>

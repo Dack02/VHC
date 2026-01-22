@@ -22,7 +22,18 @@ import { CSS } from '@dnd-kit/utilities'
 import { useAuth } from '../../contexts/AuthContext'
 import { useSocket, WS_EVENTS } from '../../contexts/SocketContext'
 import { api, HealthCheck, User } from '../../lib/api'
-import { WorkflowBadges, WorkflowLegend, WorkflowStatus } from '../../components/WorkflowBadges'
+import { WorkflowBadges, WorkflowLegend, WorkflowStatus, CompletionInfo } from '../../components/WorkflowBadges'
+import { Tooltip } from '../../components/ui/Tooltip'
+
+// Currency formatter helper
+const formatCurrency = (amount: number): string => {
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: 'GBP',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(amount)
+}
 
 // View type
 type ViewMode = 'kanban' | 'list'
@@ -93,8 +104,21 @@ interface HealthCheckCard {
   isOverdue: boolean
   isExpiringSoon: boolean
   validTransitions: string[]
+  // Technician inspection timestamps
+  tech_started_at?: string | null
+  tech_completed_at?: string | null
   // Workflow status fields
   workflowStatus?: WorkflowStatus
+  technicianCompletion?: CompletionInfo
+  // Outcome aggregation fields - identified vs authorised
+  identified_total?: number
+  authorised_total?: number
+  red_identified?: number
+  red_authorised?: number
+  amber_identified?: number
+  amber_authorised?: number
+  green_identified?: number
+  green_authorised?: number
 }
 
 interface Column {
@@ -150,48 +174,40 @@ function CardContent({ card }: { card: HealthCheckCard }) {
   return (
     <Link
       to={`/health-checks/${card.id}`}
-      className={`block bg-white border shadow-sm p-3 mb-2 hover:shadow-md transition-shadow ${
-        card.isOverdue ? 'border-rag-red border-l-4' :
-        card.isExpiringSoon ? 'border-rag-amber border-l-4' :
-        'border-gray-200'
-      }`}
+      className="block bg-white border border-gray-200 rounded-lg shadow-sm p-3 mb-2 hover:shadow transition-shadow"
       onClick={(e) => e.stopPropagation()}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <span className="font-bold text-gray-900">{card.vehicle?.registration}</span>
-        <div className="flex items-center gap-1">
+      {/* Header: Registration + Status Badges */}
+      <div className="flex items-start justify-between mb-2">
+        <span className="font-bold text-lg text-gray-900">
+          {card.vehicle?.registration}
+        </span>
+        <div className="flex gap-1 flex-wrap justify-end">
           {card.customer_waiting && (
-            <span className="px-1.5 py-0.5 text-xs font-bold text-white bg-red-600 animate-pulse">
-              WAITING
+            <span className="px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-700 rounded">
+              Waiting
             </span>
           )}
           {card.loan_car_required && (
-            <span className="px-1.5 py-0.5 text-xs font-medium text-blue-700 bg-blue-100">
-              LOAN
+            <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700 rounded">
+              Loan
             </span>
           )}
-          {(card.isOverdue || card.isExpiringSoon) && (
-            <span className={`px-1.5 py-0.5 text-xs font-medium ${
-              card.isOverdue ? 'bg-rag-red text-white' : 'bg-rag-amber text-white'
-            }`}>
-              {card.isOverdue ? 'OVERDUE' : 'EXPIRING'}
+          {card.isOverdue && (
+            <span className="px-2 py-0.5 text-xs font-medium bg-red-500 text-white rounded">
+              Overdue
+            </span>
+          )}
+          {card.isExpiringSoon && !card.isOverdue && (
+            <span className="px-2 py-0.5 text-xs font-medium bg-amber-500 text-white rounded">
+              Expiring
             </span>
           )}
         </div>
       </div>
 
-      {/* Pre-booked work indicator */}
-      {card.booked_repairs && card.booked_repairs.length > 0 && (
-        <div className="mb-2">
-          <span className="text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5">
-            {card.booked_repairs.length} pre-booked
-          </span>
-        </div>
-      )}
-
       {/* Customer */}
-      <div className="text-sm text-gray-600 mb-2">
+      <div className="text-sm font-medium text-gray-800 mb-1">
         {card.customer?.first_name} {card.customer?.last_name}
       </div>
 
@@ -200,48 +216,72 @@ function CardContent({ card }: { card: HealthCheckCard }) {
         {card.vehicle?.make} {card.vehicle?.model}
       </div>
 
-      {/* RAG Summary */}
-      <div className="flex items-center gap-2 mb-2">
-        {card.red_count > 0 && (
-          <span className="flex items-center gap-1 text-xs">
-            <span className="w-2 h-2 bg-rag-red rounded-full" />
-            <span className="text-rag-red font-medium">{card.red_count}</span>
-          </span>
+      {/* Technician & Advisor */}
+      <div className="flex items-center gap-3 text-xs text-gray-500 mb-2">
+        {card.technician && (
+          <span>Tech: {card.technician.first_name} {card.technician.last_name}</span>
         )}
-        {card.amber_count > 0 && (
-          <span className="flex items-center gap-1 text-xs">
-            <span className="w-2 h-2 bg-rag-amber rounded-full" />
-            <span className="text-rag-amber font-medium">{card.amber_count}</span>
-          </span>
-        )}
-        {card.green_count > 0 && (
-          <span className="flex items-center gap-1 text-xs">
-            <span className="w-2 h-2 bg-rag-green rounded-full" />
-            <span className="text-rag-green font-medium">{card.green_count}</span>
-          </span>
+        {card.advisor && (
+          <span>SA: {card.advisor.first_name} {card.advisor.last_name}</span>
         )}
       </div>
 
-      {/* Footer */}
-      <div className="flex items-center justify-between text-xs text-gray-500">
-        <span>{card.technician ? `${card.technician.first_name} ${card.technician.last_name?.charAt(0)}.` : 'Unassigned'}</span>
-        {card.total_amount > 0 && (
-          <span className="font-medium text-gray-900">£{card.total_amount.toFixed(0)}</span>
-        )}
-      </div>
-
-      {/* Workflow Badges (compact) */}
-      {card.workflowStatus && (
-        <div className="mt-2">
-          <WorkflowBadges status={card.workflowStatus} compact />
-        </div>
-      )}
-
-      {/* Status Badge */}
-      <div className="mt-2">
-        <span className="inline-block px-2 py-0.5 text-xs bg-gray-100 text-gray-600 capitalize">
-          {card.status.replace('_', ' ')}
+      {/* RAG Summary with identified:authorised */}
+      <div className="flex items-center gap-3 mb-2">
+        <span className="flex items-center gap-1 text-xs">
+          <span className="w-2.5 h-2.5 bg-red-500 rounded-full" />
+          <span className="text-gray-700 font-medium">
+            {card.red_identified ?? card.red_count ?? 0}:{card.red_authorised ?? 0}
+          </span>
         </span>
+        <span className="flex items-center gap-1 text-xs">
+          <span className="w-2.5 h-2.5 bg-amber-500 rounded-full" />
+          <span className="text-gray-700 font-medium">
+            {card.amber_identified ?? card.amber_count ?? 0}:{card.amber_authorised ?? 0}
+          </span>
+        </span>
+        <span className="flex items-center gap-1 text-xs">
+          <span className="w-2.5 h-2.5 bg-green-500 rounded-full" />
+          <span className="text-gray-700 font-medium">
+            {card.green_identified ?? card.green_count ?? 0}:{card.green_authorised ?? 0}
+          </span>
+        </span>
+      </div>
+
+      {/* Total Identified vs Authorised KPI */}
+      <div className="flex items-center gap-4 text-xs mb-2">
+        <span className="flex items-center gap-1">
+          <span className="text-gray-400 font-medium">I:</span>
+          <span className="font-semibold text-gray-700">
+            {formatCurrency(card.identified_total ?? card.total_amount ?? 0)}
+          </span>
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="text-green-500 font-medium">A:</span>
+          <span className="font-semibold text-green-600">
+            {formatCurrency(card.authorised_total ?? 0)}
+          </span>
+        </span>
+      </div>
+
+      {/* Footer Bar: Status + Workflow Badges */}
+      <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+        {/* Status indicator */}
+        <div className="flex items-center gap-1.5 text-xs text-gray-600">
+          <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" />
+          </svg>
+          <span className="capitalize">{card.status.replace(/_/g, ' ')}</span>
+        </div>
+
+        {/* Workflow Badges (T-L-P-Q-S) */}
+        {card.workflowStatus && (
+          <WorkflowBadges
+            status={card.workflowStatus}
+            compact
+            technicianCompletion={card.technicianCompletion}
+          />
+        )}
       </div>
     </Link>
   )
@@ -254,37 +294,53 @@ function BoardColumn({ column, cards }: { column: Column; cards: HealthCheckCard
     data: { columnId: column.id }
   })
 
-  const columnColors: Record<string, string> = {
-    technician: 'bg-blue-50 border-blue-200',
-    tech_done: 'bg-amber-50 border-amber-200',
-    advisor: 'bg-green-50 border-green-200',
-    customer: 'bg-purple-50 border-purple-200',
-    actioned: 'bg-gray-50 border-gray-200'
+  const headerColors: Record<string, string> = {
+    technician: 'bg-blue-100 border-b-blue-200',
+    tech_done: 'bg-amber-100 border-b-amber-200',
+    advisor: 'bg-green-100 border-b-green-200',
+    customer: 'bg-purple-100 border-b-purple-200',
+    actioned: 'bg-gray-100 border-b-gray-200'
   }
 
-  const headerColors: Record<string, string> = {
-    technician: 'bg-blue-100 text-blue-800',
-    tech_done: 'bg-amber-100 text-amber-800',
-    advisor: 'bg-green-100 text-green-800',
-    customer: 'bg-purple-100 text-purple-800',
-    actioned: 'bg-gray-100 text-gray-800'
+  const dotColors: Record<string, string> = {
+    technician: 'bg-blue-500',
+    tech_done: 'bg-amber-500',
+    advisor: 'bg-green-500',
+    customer: 'bg-purple-500',
+    actioned: 'bg-gray-500'
+  }
+
+  const countColors: Record<string, string> = {
+    technician: 'bg-blue-200 text-blue-800',
+    tech_done: 'bg-amber-200 text-amber-800',
+    advisor: 'bg-green-200 text-green-800',
+    customer: 'bg-purple-200 text-purple-800',
+    actioned: 'bg-gray-200 text-gray-800'
   }
 
   return (
     <div
       ref={setNodeRef}
-      className={`flex flex-col h-full border transition-colors ${columnColors[column.id] || 'bg-gray-50 border-gray-200'} ${isOver ? 'ring-2 ring-primary ring-opacity-50' : ''}`}
+      className={`flex flex-col h-full bg-gray-50 border border-gray-200 rounded-lg overflow-hidden transition-colors ${isOver ? 'ring-2 ring-primary ring-opacity-50' : ''}`}
     >
       {/* Column Header */}
-      <div className={`p-3 border-b ${headerColors[column.id] || 'bg-gray-100 text-gray-800'}`}>
+      <div className={`px-4 py-3 border-b ${headerColors[column.id]}`}>
         <div className="flex items-center justify-between">
-          <h3 className="font-semibold">{column.title}</h3>
-          <span className="bg-white px-2 py-0.5 text-sm font-medium rounded">
+          <div className="flex items-center gap-2">
+            <span className={`w-2.5 h-2.5 rounded-full ${dotColors[column.id]}`} />
+            <h3 className="text-base font-semibold text-gray-900">{column.title}</h3>
+            {/* Info icon with floating-ui tooltip showing statuses */}
+            <Tooltip content={column.statuses.map(s => statusLabels[s] || s.replace('_', ' ')).join(' · ')}>
+              <span className="text-gray-400 hover:text-gray-600">
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+              </span>
+            </Tooltip>
+          </div>
+          <span className={`px-2.5 py-0.5 text-sm font-bold rounded-full ${countColors[column.id]}`}>
             {cards.length}
           </span>
-        </div>
-        <div className="text-xs mt-1 opacity-75">
-          {column.statuses.map(s => statusLabels[s] || s.replace('_', ' ')).join(', ')}
         </div>
       </div>
 
@@ -389,7 +445,31 @@ export default function HealthCheckList() {
     try {
       setLoading(true)
       const data = await api<BoardData>('/api/v1/dashboard/board', { token })
-      setBoardData(data)
+
+      // Process cards to add technicianCompletion for tooltip (workflowStatus now comes from API)
+      const processedData: BoardData = {
+        ...data,
+        columns: Object.fromEntries(
+          Object.entries(data.columns).map(([key, column]) => [
+            key,
+            {
+              ...column,
+              cards: column.cards.map(card => ({
+                ...card,
+                // Create technicianCompletion for tooltip
+                technicianCompletion: {
+                  startedAt: card.tech_started_at,
+                  startedBy: card.technician ? `${card.technician.first_name} ${card.technician.last_name}` : undefined,
+                  completedAt: card.tech_completed_at,
+                  completedBy: card.technician ? `${card.technician.first_name} ${card.technician.last_name}` : undefined
+                }
+              }))
+            }
+          ])
+        ) as BoardData['columns']
+      }
+
+      setBoardData(processedData)
       setTotalCount(data.totalCount)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load board')
@@ -634,18 +714,21 @@ export default function HealthCheckList() {
 
               {/* Legend */}
               <div className="mt-4 space-y-2">
-                <div className="flex items-center gap-6 text-xs text-gray-500">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 border-l-4 border-rag-red bg-white"></div>
-                    <span>Overdue</span>
+                <div className="flex flex-wrap items-center gap-6 text-xs text-gray-500">
+                  <div className="flex items-center gap-4">
+                    <span className="font-medium text-gray-600">Badges:</span>
+                    <span className="px-2 py-0.5 bg-red-500 text-white rounded text-[10px]">Overdue</span>
+                    <span className="px-2 py-0.5 bg-amber-500 text-white rounded text-[10px]">Expiring</span>
+                    <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px]">Waiting</span>
+                    <span className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded text-[10px]">Loan</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 border-l-4 border-rag-amber bg-white"></div>
-                    <span>Link Expiring</span>
+                    <span className="font-medium text-gray-600">RAG:</span>
+                    <span className="w-2.5 h-2.5 bg-red-500 rounded-full" />
+                    <span className="w-2.5 h-2.5 bg-amber-500 rounded-full" />
+                    <span className="w-2.5 h-2.5 bg-green-500 rounded-full" />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="italic">Drag cards between columns to change status</span>
-                  </div>
+                  <span className="italic">Drag cards between columns to change status</span>
                   <div className="ml-auto text-sm text-gray-500">
                     {boardData.totalCount} health checks
                   </div>

@@ -1,0 +1,176 @@
+# VHC Mobile App
+
+## Project Overview
+Vehicle Health Check (VHC) Mobile - a Progressive Web App for technicians conducting vehicle inspections. Built with React + Vite, designed for offline-first field use with large touch targets for workshop conditions.
+
+## Technology Stack
+- **Framework:** React 18 + TypeScript
+- **Build:** Vite 5 with PWA plugin (Workbox)
+- **Styling:** Tailwind CSS
+- **Routing:** React Router v6
+- **Auth:** Supabase Auth (session-based)
+- **Offline Storage:** IndexedDB (idb library)
+- **API:** Custom fetch wrapper with Bearer tokens
+
+## Critical Conventions
+
+### Component Pattern
+Functional components with TypeScript interfaces:
+```tsx
+interface ButtonProps extends HTMLAttributes<HTMLButtonElement> {
+  variant?: 'primary' | 'secondary' | 'danger'
+  size?: 'sm' | 'md' | 'lg'
+  loading?: boolean
+}
+
+export function Button({ variant = 'primary', ...props }: ButtonProps) {
+  return <button className={...} {...props} />
+}
+```
+
+### State Management
+Use React Context for global state (no Redux):
+```tsx
+import { useAuth } from '../context/AuthContext'
+import { useToast } from '../context/ToastContext'
+import { useThresholds } from '../context/ThresholdsContext'
+
+const { session, user, signOut } = useAuth()
+```
+
+### API Calls
+Use the typed `api` function from `lib/api.ts`:
+```tsx
+import { api, HealthCheck } from '../lib/api'
+
+const data = await api<HealthCheck[]>('/api/v1/health-checks', {
+  token: session?.access_token,
+  method: 'GET'
+})
+```
+
+### Error Handling
+Consistent try/catch with user-friendly messages:
+```tsx
+try {
+  const result = await api<T>('/endpoint', { token })
+} catch (err) {
+  setError(err instanceof Error ? err.message : 'Something went wrong')
+}
+```
+
+### Loading States
+Always show loading indicators:
+```tsx
+const [loading, setLoading] = useState(true)
+
+if (loading) return <div className="p-4 text-center">Loading...</div>
+```
+
+### Offline Support
+Queue operations when offline using IndexedDB:
+```tsx
+import { db } from '../lib/db'
+import { useOfflineSync } from '../hooks/useOfflineSync'
+
+// Queue for later sync
+await db.syncQueue.add({ operation: 'update', data })
+
+// Auto-sync hook in components
+const { syncPending, pendingCount } = useOfflineSync()
+```
+
+## Project Structure
+```
+src/
+├── main.tsx              # React DOM entry
+├── App.tsx               # Router & providers
+├── index.css             # Tailwind imports
+├── components/           # Reusable UI components
+│   ├── Button.tsx
+│   ├── Card.tsx
+│   ├── RAGSelector.tsx   # Red/Amber/Green status
+│   ├── TyreDepthInput.tsx
+│   ├── PhotoCapture.tsx
+│   └── index.ts          # Barrel exports
+├── context/              # React Context providers
+│   ├── AuthContext.tsx
+│   ├── ThresholdsContext.tsx
+│   └── ToastContext.tsx
+├── pages/                # Route components
+│   ├── Login.tsx
+│   ├── JobList.tsx
+│   ├── PreCheck.tsx
+│   ├── Inspection.tsx    # Main inspection form
+│   └── Summary.tsx
+├── hooks/                # Custom hooks
+│   ├── useOfflineSync.ts
+│   └── usePWA.ts
+└── lib/                  # Utilities
+    ├── api.ts            # Fetch wrapper + types
+    ├── db.ts             # IndexedDB operations
+    └── supabase.ts       # Auth client
+```
+
+## Key Files
+- `src/App.tsx` - Router setup, protected routes
+- `src/context/AuthContext.tsx` - Session management
+- `src/lib/api.ts` - API client and TypeScript interfaces
+- `src/lib/db.ts` - IndexedDB schema and operations
+- `src/pages/Inspection.tsx` - Main inspection form (largest page)
+- `tailwind.config.js` - Custom colors and design tokens
+
+## Styling Conventions
+
+### Tailwind Classes
+Use utility classes, avoid custom CSS:
+```tsx
+<button className="bg-primary text-white px-4 py-3 font-semibold">
+```
+
+### RAG Colors
+Use semantic color classes:
+```tsx
+// RAG status colors
+bg-rag-green text-white      // Green status
+bg-rag-amber text-white      // Amber status
+bg-rag-red text-white        // Red status
+bg-rag-green-bg text-rag-green  // Light background variants
+```
+
+### Touch Targets
+Minimum 56px for workshop gloves, 72px for RAG buttons:
+```tsx
+<button className="min-h-14 min-w-14">  // 56px
+<div className="h-[72px]">              // RAG buttons
+```
+
+### Square Edges
+No rounded corners (automotive aesthetic):
+```tsx
+<div className="rounded-none">  // or omit border-radius
+```
+
+## Inspection Flow
+1. **Login** → Supabase auth, stores session
+2. **JobList** → View/claim assigned jobs
+3. **PreCheck** → Clock in, capture initial data
+4. **Inspection** → RAG checks, measurements, photos
+5. **Summary** → Review, signature, submit
+
+## Commands
+```bash
+npm run dev       # Vite dev server (port 5182)
+npm run build     # TypeScript check + production build
+npm run preview   # Preview production build
+npm run lint      # TypeScript type checking
+```
+
+## Environment
+- `VITE_API_URL` - Backend API (default: http://localhost:5180)
+
+## Testing Changes
+1. Run `npm run dev` in `apps/mobile`
+2. Open http://localhost:5182 in browser
+3. Use Chrome DevTools mobile mode for testing
+4. Test offline mode: DevTools → Network → Offline

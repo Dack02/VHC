@@ -68,6 +68,8 @@ export interface HealthCheck {
   total_labour: number
   total_parts: number
   total_amount: number
+  // VHC Reference Number (format: VHC00001)
+  vhc_reference?: string | null
   vehicle?: Vehicle
   customer?: Customer
   template?: Template

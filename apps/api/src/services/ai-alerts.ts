@@ -20,11 +20,12 @@ interface OrgUsageStatus {
   reachedAlreadySent: boolean
 }
 
-interface PlatformCostStatus {
-  totalCostThisMonth: number
-  threshold: number
-  alertAlreadySent: boolean
-}
+// Interface reserved for future platform cost tracking
+// interface PlatformCostStatus {
+//   totalCostThisMonth: number
+//   threshold: number
+//   alertAlreadySent: boolean
+// }
 
 // =============================================================================
 // ALERT CHECKING FUNCTIONS
@@ -269,7 +270,7 @@ export async function getUnacknowledgedAlerts(): Promise<{
     id: alert.id,
     alertType: alert.alert_type,
     organizationId: alert.organization_id,
-    organizationName: (alert.organization as { name: string } | null)?.name || null,
+    organizationName: (alert.organization as { name: string }[] | null)?.[0]?.name || null,
     threshold: alert.threshold_value,
     currentValue: alert.current_value,
     message: alert.message,

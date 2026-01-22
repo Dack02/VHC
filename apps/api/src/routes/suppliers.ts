@@ -21,6 +21,8 @@ suppliers.get('/', async (c) => {
     // Check for ?include_inactive=true query param
     const includeInactive = c.req.query('include_inactive') === 'true'
 
+    // Note: Using separate query for supplier type to avoid PostgREST schema cache issues
+    // with the suppliers -> supplier_types foreign key relationship
     let query = supabaseAdmin
       .from('suppliers')
       .select('*')
@@ -38,6 +40,21 @@ suppliers.get('/', async (c) => {
       return c.json({ error: error.message }, 500)
     }
 
+    // Fetch supplier types separately to avoid PostgREST schema cache issues
+    const typeIds = [...new Set((supplierList || []).map(s => s.supplier_type_id).filter(Boolean))]
+    let typeMap: Record<string, string> = {}
+
+    if (typeIds.length > 0) {
+      const { data: types } = await supabaseAdmin
+        .from('supplier_types')
+        .select('id, name')
+        .in('id', typeIds)
+
+      if (types) {
+        typeMap = Object.fromEntries(types.map(t => [t.id, t.name]))
+      }
+    }
+
     return c.json({
       suppliers: (supplierList || []).map(supplier => ({
         id: supplier.id,
@@ -52,6 +69,8 @@ suppliers.get('/', async (c) => {
         isActive: supplier.is_active,
         isQuickAdd: supplier.is_quick_add,
         sortOrder: supplier.sort_order,
+        supplierTypeId: supplier.supplier_type_id,
+        supplierTypeName: typeMap[supplier.supplier_type_id] || null,
         createdAt: supplier.created_at,
         updatedAt: supplier.updated_at
       }))
@@ -83,7 +102,8 @@ suppliers.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
       contact_phone,
       address,
       notes,
-      is_quick_add
+      is_quick_add,
+      supplier_type_id
     } = body
 
     // Validate required fields
@@ -108,7 +128,8 @@ suppliers.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         contact_phone: contact_phone?.trim() || null,
         address: address?.trim() || null,
         notes: notes?.trim() || null,
-        is_quick_add: isQuickAdd
+        is_quick_add: isQuickAdd,
+        supplier_type_id: supplier_type_id || null
       })
       .select()
       .single()
@@ -133,6 +154,7 @@ suppliers.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
       notes: newSupplier.notes,
       isActive: newSupplier.is_active,
       isQuickAdd: newSupplier.is_quick_add,
+      supplierTypeId: newSupplier.supplier_type_id,
       createdAt: newSupplier.created_at
     }, 201)
   } catch (error) {
@@ -163,7 +185,8 @@ suppliers.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       contact_phone,
       address,
       notes,
-      sort_order
+      sort_order,
+      supplier_type_id
     } = body
 
     // Check if the supplier exists and belongs to this org
@@ -189,6 +212,7 @@ suppliers.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     if (address !== undefined) updateData.address = address?.trim() || null
     if (notes !== undefined) updateData.notes = notes?.trim() || null
     if (sort_order !== undefined) updateData.sort_order = sort_order
+    if (supplier_type_id !== undefined) updateData.supplier_type_id = supplier_type_id || null
 
     // If additional details were added, mark as no longer quick-add
     const hasDetails = !!(
@@ -232,6 +256,7 @@ suppliers.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       isActive: updated.is_active,
       isQuickAdd: updated.is_quick_add,
       sortOrder: updated.sort_order,
+      supplierTypeId: updated.supplier_type_id,
       updatedAt: updated.updated_at
     })
   } catch (error) {

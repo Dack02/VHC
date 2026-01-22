@@ -35,15 +35,11 @@ async function getPlanLimits(organizationId: string): Promise<{
     .eq('status', 'active')
     .single()
 
-  if (!subscription?.plan) {
-    return null
-  }
+  const planArray = subscription?.plan as { max_sites: number; max_users: number; max_health_checks_per_month: number; max_storage_gb: number }[] | null
+  const plan = planArray?.[0]
 
-  const plan = subscription.plan as {
-    max_sites: number
-    max_users: number
-    max_health_checks_per_month: number
-    max_storage_gb: number
+  if (!plan) {
+    return null
   }
 
   return {

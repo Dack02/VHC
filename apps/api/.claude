@@ -1,0 +1,149 @@
+# VHC API Backend
+
+## Project Overview
+Vehicle Health Check (VHC) API - a multi-tenant SaaS backend for automotive inspection management. Built with Hono framework on Node.js, using Supabase/PostgreSQL for data persistence.
+
+## Technology Stack
+- **Framework:** Hono v4 (lightweight web framework)
+- **Runtime:** Node.js with ESM modules
+- **Database:** Supabase/PostgreSQL (no ORM - direct Supabase client queries)
+- **Auth:** Supabase Auth with JWT bearer tokens
+- **Queue:** BullMQ with Redis
+- **Real-time:** Socket.io
+
+## Critical Conventions
+
+### ESM Imports
+Always use `.js` extension in relative imports:
+```typescript
+// Correct
+import { supabaseAdmin } from '../lib/supabase.js'
+
+// Wrong - will fail at runtime
+import { supabaseAdmin } from '../lib/supabase'
+```
+
+### Route Pattern
+Each route file exports a Hono router instance as default:
+```typescript
+import { Hono } from 'hono'
+
+const router = new Hono()
+
+router.get('/', async (c) => { ... })
+
+export default router
+```
+
+Routes are mounted in `src/index.ts`:
+```typescript
+app.route('/api/v1/customers', customers)
+```
+
+### Database Queries
+Use Supabase client directly - no ORM:
+```typescript
+const { data, error } = await supabaseAdmin
+  .from('customers')
+  .select('*')
+  .eq('organization_id', orgId)
+  .order('created_at', { ascending: false })
+```
+
+### Multi-tenancy
+Always filter queries by `organization_id`:
+```typescript
+.eq('organization_id', auth.user.organization_id)
+```
+
+### Error Handling
+Use the standardized ApiError system:
+```typescript
+import { ApiError, Errors } from '../lib/errors.js'
+
+// Factory methods
+throw Errors.notFound('Customer')
+throw Errors.unauthorized()
+throw Errors.roleRequired(['org_admin'])
+throw Errors.validationFailed('Invalid email format')
+```
+
+### Response Transformation
+Transform database snake_case to API camelCase:
+```typescript
+return c.json({
+  id: data.id,
+  firstName: data.first_name,
+  lastName: data.last_name,
+  organizationId: data.organization_id
+})
+```
+
+### Authentication
+Access auth context via Hono's context:
+```typescript
+const auth = c.get('auth')
+// auth.user - current user with org/site info
+// auth.token - JWT token
+```
+
+### Authorization
+Use middleware factories:
+```typescript
+import { authorize, authorizeMinRole } from '../middleware/auth.js'
+
+router.post('/', authorize(['org_admin', 'site_admin']), async (c) => { ... })
+router.delete('/:id', authorizeMinRole('org_admin'), async (c) => { ... })
+```
+
+## User Roles (hierarchy)
+1. `super_admin` (5) - Platform admin
+2. `org_admin` (4) - Organization admin
+3. `site_admin` (3) - Site admin
+4. `service_advisor` (2) - Service advisor
+5. `technician` (1) - Technician
+
+## Project Structure
+```
+src/
+├── index.ts          # Entry point, route mounting, middleware
+├── middleware/       # Auth, rate limiting, error handling
+├── routes/           # API endpoints (thin controllers)
+├── services/         # Business logic, external integrations
+├── lib/              # Utilities (logger, errors, supabase, encryption)
+├── db/               # Schema reference (schema.sql)
+└── jobs/             # Background job handlers
+```
+
+## Multi-file Routers
+Complex features use sub-routers mounted in order (specific before general):
+```typescript
+// health-checks/index.ts
+router.route('/status', statusRoutes)
+router.route('/pdf', pdfRoutes)
+router.route('/', crudRoutes)  // Must be last
+```
+
+## Key Files
+- `src/index.ts` - Main entry, middleware setup, route mounting
+- `src/middleware/auth.ts` - Authentication/authorization
+- `src/lib/errors.ts` - Error system and codes
+- `src/lib/supabase.ts` - Database client
+- `src/lib/logger.ts` - Structured logging
+
+## Commands
+```bash
+pnpm dev        # Run API + worker (development)
+pnpm build      # Compile TypeScript
+pnpm start      # Run production build
+pnpm lint       # Type check
+```
+
+## Environment
+Required: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `ENCRYPTION_KEY`
+Optional: `REDIS_URL`, `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `TWILIO_*`
+
+## Testing Changes
+1. Run `pnpm dev` in `apps/api`
+2. Test endpoints via REST client or frontend
+3. Check console for errors and logs

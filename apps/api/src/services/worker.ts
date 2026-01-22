@@ -187,7 +187,7 @@ const emailWorker = new Worker(
 
     return result
   },
-  { connection: redis }
+  { connection: redis as any }
 )
 
 emailWorker.on('completed', (job) => {
@@ -231,7 +231,7 @@ const smsWorker = new Worker(
 
     return result
   },
-  { connection: redis }
+  { connection: redis as any }
 )
 
 smsWorker.on('completed', (job) => {
@@ -263,7 +263,7 @@ const notificationWorker = new Worker(
         console.warn(`Unknown notification type: ${job.data.type}`)
     }
   },
-  { connection: redis }
+  { connection: redis as any }
 )
 
 notificationWorker.on('completed', (job) => {
@@ -284,7 +284,7 @@ const reminderWorker = new Worker(
 
     await processReminder(job.data)
   },
-  { connection: redis }
+  { connection: redis as any }
 )
 
 reminderWorker.on('completed', (job) => {
@@ -355,7 +355,7 @@ const dmsImportWorker = new Worker(
 
     return result
   },
-  { connection: redis }
+  { connection: redis as any }
 )
 
 dmsImportWorker.on('completed', (job) => {
@@ -493,6 +493,7 @@ async function processStaffNotification(data: StaffNotificationJob) {
     .from('health_checks')
     .select(`
       id,
+      organization_id,
       vehicle:vehicles(registration),
       customer:customers(first_name, last_name)
     `)
@@ -504,8 +505,12 @@ async function processStaffNotification(data: StaffNotificationJob) {
   }
 
   // Cast nested relations for TypeScript
-  const vehicle = healthCheck.vehicle as unknown as { registration: string }
-  const customer = healthCheck.customer as unknown as { first_name: string; last_name: string }
+  const vehicle = (healthCheck.vehicle as { registration: string }[] | null)?.[0]
+  const customer = (healthCheck.customer as { first_name: string; last_name: string }[] | null)?.[0]
+
+  if (!vehicle || !customer) {
+    throw new Error(`Health check missing vehicle or customer data: ${data.healthCheckId}`)
+  }
 
   const vehicleReg = vehicle.registration
   const customerName = `${customer.first_name} ${customer.last_name}`

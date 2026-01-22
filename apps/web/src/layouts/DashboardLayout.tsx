@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useBranding } from '../contexts/BrandingContext'
@@ -16,14 +16,59 @@ interface NavItem {
   badge?: number
 }
 
+const NAV_COLLAPSED_KEY = 'vhc-nav-collapsed'
+
 export default function DashboardLayout() {
   const { user, logout, session } = useAuth()
   const { branding } = useBranding()
   const navigate = useNavigate()
   const location = useLocation()
+  const navRef = useRef<HTMLElement>(null)
 
   const [pendingSubmissionsCount, setPendingSubmissionsCount] = useState(0)
   const [isAiEnabled, setIsAiEnabled] = useState(false)
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(NAV_COLLAPSED_KEY) === 'true'
+    }
+    return false
+  })
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const [showScrollFade, setShowScrollFade] = useState(false)
+
+  // Handle nav scroll fade indicator
+  useEffect(() => {
+    const navEl = navRef.current
+    if (!navEl) return
+
+    const checkScroll = () => {
+      const hasMoreContent = navEl.scrollHeight > navEl.clientHeight + navEl.scrollTop + 20
+      setShowScrollFade(hasMoreContent)
+    }
+
+    checkScroll()
+    navEl.addEventListener('scroll', checkScroll)
+    window.addEventListener('resize', checkScroll)
+
+    return () => {
+      navEl.removeEventListener('scroll', checkScroll)
+      window.removeEventListener('resize', checkScroll)
+    }
+  }, [])
+
+  // Toggle collapsed state and persist to localStorage
+  const toggleCollapsed = () => {
+    setIsCollapsed(prev => {
+      const newValue = !prev
+      localStorage.setItem(NAV_COLLAPSED_KEY, String(newValue))
+      return newValue
+    })
+  }
+
+  // Close mobile menu on route change
+  useEffect(() => {
+    setIsMobileMenuOpen(false)
+  }, [location.pathname])
 
   const handleLogout = async () => {
     await logout()
@@ -154,6 +199,16 @@ export default function DashboardLayout() {
       roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
+      to: '/settings/supplier-types',
+      label: 'Supplier Types',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
       to: '/settings/pricing',
       label: 'Pricing',
       icon: (
@@ -232,6 +287,26 @@ export default function DashboardLayout() {
         </svg>
       ),
       roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/declined-reasons',
+      label: 'Declined Reasons',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/deleted-reasons',
+      label: 'Deleted Reasons',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
     }
   ]
 
@@ -244,155 +319,289 @@ export default function DashboardLayout() {
     return location.pathname.startsWith(path)
   }
 
-  const navLinkClass = (path: string) =>
-    `flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
-      isActive(path)
-        ? 'bg-primary text-white'
-        : 'text-gray-700 hover:bg-gray-100'
+  const navLinkClass = (path: string) => {
+    const active = isActive(path)
+    const base = 'flex items-center py-2 text-sm font-medium rounded-lg transition-all duration-150'
+
+    if (isCollapsed) {
+      return `${base} justify-center px-2 ${
+        active
+          ? 'bg-blue-50 text-primary border-l-4 border-primary'
+          : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 border-l-4 border-transparent'
+      }`
+    }
+
+    return `${base} px-3 ${
+      active
+        ? 'bg-blue-50 text-primary border-l-4 border-primary -ml-1 pl-4'
+        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
     }`
+  }
+
+  // Tooltip component for collapsed nav
+  const NavTooltip = ({ children, label }: { children: React.ReactNode; label: string }) => (
+    <div className="group relative">
+      {children}
+      {isCollapsed && (
+        <div className="absolute left-full ml-2 px-2 py-1 bg-gray-900 text-white text-sm rounded opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 whitespace-nowrap z-50">
+          {label}
+        </div>
+      )}
+    </div>
+  )
+
+  // Sidebar width classes
+  const sidebarWidth = isCollapsed ? 'w-16' : 'w-64'
+  const mainMargin = isCollapsed ? 'md:ml-16' : 'md:ml-64'
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="min-h-screen bg-gray-50">
+      {/* Mobile menu overlay */}
+      {isMobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* Mobile hamburger button */}
+      <button
+        onClick={() => setIsMobileMenuOpen(true)}
+        className="fixed top-4 left-4 z-30 p-2 bg-white rounded-lg shadow-md md:hidden"
+        aria-label="Open menu"
+      >
+        <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
+
       {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
-        <div className="p-4 border-b border-gray-200">
-          {branding?.logoUrl ? (
-            <img
-              src={branding.logoUrl}
-              alt={branding.organizationName}
-              className="h-8 w-auto max-w-full object-contain"
-            />
-          ) : (
-            <h1 className="text-xl font-bold text-primary">
-              {branding?.organizationName || user?.organization?.name || 'VHC'}
-            </h1>
-          )}
-          <p className="text-xs text-gray-500 mt-1">{user?.organization?.name}</p>
-        </div>
-
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-          {/* Main Navigation */}
-          {visibleMainNav.map(item => (
-            <Link key={item.to} to={item.to} className={navLinkClass(item.to)}>
-              <span className="mr-3">{item.icon}</span>
-              {item.label}
-            </Link>
-          ))}
-
-          {/* Settings Section - Only for admins */}
-          {visibleSettingsNav.length > 0 && (
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              <p className="px-3 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                Settings
-              </p>
-              {visibleSettingsNav.map(item => (
-                <Link key={item.to} to={item.to} className={navLinkClass(item.to)}>
-                  <span className="mr-3">{item.icon}</span>
-                  {item.label}
-                </Link>
-              ))}
-              {/* Reason Submissions with badge */}
-              {(isOrgAdmin || isSiteAdmin) && (
-                <>
-                  <Link to="/settings/reason-submissions" className={navLinkClass('/settings/reason-submissions')}>
-                    <span className="mr-3">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                    </span>
-                    <span className="flex-1">Reason Submissions</span>
-                    {pendingSubmissionsCount > 0 && (
-                      <span className="ml-2 px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-medium rounded-full">
-                        {pendingSubmissionsCount}
-                      </span>
-                    )}
-                  </Link>
-                  <Link to="/settings/reason-analytics" className={navLinkClass('/settings/reason-analytics')}>
-                    <span className="mr-3">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                      </svg>
-                    </span>
-                    Reason Analytics
-                  </Link>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Org Admin specific links */}
-          {isOrgAdmin && (
-            <div className="mt-6 pt-6 border-t border-gray-200">
-              <p className="px-3 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                Organization
-              </p>
-              <Link to="/settings/organization" className={navLinkClass('/settings/organization')}>
-                <span className="mr-3">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                  </svg>
-                </span>
-                Organization Settings
-              </Link>
-              <Link to="/settings/subscription" className={navLinkClass('/settings/subscription')}>
-                <span className="mr-3">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                  </svg>
-                </span>
-                Subscription
-              </Link>
-              {isAiEnabled && (
-                <Link to="/settings/ai-usage" className={navLinkClass('/settings/ai-usage')}>
-                  <span className="mr-3">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                    </svg>
-                  </span>
-                  AI Usage
-                </Link>
-              )}
-            </div>
-          )}
-        </nav>
-
-        {/* User Section */}
-        <div className="p-4 border-t border-gray-200">
-          <div className="flex items-center space-x-3 mb-3">
-            <div className="w-10 h-10 bg-primary rounded-full flex items-center justify-center">
-              <span className="text-white font-medium">
-                {user?.firstName?.charAt(0) || 'U'}
+      <aside
+        className={`
+          fixed top-0 left-0 h-full bg-white border-r border-gray-200 shadow-sm
+          flex flex-col z-50 transition-all duration-200 ease-in-out
+          ${sidebarWidth}
+          ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+        `}
+      >
+        {/* Logo/Header area */}
+        <div className={`p-4 border-b border-gray-100 ${isCollapsed ? 'flex justify-center' : ''}`}>
+          {isCollapsed ? (
+            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+              <span className="text-white font-bold text-sm">
+                {(branding?.organizationName || user?.organization?.name || 'V').charAt(0)}
               </span>
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-gray-900 truncate">
-                {user?.firstName} {user?.lastName}
+          ) : (
+            <>
+              {branding?.logoUrl ? (
+                <img
+                  src={branding.logoUrl}
+                  alt={branding.organizationName}
+                  className="h-8 w-auto max-w-full object-contain"
+                />
+              ) : (
+                <h1 className="text-xl font-bold text-primary">
+                  {branding?.organizationName || user?.organization?.name || 'VHC'}
+                </h1>
+              )}
+              <p className="text-xs text-gray-400 mt-1 truncate">{user?.organization?.name}</p>
+            </>
+          )}
+        </div>
+
+        {/* Mobile close button */}
+        <button
+          onClick={() => setIsMobileMenuOpen(false)}
+          className="absolute top-4 right-4 p-1 rounded hover:bg-gray-100 md:hidden"
+          aria-label="Close menu"
+        >
+          <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+
+        {/* Navigation with scroll fade */}
+        <div className="relative flex-1 overflow-hidden">
+          <nav ref={navRef} className={`h-full overflow-y-auto ${isCollapsed ? 'p-2' : 'p-4'} space-y-1`}>
+            {/* Main Navigation */}
+            {visibleMainNav.map(item => (
+              <NavTooltip key={item.to} label={item.label}>
+                <Link to={item.to} className={navLinkClass(item.to)}>
+                  <span className={isCollapsed ? '' : 'mr-3'}>{item.icon}</span>
+                  {!isCollapsed && item.label}
+                </Link>
+              </NavTooltip>
+            ))}
+
+            {/* Settings Section - Only for admins */}
+            {visibleSettingsNav.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                {!isCollapsed && (
+                  <p className="px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                    Settings
+                  </p>
+                )}
+                {visibleSettingsNav.map(item => (
+                  <NavTooltip key={item.to} label={item.label}>
+                    <Link to={item.to} className={navLinkClass(item.to)}>
+                      <span className={isCollapsed ? '' : 'mr-3'}>{item.icon}</span>
+                      {!isCollapsed && item.label}
+                    </Link>
+                  </NavTooltip>
+                ))}
+                {/* Reason Submissions with badge */}
+                {(isOrgAdmin || isSiteAdmin) && (
+                  <>
+                    <NavTooltip label="Reason Submissions">
+                      <Link to="/settings/reason-submissions" className={navLinkClass('/settings/reason-submissions')}>
+                        <span className={isCollapsed ? '' : 'mr-3'}>
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                        </span>
+                        {!isCollapsed && <span className="flex-1">Reason Submissions</span>}
+                        {pendingSubmissionsCount > 0 && (
+                          <span className={`px-1.5 py-0.5 bg-amber-100 text-amber-700 text-xs font-medium rounded-full ${isCollapsed ? 'absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center' : 'ml-2'}`}>
+                            {pendingSubmissionsCount}
+                          </span>
+                        )}
+                      </Link>
+                    </NavTooltip>
+                    <NavTooltip label="Reason Analytics">
+                      <Link to="/settings/reason-analytics" className={navLinkClass('/settings/reason-analytics')}>
+                        <span className={isCollapsed ? '' : 'mr-3'}>
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                          </svg>
+                        </span>
+                        {!isCollapsed && 'Reason Analytics'}
+                      </Link>
+                    </NavTooltip>
+                  </>
+                )}
               </div>
-              <div className="text-xs text-gray-500 capitalize">
-                {user?.role?.replace('_', ' ')}
+            )}
+
+            {/* Org Admin specific links */}
+            {isOrgAdmin && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                {!isCollapsed && (
+                  <p className="px-3 py-2 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                    Organization
+                  </p>
+                )}
+                <NavTooltip label="Organization Settings">
+                  <Link to="/settings/organization" className={navLinkClass('/settings/organization')}>
+                    <span className={isCollapsed ? '' : 'mr-3'}>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                      </svg>
+                    </span>
+                    {!isCollapsed && 'Organization Settings'}
+                  </Link>
+                </NavTooltip>
+                <NavTooltip label="Subscription">
+                  <Link to="/settings/subscription" className={navLinkClass('/settings/subscription')}>
+                    <span className={isCollapsed ? '' : 'mr-3'}>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                      </svg>
+                    </span>
+                    {!isCollapsed && 'Subscription'}
+                  </Link>
+                </NavTooltip>
+                {isAiEnabled && (
+                  <NavTooltip label="AI Usage">
+                    <Link to="/settings/ai-usage" className={navLinkClass('/settings/ai-usage')}>
+                      <span className={isCollapsed ? '' : 'mr-3'}>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                        </svg>
+                      </span>
+                      {!isCollapsed && 'AI Usage'}
+                    </Link>
+                  </NavTooltip>
+                )}
+              </div>
+            )}
+          </nav>
+
+          {/* Scroll fade indicator */}
+          {showScrollFade && (
+            <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-white to-transparent pointer-events-none" />
+          )}
+        </div>
+
+        {/* User Section */}
+        <div className={`border-t border-gray-100 ${isCollapsed ? 'p-2' : 'p-4'}`}>
+          {isCollapsed ? (
+            <NavTooltip label={`${user?.firstName} ${user?.lastName}`}>
+              <div className="flex justify-center mb-2">
+                <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
+                  <span className="text-white text-sm font-medium">
+                    {user?.firstName?.charAt(0) || 'U'}
+                  </span>
+                </div>
+              </div>
+            </NavTooltip>
+          ) : (
+            <div className="flex items-center space-x-3 mb-3">
+              <div className="w-10 h-10 bg-primary rounded-full flex items-center justify-center flex-shrink-0">
+                <span className="text-white font-medium">
+                  {user?.firstName?.charAt(0) || 'U'}
+                </span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-gray-900 truncate">
+                  {user?.firstName} {user?.lastName}
+                </div>
+                <div className="text-xs text-gray-400 capitalize">
+                  {user?.role?.replace('_', ' ')}
+                </div>
               </div>
             </div>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="w-full flex items-center px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-            </svg>
-            Sign out
-          </button>
+          )}
+          <NavTooltip label="Sign out">
+            <button
+              onClick={handleLogout}
+              className={`w-full flex items-center ${isCollapsed ? 'justify-center' : ''} px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg transition-all duration-150`}
+            >
+              <svg className={`w-5 h-5 ${isCollapsed ? '' : 'mr-3'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+              {!isCollapsed && 'Sign out'}
+            </button>
+          </NavTooltip>
         </div>
+
+        {/* Collapse toggle button */}
+        <button
+          onClick={toggleCollapsed}
+          className="hidden md:flex items-center justify-center p-2 border-t border-gray-100 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-all duration-150"
+          aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <svg
+            className={`w-5 h-5 transition-transform duration-200 ${isCollapsed ? 'rotate-180' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+          </svg>
+        </button>
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col">
+      <main className={`min-h-screen flex flex-col transition-all duration-200 ${mainMargin}`}>
         {/* AI Limit Warning Banner */}
         <AILimitWarningBanner />
 
-        <header className="bg-white border-b border-gray-200 px-6 py-4">
+        <header className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-20">
           <div className="flex items-center justify-between">
-            <div>
+            <div className="flex items-center">
+              {/* Spacer for mobile hamburger button */}
+              <div className="w-10 md:hidden" />
               {user?.site && (
                 <span className="text-sm text-gray-500">{user.site.name}</span>
               )}

@@ -33,7 +33,10 @@ import AIUsage from './pages/Settings/AIUsage'
 import AIUsageHistory from './pages/Settings/AIUsageHistory'
 import LabourCodes from './pages/Settings/LabourCodes'
 import Suppliers from './pages/Settings/Suppliers'
+import SupplierTypes from './pages/Settings/SupplierTypes'
 import PricingSettings from './pages/Settings/PricingSettings'
+import DeclinedReasons from './pages/Settings/DeclinedReasons'
+import DeletedReasons from './pages/Settings/DeletedReasons'
 import CustomerPortal from './pages/CustomerPortal/CustomerPortal'
 import AdminLogin from './pages/Admin/AdminLogin'
 import AdminDashboard from './pages/Admin/AdminDashboard'
@@ -48,7 +51,6 @@ import AIUsageDashboard from './pages/Admin/AIUsageDashboard'
 import ImpersonationBanner from './components/admin/ImpersonationBanner'
 import SuspendedBanner from './components/SuspendedBanner'
 import Onboarding from './pages/Onboarding'
-import KanbanBoard from './pages/Dashboard/KanbanBoard'
 import TechnicianWorkload from './pages/Dashboard/TechnicianWorkload'
 import Reports from './pages/Reports'
 
@@ -92,7 +94,6 @@ function App() {
                     <Route element={<ProtectedLayout />}>
                       <Route element={<DashboardLayout />}>
                         <Route path="/" element={<Dashboard />} />
-                        <Route path="/dashboard/board" element={<KanbanBoard />} />
                         <Route path="/dashboard/technicians" element={<TechnicianWorkload />} />
                         <Route path="/reports" element={<Reports />} />
                         <Route path="/users" element={<Users />} />
@@ -119,7 +120,10 @@ function App() {
                         <Route path="/settings/ai-usage/history" element={<AIUsageHistory />} />
                         <Route path="/settings/labour-codes" element={<LabourCodes />} />
                         <Route path="/settings/suppliers" element={<Suppliers />} />
+                        <Route path="/settings/supplier-types" element={<SupplierTypes />} />
                         <Route path="/settings/pricing" element={<PricingSettings />} />
+                        <Route path="/settings/declined-reasons" element={<DeclinedReasons />} />
+                        <Route path="/settings/deleted-reasons" element={<DeletedReasons />} />
                       </Route>
                     </Route>
 

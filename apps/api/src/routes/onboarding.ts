@@ -11,7 +11,7 @@ const onboarding = new Hono()
 
 // All routes require authentication and org admin role
 onboarding.use('*', authMiddleware)
-onboarding.use('*', requireOrgAdmin)
+onboarding.use('*', requireOrgAdmin())
 
 /**
  * GET /api/v1/onboarding/status
@@ -19,7 +19,7 @@ onboarding.use('*', requireOrgAdmin)
  */
 onboarding.get('/status', async (c) => {
   const auth = c.get('auth')
-  const organizationId = auth.user.organization_id
+  const organizationId = auth.user.organizationId
 
   // Get organization with settings
   const { data: org, error } = await supabaseAdmin
@@ -72,7 +72,7 @@ onboarding.get('/status', async (c) => {
  */
 onboarding.patch('/step', async (c) => {
   const auth = c.get('auth')
-  const organizationId = auth.user.organization_id
+  const organizationId = auth.user.organizationId
   const { step } = await c.req.json()
 
   if (typeof step !== 'number' || step < 0 || step > 5) {
@@ -100,7 +100,7 @@ onboarding.patch('/step', async (c) => {
  */
 onboarding.post('/business-details', async (c) => {
   const auth = c.get('auth')
-  const organizationId = auth.user.organization_id
+  const organizationId = auth.user.organizationId
   const body = await c.req.json()
 
   const {
@@ -192,7 +192,7 @@ onboarding.post('/business-details', async (c) => {
  */
 onboarding.post('/first-site', async (c) => {
   const auth = c.get('auth')
-  const organizationId = auth.user.organization_id
+  const organizationId = auth.user.organizationId
   const body = await c.req.json()
 
   const {
@@ -309,7 +309,7 @@ onboarding.post('/first-site', async (c) => {
  */
 onboarding.post('/invite-team', async (c) => {
   const auth = c.get('auth')
-  const organizationId = auth.user.organization_id
+  const organizationId = auth.user.organizationId
   const body = await c.req.json()
   const { invites } = body
 
@@ -428,7 +428,7 @@ onboarding.post('/invite-team', async (c) => {
  */
 onboarding.post('/notifications', async (c) => {
   const auth = c.get('auth')
-  const organizationId = auth.user.organization_id
+  const organizationId = auth.user.organizationId
   const body = await c.req.json()
 
   const {
@@ -505,7 +505,7 @@ onboarding.post('/notifications', async (c) => {
  */
 onboarding.post('/complete', async (c) => {
   const auth = c.get('auth')
-  const organizationId = auth.user.organization_id
+  const organizationId = auth.user.organizationId
 
   const { error } = await supabaseAdmin
     .from('organizations')
@@ -532,7 +532,7 @@ onboarding.post('/complete', async (c) => {
  */
 onboarding.post('/skip', async (c) => {
   const auth = c.get('auth')
-  const organizationId = auth.user.organization_id
+  const organizationId = auth.user.organizationId
 
   const { error } = await supabaseAdmin
     .from('organizations')

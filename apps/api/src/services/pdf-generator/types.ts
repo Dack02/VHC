@@ -109,7 +109,7 @@ export interface RepairItemData {
   work_completed_at?: string | null
   // Group info for rendering grouped items
   is_group?: boolean
-  children?: Array<{ name: string; rag_status: string }>
+  children?: Array<{ name: string; rag_status: string; description?: string | null; check_result_id?: string }>
 }
 
 export interface MediaData {
@@ -218,4 +218,123 @@ export interface ApprovalConfirmationPDFData {
 export interface CustomerSignatureData {
   signatureData: string | null | undefined
   signedAt: string | null | undefined
+}
+
+// ============================================
+// Work Authority Sheet Types
+// ============================================
+
+export type WorkAuthorityVariant = 'technician' | 'service_advisor'
+
+export interface WorkAuthoritySheetData {
+  // Document metadata
+  documentNumber: string          // WA-YYYYMMDD-SEQ
+  generatedAt: string
+  generatedBy: string             // User who generated the document
+  variant: WorkAuthorityVariant
+
+  // Vehicle & Customer
+  vehicle: {
+    vrm: string
+    vin?: string | null
+    make?: string | null
+    model?: string | null
+    year?: number | null
+    mileageIn?: number | null
+    fuelLevel?: string | null
+  }
+
+  customer: {
+    name: string
+    phone?: string | null
+    email?: string | null
+    address?: {
+      line1: string
+      line2?: string | null
+      postcode?: string | null
+    } | null
+  }
+
+  // Staff assignments
+  serviceAdvisor: string
+  assignedTechnician?: string | null
+
+  // References
+  vhcReference: string
+  dmsJobNumber?: string | null
+
+  // Site info
+  site?: {
+    name: string
+    address?: string | null
+    phone?: string | null
+  } | null
+
+  // Organization branding
+  branding?: OrganizationBranding
+
+  // Work items
+  preBookedWork: WorkSection[]
+  authorizedVhcWork: WorkSection[]
+
+  // Totals (Service Advisor only)
+  totals?: PricingSummary
+}
+
+export interface WorkSection {
+  id: string
+  title: string
+  description?: string | null       // Defect description for VHC items
+  severity?: 'red' | 'amber' | 'green'  // VHC severity
+  labourLines: LabourLine[]
+  partsLines: PartsLine[]
+  subtotals?: SectionSubtotals      // Service Advisor only
+  // For grouped items
+  isGroup?: boolean
+  children?: WorkSection[]
+}
+
+export interface LabourLine {
+  description: string
+  labourCode?: string | null
+  hours: number
+  rate?: number                     // Service Advisor only
+  total?: number                    // Service Advisor only
+  isVatExempt?: boolean
+}
+
+export interface PartsLine {
+  description: string
+  partNumber?: string | null
+  quantity: number
+  unit?: string                     // 'each', 'litre', 'set', etc.
+  unitPrice?: number                // Service Advisor only
+  total?: number                    // Service Advisor only
+}
+
+export interface SectionSubtotals {
+  labourTotal: number
+  partsTotal: number
+  sectionTotal: number
+}
+
+export interface PricingSummary {
+  preBooked: {
+    labour: number
+    parts: number
+    subtotal: number
+  }
+  vhcWork: {
+    labour: number
+    parts: number
+    subtotal: number
+  }
+  totalLabourHours: number
+  totalLabourValue: number
+  totalPartsLines: number
+  totalPartsValue: number
+  subtotalExVat: number
+  vatAmount: number
+  vatRate: number
+  grandTotal: number
 }

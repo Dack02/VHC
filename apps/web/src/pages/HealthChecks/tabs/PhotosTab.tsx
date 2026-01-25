@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { CheckResult, ResultMedia } from '../../../lib/api'
+import { useAuth } from '../../../contexts/AuthContext'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5180'
 
@@ -24,6 +25,7 @@ interface PhotosTabProps {
 }
 
 export function PhotosTab({ results, healthCheckId, onSelectionChange }: PhotosTabProps) {
+  const { session } = useAuth()
   const [filter, setFilter] = useState<RAGFilter>('all')
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
   const [photoSelections, setPhotoSelections] = useState<Record<string, boolean>>({})
@@ -79,12 +81,11 @@ export function PhotosTab({ results, healthCheckId, onSelectionChange }: PhotosT
     setPhotoSelections(prev => ({ ...prev, [mediaId]: include }))
 
     try {
-      const token = localStorage.getItem('token')
       const response = await fetch(`${API_URL}/api/v1/media/${mediaId}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${session?.accessToken}`
         },
         body: JSON.stringify({ include_in_report: include })
       })
@@ -115,12 +116,11 @@ export function PhotosTab({ results, healthCheckId, onSelectionChange }: PhotosT
     setPhotoSelections(newSelections)
 
     try {
-      const token = localStorage.getItem('token')
       const response = await fetch(`${API_URL}/api/v1/health-checks/${healthCheckId}/media/selection`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${session?.accessToken}`
         },
         body: JSON.stringify({ include_in_report: true })
       })
@@ -147,12 +147,11 @@ export function PhotosTab({ results, healthCheckId, onSelectionChange }: PhotosT
     setPhotoSelections(newSelections)
 
     try {
-      const token = localStorage.getItem('token')
       const response = await fetch(`${API_URL}/api/v1/health-checks/${healthCheckId}/media/selection`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${session?.accessToken}`
         },
         body: JSON.stringify({ include_in_report: false })
       })
@@ -338,7 +337,7 @@ export function PhotosTab({ results, healthCheckId, onSelectionChange }: PhotosT
                   {/* Selection checkbox overlay - only show if healthCheckId is provided */}
                   {healthCheckId && (
                     <div
-                      className="absolute top-2 right-2"
+                      className="absolute top-2 right-2 z-10"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <label className="relative flex items-center cursor-pointer">
@@ -378,7 +377,7 @@ export function PhotosTab({ results, healthCheckId, onSelectionChange }: PhotosT
 
                   {/* Not included overlay */}
                   {!isSelected && healthCheckId && (
-                    <div className="absolute inset-0 bg-white bg-opacity-40 flex items-center justify-center">
+                    <div className="absolute inset-0 bg-white bg-opacity-40 flex items-center justify-center pointer-events-none">
                       <span className="bg-gray-800 bg-opacity-70 text-white text-xs px-2 py-1 rounded">
                         Not in report
                       </span>

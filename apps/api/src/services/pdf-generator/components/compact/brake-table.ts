@@ -9,6 +9,7 @@ interface BrakeSideData {
   pad: number | null
   disc: number | null
   disc_min: number | null
+  disc_unable_to_access?: boolean
 }
 
 interface BrakeAxleData {
@@ -49,12 +50,14 @@ export function extractBrakeData(results: ResultData[]): { front: BrakeAxleData 
         nearside: {
           pad: nearside.pad as number | null ?? null,
           disc: nearside.disc as number | null ?? null,
-          disc_min: nearside.disc_min as number | null ?? null
+          disc_min: nearside.disc_min as number | null ?? null,
+          disc_unable_to_access: nearside.disc_unable_to_access as boolean | undefined
         },
         offside: {
           pad: offside.pad as number | null ?? null,
           disc: offside.disc as number | null ?? null,
-          disc_min: offside.disc_min as number | null ?? null
+          disc_min: offside.disc_min as number | null ?? null,
+          disc_unable_to_access: offside.disc_unable_to_access as boolean | undefined
         },
         hasData: true
       }
@@ -95,7 +98,8 @@ function formatValue(value: number | null): string {
 /**
  * Check if disc is below minimum spec
  */
-function isBelowMinSpec(actual: number | null, min: number | null): boolean {
+function isBelowMinSpec(actual: number | null, min: number | null, unableToAccess?: boolean): boolean {
+  if (unableToAccess) return false
   if (actual === null || min === null) return false
   return actual < min
 }
@@ -118,13 +122,20 @@ function renderAxleColumn(data: BrakeAxleData | null, label: string): string {
 
   const { type, nearside, offside } = data
 
-  // Check for any below-spec conditions
-  const nsDiscBelowSpec = isBelowMinSpec(nearside.disc, nearside.disc_min)
-  const osDiscBelowSpec = isBelowMinSpec(offside.disc, offside.disc_min)
+  // Check for any below-spec conditions (skip if unable to access)
+  const nsDiscBelowSpec = isBelowMinSpec(nearside.disc, nearside.disc_min, nearside.disc_unable_to_access)
+  const osDiscBelowSpec = isBelowMinSpec(offside.disc, offside.disc_min, offside.disc_unable_to_access)
   const hasAlert = type === 'disc' && (nsDiscBelowSpec || osDiscBelowSpec)
 
-  // Get the min spec to display (use offside if nearside is null)
-  const minSpec = nearside.disc_min ?? offside.disc_min
+  // Get the min spec to display (use offside if nearside is null, skip if both are unable to access)
+  const minSpec = (!nearside.disc_unable_to_access ? nearside.disc_min : null) ??
+                  (!offside.disc_unable_to_access ? offside.disc_min : null)
+
+  // Format disc value or show N/A if unable to access
+  const formatDiscValue = (side: BrakeSideData): string => {
+    if (side.disc_unable_to_access) return 'N/A'
+    return formatValue(side.disc)
+  }
 
   return `
     <div class="brake-axle">
@@ -149,8 +160,8 @@ function renderAxleColumn(data: BrakeAxleData | null, label: string): string {
           ${type === 'disc' ? `
             <tr>
               <td>Disc</td>
-              <td class="brake-value ${nsDiscBelowSpec ? 'critical' : 'ok'}">${formatValue(nearside.disc)}</td>
-              <td class="brake-value ${osDiscBelowSpec ? 'critical' : 'ok'}">${formatValue(offside.disc)}</td>
+              <td class="brake-value ${nearside.disc_unable_to_access ? 'na' : nsDiscBelowSpec ? 'critical' : 'ok'}">${formatDiscValue(nearside)}</td>
+              <td class="brake-value ${offside.disc_unable_to_access ? 'na' : osDiscBelowSpec ? 'critical' : 'ok'}">${formatDiscValue(offside)}</td>
             </tr>
             <tr>
               <td>Min spec</td>

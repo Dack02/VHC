@@ -10,6 +10,7 @@ import historyRouter from './history.js'
 import pdfRouter from './pdf.js'
 import repairItemsHCRouter from './repair-items-hc.js'
 import deletionRouter from './deletion.js'
+import workAuthoritySheetRouter from './work-authority-sheet.js'
 
 const healthChecks = new Hono()
 
@@ -19,13 +20,14 @@ healthChecks.use('*', authMiddleware)
 // Mount sub-routers
 // NOTE: Order matters for parameterized routes!
 // PDF route must come before other /:id routes to avoid being caught by them
-healthChecks.route('/', pdfRouter)           // /:id/pdf
-healthChecks.route('/', historyRouter)       // /:id/history
-healthChecks.route('/', checkResultsRouter)  // /:id/results
-healthChecks.route('/', repairItemsHCRouter) // /:id/repair-items/*
-healthChecks.route('/', statusRouter)        // /:id/status, /:id/clock-in, /:id/clock-out, etc.
-healthChecks.route('/', sendCustomerRouter)  // /:id/publish
-healthChecks.route('/', deletionRouter)      // DELETE /:id, POST /:id/delete, /bulk-delete, /:id/restore
-healthChecks.route('/', crudRouter)          // GET /, POST /, GET /:id, PATCH /:id
+healthChecks.route('/', pdfRouter)                  // /:id/pdf
+healthChecks.route('/', workAuthoritySheetRouter)   // /:id/work-authority-sheet
+healthChecks.route('/', historyRouter)              // /:id/history
+healthChecks.route('/', checkResultsRouter)         // /:id/results
+healthChecks.route('/', repairItemsHCRouter)        // /:id/repair-items/*
+healthChecks.route('/', statusRouter)               // /:id/status, /:id/clock-in, /:id/clock-out, etc.
+healthChecks.route('/', sendCustomerRouter)         // /:id/publish
+healthChecks.route('/', deletionRouter)             // DELETE /:id, POST /:id/delete, /bulk-delete, /:id/restore
+healthChecks.route('/', crudRouter)                 // GET /, POST /, GET /:id, PATCH /:id
 
 export default healthChecks

@@ -95,7 +95,6 @@ export function ReasonSelector({
   // State
   const [loading, setLoading] = useState(true)
   const [reasons, setReasons] = useState<ItemReason[]>([])
-  const [recentlyUsed, setRecentlyUsed] = useState<ItemReason[]>([])
   const [categories, setCategories] = useState<ReasonCategory[]>([])
   const [selectedReasonIds, setSelectedReasonIds] = useState<Set<string>>(
     new Set(initialSelectedReasons)
@@ -112,7 +111,6 @@ export function ReasonSelector({
   useEffect(() => {
     if (session?.access_token) {
       fetchReasons()
-      fetchRecentlyUsed()
       // Fetch existing selected reasons if we have a checkResultId
       if (checkResultId) {
         fetchExistingSelections()
@@ -173,18 +171,6 @@ export function ReasonSelector({
     } catch (err) {
       console.error('Failed to fetch existing selections:', err)
       // Don't show error toast - just continue with empty selections
-    }
-  }
-
-  const fetchRecentlyUsed = async () => {
-    try {
-      const response = await api<{ reasons: ItemReason[] }>(
-        '/api/v1/reasons/recently-used?limit=5',
-        { token: session?.access_token }
-      )
-      setRecentlyUsed(response.reasons || [])
-    } catch (err) {
-      console.error('Failed to fetch recently used:', err)
     }
   }
 
@@ -420,26 +406,6 @@ export function ReasonSelector({
             </div>
           )}
 
-          {/* Recently Used */}
-          {recentlyUsed.length > 0 && !searchQuery && (
-            <div className="space-y-2">
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                Recently Used
-              </h3>
-              <div className="space-y-2">
-                {recentlyUsed.slice(0, 3).map((reason) => (
-                  <ReasonItem
-                    key={`recent-${reason.id}`}
-                    reason={reason}
-                    selected={selectedReasonIds.has(reason.id)}
-                    onToggle={() => handleReasonToggle(reason)}
-                    showBadge="recent"
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Grouped Reasons */}
           {groupedReasons.length > 0 ? (
             groupedReasons.map((group) => (
@@ -572,10 +538,9 @@ interface ReasonItemProps {
   reason: ItemReason
   selected: boolean
   onToggle: () => void
-  showBadge?: 'recent'
 }
 
-function ReasonItem({ reason, selected, onToggle, showBadge }: ReasonItemProps) {
+function ReasonItem({ reason, selected, onToggle }: ReasonItemProps) {
   return (
     <button
       onClick={onToggle}
@@ -609,11 +574,6 @@ function ReasonItem({ reason, selected, onToggle, showBadge }: ReasonItemProps) 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="font-medium text-sm">{reason.reasonText}</span>
-            {showBadge === 'recent' && (
-              <span className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">
-                Recent
-              </span>
-            )}
           </div>
           <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
             <span className="flex items-center gap-1">

@@ -15,7 +15,8 @@ import {
   renderGreenSummary,
   renderCompactFooter,
   renderPhotoPage,
-  hasPhotos
+  hasPhotos,
+  countPhotoPages
 } from '../components/compact/index.js'
 import { renderHTMLToPDF } from '../pdf.js'
 
@@ -52,9 +53,10 @@ export function generateCompactHealthCheckHTML(data: HealthCheckPDFData): string
   // Total items checked
   const totalItems = results.length
 
-  // Check if photos exist
+  // Check if photos exist and calculate total pages
   const hasPhotoEvidence = hasPhotos(repairItems, results)
-  const totalPages = hasPhotoEvidence ? 2 : 1
+  const numPhotoPages = countPhotoPages(repairItems, results)
+  const totalPages = 1 + numPhotoPages // 1 for main report + photo pages
 
   // Generate reference
   const reference = data.vhc_reference || `VHC${data.id.slice(0, 8).toUpperCase()}`

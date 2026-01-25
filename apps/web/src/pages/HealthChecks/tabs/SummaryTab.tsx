@@ -10,7 +10,8 @@ import {
   WorkflowBadges,
   BadgeStatus,
   RepairItemBadges,
-  useWorkflowStatus
+  useWorkflowStatus,
+  calculateAuthorisationInfo
 } from '../../../components/WorkflowBadges'
 
 interface SummaryTabProps {
@@ -83,6 +84,9 @@ export function SummaryTab({ healthCheckId, sentAt, bookedRepairs, onUpdate }: S
 
   // Calculate overall workflow status using shared hook
   const workflowStatus = useWorkflowStatus(repairItems, sentAt)
+
+  // Calculate authorisation info for A badge tooltip
+  const authorisationInfo = useMemo(() => calculateAuthorisationInfo(repairItems), [repairItems])
 
   // Calculate quote totals
   const quoteTotals = useMemo(() => {
@@ -209,7 +213,7 @@ export function SummaryTab({ healthCheckId, sentAt, bookedRepairs, onUpdate }: S
       {/* Workflow Status Badges */}
       <div className="flex items-center gap-2">
         <span className="text-sm text-gray-500 mr-2">Status:</span>
-        <WorkflowBadges status={workflowStatus} />
+        <WorkflowBadges status={workflowStatus} authorisationInfo={authorisationInfo} />
       </div>
 
       {/* Pre-Booked Work Section */}

@@ -219,6 +219,12 @@ export function formatRepairItem(item: Record<string, unknown>) {
     noLabourRequiredAt: item.no_labour_required_at,
     noPartsRequired: item.no_parts_required || false,
     noPartsRequiredBy: item.no_parts_required_by,
-    noPartsRequiredAt: item.no_parts_required_at
+    noPartsRequiredAt: item.no_parts_required_at,
+    // Outcome tracking fields for authorisation
+    outcomeStatus: item.outcome_status || null,
+    outcomeSetBy: item.outcome_set_by || null,
+    outcomeSetAt: item.outcome_set_at || null,
+    outcomeSource: item.outcome_source || null,
+    outcomeSetByUser: formatUser(item.outcome_set_by_user)
   }
 }

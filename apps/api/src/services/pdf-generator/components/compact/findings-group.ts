@@ -6,14 +6,21 @@
 import type { RepairItemData, ResultData, CheckResultReasonsMap } from '../../types.js'
 import { formatCurrency, formatDate } from '../../utils/formatters.js'
 
+interface ChildItem {
+  name: string
+  descriptions: string[]
+}
+
 interface FindingItem {
   id: string
   name: string
-  description: string | null
+  descriptions: string[]  // All descriptions/reasons - no truncation
   price: number | null
   isDeferred: boolean
   deferredUntil: string | null
   status: 'red' | 'amber' | 'green'
+  isGroup: boolean
+  children: ChildItem[]
 }
 
 interface FindingsGroupOptions {
@@ -25,60 +32,140 @@ interface FindingsGroupOptions {
 }
 
 /**
- * Get description from reasons or repair item
+ * Get ALL descriptions/reasons for an item - no truncation
  */
-function getDescription(
+function getDescriptions(
   item: RepairItemData,
   results: ResultData[],
   reasonsByCheckResult: CheckResultReasonsMap = {}
-): string | null {
-  // First check for AI-generated reasons
+): string[] {
+  const descriptions: string[] = []
+
+  // First check for AI-generated reasons - include ALL of them
   const reasons = reasonsByCheckResult[item.check_result_id]
   if (reasons && reasons.length > 0) {
-    // Use customer description or reason text
-    const reason = reasons[0]
-    return reason.customerDescription || reason.reasonText || null
+    for (const reason of reasons) {
+      const text = reason.customerDescription || reason.reasonText
+      if (text) {
+        descriptions.push(text)
+      }
+    }
   }
 
-  // Fall back to item description
-  if (item.description) {
-    return item.description
+  // If no reasons, fall back to item description
+  if (descriptions.length === 0 && item.description) {
+    descriptions.push(item.description)
   }
 
-  // Check result notes
+  // Also check result notes
   const result = results.find(r => r.id === item.check_result_id)
-  if (result?.notes) {
-    return result.notes
+  if (result?.notes && !descriptions.includes(result.notes)) {
+    descriptions.push(result.notes)
   }
 
-  return null
+  return descriptions
 }
 
 /**
- * Truncate text with ellipsis
+ * Get descriptions for a child item
  */
-function truncate(text: string | null, maxLength: number): string {
-  if (!text) return ''
-  if (text.length <= maxLength) return text
-  return text.slice(0, maxLength - 3) + '...'
+function getChildDescriptions(
+  child: { name: string; description?: string | null; check_result_id?: string },
+  results: ResultData[],
+  reasonsByCheckResult: CheckResultReasonsMap = {}
+): string[] {
+  const descriptions: string[] = []
+
+  // Check for AI-generated reasons using check_result_id
+  if (child.check_result_id) {
+    const reasons = reasonsByCheckResult[child.check_result_id]
+    if (reasons && reasons.length > 0) {
+      for (const reason of reasons) {
+        const text = reason.customerDescription || reason.reasonText
+        if (text) {
+          descriptions.push(text)
+        }
+      }
+    }
+
+    // Also check result notes
+    const result = results.find(r => r.id === child.check_result_id)
+    if (result?.notes && !descriptions.includes(result.notes)) {
+      descriptions.push(result.notes)
+    }
+  }
+
+  // Fall back to child description if no reasons
+  if (descriptions.length === 0 && child.description) {
+    descriptions.push(child.description)
+  }
+
+  return descriptions
 }
 
 /**
- * Render a single finding row
+ * Render child items for a group
+ */
+function renderChildItems(children: ChildItem[]): string {
+  if (children.length === 0) return ''
+
+  return `
+    <div class="finding-children">
+      ${children.map(child => `
+        <div class="finding-child">
+          <div class="finding-child-name">${child.name}</div>
+          ${child.descriptions.length > 0
+            ? child.descriptions.map(desc => `<div class="finding-description">${desc}</div>`).join('')
+            : ''
+          }
+        </div>
+      `).join('')}
+    </div>
+  `
+}
+
+/**
+ * Render a single finding row - full descriptions, no truncation
+ * Handles both regular items and grouped items
  */
 function renderFindingRow(item: FindingItem): string {
-  const description = truncate(item.description, 80)
-
   // Format price or show POA
   const priceDisplay = item.price !== null && item.price > 0
     ? formatCurrency(item.price)
     : 'POA'
 
+  // For grouped items, show group name as header and children with descriptions
+  if (item.isGroup && item.children.length > 0) {
+    return `
+      <div class="finding-row finding-group">
+        <div class="finding-info">
+          <div class="finding-name">
+            ${item.name}
+            <span class="group-badge">${item.children.length} items</span>
+          </div>
+          ${renderChildItems(item.children)}
+          ${item.isDeferred && item.deferredUntil ? `
+            <div class="finding-deferred">&#9201; Deferred until ${formatDate(item.deferredUntil)}</div>
+          ` : ''}
+        </div>
+        <div class="finding-price">
+          ${item.isDeferred ? `<span class="deferred-badge">Deferred</span>` : ''}
+          <span class="price-value">${priceDisplay}</span>
+        </div>
+      </div>
+    `
+  }
+
+  // Regular item (not a group)
+  const descriptionsHtml = item.descriptions.length > 0
+    ? item.descriptions.map(desc => `<div class="finding-description">${desc}</div>`).join('')
+    : ''
+
   return `
     <div class="finding-row">
       <div class="finding-info">
-        <div class="finding-name">${truncate(item.name, 40)}</div>
-        ${description ? `<div class="finding-description">${description}</div>` : ''}
+        <div class="finding-name">${item.name}</div>
+        ${descriptionsHtml}
         ${item.isDeferred && item.deferredUntil ? `
           <div class="finding-deferred">&#9201; Deferred until ${formatDate(item.deferredUntil)}</div>
         ` : ''}
@@ -100,15 +187,25 @@ export function renderFindingsGroup(options: FindingsGroupOptions): string {
   if (items.length === 0) return ''
 
   // Transform items to finding items
-  const findingItems: FindingItem[] = items.map(item => ({
-    id: item.id,
-    name: item.title,
-    description: getDescription(item, results, reasonsByCheckResult),
-    price: item.total_price ?? null,
-    isDeferred: !!item.follow_up_date,
-    deferredUntil: item.follow_up_date ?? null,
-    status: item.rag_status as 'red' | 'amber'
-  }))
+  const findingItems: FindingItem[] = items.map(item => {
+    // Process children if this is a group
+    const children: ChildItem[] = (item.children || []).map(child => ({
+      name: child.name,
+      descriptions: getChildDescriptions(child, results, reasonsByCheckResult)
+    }))
+
+    return {
+      id: item.id,
+      name: item.title,
+      descriptions: getDescriptions(item, results, reasonsByCheckResult),
+      price: item.total_price ?? null,
+      isDeferred: !!item.follow_up_date,
+      deferredUntil: item.follow_up_date ?? null,
+      status: item.rag_status as 'red' | 'amber',
+      isGroup: !!item.is_group,
+      children
+    }
+  })
 
   // Determine icon and title
   const icon = status === 'red' ? '&#9888;' : '&#9889;'

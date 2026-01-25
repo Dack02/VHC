@@ -6,4 +6,15 @@
 export { generateHealthCheckPDF } from './generators/health-check.js'
 export { generateCompactHealthCheckPDF, generateCompactHealthCheckHTML } from './generators/health-check-compact.js'
 export { generateApprovalConfirmationPDF } from './generators/approval-confirmation.js'
-export type { HealthCheckPDFData, ApprovalConfirmationPDFData } from './types.js'
+export { generateWorkAuthoritySheetPDF, generateWorkAuthoritySheetHTML } from './generators/work-authority-sheet.js'
+export { fetchWorkAuthorityData, generateDocumentNumber } from './work-authority-sheet.js'
+export type {
+  HealthCheckPDFData,
+  ApprovalConfirmationPDFData,
+  WorkAuthoritySheetData,
+  WorkAuthorityVariant,
+  WorkSection,
+  LabourLine,
+  PartsLine,
+  PricingSummary
+} from './types.js'

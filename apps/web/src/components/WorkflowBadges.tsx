@@ -1,6 +1,6 @@
 /**
  * Workflow Badges Component
- * Displays status indicators for Labour, Parts, Quote, and Sent workflow stages
+ * Displays status indicators for Tech, Labour, Parts, Sent, and Authorised workflow stages
  *
  * Status colours (background-based):
  * - pending (red): Not started
@@ -19,8 +19,8 @@ export interface WorkflowStatus {
   technician: BadgeStatus
   labour: BadgeStatus
   parts: BadgeStatus
-  quote: BadgeStatus
   sent: BadgeStatus
+  authorised: BadgeStatus
 }
 
 export interface CompletionInfo {
@@ -30,12 +30,27 @@ export interface CompletionInfo {
   completedBy?: string | null
 }
 
+// Authorisation info for A badge tooltip
+export interface AuthorisationEntry {
+  source: 'manual' | 'online'
+  userName?: string | null
+  timestamp: string
+}
+
+export interface AuthorisationInfo {
+  status: BadgeStatus
+  authorisedBy: AuthorisationEntry[]
+  totalItems: number
+  authorisedCount: number
+}
+
 interface WorkflowBadgeProps {
   label: string
   status: BadgeStatus
   title: string
   compact?: boolean
   completionInfo?: CompletionInfo
+  customTooltip?: string
 }
 
 interface WorkflowBadgesProps {
@@ -44,8 +59,8 @@ interface WorkflowBadgesProps {
   technicianCompletion?: CompletionInfo
   labourCompletion?: CompletionInfo
   partsCompletion?: CompletionInfo
-  quoteCompletion?: CompletionInfo
   sentCompletion?: CompletionInfo
+  authorisationInfo?: AuthorisationInfo
 }
 
 interface WorkflowLegendProps {
@@ -110,12 +125,18 @@ function formatCompletionInfo(completionInfo?: CompletionInfo, status?: BadgeSta
 }
 
 // Individual Workflow Badge
-export function WorkflowBadge({ label, status, title, compact, completionInfo }: WorkflowBadgeProps) {
-  // Show completion info for in_progress and complete states
-  const completionText = (status === 'complete' || status === 'in_progress')
-    ? formatCompletionInfo(completionInfo, status)
-    : ''
-  const tooltipText = `${title}: ${statusText[status]}${completionText}`
+export function WorkflowBadge({ label, status, title, compact, completionInfo, customTooltip }: WorkflowBadgeProps) {
+  // Use custom tooltip if provided, otherwise build from completion info
+  let tooltipText: string
+  if (customTooltip) {
+    tooltipText = customTooltip
+  } else {
+    // Show completion info for in_progress and complete states
+    const completionText = (status === 'complete' || status === 'in_progress')
+      ? formatCompletionInfo(completionInfo, status)
+      : ''
+    tooltipText = `${title}: ${statusText[status]}${completionText}`
+  }
 
   const sizeClass = compact ? 'w-5 h-5 text-[10px]' : 'w-7 h-7 text-xs'
 
@@ -130,16 +151,61 @@ export function WorkflowBadge({ label, status, title, compact, completionInfo }:
   )
 }
 
-// Grouped Workflow Badges T L P Q S
+// Helper to format authorisation tooltip
+function formatAuthorisationTooltip(info?: AuthorisationInfo, fallbackStatus?: BadgeStatus): string {
+  if (!info) {
+    // Fallback based on status when authorisationInfo not provided
+    if (fallbackStatus === 'na') return 'Authorised: Not applicable'
+    if (fallbackStatus === 'complete') return 'Authorised: Complete'
+    if (fallbackStatus === 'in_progress') return 'Authorised: In progress'
+    if (fallbackStatus === 'pending') return 'Authorised: Not started'
+    return 'Authorised: Not available'
+  }
+
+  const { status, authorisedBy, totalItems, authorisedCount } = info
+
+  // N/A case
+  if (status === 'na') return 'Authorised: Not applicable'
+
+  // Pending case
+  if (status === 'pending' || authorisedCount === 0) {
+    return `Authorised: Not started (0/${totalItems})`
+  }
+
+  // Format the entries
+  const entryTexts = authorisedBy.map(entry => {
+    const date = new Date(entry.timestamp)
+    const dateStr = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) +
+      ', ' + date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+
+    if (entry.source === 'online') {
+      return `Customer online on ${dateStr}`
+    } else {
+      return `${entry.userName || 'Unknown'} on ${dateStr}`
+    }
+  })
+
+  // Build final tooltip
+  const prefix = `Authorised (${authorisedCount}/${totalItems}): `
+  // If no entries have timestamps, show just the count
+  if (entryTexts.length === 0) {
+    return prefix + 'Details not available'
+  }
+  return prefix + entryTexts.join('; ')
+}
+
+// Grouped Workflow Badges T L P S A
 export function WorkflowBadges({
   status,
   compact,
   technicianCompletion,
   labourCompletion,
   partsCompletion,
-  quoteCompletion,
-  sentCompletion
+  sentCompletion,
+  authorisationInfo
 }: WorkflowBadgesProps) {
+  const authorisationTooltip = formatAuthorisationTooltip(authorisationInfo, status.authorised)
+
   return (
     <div className="inline-flex items-center gap-1">
       <WorkflowBadge
@@ -164,18 +230,18 @@ export function WorkflowBadges({
         completionInfo={partsCompletion}
       />
       <WorkflowBadge
-        label="Q"
-        status={status.quote}
-        title="Quote"
-        compact={compact}
-        completionInfo={quoteCompletion}
-      />
-      <WorkflowBadge
         label="S"
         status={status.sent}
         title="Sent"
         compact={compact}
         completionInfo={sentCompletion}
+      />
+      <WorkflowBadge
+        label="A"
+        status={status.authorised}
+        title="Authorised"
+        compact={compact}
+        customTooltip={authorisationTooltip}
       />
     </div>
   )
@@ -220,8 +286,8 @@ export function WorkflowLegend({ className = '' }: WorkflowLegendProps) {
         <span>T = Tech Inspection</span>
         <span>L = Labour</span>
         <span>P = Parts</span>
-        <span>Q = Quoted</span>
         <span>S = Sent</span>
+        <span>A = Authorised</span>
       </div>
       <div className="flex items-center gap-2 border-l border-gray-300 pl-4">
         <span className="inline-flex items-center gap-1">
@@ -251,8 +317,23 @@ export interface RepairItemForWorkflow {
   labour_status?: string
   partsStatus?: string
   parts_status?: string
-  quoteStatus?: string
-  quote_status?: string
+  // Outcome fields for authorisation calculation
+  outcomeStatus?: string | null
+  outcome_status?: string | null
+  outcomeSetBy?: string | null
+  outcome_set_by?: string | null
+  outcomeSetAt?: string | null
+  outcome_set_at?: string | null
+  outcomeSource?: string | null
+  outcome_source?: string | null
+  outcomeSetByUser?: { first_name: string; last_name: string } | null
+  outcome_set_by_user?: { first_name: string; last_name: string } | null
+  // Customer approval flag (legacy field also used for authorisation)
+  customerApproved?: boolean | null
+  customer_approved?: boolean | null
+  // Customer approval timestamp (for tooltip)
+  customerApprovedAt?: string | null
+  customer_approved_at?: string | null
 }
 
 export interface TechTimestamps {
@@ -284,8 +365,8 @@ export function calculateWorkflowStatus(
       technician: technicianStatus,
       labour: 'na',
       parts: 'na',
-      quote: 'na',
-      sent: sentAt ? 'complete' : 'na'
+      sent: sentAt ? 'complete' : 'na',
+      authorised: 'na'
     }
   }
 
@@ -294,8 +375,17 @@ export function calculateWorkflowStatus(
     item.labourStatus || item.labour_status || 'pending'
   const getPartsStatus = (item: RepairItemForWorkflow) =>
     item.partsStatus || item.parts_status || 'pending'
-  const getQuoteStatus = (item: RepairItemForWorkflow) =>
-    item.quoteStatus || item.quote_status || 'pending'
+  const getOutcomeStatus = (item: RepairItemForWorkflow) =>
+    item.outcomeStatus || item.outcome_status || null
+  const getCustomerApproved = (item: RepairItemForWorkflow) =>
+    item.customerApproved ?? item.customer_approved ?? null
+
+  // Check if item is authorised (outcome_status = 'authorised' OR customer_approved = true)
+  const isItemAuthorised = (item: RepairItemForWorkflow) => {
+    const outcome = getOutcomeStatus(item)
+    const customerApproved = getCustomerApproved(item)
+    return outcome === 'authorised' || customerApproved === true
+  }
 
   const labourComplete = repairItems.every(i => getLabourStatus(i) === 'complete')
   const labourStarted = repairItems.some(i =>
@@ -307,18 +397,106 @@ export function calculateWorkflowStatus(
     getPartsStatus(i) === 'in_progress' || getPartsStatus(i) === 'complete'
   )
 
-  const quoteReady = repairItems.every(i => getQuoteStatus(i) === 'ready')
   const isSent = !!sentAt
 
-  // Quote is only complete when Labour AND Parts are both complete
-  const quoteComplete = quoteReady && labourComplete && partsComplete
+  // Calculate authorised status based on outcome_status OR customer_approved
+  // Filter to only actionable items (not deleted)
+  const actionableItems = repairItems.filter(i => {
+    const outcome = getOutcomeStatus(i)
+    return outcome !== 'deleted'
+  })
+
+  let authorisedStatus: BadgeStatus = 'na'
+  if (actionableItems.length > 0) {
+    const authorisedCount = actionableItems.filter(i => isItemAuthorised(i)).length
+    if (authorisedCount === actionableItems.length) {
+      authorisedStatus = 'complete'
+    } else if (authorisedCount > 0) {
+      authorisedStatus = 'in_progress'
+    } else {
+      authorisedStatus = 'pending'
+    }
+  }
 
   return {
     technician: technicianStatus,
     labour: labourComplete ? 'complete' : labourStarted ? 'in_progress' : 'pending',
     parts: partsComplete ? 'complete' : partsStarted ? 'in_progress' : 'pending',
-    quote: quoteComplete ? 'complete' : 'pending',
-    sent: isSent ? 'complete' : 'na'
+    sent: isSent ? 'complete' : 'na',
+    authorised: authorisedStatus
+  }
+}
+
+// Calculate authorisation info from repair items for tooltip
+export function calculateAuthorisationInfo(repairItems: RepairItemForWorkflow[]): AuthorisationInfo {
+  // Helper to check if item is authorised (outcome_status = 'authorised' OR customer_approved = true)
+  const isItemAuthorised = (item: RepairItemForWorkflow) => {
+    const outcome = item.outcomeStatus || item.outcome_status || null
+    const customerApproved = item.customerApproved ?? item.customer_approved ?? null
+    return outcome === 'authorised' || customerApproved === true
+  }
+
+  // Filter to only actionable items (not deleted)
+  const actionableItems = repairItems.filter(item => {
+    const outcome = item.outcomeStatus || item.outcome_status || null
+    return outcome !== 'deleted'
+  })
+
+  if (actionableItems.length === 0) {
+    return {
+      status: 'na',
+      authorisedBy: [],
+      totalItems: 0,
+      authorisedCount: 0
+    }
+  }
+
+  // Find authorised items (outcome_status = 'authorised' OR customer_approved = true)
+  const authorisedItems = actionableItems.filter(item => isItemAuthorised(item))
+
+  const authorisedCount = authorisedItems.length
+  const totalItems = actionableItems.length
+
+  // Determine status
+  let status: BadgeStatus = 'pending'
+  if (authorisedCount === totalItems) {
+    status = 'complete'
+  } else if (authorisedCount > 0) {
+    status = 'in_progress'
+  }
+
+  // Build authorisation entries
+  const authorisedBy: AuthorisationEntry[] = authorisedItems
+    .filter(item => {
+      // Use outcome_set_at if available, otherwise customer_approved_at
+      const timestamp = item.outcomeSetAt || item.outcome_set_at ||
+                       item.customerApprovedAt || item.customer_approved_at
+      return !!timestamp
+    })
+    .map(item => {
+      const outcomeSource = item.outcomeSource || item.outcome_source
+      // If we have outcome_source, use it; otherwise default to 'online' for customer_approved
+      const source = outcomeSource ? (outcomeSource as 'manual' | 'online') : 'online'
+      const user = item.outcomeSetByUser || item.outcome_set_by_user
+      const userName = user ? `${user.first_name} ${user.last_name}` : null
+      // Use outcome_set_at if available, otherwise customer_approved_at
+      const timestamp = item.outcomeSetAt || item.outcome_set_at ||
+                       item.customerApprovedAt || item.customer_approved_at || ''
+
+      return {
+        source,
+        userName,
+        timestamp
+      }
+    })
+    // Sort by timestamp descending (most recent first)
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+
+  return {
+    status,
+    authorisedBy,
+    totalItems,
+    authorisedCount
   }
 }
 

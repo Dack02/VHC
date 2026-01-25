@@ -30,6 +30,22 @@ interface AdvisorMetric {
   totalValue: number
 }
 
+interface BrakeDiscTechnicianStat {
+  technicianId: string
+  technicianName: string
+  notMeasuredCount: number
+  unableToAccessCount: number
+  totalHealthChecks: number
+}
+
+interface BrakeDiscData {
+  period: { from: string; to: string }
+  totalHealthChecks: number
+  unableToAccessCount: number
+  notMeasuredCount: number
+  byTechnician: BrakeDiscTechnicianStat[]
+}
+
 interface ReportSummary {
   total: number
   completed: number
@@ -55,6 +71,7 @@ export default function Reports() {
   const { session } = useAuth()
   const token = session?.accessToken
   const [data, setData] = useState<ReportData | null>(null)
+  const [brakeDiscData, setBrakeDiscData] = useState<BrakeDiscData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
@@ -82,12 +99,20 @@ export default function Reports() {
         dateFrom = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000)
       }
 
-      const reportData = await api<ReportData>(
-        `/api/v1/reports?date_from=${dateFrom.toISOString()}&date_to=${today.toISOString()}&group_by=${groupBy}`,
-        { token }
-      )
+      // Fetch main report data and brake disc data in parallel
+      const [reportData, brakeData] = await Promise.all([
+        api<ReportData>(
+          `/api/v1/reports?date_from=${dateFrom.toISOString()}&date_to=${today.toISOString()}&group_by=${groupBy}`,
+          { token }
+        ),
+        api<BrakeDiscData>(
+          `/api/v1/reports/brake-disc-access?startDate=${dateFrom.toISOString()}&endDate=${today.toISOString()}`,
+          { token }
+        )
+      ])
 
       setData(reportData)
+      setBrakeDiscData(brakeData)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load reports')
     } finally {
@@ -366,6 +391,75 @@ export default function Reports() {
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      {/* Brake Disc Measurements */}
+      <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="border-b border-gray-200 p-4">
+          <h2 className="font-semibold text-gray-900">Brake Disc Measurements</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Tracking disc measurements not recorded by technicians
+          </p>
+        </div>
+
+        {/* Summary stats */}
+        <div className="grid grid-cols-3 gap-4 p-4 border-b border-gray-200 bg-gray-50">
+          <div>
+            <div className="text-sm text-gray-500">Total Health Checks</div>
+            <div className="text-xl font-bold text-gray-900">{brakeDiscData?.totalHealthChecks || 0}</div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-500">Not Measured</div>
+            <div className="text-xl font-bold text-rag-amber">{brakeDiscData?.notMeasuredCount || 0}</div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-500">Unable to Access</div>
+            <div className="text-xl font-bold text-gray-600">{brakeDiscData?.unableToAccessCount || 0}</div>
+          </div>
+        </div>
+
+        {/* By technician table */}
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Technician</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Health Checks</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Not Measured</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Unable to Access</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {brakeDiscData?.byTechnician.map((tech) => (
+                <tr key={tech.technicianId} className="hover:bg-gray-50">
+                  <td className="px-4 py-3 text-sm font-medium text-gray-900">{tech.technicianName}</td>
+                  <td className="px-4 py-3 text-sm text-gray-500 text-right">{tech.totalHealthChecks}</td>
+                  <td className="px-4 py-3 text-sm text-right">
+                    {tech.notMeasuredCount > 0 ? (
+                      <span className="font-medium text-rag-amber">{tech.notMeasuredCount}</span>
+                    ) : (
+                      <span className="text-gray-400">0</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-right">
+                    {tech.unableToAccessCount > 0 ? (
+                      <span className="font-medium text-gray-600">{tech.unableToAccessCount}</span>
+                    ) : (
+                      <span className="text-gray-400">0</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {(brakeDiscData?.byTechnician.length || 0) === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-gray-500 text-sm">
+                    No brake disc measurement data available
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 

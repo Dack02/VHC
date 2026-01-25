@@ -86,6 +86,7 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
       .select(`
         id,
         name,
+        description,
         parent_repair_item_id,
         check_results:repair_item_check_results(
           check_result:check_results(id, rag_status)
@@ -96,7 +97,7 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
       .order('created_at', { ascending: true })
 
     // Build child items map for groups
-    const childItemsByParentId = new Map<string, Array<{ id: string; name: string; rag_status: 'red' | 'amber' | null }>>()
+    const childItemsByParentId = new Map<string, Array<{ id: string; name: string; description?: string | null; rag_status: 'red' | 'amber' | null; check_result_id?: string }>>()
     for (const child of childItemsRaw || []) {
       const parentId = child.parent_repair_item_id as string
       if (!childItemsByParentId.has(parentId)) {
@@ -104,8 +105,12 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
       }
       // Derive child's rag_status from its check results
       let childRagStatus: 'red' | 'amber' | null = null
+      let firstCheckResultId: string | undefined = undefined
       for (const link of child.check_results || []) {
         const cr = (link as Record<string, unknown>)?.check_result as { id?: string; rag_status?: string } | null
+        if (!firstCheckResultId && cr?.id) {
+          firstCheckResultId = cr.id
+        }
         if (cr?.rag_status === 'red') {
           childRagStatus = 'red'
           break
@@ -117,7 +122,9 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
       childItemsByParentId.get(parentId)!.push({
         id: child.id,
         name: child.name,
-        rag_status: childRagStatus
+        description: child.description,
+        rag_status: childRagStatus,
+        check_result_id: firstCheckResultId
       })
     }
 
@@ -174,7 +181,9 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         is_group: item.is_group,
         children: children.length > 0 ? children.map(c => ({
           name: c.name,
-          rag_status: c.rag_status || 'amber'
+          rag_status: c.rag_status || 'amber',
+          description: c.description,
+          check_result_id: c.check_result_id
         })) : undefined
       }
     })

@@ -134,8 +134,8 @@ export function Summary() {
 
     const data = result.value as {
       brake_type?: string
-      nearside?: { pad: number | null; disc: number | null; disc_min: number | null }
-      offside?: { pad: number | null; disc: number | null; disc_min: number | null }
+      nearside?: { pad: number | null; disc: number | null; disc_min: number | null; disc_unable_to_access?: boolean }
+      offside?: { pad: number | null; disc: number | null; disc_min: number | null; disc_unable_to_access?: boolean }
     }
 
     if (!data.nearside && !data.offside) return null
@@ -170,11 +170,17 @@ export function Summary() {
                   Pad: {ns.pad}mm
                 </div>
               )}
-              {data.brake_type === 'disc' && ns.disc !== null && (
-                <div className={getDiscStatus(ns.disc, ns.disc_min) === 'below' ? 'text-rag-red font-bold' : 'text-gray-600'}>
-                  Disc: {ns.disc}mm
-                  {ns.disc_min !== null && ` (min: ${ns.disc_min}mm)`}
-                </div>
+              {data.brake_type === 'disc' && (
+                ns.disc_unable_to_access ? (
+                  <div className="text-gray-500 italic">
+                    Disc: Unable to access
+                  </div>
+                ) : ns.disc !== null && (
+                  <div className={getDiscStatus(ns.disc, ns.disc_min) === 'below' ? 'text-rag-red font-bold' : 'text-gray-600'}>
+                    Disc: {ns.disc}mm
+                    {ns.disc_min !== null && ` (min: ${ns.disc_min}mm)`}
+                  </div>
+                )
               )}
             </div>
           )}
@@ -187,11 +193,17 @@ export function Summary() {
                   Pad: {os.pad}mm
                 </div>
               )}
-              {data.brake_type === 'disc' && os.disc !== null && (
-                <div className={getDiscStatus(os.disc, os.disc_min) === 'below' ? 'text-rag-red font-bold' : 'text-gray-600'}>
-                  Disc: {os.disc}mm
-                  {os.disc_min !== null && ` (min: ${os.disc_min}mm)`}
-                </div>
+              {data.brake_type === 'disc' && (
+                os.disc_unable_to_access ? (
+                  <div className="text-gray-500 italic">
+                    Disc: Unable to access
+                  </div>
+                ) : os.disc !== null && (
+                  <div className={getDiscStatus(os.disc, os.disc_min) === 'below' ? 'text-rag-red font-bold' : 'text-gray-600'}>
+                    Disc: {os.disc}mm
+                    {os.disc_min !== null && ` (min: ${os.disc_min}mm)`}
+                  </div>
+                )
               )}
             </div>
           )}

@@ -11,11 +11,13 @@ interface BrakeMeasurementValue {
     pad: number | null
     disc: number | null
     disc_min: number | null
+    disc_unable_to_access?: boolean
   }
   offside: {
     pad: number | null
     disc: number | null
     disc_min: number | null
+    disc_unable_to_access?: boolean
   }
 }
 
@@ -28,8 +30,8 @@ interface BrakeMeasurementInputProps {
 
 const DEFAULT_VALUE: BrakeMeasurementValue = {
   brake_type: 'disc',
-  nearside: { pad: null, disc: null, disc_min: null },
-  offside: { pad: null, disc: null, disc_min: null }
+  nearside: { pad: null, disc: null, disc_min: null, disc_unable_to_access: false },
+  offside: { pad: null, disc: null, disc_min: null, disc_unable_to_access: false }
 }
 
 export function BrakeMeasurementInput({
@@ -45,8 +47,8 @@ export function BrakeMeasurementInput({
     if (value?.nearside || value?.offside) {
       return {
         brake_type: value.brake_type || 'disc',
-        nearside: value.nearside || { pad: null, disc: null, disc_min: null },
-        offside: value.offside || { pad: null, disc: null, disc_min: null }
+        nearside: value.nearside || { pad: null, disc: null, disc_min: null, disc_unable_to_access: false },
+        offside: value.offside || { pad: null, disc: null, disc_min: null, disc_unable_to_access: false }
       }
     }
     return { ...DEFAULT_VALUE }
@@ -67,22 +69,26 @@ export function BrakeMeasurementInput({
     if (m.nearside.pad !== null) padValues.push(m.nearside.pad)
     if (m.offside.pad !== null) padValues.push(m.offside.pad)
 
-    // Check disc measurements against min specs
+    // Check disc measurements against min specs (skip if unable to access)
     if (m.brake_type === 'disc') {
-      if (m.nearside.disc !== null && m.nearside.disc_min !== null) {
+      if (!m.nearside.disc_unable_to_access && m.nearside.disc !== null && m.nearside.disc_min !== null) {
         if (m.nearside.disc < m.nearside.disc_min) {
           hasDiscBelowMinSpec = true
         }
       }
-      if (m.offside.disc !== null && m.offside.disc_min !== null) {
+      if (!m.offside.disc_unable_to_access && m.offside.disc !== null && m.offside.disc_min !== null) {
         if (m.offside.disc < m.offside.disc_min) {
           hasDiscBelowMinSpec = true
         }
       }
     }
 
+    // Consider disc accessible if not marked as unable_to_access
+    const nsDiscAccessible = !m.nearside.disc_unable_to_access
+    const osDiscAccessible = !m.offside.disc_unable_to_access
     const hasAnyMeasurement = padValues.length > 0 ||
-      m.nearside.disc !== null || m.offside.disc !== null
+      (nsDiscAccessible && m.nearside.disc !== null) ||
+      (osDiscAccessible && m.offside.disc !== null)
 
     if (!hasAnyMeasurement) {
       return null
@@ -147,6 +153,25 @@ export function BrakeMeasurementInput({
     })
   }, [onChange, onRAGChange, calculateRAG])
 
+  const handleUnableToAccessChange = useCallback((side: 'nearside' | 'offside', checked: boolean) => {
+    if ('vibrate' in navigator) navigator.vibrate(30)
+    setMeasurement((prev) => {
+      const newMeasurement = {
+        ...prev,
+        [side]: {
+          ...prev[side],
+          disc_unable_to_access: checked,
+          // Clear disc measurements when marking as unable to access
+          ...(checked ? { disc: null, disc_min: null } : {})
+        }
+      }
+      const ragStatus = calculateRAG(newMeasurement)
+      onChange(newMeasurement, ragStatus)
+      onRAGChange?.(ragStatus)
+      return newMeasurement
+    })
+  }, [onChange, onRAGChange, calculateRAG])
+
   return (
     <div className="space-y-4">
       {/* Brake Type Toggle */}
@@ -200,35 +225,53 @@ export function BrakeMeasurementInput({
           {measurement.brake_type === 'disc' && (
             <div className="space-y-2">
               <div className="text-xs font-medium text-gray-500 uppercase">Disc</div>
-              <NumericPicker
-                label="Actual"
-                value={measurement.nearside.disc}
-                onChange={(v) => handleDiscChange('nearside', v)}
-                min={15}
-                max={35}
-                step={1}
-                unit="mm"
-              />
-              <NumericPicker
-                label="Min Spec"
-                value={measurement.nearside.disc_min}
-                onChange={(v) => handleDiscMinChange('nearside', v)}
-                min={15}
-                max={35}
-                step={1}
-                unit="mm"
-              />
-              {/* Status indicator */}
-              {measurement.nearside.disc !== null && measurement.nearside.disc_min !== null && (
-                <div className={`
-                  px-2 py-1 text-xs font-medium text-center rounded
-                  ${measurement.nearside.disc < measurement.nearside.disc_min
-                    ? 'bg-rag-red text-white'
-                    : 'bg-rag-green text-white'
-                  }
-                `}>
-                  {measurement.nearside.disc < measurement.nearside.disc_min ? 'REPLACEMENT REQUIRED' : 'OK'}
+              {/* Unable to access checkbox */}
+              <label className="flex items-center gap-2 py-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={measurement.nearside.disc_unable_to_access || false}
+                  onChange={(e) => handleUnableToAccessChange('nearside', e.target.checked)}
+                  className="w-5 h-5 rounded border-gray-300 text-primary focus:ring-primary"
+                />
+                <span className="text-sm text-gray-600">Unable to access</span>
+              </label>
+              {measurement.nearside.disc_unable_to_access ? (
+                <div className="px-2 py-2 text-xs font-medium text-center rounded bg-gray-200 text-gray-600">
+                  NOT ACCESSIBLE
                 </div>
+              ) : (
+                <>
+                  <NumericPicker
+                    label="Actual"
+                    value={measurement.nearside.disc}
+                    onChange={(v) => handleDiscChange('nearside', v)}
+                    min={15}
+                    max={35}
+                    step={1}
+                    unit="mm"
+                  />
+                  <NumericPicker
+                    label="Min Spec"
+                    value={measurement.nearside.disc_min}
+                    onChange={(v) => handleDiscMinChange('nearside', v)}
+                    min={15}
+                    max={35}
+                    step={1}
+                    unit="mm"
+                  />
+                  {/* Status indicator */}
+                  {measurement.nearside.disc !== null && measurement.nearside.disc_min !== null && (
+                    <div className={`
+                      px-2 py-1 text-xs font-medium text-center rounded
+                      ${measurement.nearside.disc < measurement.nearside.disc_min
+                        ? 'bg-rag-red text-white'
+                        : 'bg-rag-green text-white'
+                      }
+                    `}>
+                      {measurement.nearside.disc < measurement.nearside.disc_min ? 'REPLACEMENT REQUIRED' : 'OK'}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -252,35 +295,53 @@ export function BrakeMeasurementInput({
           {measurement.brake_type === 'disc' && (
             <div className="space-y-2">
               <div className="text-xs font-medium text-gray-500 uppercase">Disc</div>
-              <NumericPicker
-                label="Actual"
-                value={measurement.offside.disc}
-                onChange={(v) => handleDiscChange('offside', v)}
-                min={15}
-                max={35}
-                step={1}
-                unit="mm"
-              />
-              <NumericPicker
-                label="Min Spec"
-                value={measurement.offside.disc_min}
-                onChange={(v) => handleDiscMinChange('offside', v)}
-                min={15}
-                max={35}
-                step={1}
-                unit="mm"
-              />
-              {/* Status indicator */}
-              {measurement.offside.disc !== null && measurement.offside.disc_min !== null && (
-                <div className={`
-                  px-2 py-1 text-xs font-medium text-center rounded
-                  ${measurement.offside.disc < measurement.offside.disc_min
-                    ? 'bg-rag-red text-white'
-                    : 'bg-rag-green text-white'
-                  }
-                `}>
-                  {measurement.offside.disc < measurement.offside.disc_min ? 'REPLACEMENT REQUIRED' : 'OK'}
+              {/* Unable to access checkbox */}
+              <label className="flex items-center gap-2 py-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={measurement.offside.disc_unable_to_access || false}
+                  onChange={(e) => handleUnableToAccessChange('offside', e.target.checked)}
+                  className="w-5 h-5 rounded border-gray-300 text-primary focus:ring-primary"
+                />
+                <span className="text-sm text-gray-600">Unable to access</span>
+              </label>
+              {measurement.offside.disc_unable_to_access ? (
+                <div className="px-2 py-2 text-xs font-medium text-center rounded bg-gray-200 text-gray-600">
+                  NOT ACCESSIBLE
                 </div>
+              ) : (
+                <>
+                  <NumericPicker
+                    label="Actual"
+                    value={measurement.offside.disc}
+                    onChange={(v) => handleDiscChange('offside', v)}
+                    min={15}
+                    max={35}
+                    step={1}
+                    unit="mm"
+                  />
+                  <NumericPicker
+                    label="Min Spec"
+                    value={measurement.offside.disc_min}
+                    onChange={(v) => handleDiscMinChange('offside', v)}
+                    min={15}
+                    max={35}
+                    step={1}
+                    unit="mm"
+                  />
+                  {/* Status indicator */}
+                  {measurement.offside.disc !== null && measurement.offside.disc_min !== null && (
+                    <div className={`
+                      px-2 py-1 text-xs font-medium text-center rounded
+                      ${measurement.offside.disc < measurement.offside.disc_min
+                        ? 'bg-rag-red text-white'
+                        : 'bg-rag-green text-white'
+                      }
+                    `}>
+                      {measurement.offside.disc < measurement.offside.disc_min ? 'REPLACEMENT REQUIRED' : 'OK'}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}

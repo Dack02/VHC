@@ -585,6 +585,12 @@ export interface NewRepairItem {
   noPartsRequired: boolean
   noPartsRequiredBy: string | null
   noPartsRequiredAt: string | null
+  // Outcome tracking fields for authorisation
+  outcomeStatus?: 'incomplete' | 'ready' | 'authorised' | 'deferred' | 'declined' | 'deleted' | null
+  outcomeSetBy?: string | null
+  outcomeSetAt?: string | null
+  outcomeSource?: 'manual' | 'online' | null
+  outcomeSetByUser?: { first_name: string; last_name: string } | null
   checkResults?: Array<{
     id: string
     ragStatus: string

@@ -102,6 +102,7 @@ export function getCompactStyles(): string {
       background: #f9fafb;
       padding: 10px 12px;
       margin-bottom: 10px;
+      border-radius: 8px;
     }
 
     .reg-plate {
@@ -111,6 +112,7 @@ export function getCompactStyles(): string {
       font-weight: 700;
       color: #1f2937;
       letter-spacing: 1px;
+      border-radius: 4px;
     }
 
     .info-item {
@@ -145,6 +147,7 @@ export function getCompactStyles(): string {
       display: flex;
       align-items: center;
       gap: 10px;
+      border-radius: 8px;
     }
 
     .rag-block.red {
@@ -223,6 +226,8 @@ export function getCompactStyles(): string {
       flex: 1;
       border: 1px solid #e5e7eb;
       background: white;
+      border-radius: 8px;
+      overflow: hidden;
     }
 
     .measurement-header {
@@ -232,6 +237,7 @@ export function getCompactStyles(): string {
       padding: 8px 10px;
       background: #f9fafb;
       border-bottom: 1px solid #e5e7eb;
+      border-radius: 8px 8px 0 0;
     }
 
     .measurement-title {
@@ -259,16 +265,19 @@ export function getCompactStyles(): string {
     .tyre-cell {
       padding: 8px;
       background: #f9fafb;
+      border-radius: 6px;
     }
 
     .tyre-cell.urgent {
       background: #FEF2F2;
       border-left: 3px solid #DC2626;
+      border-radius: 6px;
     }
 
     .tyre-cell.advisory {
       background: #FFFBEB;
       border-left: 3px solid #D97706;
+      border-radius: 6px;
     }
 
     .tyre-position {
@@ -366,6 +375,11 @@ export function getCompactStyles(): string {
       color: #374151;
     }
 
+    .brake-value.na {
+      color: #9ca3af;
+      font-style: italic;
+    }
+
     .brake-alert {
       padding: 6px 8px;
       background: #FEF2F2;
@@ -387,6 +401,8 @@ export function getCompactStyles(): string {
       border: 1px solid #e5e7eb;
       margin-bottom: 10px;
       page-break-inside: avoid;
+      border-radius: 8px;
+      overflow: hidden;
     }
 
     .findings-header {
@@ -394,6 +410,7 @@ export function getCompactStyles(): string {
       display: flex;
       align-items: center;
       gap: 6px;
+      border-radius: 8px 8px 0 0;
     }
 
     .findings-header.red {
@@ -455,10 +472,8 @@ export function getCompactStyles(): string {
     .finding-description {
       font-size: 8px;
       color: #6b7280;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 400px;
+      line-height: 1.4;
+      margin-bottom: 2px;
     }
 
     .finding-deferred {
@@ -481,6 +496,7 @@ export function getCompactStyles(): string {
       background: #FFFBEB;
       padding: 2px 6px;
       text-transform: uppercase;
+      border-radius: 4px;
     }
 
     .price-value {
@@ -507,6 +523,45 @@ export function getCompactStyles(): string {
     .green-count {
       color: #059669;
       font-weight: 700;
+    }
+
+    /* Grouped items */
+    .finding-group {
+      background: #fafafa;
+    }
+
+    .group-badge {
+      display: inline-block;
+      font-size: 7px;
+      font-weight: 600;
+      color: #6b7280;
+      background: #e5e7eb;
+      padding: 2px 6px;
+      margin-left: 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+
+    .finding-children {
+      margin-top: 6px;
+      margin-left: 12px;
+      padding-left: 10px;
+      border-left: 2px solid #e5e7eb;
+    }
+
+    .finding-child {
+      margin-bottom: 6px;
+    }
+
+    .finding-child:last-child {
+      margin-bottom: 0;
+    }
+
+    .finding-child-name {
+      font-size: 9px;
+      font-weight: 500;
+      color: #374151;
+      margin-bottom: 2px;
     }
 
     /* ===== FOOTER ===== */
@@ -582,6 +637,8 @@ export function getCompactStyles(): string {
     .photo-group {
       margin-bottom: 12px;
       border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      overflow: hidden;
     }
 
     .photo-group-header {
@@ -591,6 +648,7 @@ export function getCompactStyles(): string {
       padding: 6px 10px;
       background: #f9fafb;
       border-bottom: 1px solid #e5e7eb;
+      border-radius: 8px 8px 0 0;
     }
 
     .photo-group-name {
@@ -604,6 +662,7 @@ export function getCompactStyles(): string {
       font-weight: 600;
       padding: 2px 6px;
       text-transform: uppercase;
+      border-radius: 4px;
     }
 
     .photo-status-badge.red {
@@ -617,28 +676,30 @@ export function getCompactStyles(): string {
     }
 
     .photo-grid {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      padding: 8px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      padding: 12px;
+    }
+
+    .photo-item {
+      text-align: center;
     }
 
     .photo-thumb {
-      width: 80px;
-      height: 80px;
+      width: 150px;
+      height: 150px;
       object-fit: cover;
       border: 1px solid #e5e7eb;
+      border-radius: 8px;
     }
 
     .photo-caption {
-      font-size: 7px;
+      font-size: 8px;
       color: #6b7280;
       text-align: center;
-      margin-top: 2px;
-      max-width: 80px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      margin-top: 4px;
+      max-width: 150px;
     }
 
     /* Print utilities */

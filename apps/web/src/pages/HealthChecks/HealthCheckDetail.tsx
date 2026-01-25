@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { api, HealthCheck, CheckResult, RepairItem, StatusHistoryEntry, TemplateSection, HealthCheckSummary, FullHealthCheckResponse, NewRepairItem } from '../../lib/api'
-import { WorkflowBadges, WorkflowStatus, calculateWorkflowStatus, CompletionInfo } from '../../components/WorkflowBadges'
+import { WorkflowBadges, WorkflowStatus, calculateWorkflowStatus, calculateAuthorisationInfo, CompletionInfo, AuthorisationInfo } from '../../components/WorkflowBadges'
 import { PhotosTab } from './tabs/PhotosTab'
 import { TimelineTab } from './tabs/TimelineTab'
 import { LabourTab } from './tabs/LabourTab'
@@ -13,6 +13,7 @@ import { CustomerPreviewModal } from './CustomerPreviewModal'
 import { HealthCheckTabContent } from './components/HealthCheckTabContent'
 import { CloseHealthCheckModal } from './components/CloseHealthCheckModal'
 import { AdvisorSelectionModal } from './components/AdvisorSelectionModal'
+import { WorkAuthoritySheetModal } from './components/WorkAuthoritySheetModal'
 
 // Hook for online/offline detection
 function useOnlineStatus() {
@@ -93,6 +94,7 @@ export default function HealthCheckDetail() {
   const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatus | null>(null)
   const [labourCompletion, setLabourCompletion] = useState<CompletionInfo | undefined>(undefined)
   const [partsCompletion, setPartsCompletion] = useState<CompletionInfo | undefined>(undefined)
+  const [authorisationInfo, setAuthorisationInfo] = useState<AuthorisationInfo | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
@@ -101,6 +103,7 @@ export default function HealthCheckDetail() {
   const [showPreviewModal, setShowPreviewModal] = useState(false)
   const [showCloseModal, setShowCloseModal] = useState(false)
   const [showAdvisorModal, setShowAdvisorModal] = useState(false)
+  const [showWorkAuthorityModal, setShowWorkAuthorityModal] = useState(false)
   const [generatingPDF, setGeneratingPDF] = useState(false)
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -163,6 +166,10 @@ export default function HealthCheckDetail() {
         })
         setWorkflowStatus(calculatedStatus)
 
+        // Calculate authorisation info for A badge tooltip
+        const authInfo = calculateAuthorisationInfo(items)
+        setAuthorisationInfo(authInfo)
+
         // Aggregate completion info from repair items for L/P badge tooltips
         // Find the latest labour and parts completion times across all items
         let latestLabour: NewRepairItem | null = null
@@ -211,6 +218,7 @@ export default function HealthCheckDetail() {
         setWorkflowStatus(null)
         setLabourCompletion(undefined)
         setPartsCompletion(undefined)
+        setAuthorisationInfo(undefined)
       }
 
       // Reset retry count on success
@@ -458,6 +466,16 @@ export default function HealthCheckDetail() {
               )}
               <span className="hidden sm:inline">{generatingPDF ? 'Generating...' : 'PDF'}</span>
             </button>
+            <button
+              onClick={() => setShowWorkAuthorityModal(true)}
+              title="Generate Work Authority Sheet"
+              className="px-3 md:px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50 rounded flex items-center gap-2 whitespace-nowrap"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="hidden sm:inline">Work Sheet</span>
+            </button>
             {canClose && (
               <button
                 onClick={() => setShowCloseModal(true)}
@@ -488,6 +506,7 @@ export default function HealthCheckDetail() {
         }}
         labourCompletion={labourCompletion}
         partsCompletion={partsCompletion}
+        authorisationInfo={authorisationInfo}
         canChangeAdvisor={canChangeAdvisor || undefined}
         onAdvisorClick={() => setShowAdvisorModal(true)}
       />
@@ -605,6 +624,15 @@ export default function HealthCheckDetail() {
           }}
         />
       )}
+      {showWorkAuthorityModal && healthCheck && (
+        <WorkAuthoritySheetModal
+          isOpen={showWorkAuthorityModal}
+          onClose={() => setShowWorkAuthorityModal(false)}
+          healthCheckId={healthCheck.id}
+          vehicleReg={healthCheck.vehicle?.registration || ''}
+          userRole={user?.role || 'technician'}
+        />
+      )}
     </div>
   )
 }
@@ -632,11 +660,12 @@ interface VehicleInfoBarProps {
   technicianCompletion?: CompletionInfo
   labourCompletion?: CompletionInfo
   partsCompletion?: CompletionInfo
+  authorisationInfo?: AuthorisationInfo
   canChangeAdvisor?: boolean
   onAdvisorClick?: () => void
 }
 
-function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, labourCompletion, partsCompletion, canChangeAdvisor, onAdvisorClick }: VehicleInfoBarProps) {
+function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, labourCompletion, partsCompletion, authorisationInfo, canChangeAdvisor, onAdvisorClick }: VehicleInfoBarProps) {
   const vehicle = healthCheck.vehicle
   const customer = healthCheck.vehicle?.customer
   const [vinExpanded, setVinExpanded] = useState(false)
@@ -673,7 +702,7 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
             <span className={`inline-block px-3 py-1 text-sm font-medium rounded ${statusColors[healthCheck.status]}`}>
               {statusLabels[healthCheck.status]}
             </span>
-            {workflowStatus && <WorkflowBadges status={workflowStatus} compact technicianCompletion={technicianCompletion} labourCompletion={labourCompletion} partsCompletion={partsCompletion} />}
+            {workflowStatus && <WorkflowBadges status={workflowStatus} compact technicianCompletion={technicianCompletion} labourCompletion={labourCompletion} partsCompletion={partsCompletion} authorisationInfo={authorisationInfo} />}
           </div>
         </div>
 
@@ -892,7 +921,7 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
         {workflowStatus && (
           <div>
             <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Workflow</div>
-            <WorkflowBadges status={workflowStatus} technicianCompletion={technicianCompletion} labourCompletion={labourCompletion} partsCompletion={partsCompletion} />
+            <WorkflowBadges status={workflowStatus} technicianCompletion={technicianCompletion} labourCompletion={labourCompletion} partsCompletion={partsCompletion} authorisationInfo={authorisationInfo} />
           </div>
         )}
 

@@ -27,6 +27,7 @@ repairItemsRouter.get('/health-checks/:id/repair-items', async (c) => {
         *,
         labour_completed_by_user:users!repair_items_labour_completed_by_fkey(first_name, last_name),
         parts_completed_by_user:users!repair_items_parts_completed_by_fkey(first_name, last_name),
+        outcome_set_by_user:users!repair_items_outcome_set_by_fkey(first_name, last_name),
         check_results:repair_item_check_results(
           check_result:check_results(
             id,
@@ -84,6 +85,7 @@ repairItemsRouter.get('/health-checks/:id/repair-items', async (c) => {
         *,
         labour_completed_by_user:users!repair_items_labour_completed_by_fkey(first_name, last_name),
         parts_completed_by_user:users!repair_items_parts_completed_by_fkey(first_name, last_name),
+        outcome_set_by_user:users!repair_items_outcome_set_by_fkey(first_name, last_name),
         check_results:repair_item_check_results(
           check_result:check_results(
             id,

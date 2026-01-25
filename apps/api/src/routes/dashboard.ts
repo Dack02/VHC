@@ -249,7 +249,10 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     // Fetch total amounts, workflow status data, and outcome aggregations from repair_items for each health check
     const healthCheckIds = healthChecks?.map(hc => hc.id) || []
     let repairTotals: Record<string, number> = {}
-    let repairItemsByHc: Record<string, Array<{ labour_status: string; parts_status: string; quote_status: string }>> = {}
+    // For labour/parts status: use non-group items (standalone + children) - groups don't have their own L/P status
+    let repairItemsByHc: Record<string, Array<{ labour_status: string; parts_status: string }>> = {}
+    // For authorisation status: use top-level items (groups + standalone, NOT children) - matches frontend logic
+    let authItemsByHc: Record<string, Array<{ outcome_status: string | null; customer_approved: boolean | null }>> = {}
 
     // Outcome aggregation data per health check
     interface OutcomeAggregation {
@@ -387,7 +390,7 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
           }
         }
 
-        // For workflow status: include non-group items (standalone items and children)
+        // For labour/parts workflow status: include non-group items (standalone items and children)
         // Groups don't track their own labour/parts status - their children do
         if (!isGroup) {
           if (!repairItemsByHc[item.health_check_id]) {
@@ -395,8 +398,19 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
           }
           repairItemsByHc[item.health_check_id].push({
             labour_status: item.labour_status || 'pending',
-            parts_status: item.parts_status || 'pending',
-            quote_status: item.quote_status || 'pending'
+            parts_status: item.parts_status || 'pending'
+          })
+        }
+
+        // For authorisation status: include top-level items (groups + standalone, NOT children)
+        // This matches the frontend logic which counts all items returned by the repair-items endpoint
+        if (!isChild) {
+          if (!authItemsByHc[item.health_check_id]) {
+            authItemsByHc[item.health_check_id] = []
+          }
+          authItemsByHc[item.health_check_id].push({
+            outcome_status: item.outcome_status || null,
+            customer_approved: item.customer_approved ?? null
           })
         }
       })
@@ -404,7 +418,10 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
 
     // Helper function to calculate workflow status
     function calculateWorkflowStatus(
-      repairItems: Array<{ labour_status: string; parts_status: string; quote_status: string }>,
+      // repairItems: non-group items for labour/parts calculation
+      repairItems: Array<{ labour_status: string; parts_status: string }>,
+      // authItems: top-level items for authorisation calculation (matches frontend)
+      authItems: Array<{ outcome_status: string | null; customer_approved: boolean | null }>,
       sentAt: string | null | undefined,
       techStartedAt: string | null | undefined,
       techCompletedAt: string | null | undefined
@@ -417,37 +434,51 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         technicianStatus = 'in_progress'
       }
 
-      if (repairItems.length === 0) {
-        return {
-          technician: technicianStatus,
-          labour: 'na' as const,
-          parts: 'na' as const,
-          quote: 'na' as const,
-          sent: sentAt ? 'complete' as const : 'na' as const
+      // Labour/Parts: based on non-group items
+      let labourStatus: 'pending' | 'in_progress' | 'complete' | 'na' = 'na'
+      let partsStatus: 'pending' | 'in_progress' | 'complete' | 'na' = 'na'
+
+      if (repairItems.length > 0) {
+        const labourComplete = repairItems.every(i => i.labour_status === 'complete')
+        const labourStarted = repairItems.some(i =>
+          i.labour_status === 'in_progress' || i.labour_status === 'complete'
+        )
+        labourStatus = labourComplete ? 'complete' : labourStarted ? 'in_progress' : 'pending'
+
+        const partsComplete = repairItems.every(i => i.parts_status === 'complete')
+        const partsStarted = repairItems.some(i =>
+          i.parts_status === 'in_progress' || i.parts_status === 'complete'
+        )
+        partsStatus = partsComplete ? 'complete' : partsStarted ? 'in_progress' : 'pending'
+      }
+
+      const isSent = !!sentAt
+
+      // Check if item is authorised (outcome_status = 'authorised' OR customer_approved = true)
+      const isItemAuthorised = (item: { outcome_status: string | null; customer_approved: boolean | null }) =>
+        item.outcome_status === 'authorised' || item.customer_approved === true
+
+      // Authorisation: based on top-level items (matches frontend logic)
+      // Filter to only actionable items (not deleted)
+      const actionableItems = authItems.filter(i => i.outcome_status !== 'deleted')
+      let authorisedStatus: 'pending' | 'in_progress' | 'complete' | 'na' = 'na'
+      if (actionableItems.length > 0) {
+        const authorisedCount = actionableItems.filter(i => isItemAuthorised(i)).length
+        if (authorisedCount === actionableItems.length) {
+          authorisedStatus = 'complete'
+        } else if (authorisedCount > 0) {
+          authorisedStatus = 'in_progress'
+        } else {
+          authorisedStatus = 'pending'
         }
       }
 
-      const labourComplete = repairItems.every(i => i.labour_status === 'complete')
-      const labourStarted = repairItems.some(i =>
-        i.labour_status === 'in_progress' || i.labour_status === 'complete'
-      )
-
-      const partsComplete = repairItems.every(i => i.parts_status === 'complete')
-      const partsStarted = repairItems.some(i =>
-        i.parts_status === 'in_progress' || i.parts_status === 'complete'
-      )
-
-      const quoteReady = repairItems.every(i => i.quote_status === 'ready')
-      // Quote is only complete when Labour AND Parts are both complete
-      const quoteComplete = quoteReady && labourComplete && partsComplete
-      const isSent = !!sentAt
-
       return {
         technician: technicianStatus,
-        labour: labourComplete ? 'complete' as const : labourStarted ? 'in_progress' as const : 'pending' as const,
-        parts: partsComplete ? 'complete' as const : partsStarted ? 'in_progress' as const : 'pending' as const,
-        quote: quoteComplete ? 'complete' as const : 'pending' as const,
-        sent: isSent ? 'complete' as const : 'na' as const
+        labour: labourStatus,
+        parts: partsStatus,
+        sent: isSent ? 'complete' as const : 'na' as const,
+        authorised: authorisedStatus
       }
     }
 
@@ -462,6 +493,7 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       // Add SLA warnings and computed fields
       const workflowStatus = calculateWorkflowStatus(
         repairItemsByHc[hc.id] || [],
+        authItemsByHc[hc.id] || [],
         hc.sent_at,
         hc.tech_started_at,
         hc.tech_completed_at
@@ -479,6 +511,14 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         green_authorised: 0
       }
 
+      // Calculate authorisation counts for tooltip (same logic as calculateWorkflowStatus)
+      const authItems = authItemsByHc[hc.id] || []
+      const actionableAuthItems = authItems.filter(i => i.outcome_status !== 'deleted')
+      const authorisedCount = actionableAuthItems.filter(i =>
+        i.outcome_status === 'authorised' || i.customer_approved === true
+      ).length
+      const totalAuthItems = actionableAuthItems.length
+
       const card = {
         ...hc,
         promise_time: hc.promised_at, // Map for frontend compatibility
@@ -487,6 +527,12 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         isExpiringSoon: hc.token_expires_at && new Date(hc.token_expires_at) < in24Hours && new Date(hc.token_expires_at) > now,
         validTransitions: validDragTransitions[hc.status] || [],
         workflowStatus,
+        // Authorisation info for tooltip
+        authorisationInfo: {
+          status: workflowStatus.authorised,
+          totalItems: totalAuthItems,
+          authorisedCount: authorisedCount
+        },
         // Outcome aggregations for identified vs authorised
         identified_total: outcomes.identified_total,
         authorised_total: outcomes.authorised_total,

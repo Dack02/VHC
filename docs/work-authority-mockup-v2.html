@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Work Authority Sheet - Service Advisor v2</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      font-size: 9pt;
+      color: #1a1a2e;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+    
+    .page {
+      width: 210mm;
+      min-height: 297mm;
+      background: white;
+      margin: 0 auto;
+      padding: 12mm;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    /* Header */
+    .header {
+      background: #1e293b;
+      color: white;
+      padding: 10px 15px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    
+    .header h1 {
+      font-size: 14pt;
+      font-weight: 600;
+      letter-spacing: 1px;
+    }
+    
+    .header-right {
+      text-align: right;
+      font-size: 8pt;
+    }
+    
+    .doc-number {
+      font-weight: 600;
+      font-size: 9pt;
+    }
+    
+    /* Info Grid */
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    
+    .info-box {
+      border: 1px solid #e2e8f0;
+      padding: 8px 10px;
+    }
+    
+    .info-box-title {
+      font-size: 7pt;
+      font-weight: 600;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    
+    .info-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;
+      font-size: 8.5pt;
+    }
+    
+    .info-item label {
+      color: #64748b;
+      font-size: 7pt;
+    }
+    
+    .info-item span {
+      font-weight: 600;
+      display: block;
+    }
+    
+    /* Section Headers */
+    .section-header {
+      background: #1e293b;
+      color: white;
+      padding: 6px 10px;
+      font-size: 9pt;
+      font-weight: 600;
+      margin-top: 10px;
+      margin-bottom: 0;
+    }
+    
+    /* Work Items Table */
+    .work-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 8pt;
+    }
+    
+    .work-table th {
+      background: #f1f5f9;
+      padding: 5px 8px;
+      text-align: left;
+      font-weight: 600;
+      font-size: 7pt;
+      text-transform: uppercase;
+      color: #475569;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    
+    .work-table th.num {
+      text-align: right;
+    }
+    
+    .work-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #f1f5f9;
+      vertical-align: top;
+    }
+    
+    .work-table td.num {
+      text-align: right;
+      font-family: 'Consolas', monospace;
+    }
+    
+    /* Item row - the repair title */
+    .item-row td {
+      background: #fafafa;
+      padding: 8px;
+      font-weight: 600;
+    }
+    
+    .item-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .severity-badge {
+      font-size: 6.5pt;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    
+    .severity-red {
+      background: #fee2e2;
+      color: #dc2626;
+      border: 1px solid #fca5a5;
+    }
+    
+    .severity-amber {
+      background: #fef3c7;
+      color: #d97706;
+      border: 1px solid #fcd34d;
+    }
+    
+    .severity-green {
+      background: #d1fae5;
+      color: #059669;
+      border: 1px solid #6ee7b7;
+    }
+    
+    /* Indented child items (grouped) */
+    .child-item td:first-child {
+      padding-left: 20px;
+    }
+    
+    .child-item td:first-child::before {
+      content: "└";
+      color: #94a3b8;
+      margin-right: 6px;
+    }
+    
+    /* Line type indicator */
+    .line-type {
+      color: #94a3b8;
+      font-size: 6.5pt;
+      text-transform: uppercase;
+      display: inline-block;
+      width: 45px;
+    }
+    
+    /* Compact Summary Section */
+    .summary-section {
+      margin-top: 15px;
+      border: 1px solid #1e293b;
+    }
+    
+    .summary-header {
+      background: #1e293b;
+      color: white;
+      padding: 5px 10px;
+      font-size: 8pt;
+      font-weight: 600;
+    }
+    
+    .summary-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 8pt;
+    }
+    
+    .summary-table td {
+      padding: 4px 10px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    
+    .summary-table td.num {
+      text-align: right;
+      font-family: 'Consolas', monospace;
+      width: 80px;
+    }
+    
+    .summary-table td.label {
+      color: #64748b;
+    }
+    
+    .summary-table tr.subtotal td {
+      font-weight: 600;
+      background: #f8fafc;
+      border-top: 1px solid #e2e8f0;
+    }
+    
+    .summary-table tr.vat td {
+      color: #64748b;
+    }
+    
+    .summary-table tr.total td {
+      font-weight: 700;
+      font-size: 10pt;
+      background: #1e293b;
+      color: white;
+      padding: 8px 10px;
+    }
+    
+    /* Item subtotal row */
+    .subtotal-row td {
+      background: #f8fafc;
+      font-weight: 600;
+      font-size: 7.5pt;
+      color: #475569;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <!-- Header -->
+    <div class="header">
+      <h1>WORK AUTHORITY SHEET</h1>
+      <div class="header-right">
+        <div class="doc-number">WA-20260123-002</div>
+        <div>23/01/2026 &nbsp; 14:43</div>
+      </div>
+    </div>
+    
+    <!-- Info Grid -->
+    <div class="info-grid">
+      <div class="info-box">
+        <div class="info-box-title">Vehicle</div>
+        <div class="info-row">
+          <div class="info-item">
+            <label>Reg</label>
+            <span>FG11LKM</span>
+          </div>
+          <div class="info-item">
+            <label>Make/Model</label>
+            <span>Vauxhall Astra</span>
+          </div>
+          <div class="info-item">
+            <label>Year</label>
+            <span>2019</span>
+          </div>
+          <div class="info-item">
+            <label>Mileage</label>
+            <span>111</span>
+          </div>
+          <div class="info-item">
+            <label>VIN</label>
+            <span>N/A</span>
+          </div>
+        </div>
+      </div>
+      <div class="info-box">
+        <div class="info-box-title">Customer</div>
+        <div class="info-row">
+          <div class="info-item">
+            <label>Name</label>
+            <span>Leo Dack</span>
+          </div>
+          <div class="info-item">
+            <label>Contact</label>
+            <span>07795647496</span>
+          </div>
+          <div class="info-item">
+            <label>Email</label>
+            <span>leo.dack1@gmail.com</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Reference Bar -->
+    <div style="display: flex; gap: 20px; font-size: 8pt; padding: 6px 10px; background: #f8fafc; border: 1px solid #e2e8f0; margin-bottom: 10px;">
+      <div><strong>Workshop:</strong> Main Workshop</div>
+      <div><strong>Service Advisor:</strong> Admin User</div>
+      <div><strong>Technician:</strong> James Smith</div>
+      <div><strong>VHC Ref:</strong> VHC00004</div>
+    </div>
+    
+    <!-- Authorised Work Section -->
+    <div class="section-header">AUTHORISED WORK</div>
+    <table class="work-table">
+      <thead>
+        <tr>
+          <th style="width: 40%">Description</th>
+          <th style="width: 15%">Code / Part No.</th>
+          <th style="width: 10%" class="num">Qty/Hrs</th>
+          <th style="width: 15%" class="num">Rate</th>
+          <th style="width: 10%" class="num">Total</th>
+          <th style="width: 10%"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- Engine Oil Level -->
+        <tr class="item-row">
+          <td colspan="5">
+            <div class="item-title">
+              <span>Engine Oil Level</span>
+              <span class="severity-badge severity-red">Red - Urgent</span>
+            </div>
+          </td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><span class="line-type">Labour</span> Standard Labour</td>
+          <td>LAB</td>
+          <td class="num">1.0</td>
+          <td class="num">£85.00</td>
+          <td class="num">£68.00</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><span class="line-type">Part</span> Oil</td>
+          <td>123</td>
+          <td class="num">1</td>
+          <td class="num">£8.33</td>
+          <td class="num">£8.33</td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><span class="line-type">Part</span> Oil Filter</td>
+          <td>tyi</td>
+          <td class="num">1</td>
+          <td class="num">£18.33</td>
+          <td class="num">£18.33</td>
+          <td></td>
+        </tr>
+        <tr class="subtotal-row">
+          <td colspan="4" style="text-align: right;">Subtotal:</td>
+          <td class="num">£94.66</td>
+          <td></td>
+        </tr>
+        
+        <!-- Rear Shock Absorbers -->
+        <tr class="item-row">
+          <td colspan="5">
+            <div class="item-title">
+              <span>Rear Shock Absorbers</span>
+              <span class="severity-badge severity-amber">Amber - Advisory</span>
+            </div>
+          </td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><span class="line-type">Labour</span> Standard Labour</td>
+          <td>LAB</td>
+          <td class="num">1.0</td>
+          <td class="num">£85.00</td>
+          <td class="num">£85.00</td>
+          <td></td>
+        </tr>
+        <tr class="subtotal-row">
+          <td colspan="4" style="text-align: right;">Subtotal:</td>
+          <td class="num">£85.00</td>
+          <td></td>
+        </tr>
+        
+        <!-- Suspension Group Test (Parent) -->
+        <tr class="item-row">
+          <td colspan="5">
+            <div class="item-title">
+              <span>Suspension Group Test</span>
+              <span class="severity-badge severity-red">Red - Urgent</span>
+            </div>
+          </td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><span class="line-type">Labour</span> Standard Labour</td>
+          <td>LAB</td>
+          <td class="num">2.0</td>
+          <td class="num">£85.00</td>
+          <td class="num">£170.00</td>
+          <td></td>
+        </tr>
+        <!-- Child: Ball Joints -->
+        <tr class="child-item">
+          <td colspan="5" style="color: #64748b; font-size: 7.5pt;">Ball Joints</td>
+          <td><span class="severity-badge severity-red" style="font-size: 6pt;">Red</span></td>
+        </tr>
+        <!-- Child: Front Shock Absorbers -->
+        <tr class="child-item">
+          <td colspan="5" style="color: #64748b; font-size: 7.5pt;">Front Shock Absorbers</td>
+          <td><span class="severity-badge severity-red" style="font-size: 6pt;">Red</span></td>
+        </tr>
+        <tr class="subtotal-row">
+          <td colspan="4" style="text-align: right;">Subtotal:</td>
+          <td class="num">£170.00</td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+    
+    <!-- Compact Summary Section -->
+    <div class="summary-section">
+      <div class="summary-header">TOTALS</div>
+      <table class="summary-table">
+        <tr>
+          <td class="label">Pre-Booked Work</td>
+          <td class="num">£0.00</td>
+        </tr>
+        <tr>
+          <td class="label">Authorised VHC Work (4.0 hrs labour, 2 parts)</td>
+          <td class="num">£349.66</td>
+        </tr>
+        <tr class="subtotal">
+          <td>Subtotal (ex VAT)</td>
+          <td class="num">£349.66</td>
+        </tr>
+        <tr class="vat">
+          <td>VAT @ 20%</td>
+          <td class="num">£69.93</td>
+        </tr>
+        <tr class="total">
+          <td>TOTAL (inc VAT)</td>
+          <td class="num">£419.59</td>
+        </tr>
+      </table>
+    </div>
+    
+  </div>
+</body>
+</html>

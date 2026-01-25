@@ -1,6 +1,7 @@
 /**
  * Photo Evidence Page Component
- * Page 2 showing photos grouped by finding name
+ * Page 2+ showing photos grouped by finding name
+ * 3 columns, 150x150px photos, max 15 per page (5 rows)
  */
 
 import type { RepairItemData, ResultData } from '../../types.js'
@@ -22,6 +23,9 @@ interface PhotoPageOptions {
   siteName?: string
 }
 
+// Max photos per page (5 rows x 3 columns)
+const MAX_PHOTOS_PER_PAGE = 15
+
 /**
  * Extract photo groups from repair items and results
  */
@@ -38,17 +42,45 @@ export function extractPhotoGroups(repairItems: RepairItemData[], results: Resul
 
   // Group photos by finding (repair item)
   for (const item of repairItems) {
-    const result = resultMediaMap.get(item.check_result_id)
+    // For group items, collect photos from children
+    if (item.is_group && item.children && item.children.length > 0) {
+      const allPhotos: { url: string; caption?: string }[] = []
 
-    if (result?.media && result.media.length > 0) {
-      groups.push({
-        findingName: item.title,
-        status: item.rag_status as 'red' | 'amber',
-        photos: result.media.map(m => ({
-          url: m.url,
-          caption: m.type === 'video' ? 'Video' : undefined
-        }))
-      })
+      for (const child of item.children) {
+        if (child.check_result_id) {
+          const result = resultMediaMap.get(child.check_result_id)
+          if (result?.media && result.media.length > 0) {
+            for (const m of result.media) {
+              allPhotos.push({
+                url: m.url,
+                caption: m.type === 'video' ? 'Video' : undefined
+              })
+            }
+          }
+        }
+      }
+
+      if (allPhotos.length > 0) {
+        groups.push({
+          findingName: item.title,
+          status: item.rag_status as 'red' | 'amber',
+          photos: allPhotos
+        })
+      }
+    } else {
+      // Non-group items: use direct check_result_id
+      const result = resultMediaMap.get(item.check_result_id)
+
+      if (result?.media && result.media.length > 0) {
+        groups.push({
+          findingName: item.title,
+          status: item.rag_status as 'red' | 'amber',
+          photos: result.media.map(m => ({
+            url: m.url,
+            caption: m.type === 'video' ? 'Video' : undefined
+          }))
+        })
+      }
     }
   }
 
@@ -63,45 +95,70 @@ export function hasPhotos(repairItems: RepairItemData[], results: ResultData[]):
 }
 
 /**
- * Render a single photo group
+ * Count total photos across all groups
  */
-function renderPhotoGroup(group: PhotoGroup): string {
-  const statusClass = group.status === 'red' ? 'red' : 'amber'
+export function countTotalPhotos(repairItems: RepairItemData[], results: ResultData[]): number {
+  const groups = extractPhotoGroups(repairItems, results)
+  return groups.reduce((total, group) => total + group.photos.length, 0)
+}
 
+/**
+ * Calculate total number of photo pages needed
+ */
+export function countPhotoPages(repairItems: RepairItemData[], results: ResultData[]): number {
+  const totalPhotos = countTotalPhotos(repairItems, results)
+  if (totalPhotos === 0) return 0
+  return Math.ceil(totalPhotos / MAX_PHOTOS_PER_PAGE)
+}
+
+/**
+ * Flatten all photos into a single array with finding context
+ */
+interface FlatPhoto {
+  url: string
+  caption?: string
+  findingName: string
+  status: 'red' | 'amber'
+}
+
+function flattenPhotos(groups: PhotoGroup[]): FlatPhoto[] {
+  const photos: FlatPhoto[] = []
+  for (const group of groups) {
+    for (const photo of group.photos) {
+      photos.push({
+        url: photo.url,
+        caption: photo.caption,
+        findingName: group.findingName,
+        status: group.status
+      })
+    }
+  }
+  return photos
+}
+
+/**
+ * Render a single photo item
+ */
+function renderPhotoItem(photo: FlatPhoto): string {
   return `
-    <div class="photo-group">
-      <div class="photo-group-header">
-        <span class="photo-group-name">${group.findingName}</span>
-        <span class="photo-status-badge ${statusClass}">${group.status === 'red' ? 'Urgent' : 'Advisory'}</span>
-      </div>
-      <div class="photo-grid">
-        ${group.photos.slice(0, 4).map(photo => `
-          <div>
-            <img src="${photo.url}" alt="${group.findingName}" class="photo-thumb" />
-            ${photo.caption ? `<div class="photo-caption">${photo.caption}</div>` : ''}
-          </div>
-        `).join('')}
-        ${group.photos.length > 4 ? `
-          <div style="display: flex; align-items: center; justify-content: center; width: 80px; height: 80px; background: #f3f4f6; color: #6b7280; font-size: 9px;">
-            +${group.photos.length - 4} more
-          </div>
-        ` : ''}
-      </div>
+    <div class="photo-item">
+      <img src="${photo.url}" alt="${photo.findingName}" class="photo-thumb" />
+      <div class="photo-caption">${photo.findingName}</div>
     </div>
   `
 }
 
 /**
- * Render the photo evidence page
+ * Render a single photo page
  */
-export function renderPhotoPage(options: PhotoPageOptions): string {
-  const { repairItems, results, reference, registration, siteName } = options
-
-  const photoGroups = extractPhotoGroups(repairItems, results)
-
-  // Don't render anything if no photos
-  if (photoGroups.length === 0) return ''
-
+function renderSinglePhotoPage(
+  photos: FlatPhoto[],
+  pageNumber: number,
+  totalPages: number,
+  reference: string,
+  registration: string,
+  siteName?: string
+): string {
   return `
     <div class="photo-page">
       <!-- Mini Header -->
@@ -112,15 +169,57 @@ export function renderPhotoPage(options: PhotoPageOptions): string {
         </div>
       </div>
 
-      <!-- Photo Groups -->
-      ${photoGroups.map(group => renderPhotoGroup(group)).join('')}
+      <!-- Photo Grid -->
+      <div class="photo-grid">
+        ${photos.map(photo => renderPhotoItem(photo)).join('')}
+      </div>
 
       <!-- Footer -->
       <div class="compact-footer" style="margin-top: 20px;">
         <div></div>
         <div class="footer-contact">${siteName || ''}</div>
-        <div class="footer-page">Page 2 of 2</div>
+        <div class="footer-page">Page ${pageNumber} of ${totalPages}</div>
       </div>
     </div>
   `
+}
+
+/**
+ * Render all photo evidence pages (may be multiple if >15 photos)
+ */
+export function renderPhotoPage(options: PhotoPageOptions): string {
+  const { repairItems, results, reference, registration, siteName } = options
+
+  const photoGroups = extractPhotoGroups(repairItems, results)
+
+  // Don't render anything if no photos
+  if (photoGroups.length === 0) return ''
+
+  // Flatten all photos
+  const allPhotos = flattenPhotos(photoGroups)
+
+  // Calculate total pages (page 1 is main report, photo pages start at 2)
+  const numPhotoPages = Math.ceil(allPhotos.length / MAX_PHOTOS_PER_PAGE)
+  const totalPages = 1 + numPhotoPages // 1 for main report + photo pages
+
+  // Generate all photo pages
+  const pages: string[] = []
+
+  for (let i = 0; i < numPhotoPages; i++) {
+    const startIdx = i * MAX_PHOTOS_PER_PAGE
+    const endIdx = Math.min(startIdx + MAX_PHOTOS_PER_PAGE, allPhotos.length)
+    const pagePhotos = allPhotos.slice(startIdx, endIdx)
+    const pageNumber = 2 + i // Photo pages start at page 2
+
+    pages.push(renderSinglePhotoPage(
+      pagePhotos,
+      pageNumber,
+      totalPages,
+      reference,
+      registration,
+      siteName
+    ))
+  }
+
+  return pages.join('\n')
 }

@@ -22,6 +22,7 @@ interface SideMeasurement {
   pad: number | null
   disc: number | null
   disc_min: number | null
+  disc_unable_to_access?: boolean
 }
 
 interface AxleMeasurementNew {
@@ -36,9 +37,11 @@ interface AxleMeasurement {
   ns_pad: number | null
   ns_disc: number | null
   ns_disc_min: number | null
+  ns_disc_unable_to_access?: boolean
   os_pad: number | null
   os_disc: number | null
   os_disc_min: number | null
+  os_disc_unable_to_access?: boolean
 }
 
 // Can be legacy format with front/rear, or new single-axle format
@@ -79,9 +82,11 @@ function normalizeAxleData(data: AxleMeasurementLegacy | AxleMeasurementNew | Br
       ns_pad: newFormat.nearside?.pad ?? null,
       ns_disc: newFormat.nearside?.disc ?? null,
       ns_disc_min: newFormat.nearside?.disc_min ?? null,
+      ns_disc_unable_to_access: newFormat.nearside?.disc_unable_to_access,
       os_pad: newFormat.offside?.pad ?? null,
       os_disc: newFormat.offside?.disc ?? null,
-      os_disc_min: newFormat.offside?.disc_min ?? null
+      os_disc_min: newFormat.offside?.disc_min ?? null,
+      os_disc_unable_to_access: newFormat.offside?.disc_unable_to_access
     }
   }
 
@@ -105,9 +110,9 @@ function normalizeAxleData(data: AxleMeasurementLegacy | AxleMeasurementNew | Br
 
 // Calculate severity level for an axle
 function getAxleSeverity(axle: AxleMeasurement): 'urgent' | 'advisory' | null {
-  // Check disc replacement (most urgent)
-  const nsDiscBelowMin = axle.ns_disc !== null && axle.ns_disc_min !== null && axle.ns_disc < axle.ns_disc_min
-  const osDiscBelowMin = axle.os_disc !== null && axle.os_disc_min !== null && axle.os_disc < axle.os_disc_min
+  // Check disc replacement (most urgent) - skip if unable to access
+  const nsDiscBelowMin = !axle.ns_disc_unable_to_access && axle.ns_disc !== null && axle.ns_disc_min !== null && axle.ns_disc < axle.ns_disc_min
+  const osDiscBelowMin = !axle.os_disc_unable_to_access && axle.os_disc !== null && axle.os_disc_min !== null && axle.os_disc < axle.os_disc_min
 
   // Check pad levels
   const nsPadUrgent = axle.ns_pad !== null && axle.ns_pad < PAD_RED_THRESHOLD
@@ -128,17 +133,17 @@ function getAxleSeverity(axle: AxleMeasurement): 'urgent' | 'advisory' | null {
 function getAxleSummary(axle: AxleMeasurement): { minSpec: number | null; lowest: number | null; diff: number | null; type: 'disc' | 'pad' } | null {
   const isDisc = axle.brake_type === 'disc'
 
-  // For disc brakes, prioritize disc measurements if below spec
+  // For disc brakes, prioritize disc measurements if below spec (skip if unable to access)
   if (isDisc) {
-    const nsDiscBelowMin = axle.ns_disc !== null && axle.ns_disc_min !== null && axle.ns_disc < axle.ns_disc_min
-    const osDiscBelowMin = axle.os_disc !== null && axle.os_disc_min !== null && axle.os_disc < axle.os_disc_min
+    const nsDiscBelowMin = !axle.ns_disc_unable_to_access && axle.ns_disc !== null && axle.ns_disc_min !== null && axle.ns_disc < axle.ns_disc_min
+    const osDiscBelowMin = !axle.os_disc_unable_to_access && axle.os_disc !== null && axle.os_disc_min !== null && axle.os_disc < axle.os_disc_min
 
     if (nsDiscBelowMin || osDiscBelowMin) {
       const discReadings: { value: number; min: number }[] = []
-      if (axle.ns_disc !== null && axle.ns_disc_min !== null) {
+      if (!axle.ns_disc_unable_to_access && axle.ns_disc !== null && axle.ns_disc_min !== null) {
         discReadings.push({ value: axle.ns_disc, min: axle.ns_disc_min })
       }
-      if (axle.os_disc !== null && axle.os_disc_min !== null) {
+      if (!axle.os_disc_unable_to_access && axle.os_disc !== null && axle.os_disc_min !== null) {
         discReadings.push({ value: axle.os_disc, min: axle.os_disc_min })
       }
 
@@ -321,9 +326,13 @@ function AxleCard({ title, axle, ragStatus }: AxleCardProps) {
           </div>
           <div className="text-center">
             <div className="text-xs text-gray-500">N/S Disc</div>
-            <div className={`font-mono font-medium ${getDiscColor(axle.ns_disc, axle.ns_disc_min)}`}>
-              {formatReading(axle.ns_disc)}
-            </div>
+            {axle.ns_disc_unable_to_access ? (
+              <div className="text-xs text-gray-500 italic">N/A</div>
+            ) : (
+              <div className={`font-mono font-medium ${getDiscColor(axle.ns_disc, axle.ns_disc_min)}`}>
+                {formatReading(axle.ns_disc)}
+              </div>
+            )}
           </div>
           <div className="text-center">
             <div className="text-xs text-gray-500">O/S {frictionLabel}</div>
@@ -333,9 +342,13 @@ function AxleCard({ title, axle, ragStatus }: AxleCardProps) {
           </div>
           <div className="text-center">
             <div className="text-xs text-gray-500">O/S Disc</div>
-            <div className={`font-mono font-medium ${getDiscColor(axle.os_disc, axle.os_disc_min)}`}>
-              {formatReading(axle.os_disc)}
-            </div>
+            {axle.os_disc_unable_to_access ? (
+              <div className="text-xs text-gray-500 italic">N/A</div>
+            ) : (
+              <div className={`font-mono font-medium ${getDiscColor(axle.os_disc, axle.os_disc_min)}`}>
+                {formatReading(axle.os_disc)}
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -401,15 +414,15 @@ export function BrakeSummary({ data }: BrakeSummaryProps) {
   )
 
   let padReadings: number[] = []
-  let discChecks: { actual: number | null; min: number | null }[] = []
+  let discChecks: { actual: number | null; min: number | null; unableToAccess?: boolean }[] = []
 
   if (isSingleAxle) {
     const axle = normalizeAxleData(data)
     if (axle) {
       padReadings = [axle.ns_pad, axle.os_pad].filter((v): v is number => v !== null)
       discChecks = [
-        { actual: axle.ns_disc, min: axle.ns_disc_min },
-        { actual: axle.os_disc, min: axle.os_disc_min }
+        { actual: axle.ns_disc, min: axle.ns_disc_min, unableToAccess: axle.ns_disc_unable_to_access },
+        { actual: axle.os_disc, min: axle.os_disc_min, unableToAccess: axle.os_disc_unable_to_access }
       ]
     }
   } else {
@@ -422,17 +435,17 @@ export function BrakeSummary({ data }: BrakeSummaryProps) {
     ].filter((v): v is number => v !== null && v !== undefined)
 
     discChecks = [
-      { actual: frontAxle?.ns_disc ?? null, min: frontAxle?.ns_disc_min ?? null },
-      { actual: frontAxle?.os_disc ?? null, min: frontAxle?.os_disc_min ?? null },
-      { actual: rearAxle?.ns_disc ?? null, min: rearAxle?.ns_disc_min ?? null },
-      { actual: rearAxle?.os_disc ?? null, min: rearAxle?.os_disc_min ?? null }
+      { actual: frontAxle?.ns_disc ?? null, min: frontAxle?.ns_disc_min ?? null, unableToAccess: frontAxle?.ns_disc_unable_to_access },
+      { actual: frontAxle?.os_disc ?? null, min: frontAxle?.os_disc_min ?? null, unableToAccess: frontAxle?.os_disc_unable_to_access },
+      { actual: rearAxle?.ns_disc ?? null, min: rearAxle?.ns_disc_min ?? null, unableToAccess: rearAxle?.ns_disc_unable_to_access },
+      { actual: rearAxle?.os_disc ?? null, min: rearAxle?.os_disc_min ?? null, unableToAccess: rearAxle?.os_disc_unable_to_access }
     ]
   }
 
   const minPad = padReadings.length > 0 ? Math.min(...padReadings) : null
 
-  const discNeedsReplacement = discChecks.some(({ actual, min }) =>
-    actual !== null && min !== null && actual < min
+  const discNeedsReplacement = discChecks.some(({ actual, min, unableToAccess }) =>
+    !unableToAccess && actual !== null && min !== null && actual < min
   )
 
   if (minPad === null && !discNeedsReplacement) {

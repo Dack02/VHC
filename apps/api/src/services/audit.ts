@@ -48,6 +48,18 @@ export type AuditAction =
   | 'repair_item.bulk_defer'
   | 'repair_item.bulk_decline'
 
+  // Labour events (for timeline tracking)
+  | 'labour.add'
+  | 'labour.update'
+  | 'labour.delete'
+  | 'labour.complete'
+
+  // Parts events (for timeline tracking)
+  | 'parts.add'
+  | 'parts.update'
+  | 'parts.delete'
+  | 'parts.complete'
+
   // Admin actions
   | 'admin.impersonate_start'
   | 'admin.impersonate_end'

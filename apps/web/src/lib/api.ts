@@ -383,6 +383,8 @@ export interface RepairItem {
   parts_status?: 'pending' | 'in_progress' | 'complete'
   no_labour_required?: boolean
   no_parts_required?: boolean
+  // Source tracking
+  source?: 'inspection' | 'mri_scan' | 'manual' | null
 }
 
 export interface StatusHistoryEntry {
@@ -601,6 +603,10 @@ export interface NewRepairItem {
   labour?: RepairLabour[]
   parts?: RepairPart[]
   children?: RepairItemChild[]
+  // MRI source tracking
+  source?: 'inspection' | 'mri_scan' | 'manual' | 'dms_prebooked' | null
+  ragStatus?: 'red' | 'amber' | 'green' | null  // Direct RAG status for MRI items
+  mriResultId?: string | null
 }
 
 export interface PricingSettings {
@@ -614,4 +620,41 @@ export interface PricingCalculation {
   marginPercent: number
   markupPercent: number
   profit: number
+}
+
+// Timeline types for unified timeline view
+export interface TimelineEvent {
+  id: string
+  event_type: string
+  timestamp: string
+  user: { first_name: string; last_name: string } | null
+  description: string
+  details: {
+    from_status?: string
+    to_status?: string
+    notes?: string
+    item_name?: string
+    labour_code?: string
+    labour_description?: string
+    hours?: number
+    rate?: number
+    total?: number
+    old_hours?: number
+    new_hours?: number
+    old_total?: number
+    new_total?: number
+    labour_total?: number
+    parts_total?: number
+    description?: string
+    quantity?: number
+    sell_price?: number
+    line_total?: number
+    old_quantity?: number
+    new_quantity?: number
+    old_line_total?: number
+    new_line_total?: number
+    repair_item_id?: string
+    health_check_id?: string
+    outcome_status?: string
+  }
 }

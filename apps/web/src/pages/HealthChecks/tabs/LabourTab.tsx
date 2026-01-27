@@ -114,10 +114,15 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
 
   // Helper to get RAG status from item
   const getRagStatus = (item: NewRepairItem | RepairItemChild): 'red' | 'amber' | null => {
+    // First check linked check results (for inspection-sourced items)
     if (item.checkResults && item.checkResults.length > 0) {
       const hasRed = item.checkResults.some(cr => cr.ragStatus === 'red')
       const hasAmber = item.checkResults.some(cr => cr.ragStatus === 'amber')
       return hasRed ? 'red' : hasAmber ? 'amber' : null
+    }
+    // Fallback to direct ragStatus (for MRI-sourced items)
+    if ('ragStatus' in item && item.ragStatus) {
+      return item.ragStatus as 'red' | 'amber' | null
     }
     return null
   }

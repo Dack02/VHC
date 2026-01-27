@@ -172,8 +172,8 @@ function formatAuthorisationTooltip(info?: AuthorisationInfo, fallbackStatus?: B
     return `Authorised: Not started (0/${totalItems})`
   }
 
-  // Format the entries
-  const entryTexts = authorisedBy.map(entry => {
+  // Format the entries (handle undefined or empty authorisedBy)
+  const entryTexts = (authorisedBy || []).map(entry => {
     const date = new Date(entry.timestamp)
     const dateStr = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) +
       ', ' + date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
@@ -186,12 +186,12 @@ function formatAuthorisationTooltip(info?: AuthorisationInfo, fallbackStatus?: B
   })
 
   // Build final tooltip
-  const prefix = `Authorised (${authorisedCount}/${totalItems}): `
+  const prefix = `Authorised (${authorisedCount}/${totalItems})`
   // If no entries have timestamps, show just the count
   if (entryTexts.length === 0) {
-    return prefix + 'Details not available'
+    return prefix
   }
-  return prefix + entryTexts.join('; ')
+  return prefix + ': ' + entryTexts.join('; ')
 }
 
 // Grouped Workflow Badges T L P S A

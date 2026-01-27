@@ -157,3 +157,62 @@ export const DEFAULT_THRESHOLDS: InspectionThresholds = {
   brakePadRedBelowMm: 3.0,
   brakePadAmberBelowMm: 5.0
 }
+
+// MRI Scan Types
+export interface MriItem {
+  id: string
+  name: string
+  description: string | null
+  itemType: 'date_mileage' | 'yes_no'
+  severityWhenDue: string | null
+  severityWhenYes: string | null
+  severityWhenNo: string | null
+  isInformational: boolean
+  sortOrder: number
+  isDeleted?: boolean
+  result: MriResult | null
+}
+
+export interface MriResult {
+  id?: string
+  nextDueDate: string | null
+  nextDueMileage: number | null
+  dueIfNotReplaced: boolean
+  recommendedThisVisit: boolean
+  notDueYet: boolean
+  yesNoValue: boolean | null
+  notes: string | null
+  ragStatus: 'red' | 'amber' | 'green' | null
+  completedAt: string | null
+  dateNa: boolean
+  mileageNa: boolean
+}
+
+export interface MriResultsResponse {
+  healthCheckId: string
+  items: Record<string, MriItem[]>  // grouped by category
+  progress: {
+    completed: number
+    total: number
+  }
+  isMriComplete: boolean
+  hasArchivedItems: boolean
+}
+
+export interface CheckinSettings {
+  checkinEnabled: boolean
+  showMileageIn: boolean
+  showTimeRequired: boolean
+  showKeyLocation: boolean
+  checkinTimeoutMinutes: number
+}
+
+export interface CheckinData {
+  customerWaiting: boolean | null
+  mileageIn: number | null
+  timeRequired: string | null
+  keyLocation: string | null
+  checkinNotes: string | null
+  checkinNotesVisibleToTech: boolean
+  checkedInAt: string | null
+}

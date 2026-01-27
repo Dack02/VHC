@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { api, HealthCheck, TemplateSection, TemplateItem, CheckResult } from '../lib/api'
+import { api, HealthCheck, TemplateSection, TemplateItem, CheckResult, CheckinSettings } from '../lib/api'
 import { Card } from '../components/Card'
 import { Button } from '../components/Button'
 import { RAGSelector, RAGIndicator } from '../components/RAGSelector'
@@ -17,6 +17,7 @@ import { MultiSelectInput } from '../components/MultiSelectInput'
 import { Badge } from '../components/Badge'
 import { db } from '../lib/db'
 import { ReasonSelector } from '../components/ReasonSelector'
+import { MriScanTab } from './MriScanTab'
 
 // State for tracking which item has ReasonSelector open
 interface ReasonSelectorState {
@@ -36,6 +37,7 @@ export function Inspection() {
   const [sections, setSections] = useState<TemplateSection[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [checkinEnabled, setCheckinEnabled] = useState(false)
 
   const [currentSectionIndex, setCurrentSectionIndex] = useState(0)
   // Key format: `${templateItemId}-${instanceNumber}` to support duplicates
@@ -65,6 +67,18 @@ export function Inspection() {
         { token: session.access_token }
       )
       setJob(healthCheck)
+
+      // Fetch check-in settings to determine if MRI tab should be shown
+      try {
+        const settings = await api<CheckinSettings>(
+          `/api/v1/organizations/${healthCheck.organization_id}/checkin-settings`,
+          { token: session.access_token }
+        )
+        setCheckinEnabled(settings.checkinEnabled)
+      } catch {
+        // If we can't fetch settings, assume check-in is not enabled
+        setCheckinEnabled(false)
+      }
 
       if (healthCheck.template_id) {
         const template = await api<{ sections?: TemplateSection[] }>(
@@ -589,16 +603,38 @@ export function Inspection() {
               </button>
             )
           })}
+
+          {/* MRI Scan tab - only show when check-in is enabled */}
+          {checkinEnabled && (
+            <button
+              onClick={() => setCurrentSectionIndex(sections.length)}
+              className={`
+                flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors
+                ${currentSectionIndex === sections.length
+                  ? 'border-primary text-primary bg-blue-50'
+                  : 'border-transparent text-gray-600 hover:text-gray-900'
+                }
+              `}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🔍</span>
+                <span className="whitespace-nowrap">MRI Scan</span>
+              </div>
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Section items */}
+      {/* Section items or MRI Scan tab */}
       <main className="flex-1 p-4 space-y-3 overflow-auto pb-24">
         {error && (
           <div className="bg-rag-red-bg text-rag-red p-4 mb-4">{error}</div>
         )}
 
-        {currentSection?.items?.map((item) => {
+        {/* Show MRI Scan tab content when it's selected */}
+        {checkinEnabled && currentSectionIndex === sections.length ? (
+          <MriScanTab healthCheckId={id!} />
+        ) : currentSection?.items?.map((item) => {
           const instances = getItemInstances(item.id)
           const hasInstances = instances.length > 0
 
@@ -685,18 +721,38 @@ export function Inspection() {
             </Button>
           )}
 
-          {currentSectionIndex < sections.length - 1 ? (
-            <Button
-              onClick={() => setCurrentSectionIndex(currentSectionIndex + 1)}
-              className="flex-1"
-            >
-              Next Section
-            </Button>
-          ) : (
-            <Button onClick={handleComplete} className="flex-1">
-              Review & Complete
-            </Button>
-          )}
+          {/* Determine total tabs: sections + MRI (if enabled) */}
+          {(() => {
+            const totalTabs = sections.length + (checkinEnabled ? 1 : 0)
+            const isLastTab = currentSectionIndex >= totalTabs - 1
+            const isOnMriTab = checkinEnabled && currentSectionIndex === sections.length
+
+            if (isOnMriTab) {
+              // On MRI tab - just show Review & Complete
+              return (
+                <Button onClick={handleComplete} className="flex-1">
+                  Review & Complete
+                </Button>
+              )
+            } else if (isLastTab) {
+              // Last section (no MRI) - show Review & Complete
+              return (
+                <Button onClick={handleComplete} className="flex-1">
+                  Review & Complete
+                </Button>
+              )
+            } else {
+              // Not on last tab - show Next Section
+              return (
+                <Button
+                  onClick={() => setCurrentSectionIndex(currentSectionIndex + 1)}
+                  className="flex-1"
+                >
+                  Next Section
+                </Button>
+              )
+            }
+          })()}
         </div>
       </footer>
 

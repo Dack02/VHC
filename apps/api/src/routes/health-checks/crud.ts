@@ -150,6 +150,28 @@ crud.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_adv
       return c.json({ error: 'Template not found' }, 404)
     }
 
+    // Check if organization has check-in enabled
+    const { data: checkinSettings } = await supabaseAdmin
+      .from('organization_checkin_settings')
+      .select('checkin_enabled')
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    const checkinEnabled = checkinSettings?.checkin_enabled === true
+
+    // Determine initial status:
+    // - If technician assigned: 'assigned' (bypass check-in for direct assignment)
+    // - If check-in enabled: 'awaiting_checkin'
+    // - Otherwise: 'created'
+    let initialStatus: string
+    if (technicianId) {
+      initialStatus = 'assigned'
+    } else if (checkinEnabled) {
+      initialStatus = 'awaiting_checkin'
+    } else {
+      initialStatus = 'created'
+    }
+
     const { data: healthCheck, error } = await supabaseAdmin
       .from('health_checks')
       .insert({
@@ -161,7 +183,7 @@ crud.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_adv
         technician_id: technicianId,
         advisor_id: advisorId || auth.user.id,
         mileage_in: mileageIn,
-        status: technicianId ? 'assigned' : 'created'
+        status: initialStatus
       })
       .select()
       .single()
@@ -171,6 +193,10 @@ crud.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_adv
     }
 
     // Create initial status history entry
+    const statusNotes = initialStatus === 'awaiting_checkin'
+      ? 'Health check created - awaiting check-in'
+      : 'Health check created'
+
     await supabaseAdmin
       .from('health_check_status_history')
       .insert({
@@ -179,7 +205,7 @@ crud.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_adv
         to_status: healthCheck.status,
         changed_by: auth.user.id,
         change_source: 'user',
-        notes: 'Health check created'
+        notes: statusNotes
       })
 
     return c.json({
@@ -485,6 +511,12 @@ crud.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
             }
           }
         }
+
+        // Fallback to stored rag_status for MRI items (which don't have linked check_results)
+        if (!derivedRagStatus && item.rag_status) {
+          derivedRagStatus = item.rag_status as 'red' | 'amber' | null
+        }
+
         // Get first check_result_id for backward compatibility
         const checkResultId = firstCheckResult?.id || null
 
@@ -523,7 +555,9 @@ crud.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
           deferred_notes: item.deferred_notes || null,
           declined_reason_id: item.declined_reason_id || null,
           deleted_at: item.deleted_at || null,
-          deleted_reason_id: item.deleted_reason_id || null
+          deleted_reason_id: item.deleted_reason_id || null,
+          // Source tracking for MRI items
+          source: item.source || null
         }
       })
 

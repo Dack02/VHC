@@ -22,7 +22,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { useAuth } from '../../contexts/AuthContext'
 import { useSocket, WS_EVENTS } from '../../contexts/SocketContext'
 import { api, HealthCheck, User } from '../../lib/api'
-import { WorkflowBadges, WorkflowLegend, WorkflowStatus, CompletionInfo } from '../../components/WorkflowBadges'
+import { WorkflowBadges, WorkflowLegend, WorkflowStatus, CompletionInfo, AuthorisationInfo } from '../../components/WorkflowBadges'
 import { Tooltip } from '../../components/ui/Tooltip'
 
 // Currency formatter helper
@@ -41,6 +41,7 @@ const VIEW_PREFERENCE_KEY = 'vhc_health_checks_view'
 
 const statusLabels: Record<string, string> = {
   awaiting_arrival: 'Awaiting Arrival',
+  awaiting_checkin: 'Awaiting Check-In',
   created: 'Created',
   assigned: 'Assigned',
   in_progress: 'In Progress',
@@ -62,6 +63,7 @@ const statusLabels: Record<string, string> = {
 
 const statusColors: Record<string, string> = {
   awaiting_arrival: 'bg-blue-100 text-blue-700',
+  awaiting_checkin: 'bg-red-100 text-red-700',
   created: 'bg-gray-100 text-gray-700',
   assigned: 'bg-blue-100 text-blue-700',
   in_progress: 'bg-yellow-100 text-yellow-700',
@@ -110,6 +112,7 @@ interface HealthCheckCard {
   // Workflow status fields
   workflowStatus?: WorkflowStatus
   technicianCompletion?: CompletionInfo
+  authorisationInfo?: AuthorisationInfo
   // Outcome aggregation fields - identified vs authorised
   identified_total?: number
   authorised_total?: number
@@ -171,10 +174,16 @@ function SortableCard({ card, columnId }: { card: HealthCheckCard; columnId: str
 
 // Card Content Component
 function CardContent({ card }: { card: HealthCheckCard }) {
+  const isAwaitingCheckin = card.status === 'awaiting_checkin'
+
   return (
     <Link
-      to={`/health-checks/${card.id}`}
-      className="block bg-white border border-gray-200 rounded-lg shadow-sm p-3 mb-2 hover:shadow transition-shadow"
+      to={`/health-checks/${card.id}${isAwaitingCheckin ? '?tab=checkin' : ''}`}
+      className={`block border rounded-lg shadow-sm p-3 mb-2 hover:shadow transition-shadow ${
+        isAwaitingCheckin
+          ? 'bg-red-50 border-red-300'
+          : 'bg-white border-gray-200'
+      }`}
       onClick={(e) => e.stopPropagation()}
     >
       {/* Header: Registration + Status Badges */}
@@ -183,6 +192,11 @@ function CardContent({ card }: { card: HealthCheckCard }) {
           {card.vehicle?.registration}
         </span>
         <div className="flex gap-1 flex-wrap justify-end">
+          {isAwaitingCheckin && (
+            <span className="px-2 py-0.5 text-xs font-bold bg-red-600 text-white rounded-none animate-pulse">
+              CHECK-IN REQUIRED
+            </span>
+          )}
           {card.customer_waiting && (
             <span className="px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-700 rounded">
               Waiting
@@ -274,12 +288,13 @@ function CardContent({ card }: { card: HealthCheckCard }) {
           <span className="capitalize">{card.status.replace(/_/g, ' ')}</span>
         </div>
 
-        {/* Workflow Badges (T-L-P-Q-S) */}
+        {/* Workflow Badges (T-L-P-S-A) */}
         {card.workflowStatus && (
           <WorkflowBadges
             status={card.workflowStatus}
             compact
             technicianCompletion={card.technicianCompletion}
+            authorisationInfo={card.authorisationInfo}
           />
         )}
       </div>
@@ -608,6 +623,13 @@ export default function HealthCheckList() {
       .find(c => c.id === active.id)
 
     if (!draggedCard) return
+
+    // Block drag for awaiting_checkin status - must complete check-in first
+    if (draggedCard.status === 'awaiting_checkin') {
+      setError('Cannot assign: Check-in must be completed first')
+      setTimeout(() => setError(null), 3000)
+      return
+    }
 
     const overColumnId = over.data?.current?.columnId || over.id
     const targetColumn = boardData.columns[overColumnId as keyof typeof boardData.columns]

@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { authorize } from '../../middleware/auth.js'
 import { verifyRepairItemAccess, verifyRepairOptionAccess, updateRepairItemWorkflowStatus } from './helpers.js'
+import { logAudit } from '../../services/audit.js'
 
 const partsRouter = new Hono()
 
@@ -118,6 +119,27 @@ partsRouter.post('/repair-items/:id/parts', authorize(['super_admin', 'org_admin
 
     // Auto-update workflow status
     await updateRepairItemWorkflowStatus(id, null)
+
+    // Log audit event for timeline
+    logAudit({
+      action: 'parts.add',
+      actorId: auth.user.id,
+      actorType: 'user',
+      organizationId: auth.orgId,
+      resourceType: 'repair_item',
+      resourceId: id,
+      metadata: {
+        part_id: part.id,
+        repair_item_id: id,
+        health_check_id: existing.health_check_id,
+        item_name: existing.name,
+        part_number: part.part_number,
+        description: part.description,
+        quantity: parseFloat(part.quantity),
+        sell_price: parseFloat(part.sell_price),
+        line_total: parseFloat(part.line_total)
+      }
+    })
 
     return c.json({
       id: part.id,
@@ -367,6 +389,43 @@ partsRouter.patch('/repair-parts/:id', authorize(['super_admin', 'org_admin', 's
       return c.json({ error: error.message }, 500)
     }
 
+    // Get health_check_id and item name for audit
+    const repairItemId = existing.repair_item_id || repairOption?.repair_item_id
+    let healthCheckId: string | null = null
+    let itemName: string | null = null
+    if (repairItemId) {
+      const { data: repairItemData } = await supabaseAdmin
+        .from('repair_items')
+        .select('health_check_id, name')
+        .eq('id', repairItemId)
+        .single()
+      healthCheckId = repairItemData?.health_check_id || null
+      itemName = repairItemData?.name || null
+    }
+
+    // Log audit event for timeline
+    logAudit({
+      action: 'parts.update',
+      actorId: auth.user.id,
+      actorType: 'user',
+      organizationId: auth.orgId,
+      resourceType: 'repair_parts',
+      resourceId: id,
+      metadata: {
+        part_id: part.id,
+        repair_item_id: repairItemId,
+        health_check_id: healthCheckId,
+        item_name: itemName,
+        description: part.description,
+        old_quantity: parseFloat(existing.quantity),
+        new_quantity: parseFloat(part.quantity),
+        old_sell_price: parseFloat(existing.sell_price),
+        new_sell_price: parseFloat(part.sell_price),
+        old_line_total: parseFloat(existing.line_total),
+        new_line_total: parseFloat(part.line_total)
+      }
+    })
+
     return c.json({
       id: part.id,
       partNumber: part.part_number,
@@ -518,6 +577,27 @@ partsRouter.delete('/repair-parts/:id', authorize(['super_admin', 'org_admin', '
     const repairItemId = existing.repair_item_id
     const repairOptionId = existing.repair_option_id
 
+    // Get health_check_id and item name for audit before deletion
+    let healthCheckId: string | null = null
+    let itemName: string | null = null
+    const actualRepairItemId = repairItemId || repairOption?.id
+    if (actualRepairItemId) {
+      const { data: repairItemData } = await supabaseAdmin
+        .from('repair_items')
+        .select('health_check_id, name')
+        .eq('id', actualRepairItemId)
+        .single()
+      healthCheckId = repairItemData?.health_check_id || null
+      itemName = repairItemData?.name || null
+    }
+
+    // Get part details before deletion for audit
+    const { data: partDetails } = await supabaseAdmin
+      .from('repair_parts')
+      .select('description, quantity, sell_price, line_total')
+      .eq('id', id)
+      .single()
+
     const { error } = await supabaseAdmin
       .from('repair_parts')
       .delete()
@@ -527,6 +607,25 @@ partsRouter.delete('/repair-parts/:id', authorize(['super_admin', 'org_admin', '
       console.error('Delete part error:', error)
       return c.json({ error: error.message }, 500)
     }
+
+    // Log audit event for timeline
+    logAudit({
+      action: 'parts.delete',
+      actorId: auth.user.id,
+      actorType: 'user',
+      organizationId: auth.orgId,
+      resourceType: 'repair_parts',
+      resourceId: id,
+      metadata: {
+        part_id: id,
+        repair_item_id: actualRepairItemId,
+        health_check_id: healthCheckId,
+        item_name: itemName,
+        description: partDetails?.description || null,
+        quantity: partDetails ? parseFloat(partDetails.quantity) : null,
+        line_total: partDetails ? parseFloat(partDetails.line_total) : null
+      }
+    })
 
     // Recalculate workflow status after deletion
     await updateRepairItemWorkflowStatus(repairItemId, repairOptionId)
@@ -660,6 +759,30 @@ partsRouter.post('/repair-items/:id/parts-complete', authorize(['super_admin', '
       console.error('Mark parts complete error:', error)
       return c.json({ error: error.message }, 500)
     }
+
+    // Get parts total for audit
+    const { data: partsData } = await supabaseAdmin
+      .from('repair_parts')
+      .select('line_total')
+      .eq('repair_item_id', id)
+
+    const partsTotal = (partsData || []).reduce((sum, p) => sum + parseFloat(p.line_total), 0)
+
+    // Log audit event for timeline
+    logAudit({
+      action: 'parts.complete',
+      actorId: auth.user.id,
+      actorType: 'user',
+      organizationId: auth.orgId,
+      resourceType: 'repair_item',
+      resourceId: id,
+      metadata: {
+        repair_item_id: id,
+        health_check_id: existing.health_check_id,
+        item_name: existing.name,
+        parts_total: partsTotal
+      }
+    })
 
     return c.json({
       partsStatus: item.parts_status,

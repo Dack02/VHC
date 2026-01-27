@@ -604,4 +604,146 @@ reports.get('/brake-disc-access', authorize(['super_admin', 'org_admin', 'site_a
   }
 })
 
+// GET /api/v1/reports/mri-bypass - Report on MRI scan bypass during check-in
+reports.get('/mri-bypass', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { startDate: startDateParam, endDate: endDateParam, siteId, advisorId } = c.req.query()
+
+    // Default to last 30 days
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = startDateParam || thirtyDaysAgo.toISOString()
+    const endDate = endDateParam || new Date().toISOString()
+
+    // Query health checks that have been checked in (have checked_in_at)
+    let query = supabaseAdmin
+      .from('health_checks')
+      .select(`
+        id,
+        checked_in_at,
+        checked_in_by,
+        mri_items_total,
+        mri_items_completed,
+        mri_bypassed,
+        site_id,
+        advisor:users!health_checks_checked_in_by_fkey(id, first_name, last_name),
+        vehicle:vehicles(registration),
+        site:sites(name)
+      `)
+      .eq('organization_id', auth.orgId)
+      .not('checked_in_at', 'is', null)
+      .gte('checked_in_at', startDate)
+      .lte('checked_in_at', endDate)
+      .order('checked_in_at', { ascending: false })
+
+    if (siteId) {
+      query = query.eq('site_id', siteId)
+    }
+    if (advisorId) {
+      query = query.eq('checked_in_by', advisorId)
+    }
+
+    const { data: healthChecks, error } = await query
+
+    if (error) {
+      console.error('MRI bypass report error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+
+    // Calculate summary statistics
+    const totalCheckins = healthChecks?.length || 0
+    const bypassedCheckins = healthChecks?.filter(hc => hc.mri_bypassed).length || 0
+    const completedMri = totalCheckins - bypassedCheckins
+    const bypassRate = totalCheckins > 0 ? Math.round((bypassedCheckins / totalCheckins) * 100 * 10) / 10 : 0
+
+    // Group by advisor
+    const byAdvisor: Record<string, {
+      id: string
+      name: string
+      totalCheckins: number
+      bypassed: number
+      bypassRate: number
+      avgCompletionRate: number
+    }> = {}
+
+    for (const hc of healthChecks || []) {
+      if (!hc.checked_in_by) continue
+
+      const advisor = hc.advisor as unknown as { id: string; first_name: string; last_name: string } | null
+      const advisorKey = hc.checked_in_by
+
+      if (!byAdvisor[advisorKey]) {
+        byAdvisor[advisorKey] = {
+          id: advisorKey,
+          name: advisor ? `${advisor.first_name} ${advisor.last_name}` : 'Unknown',
+          totalCheckins: 0,
+          bypassed: 0,
+          bypassRate: 0,
+          avgCompletionRate: 0
+        }
+      }
+
+      byAdvisor[advisorKey].totalCheckins++
+      if (hc.mri_bypassed) {
+        byAdvisor[advisorKey].bypassed++
+      }
+
+      // Track completion rate
+      if (hc.mri_items_total && hc.mri_items_total > 0) {
+        const completionRate = (hc.mri_items_completed || 0) / hc.mri_items_total
+        byAdvisor[advisorKey].avgCompletionRate += completionRate
+      }
+    }
+
+    // Calculate final rates for each advisor
+    const advisorStats = Object.values(byAdvisor).map(a => ({
+      ...a,
+      bypassRate: a.totalCheckins > 0 ? Math.round((a.bypassed / a.totalCheckins) * 100 * 10) / 10 : 0,
+      avgCompletionRate: a.totalCheckins > 0 ? Math.round((a.avgCompletionRate / a.totalCheckins) * 100 * 10) / 10 : 0
+    })).sort((a, b) => b.bypassed - a.bypassed)
+
+    // Recent bypassed instances for detail view
+    const recentBypassed = (healthChecks || [])
+      .filter(hc => hc.mri_bypassed)
+      .slice(0, 20)
+      .map(hc => {
+        const advisor = hc.advisor as unknown as { id: string; first_name: string; last_name: string } | null
+        const vehicle = hc.vehicle as unknown as { registration: string } | null
+        const site = hc.site as unknown as { name: string } | null
+        return {
+          healthCheckId: hc.id,
+          vehicleReg: vehicle?.registration || 'Unknown',
+          advisorId: hc.checked_in_by,
+          advisorName: advisor ? `${advisor.first_name} ${advisor.last_name}` : 'Unknown',
+          siteName: site?.name || 'Unknown',
+          checkedInAt: hc.checked_in_at,
+          mriItemsTotal: hc.mri_items_total || 0,
+          mriItemsCompleted: hc.mri_items_completed || 0,
+          completionRate: hc.mri_items_total && hc.mri_items_total > 0
+            ? Math.round(((hc.mri_items_completed || 0) / hc.mri_items_total) * 100)
+            : 0
+        }
+      })
+
+    return c.json({
+      period: {
+        from: startDate,
+        to: endDate
+      },
+      summary: {
+        totalCheckins,
+        completedMri,
+        bypassedCheckins,
+        bypassRate
+      },
+      byAdvisor: advisorStats,
+      recentBypassed
+    })
+  } catch (error) {
+    console.error('MRI bypass report error:', error)
+    return c.json({ error: 'Failed to fetch MRI bypass report' }, 500)
+  }
+})
+
 export default reports

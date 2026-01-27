@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { authorize } from '../../middleware/auth.js'
 import { verifyRepairItemAccess, verifyRepairOptionAccess, updateRepairItemWorkflowStatus } from './helpers.js'
+import { logAudit } from '../../services/audit.js'
 
 const labourRouter = new Hono()
 
@@ -115,6 +116,27 @@ labourRouter.post('/repair-items/:id/labour', authorize(['super_admin', 'org_adm
 
     // Auto-update workflow status
     await updateRepairItemWorkflowStatus(id, null)
+
+    // Log audit event for timeline
+    logAudit({
+      action: 'labour.add',
+      actorId: auth.user.id,
+      actorType: 'user',
+      organizationId: auth.orgId,
+      resourceType: 'repair_item',
+      resourceId: id,
+      metadata: {
+        labour_id: labour.id,
+        repair_item_id: id,
+        health_check_id: existing.health_check_id,
+        item_name: existing.name,
+        labour_code: labour.labour_code?.code || null,
+        labour_description: labour.labour_code?.description || null,
+        hours: parseFloat(labour.hours),
+        rate: parseFloat(labour.rate),
+        total: parseFloat(labour.total)
+      }
+    })
 
     return c.json({
       id: labour.id,
@@ -347,6 +369,43 @@ labourRouter.patch('/repair-labour/:id', authorize(['super_admin', 'org_admin', 
       return c.json({ error: error.message }, 500)
     }
 
+    // Get health_check_id and item name for audit
+    const repairItemId = existing.repair_item_id || repairOption?.repair_item_id
+    let healthCheckId: string | null = null
+    let itemName: string | null = null
+    if (repairItemId) {
+      const { data: repairItemData } = await supabaseAdmin
+        .from('repair_items')
+        .select('health_check_id, name')
+        .eq('id', repairItemId)
+        .single()
+      healthCheckId = repairItemData?.health_check_id || null
+      itemName = repairItemData?.name || null
+    }
+
+    // Log audit event for timeline
+    logAudit({
+      action: 'labour.update',
+      actorId: auth.user.id,
+      actorType: 'user',
+      organizationId: auth.orgId,
+      resourceType: 'repair_labour',
+      resourceId: id,
+      metadata: {
+        labour_id: labour.id,
+        repair_item_id: repairItemId,
+        health_check_id: healthCheckId,
+        item_name: itemName,
+        labour_code: labour.labour_code?.code || null,
+        old_hours: parseFloat(existing.hours),
+        new_hours: parseFloat(labour.hours),
+        old_rate: parseFloat(existing.rate),
+        new_rate: parseFloat(labour.rate),
+        old_total: parseFloat(existing.total),
+        new_total: parseFloat(labour.total)
+      }
+    })
+
     return c.json({
       id: labour.id,
       labourCodeId: labour.labour_code_id,
@@ -407,6 +466,34 @@ labourRouter.delete('/repair-labour/:id', authorize(['super_admin', 'org_admin',
     const repairItemId = existing.repair_item_id
     const repairOptionId = existing.repair_option_id
 
+    // Get health_check_id and item name for audit before deletion
+    let healthCheckId: string | null = null
+    let itemName: string | null = null
+    const actualRepairItemId = repairItemId || repairOption?.id
+    if (actualRepairItemId) {
+      const { data: repairItemData } = await supabaseAdmin
+        .from('repair_items')
+        .select('health_check_id, name')
+        .eq('id', actualRepairItemId)
+        .single()
+      healthCheckId = repairItemData?.health_check_id || null
+      itemName = repairItemData?.name || null
+    }
+
+    // Get labour details before deletion for audit
+    const { data: labourDetails } = await supabaseAdmin
+      .from('repair_labour')
+      .select(`
+        hours, rate, total,
+        labour_code:labour_codes(code, description)
+      `)
+      .eq('id', id)
+      .single()
+
+    // Extract labour_code (may be array from join)
+    const labourCodeObj = labourDetails?.labour_code
+    const labourCode = Array.isArray(labourCodeObj) ? labourCodeObj[0] : labourCodeObj
+
     const { error } = await supabaseAdmin
       .from('repair_labour')
       .delete()
@@ -416,6 +503,26 @@ labourRouter.delete('/repair-labour/:id', authorize(['super_admin', 'org_admin',
       console.error('Delete labour error:', error)
       return c.json({ error: error.message }, 500)
     }
+
+    // Log audit event for timeline
+    logAudit({
+      action: 'labour.delete',
+      actorId: auth.user.id,
+      actorType: 'user',
+      organizationId: auth.orgId,
+      resourceType: 'repair_labour',
+      resourceId: id,
+      metadata: {
+        labour_id: id,
+        repair_item_id: actualRepairItemId,
+        health_check_id: healthCheckId,
+        item_name: itemName,
+        labour_code: labourCode?.code || null,
+        labour_description: labourCode?.description || null,
+        hours: labourDetails ? parseFloat(labourDetails.hours) : null,
+        total: labourDetails ? parseFloat(labourDetails.total) : null
+      }
+    })
 
     // Recalculate workflow status after deletion
     await updateRepairItemWorkflowStatus(repairItemId, repairOptionId)
@@ -549,6 +656,30 @@ labourRouter.post('/repair-items/:id/labour-complete', authorize(['super_admin',
       console.error('Mark labour complete error:', error)
       return c.json({ error: error.message }, 500)
     }
+
+    // Get labour total for audit
+    const { data: labourData } = await supabaseAdmin
+      .from('repair_labour')
+      .select('total')
+      .eq('repair_item_id', id)
+
+    const labourTotal = (labourData || []).reduce((sum, l) => sum + parseFloat(l.total), 0)
+
+    // Log audit event for timeline
+    logAudit({
+      action: 'labour.complete',
+      actorId: auth.user.id,
+      actorType: 'user',
+      organizationId: auth.orgId,
+      resourceType: 'repair_item',
+      resourceId: id,
+      metadata: {
+        repair_item_id: id,
+        health_check_id: existing.health_check_id,
+        item_name: existing.name,
+        labour_total: labourTotal
+      }
+    })
 
     return c.json({
       labourStatus: item.labour_status,

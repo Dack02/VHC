@@ -174,6 +174,44 @@ notificationRoutes.delete('/', async (c) => {
 })
 
 /**
+ * POST /api/notifications/test
+ * Create a test notification for the current user (for debugging)
+ */
+notificationRoutes.post('/test', async (c) => {
+  const auth = c.get('auth')
+  const userId = auth.user.id
+
+  const { data: notification, error } = await supabaseAdmin
+    .from('notifications')
+    .insert({
+      user_id: userId,
+      type: 'health_check_assigned',
+      title: 'Test Notification',
+      message: 'This is a test notification to verify the system is working.',
+      priority: 'normal'
+    })
+    .select()
+    .single()
+
+  if (error) {
+    console.error('Error creating test notification:', error)
+    return c.json({ error: 'Failed to create test notification' }, 500)
+  }
+
+  // Emit via WebSocket
+  emitToUser(userId, WS_EVENTS.NOTIFICATION, {
+    id: notification.id,
+    type: 'health_check_assigned',
+    title: 'Test Notification',
+    message: 'This is a test notification to verify the system is working.',
+    priority: 'normal',
+    timestamp: notification.created_at
+  })
+
+  return c.json({ success: true, notification })
+})
+
+/**
  * Helper: Create notification for a user
  */
 export async function createNotification(

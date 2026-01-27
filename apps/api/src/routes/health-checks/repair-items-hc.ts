@@ -277,6 +277,11 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
           createdBy: item.created_by,
           createdAt: item.created_at,
           updatedAt: item.updated_at,
+          // Source tracking for MRI items
+          source: item.source || null,
+          // RAG status - from stored value (for MRI items) or will be derived from checkResults on frontend
+          ragStatus: item.rag_status || null,
+          mriResultId: item.mri_result_id || null,
           checkResults: item.check_results?.map((cr: Record<string, unknown>) => {
             const checkResult = cr.check_result as Record<string, unknown>
             return {

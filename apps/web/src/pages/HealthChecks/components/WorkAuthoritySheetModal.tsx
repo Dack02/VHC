@@ -96,7 +96,7 @@ export function WorkAuthoritySheetModal({
     setError(null)
 
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5180'
       const response = await fetch(
         `${apiUrl}/api/v1/health-checks/${healthCheckId}/work-authority-sheet`,
         {

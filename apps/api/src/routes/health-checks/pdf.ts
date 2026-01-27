@@ -72,6 +72,8 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         parts_completed_at,
         follow_up_date,
         work_completed_at,
+        source,
+        rag_status,
         check_results:repair_item_check_results(
           check_result:check_results(id, rag_status)
         )
@@ -130,22 +132,30 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
 
     // Transform NEW schema to legacy format for PDF
     const repairItems = (repairItemsRaw || []).map(item => {
-      // Derive rag_status from linked check results
-      const linkedResults = item.check_results || []
+      // For MRI items, use the direct rag_status from the repair_items table
+      // For inspection items, derive from linked check_results
       let derivedRagStatus: 'red' | 'amber' | null = null
       let firstCheckResultId: string | null = null
-      for (const link of linkedResults) {
-        // Supabase returns single relations as objects (not arrays)
-        const cr = link?.check_result as { id?: string; rag_status?: string } | null
-        if (!firstCheckResultId && cr?.id) {
-          firstCheckResultId = cr.id
-        }
-        if (cr?.rag_status === 'red') {
-          derivedRagStatus = 'red'
-          break
-        }
-        if (cr?.rag_status === 'amber' && !derivedRagStatus) {
-          derivedRagStatus = 'amber'
+
+      // MRI items have their rag_status stored directly
+      if (item.source === 'mri_scan' && item.rag_status) {
+        derivedRagStatus = item.rag_status as 'red' | 'amber'
+      } else {
+        // Derive rag_status from linked check results (for inspection items)
+        const linkedResults = item.check_results || []
+        for (const link of linkedResults) {
+          // Supabase returns single relations as objects (not arrays)
+          const cr = link?.check_result as { id?: string; rag_status?: string } | null
+          if (!firstCheckResultId && cr?.id) {
+            firstCheckResultId = cr.id
+          }
+          if (cr?.rag_status === 'red') {
+            derivedRagStatus = 'red'
+            break
+          }
+          if (cr?.rag_status === 'amber' && !derivedRagStatus) {
+            derivedRagStatus = 'amber'
+          }
         }
       }
 

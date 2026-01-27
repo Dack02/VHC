@@ -1,19 +1,22 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
-import { api, HealthCheck, CheckResult, RepairItem, StatusHistoryEntry, TemplateSection, HealthCheckSummary, FullHealthCheckResponse, NewRepairItem } from '../../lib/api'
+import { api, HealthCheck, CheckResult, RepairItem, TemplateSection, HealthCheckSummary, FullHealthCheckResponse, NewRepairItem, TimelineEvent } from '../../lib/api'
 import { WorkflowBadges, WorkflowStatus, calculateWorkflowStatus, calculateAuthorisationInfo, CompletionInfo, AuthorisationInfo } from '../../components/WorkflowBadges'
 import { PhotosTab } from './tabs/PhotosTab'
 import { TimelineTab } from './tabs/TimelineTab'
 import { LabourTab } from './tabs/LabourTab'
 import { PartsTab } from './tabs/PartsTab'
 import { SummaryTab } from './tabs/SummaryTab'
+import { CheckInTab } from './tabs/CheckInTab'
+import { MriTab } from './tabs/MriTab'
 import { PublishModal } from './PublishModal'
 import { CustomerPreviewModal } from './CustomerPreviewModal'
 import { HealthCheckTabContent } from './components/HealthCheckTabContent'
 import { CloseHealthCheckModal } from './components/CloseHealthCheckModal'
 import { AdvisorSelectionModal } from './components/AdvisorSelectionModal'
 import { WorkAuthoritySheetModal } from './components/WorkAuthoritySheetModal'
+import { CustomerEditModal } from './components/CustomerEditModal'
 
 // Hook for online/offline detection
 function useOnlineStatus() {
@@ -36,6 +39,8 @@ function useOnlineStatus() {
 }
 
 const statusLabels: Record<string, string> = {
+  awaiting_arrival: 'Awaiting Arrival',
+  awaiting_checkin: 'Awaiting Check-In',
   created: 'Created',
   assigned: 'Assigned',
   in_progress: 'In Progress',
@@ -51,10 +56,13 @@ const statusLabels: Record<string, string> = {
   declined: 'Declined',
   expired: 'Expired',
   completed: 'Completed',
-  cancelled: 'Cancelled'
+  cancelled: 'Cancelled',
+  no_show: 'No Show'
 }
 
 const statusColors: Record<string, string> = {
+  awaiting_arrival: 'bg-purple-100 text-purple-700',
+  awaiting_checkin: 'bg-amber-100 text-amber-700',
   created: 'bg-gray-100 text-gray-700',
   assigned: 'bg-blue-100 text-blue-700',
   in_progress: 'bg-yellow-100 text-yellow-700',
@@ -70,10 +78,11 @@ const statusColors: Record<string, string> = {
   declined: 'bg-red-100 text-red-700',
   expired: 'bg-gray-100 text-gray-700',
   completed: 'bg-green-100 text-green-700',
-  cancelled: 'bg-gray-100 text-gray-700'
+  cancelled: 'bg-gray-100 text-gray-700',
+  no_show: 'bg-red-100 text-red-700'
 }
 
-type Tab = 'summary' | 'health-check' | 'labour' | 'parts' | 'photos' | 'timeline'
+type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'labour' | 'parts' | 'photos' | 'timeline'
 
 export default function HealthCheckDetail() {
   const { id } = useParams<{ id: string }>()
@@ -90,7 +99,7 @@ export default function HealthCheckDetail() {
   const [repairItems, setRepairItems] = useState<RepairItem[]>([])
   const [newRepairItems, setNewRepairItems] = useState<NewRepairItem[]>([])
   const [summary, setSummary] = useState<HealthCheckSummary | null>(null)
-  const [history, setHistory] = useState<StatusHistoryEntry[]>([])
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([])
   const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatus | null>(null)
   const [labourCompletion, setLabourCompletion] = useState<CompletionInfo | undefined>(undefined)
   const [partsCompletion, setPartsCompletion] = useState<CompletionInfo | undefined>(undefined)
@@ -104,7 +113,9 @@ export default function HealthCheckDetail() {
   const [showCloseModal, setShowCloseModal] = useState(false)
   const [showAdvisorModal, setShowAdvisorModal] = useState(false)
   const [showWorkAuthorityModal, setShowWorkAuthorityModal] = useState(false)
+  const [showCustomerEditModal, setShowCustomerEditModal] = useState(false)
   const [generatingPDF, setGeneratingPDF] = useState(false)
+  const [checkinEnabled, setCheckinEnabled] = useState(false)
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const fetchData = useCallback(async (options: { isRetry?: boolean; silent?: boolean } = {}) => {
@@ -143,12 +154,26 @@ export default function HealthCheckDetail() {
         setSections(templateData.sections || [])
       }
 
-      // Fetch history
-      const historyData = await api<{ history: StatusHistoryEntry[] }>(
-        `/api/v1/health-checks/${id}/history`,
+      // Fetch unified timeline (includes status history, labour/parts events, outcomes)
+      const timelineData = await api<{ timeline: TimelineEvent[] }>(
+        `/api/v1/health-checks/${id}/timeline`,
         { token: session.accessToken }
       )
-      setHistory(historyData.history || [])
+      setTimeline(timelineData.timeline || [])
+
+      // Fetch check-in settings for organization
+      if (user?.organization?.id) {
+        try {
+          const checkinSettings = await api<{ checkinEnabled: boolean }>(
+            `/api/v1/organizations/${user.organization.id}/checkin-settings`,
+            { token: session.accessToken }
+          )
+          setCheckinEnabled(checkinSettings.checkinEnabled || false)
+        } catch {
+          // Check-in settings not configured, leave as disabled
+          setCheckinEnabled(false)
+        }
+      }
 
       // Fetch new repair items for workflow status
       try {
@@ -282,7 +307,7 @@ export default function HealthCheckDetail() {
     setGeneratingPDF(true)
     try {
       // Fetch PDF as blob with auth token
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5180'
       const response = await fetch(`${apiUrl}/api/v1/health-checks/${id}/pdf`, {
         headers: {
           'Authorization': `Bearer ${session.accessToken}`
@@ -374,8 +399,13 @@ export default function HealthCheckDetail() {
 
   const customer = healthCheck.vehicle?.customer
 
+  // Build tabs array - conditionally include Check-In and MRI tabs if enabled
   const tabs: { id: Tab; label: string; badge?: number }[] = [
     { id: 'summary', label: 'Summary' },
+    // Show Check-In tab when check-in is enabled for the org
+    ...(checkinEnabled ? [{ id: 'checkin' as Tab, label: 'Check-In' }] : []),
+    // Show MRI tab when check-in is enabled (for viewing MRI scan results)
+    ...(checkinEnabled ? [{ id: 'mri' as Tab, label: 'MRI Scan' }] : []),
     { id: 'health-check', label: 'Health Check' },
     { id: 'labour', label: 'Labour' },
     { id: 'parts', label: 'Parts' },
@@ -509,6 +539,8 @@ export default function HealthCheckDetail() {
         authorisationInfo={authorisationInfo}
         canChangeAdvisor={canChangeAdvisor || undefined}
         onAdvisorClick={() => setShowAdvisorModal(true)}
+        canEditCustomer={canChangeAdvisor || undefined}
+        onCustomerEditClick={() => setShowCustomerEditModal(true)}
       />
 
       {/* Tab Navigation */}
@@ -549,6 +581,21 @@ export default function HealthCheckDetail() {
             onUpdate={silentRefresh}
           />
         )}
+        {activeTab === 'checkin' && (
+          <CheckInTab
+            healthCheckId={id!}
+            healthCheckStatus={healthCheck.status}
+            onUpdate={silentRefresh}
+            onCheckInComplete={() => {
+              silentRefresh()
+              // Optionally switch to health-check tab after check-in
+              setActiveTab('health-check')
+            }}
+          />
+        )}
+        {activeTab === 'mri' && (
+          <MriTab healthCheckId={id!} />
+        )}
         {activeTab === 'health-check' && (
           <HealthCheckTabContent
             healthCheckId={id!}
@@ -578,7 +625,7 @@ export default function HealthCheckDetail() {
           />
         )}
         {activeTab === 'timeline' && (
-          <TimelineTab history={history} />
+          <TimelineTab timeline={timeline} />
         )}
       </div>
 
@@ -633,6 +680,37 @@ export default function HealthCheckDetail() {
           userRole={user?.role || 'technician'}
         />
       )}
+      {showCustomerEditModal && customer && (
+        <CustomerEditModal
+          customer={{
+            id: customer.id,
+            firstName: customer.first_name,
+            lastName: customer.last_name,
+            email: customer.email || null,
+            mobile: customer.mobile || null
+          }}
+          onClose={() => setShowCustomerEditModal(false)}
+          onCustomerUpdated={(updatedCustomer) => {
+            // Update the health check with new customer data
+            if (healthCheck?.vehicle) {
+              setHealthCheck({
+                ...healthCheck,
+                vehicle: {
+                  ...healthCheck.vehicle,
+                  customer: {
+                    ...healthCheck.vehicle.customer!,
+                    first_name: updatedCustomer.firstName,
+                    last_name: updatedCustomer.lastName,
+                    email: updatedCustomer.email,
+                    mobile: updatedCustomer.mobile
+                  }
+                }
+              })
+            }
+            setShowCustomerEditModal(false)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -663,9 +741,11 @@ interface VehicleInfoBarProps {
   authorisationInfo?: AuthorisationInfo
   canChangeAdvisor?: boolean
   onAdvisorClick?: () => void
+  canEditCustomer?: boolean
+  onCustomerEditClick?: () => void
 }
 
-function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, labourCompletion, partsCompletion, authorisationInfo, canChangeAdvisor, onAdvisorClick }: VehicleInfoBarProps) {
+function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, labourCompletion, partsCompletion, authorisationInfo, canChangeAdvisor, onAdvisorClick, canEditCustomer, onCustomerEditClick }: VehicleInfoBarProps) {
   const vehicle = healthCheck.vehicle
   const customer = healthCheck.vehicle?.customer
   const [vinExpanded, setVinExpanded] = useState(false)
@@ -724,26 +804,31 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
         </div>
 
         {/* Contact info - Stacked on mobile */}
-        {(customer?.mobile || customer?.email) && (
-          <div className="flex flex-wrap gap-3 text-sm text-gray-600">
-            {customer?.mobile && (
-              <span className="flex items-center gap-1">
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                </svg>
-                {customer.mobile}
-              </span>
-            )}
-            {customer?.email && (
-              <span className="flex items-center gap-1 truncate max-w-[200px]">
-                <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                </svg>
-                <span className="truncate">{customer.email}</span>
-              </span>
-            )}
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">
+          <span className="flex items-center gap-1">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+            </svg>
+            {customer?.mobile || '-'}
+          </span>
+          <span className="flex items-center gap-1 truncate max-w-[200px]">
+            <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+            <span className="truncate">{customer?.email || '-'}</span>
+          </span>
+          {canEditCustomer && customer && (
+            <button
+              onClick={onCustomerEditClick}
+              className="text-primary hover:text-primary-dark"
+              title="Edit customer contact"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+            </button>
+          )}
+        </div>
 
         {/* Secondary info row */}
         <div className="grid grid-cols-3 gap-3 text-sm">
@@ -834,25 +919,33 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
 
         {/* Contact */}
         <div>
-          <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Contact</div>
-          <div className="text-sm text-gray-900">
-            {customer?.mobile && (
-              <span className="mr-3">
-                <svg className="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                </svg>
-                {customer.mobile}
-              </span>
-            )}
-            {customer?.email && (
-              <span className="flex items-center gap-1">
+          <div className="text-xs text-gray-500 uppercase tracking-wider mb-1 flex items-center gap-2">
+            Contact
+            {canEditCustomer && customer && (
+              <button
+                onClick={onCustomerEditClick}
+                className="text-primary hover:text-primary-dark"
+                title="Edit customer contact"
+              >
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                 </svg>
-                {customer.email}
-              </span>
+              </button>
             )}
-            {!customer?.mobile && !customer?.email && '-'}
+          </div>
+          <div className="text-sm text-gray-900">
+            <span className="mr-3">
+              <svg className="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+              </svg>
+              {customer?.mobile || '-'}
+            </span>
+            <span className="flex items-center gap-1">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              {customer?.email || '-'}
+            </span>
           </div>
         </div>
 

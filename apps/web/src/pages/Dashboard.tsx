@@ -86,6 +86,16 @@ interface AwaitingArrivalItem {
   jobsheetNumber: string | null
 }
 
+interface AwaitingCheckinItem {
+  id: string
+  registration: string
+  make: string
+  model: string
+  customerName: string
+  arrivedAt: string
+  customerWaiting: boolean
+}
+
 export default function Dashboard() {
   const { user, session } = useAuth()
   const { on, off, isConnected } = useSocket()
@@ -94,6 +104,8 @@ export default function Dashboard() {
   const [technicians, setTechnicians] = useState<TechnicianWorkload[]>([])
   const [awaitingArrival, setAwaitingArrival] = useState<AwaitingArrivalItem[]>([])
   const [awaitingArrivalLoading, setAwaitingArrivalLoading] = useState(false)
+  const [awaitingCheckin, setAwaitingCheckin] = useState<AwaitingCheckinItem[]>([])
+  const [awaitingCheckinLoading, setAwaitingCheckinLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [liveUpdate, setLiveUpdate] = useState<string | null>(null)
@@ -139,6 +151,49 @@ export default function Dashboard() {
     }
   }, [token, dateRange])
 
+  // Fetch awaiting arrival health checks (from DMS imports)
+  const fetchAwaitingArrival = useCallback(async () => {
+    if (!token) return
+    try {
+      setAwaitingArrivalLoading(true)
+      const response = await api<{ healthChecks: AwaitingArrivalItem[] }>('/api/v1/dms-settings/unactioned?limit=50', { token })
+      setAwaitingArrival(response.healthChecks || [])
+    } catch (err) {
+      console.error('Failed to fetch awaiting arrival:', err)
+    } finally {
+      setAwaitingArrivalLoading(false)
+    }
+  }, [token])
+
+  // Fetch awaiting check-in health checks
+  const fetchAwaitingCheckin = useCallback(async () => {
+    if (!token) return
+    try {
+      setAwaitingCheckinLoading(true)
+      const response = await api<{ healthChecks: Array<{
+        id: string
+        arrived_at: string
+        customer_waiting: boolean
+        vehicle: { registration: string; make: string; model: string }
+        customer: { first_name: string; last_name: string }
+      }> }>('/api/v1/health-checks?status=awaiting_checkin&limit=50', { token })
+
+      setAwaitingCheckin((response.healthChecks || []).map(hc => ({
+        id: hc.id,
+        registration: hc.vehicle?.registration || 'Unknown',
+        make: hc.vehicle?.make || '',
+        model: hc.vehicle?.model || '',
+        customerName: hc.customer ? `${hc.customer.first_name} ${hc.customer.last_name}` : 'Unknown',
+        arrivedAt: hc.arrived_at,
+        customerWaiting: hc.customer_waiting || false
+      })))
+    } catch (err) {
+      console.error('Failed to fetch awaiting checkin:', err)
+    } finally {
+      setAwaitingCheckinLoading(false)
+    }
+  }, [token])
+
   useEffect(() => {
     fetchDashboard()
     // Refresh every 30 seconds
@@ -146,12 +201,22 @@ export default function Dashboard() {
     return () => clearInterval(interval)
   }, [fetchDashboard])
 
+  // Initial fetch for awaiting arrival and check-in
+  useEffect(() => {
+    fetchAwaitingArrival()
+    fetchAwaitingCheckin()
+  }, [fetchAwaitingArrival, fetchAwaitingCheckin])
+
   // Subscribe to real-time WebSocket events
   useEffect(() => {
     const handleStatusChange = (data: { healthCheckId: string; status: string; vehicleReg: string }) => {
       setLiveUpdate(`${data.vehicleReg} → ${data.status.replace('_', ' ')}`)
       setTimeout(() => setLiveUpdate(null), 3000)
       fetchDashboard()
+      // Refresh check-in list if status changed to/from awaiting_checkin
+      if (data.status === 'awaiting_checkin' || data.status === 'created') {
+        fetchAwaitingCheckin()
+      }
     }
 
     const handleCustomerAction = (data: { vehicleReg: string; action: string }) => {
@@ -180,7 +245,7 @@ export default function Dashboard() {
       off(WS_EVENTS.TECHNICIAN_CLOCKED_IN)
       off(WS_EVENTS.TECHNICIAN_CLOCKED_OUT)
     }
-  }, [on, off, fetchDashboard])
+  }, [on, off, fetchDashboard, fetchAwaitingCheckin])
 
   // Check if onboarding is incomplete (only show for org admins)
   const showOnboardingReminder =
@@ -190,25 +255,6 @@ export default function Dashboard() {
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(value)
   }
-
-  // Fetch awaiting arrival health checks (from DMS imports)
-  const fetchAwaitingArrival = useCallback(async () => {
-    if (!token) return
-    try {
-      setAwaitingArrivalLoading(true)
-      const response = await api<{ healthChecks: AwaitingArrivalItem[] }>('/api/v1/dms-settings/unactioned?limit=50', { token })
-      setAwaitingArrival(response.healthChecks || [])
-    } catch (err) {
-      console.error('Failed to fetch awaiting arrival:', err)
-    } finally {
-      setAwaitingArrivalLoading(false)
-    }
-  }, [token])
-
-  // Initial fetch for awaiting arrival
-  useEffect(() => {
-    fetchAwaitingArrival()
-  }, [fetchAwaitingArrival])
 
   // Mark a vehicle as arrived
   const handleMarkArrived = async (healthCheckId: string) => {
@@ -399,6 +445,101 @@ export default function Dashboard() {
                 <span className="text-rag-amber">Links Expiring Soon</span>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Check-In Required Section */}
+      {awaitingCheckin.length > 0 && (
+        <div className="bg-white border-2 border-red-400 shadow-sm">
+          <div className="border-b border-red-200 p-4 flex items-center justify-between bg-red-50">
+            <div className="flex items-center gap-3">
+              <span className="animate-pulse">
+                <svg className="w-6 h-6 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              </span>
+              <div>
+                <h2 className="font-bold text-red-700">Check-In Required</h2>
+                <p className="text-xs text-red-600">{awaitingCheckin.length} vehicle{awaitingCheckin.length !== 1 ? 's' : ''} awaiting check-in</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={fetchAwaitingCheckin}
+                disabled={awaitingCheckinLoading}
+                className="p-2 text-red-600 hover:bg-red-100 disabled:opacity-50"
+                title="Refresh"
+              >
+                <svg className={`w-4 h-4 ${awaitingCheckinLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+              <Link to="/health-checks?status=awaiting_checkin" className="text-sm text-red-600 hover:underline font-medium">
+                View All
+              </Link>
+            </div>
+          </div>
+          <div className="divide-y divide-red-100">
+            {awaitingCheckin.map((item) => {
+              // Calculate elapsed time
+              const arrivedTime = new Date(item.arrivedAt)
+              const now = new Date()
+              const elapsedMinutes = Math.floor((now.getTime() - arrivedTime.getTime()) / (1000 * 60))
+              const isOverdue = elapsedMinutes >= 20
+
+              return (
+                <Link
+                  key={item.id}
+                  to={`/health-checks/${item.id}?tab=checkin`}
+                  className={`block p-3 hover:bg-red-50 ${isOverdue ? 'bg-red-100' : ''}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="flex flex-col items-center gap-1">
+                        <div className="font-mono font-semibold text-gray-900 bg-red-100 px-2 py-1 border border-red-300">
+                          {item.registration}
+                        </div>
+                        {item.customerWaiting && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold text-white bg-red-600 animate-pulse">
+                            WAITING
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-900">
+                          {item.make} {item.model}
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          {item.customerName}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      {/* Elapsed time with warning */}
+                      <div className={`text-right ${isOverdue ? 'text-red-700' : 'text-gray-600'}`}>
+                        <div className="flex items-center gap-1">
+                          {isOverdue && (
+                            <svg className="w-4 h-4 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                            </svg>
+                          )}
+                          <span className={`font-medium ${isOverdue ? 'text-red-700 font-bold' : ''}`}>
+                            {elapsedMinutes}m
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          Arrived {arrivedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                      <span className="px-3 py-1.5 bg-red-600 text-white text-sm font-bold rounded-none">
+                        CHECK IN
+                      </span>
+                    </div>
+                  </div>
+                </Link>
+              )
+            })}
           </div>
         </div>
       )}

@@ -63,7 +63,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
     }
 
     // Get API URL from environment or use default
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5180'
 
     const newSocket = io(apiUrl, {
       auth: { token },

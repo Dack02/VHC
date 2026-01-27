@@ -37,6 +37,8 @@ import SupplierTypes from './pages/Settings/SupplierTypes'
 import PricingSettings from './pages/Settings/PricingSettings'
 import DeclinedReasons from './pages/Settings/DeclinedReasons'
 import DeletedReasons from './pages/Settings/DeletedReasons'
+import WorkflowSettings from './pages/Settings/WorkflowSettings'
+import MriItemsSettings from './pages/Settings/MriItemsSettings'
 import CustomerPortal from './pages/CustomerPortal/CustomerPortal'
 import AdminLogin from './pages/Admin/AdminLogin'
 import AdminDashboard from './pages/Admin/AdminDashboard'
@@ -124,6 +126,8 @@ function App() {
                         <Route path="/settings/pricing" element={<PricingSettings />} />
                         <Route path="/settings/declined-reasons" element={<DeclinedReasons />} />
                         <Route path="/settings/deleted-reasons" element={<DeletedReasons />} />
+                        <Route path="/settings/workflow" element={<WorkflowSettings />} />
+                        <Route path="/settings/mri-items" element={<MriItemsSettings />} />
                       </Route>
                     </Route>
 

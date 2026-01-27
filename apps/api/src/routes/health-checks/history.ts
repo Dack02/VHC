@@ -38,15 +38,16 @@ history.get('/:id/history', authorize(['super_admin', 'org_admin', 'site_admin',
     return c.json({
       history: historyData?.map(h => ({
         id: h.id,
-        fromStatus: h.from_status,
-        toStatus: h.to_status,
-        changedBy: h.user ? {
-          id: h.user.id,
-          firstName: h.user.first_name,
-          lastName: h.user.last_name
-        } : null,
+        health_check_id: h.health_check_id,
+        from_status: h.from_status,
+        to_status: h.to_status,
+        changed_by: h.changed_by,
         notes: h.notes,
-        createdAt: h.changed_at
+        created_at: h.changed_at,
+        user: h.user ? {
+          first_name: h.user.first_name,
+          last_name: h.user.last_name
+        } : null
       }))
     })
   } catch (error) {

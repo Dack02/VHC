@@ -2,7 +2,8 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { authorize } from '../../middleware/auth.js'
 import { notifyHealthCheckStatusChanged, notifyTechnicianClockedIn, notifyTechnicianClockedOut } from '../../services/websocket.js'
-import { isValidTransition, autoGenerateRepairItems } from './helpers.js'
+import { isValidTransition, autoGenerateRepairItems, autoCreateMriRepairItems } from './helpers.js'
+import { createNotification } from '../notifications.js'
 
 const status = new Hono()
 
@@ -113,13 +114,26 @@ status.post('/:id/mark-arrived', authorize(['super_admin', 'org_admin', 'site_ad
       return c.json({ error: `Can only mark arrived from awaiting_arrival status, current status is ${current.status}` }, 400)
     }
 
+    // Check if organization has check-in enabled
+    const { data: checkinSettings } = await supabaseAdmin
+      .from('organization_checkin_settings')
+      .select('checkin_enabled')
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    const checkinEnabled = checkinSettings?.checkin_enabled === true
+
+    // Determine target status based on check-in setting
+    const newStatus = checkinEnabled ? 'awaiting_checkin' : 'created'
+    const statusNote = checkinEnabled ? 'Vehicle arrived - awaiting check-in' : 'Vehicle marked as arrived'
+
     const now = new Date().toISOString()
 
     // Update status and record arrival time
     const { data: healthCheck, error: updateError } = await supabaseAdmin
       .from('health_checks')
       .update({
-        status: 'created',
+        status: newStatus,
         arrived_at: now,
         updated_at: now
       })
@@ -138,9 +152,9 @@ status.post('/:id/mark-arrived', authorize(['super_admin', 'org_admin', 'site_ad
       .insert({
         health_check_id: id,
         from_status: 'awaiting_arrival',
-        to_status: 'created',
+        to_status: newStatus,
         changed_by: auth.user.id,
-        notes: 'Vehicle marked as arrived'
+        notes: statusNote
       })
 
     // Notify via WebSocket (need site_id for WebSocket notification)
@@ -152,7 +166,7 @@ status.post('/:id/mark-arrived', authorize(['super_admin', 'org_admin', 'site_ad
 
     if (updatedHC?.site_id) {
       notifyHealthCheckStatusChanged(updatedHC.site_id, id, {
-        status: 'created',
+        status: newStatus,
         previousStatus: 'awaiting_arrival',
         vehicleReg: 'Unknown',
         updatedBy: `${auth.user.firstName} ${auth.user.lastName}`
@@ -164,12 +178,419 @@ status.post('/:id/mark-arrived', authorize(['super_admin', 'org_admin', 'site_ad
       healthCheck: {
         id: healthCheck.id,
         status: healthCheck.status,
-        arrivedAt: healthCheck.arrived_at
+        arrivedAt: healthCheck.arrived_at,
+        requiresCheckin: checkinEnabled
       }
     })
   } catch (error) {
     console.error('Mark arrived error:', error)
     return c.json({ error: 'Failed to mark vehicle as arrived' }, 500)
+  }
+})
+
+// POST /:id/complete-checkin - Complete check-in process (transitions awaiting_checkin → created)
+status.post('/:id/complete-checkin', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    // Get current health check
+    const { data: current, error: fetchError } = await supabaseAdmin
+      .from('health_checks')
+      .select('id, status, site_id')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    if (fetchError || !current) {
+      return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Validate transition - must be in awaiting_checkin status
+    // Also allow completing from 'created' status if check-in was skipped but user wants to record it
+    if (current.status !== 'awaiting_checkin' && current.status !== 'created') {
+      return c.json({ error: `Can only complete check-in from awaiting_checkin or created status, current status is ${current.status}` }, 400)
+    }
+
+    const now = new Date().toISOString()
+
+    // Calculate MRI completion stats for bypass tracking
+    // Get total enabled MRI items for the org
+    const { count: mriItemsTotal } = await supabaseAdmin
+      .from('mri_items')
+      .select('*', { count: 'exact', head: true })
+      .eq('organization_id', auth.orgId)
+      .eq('enabled', true)
+      .is('deleted_at', null)
+
+    // Get completed MRI results for this health check
+    // An item is "completed" if it has any meaningful data
+    const { data: mriResults } = await supabaseAdmin
+      .from('mri_scan_results')
+      .select('id, next_due_date, next_due_mileage, date_na, mileage_na, due_if_not_replaced, recommended_this_visit, not_due_yet, yes_no_value')
+      .eq('health_check_id', id)
+      .eq('organization_id', auth.orgId)
+
+    const mriItemsCompleted = (mriResults || []).filter(r =>
+      r.next_due_date ||
+      r.next_due_mileage ||
+      r.date_na ||
+      r.mileage_na ||
+      r.due_if_not_replaced ||
+      r.recommended_this_visit ||
+      r.not_due_yet ||
+      r.yes_no_value !== null
+    ).length
+
+    const mriBypassed = (mriItemsTotal || 0) > 0 && mriItemsCompleted < (mriItemsTotal || 0)
+
+    // Update status, record check-in completion with MRI stats
+    const { data: healthCheck, error: updateError } = await supabaseAdmin
+      .from('health_checks')
+      .update({
+        status: 'created',
+        checked_in_at: now,
+        checked_in_by: auth.user.id,
+        mri_items_total: mriItemsTotal || 0,
+        mri_items_completed: mriItemsCompleted,
+        mri_bypassed: mriBypassed,
+        updated_at: now
+      })
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .select()
+      .single()
+
+    if (updateError) {
+      return c.json({ error: updateError.message }, 500)
+    }
+
+    // Mark MRI scan as complete (set completed_at on all MRI results)
+    // This ensures the mobile app shows MRI results instead of "Awaiting MRI Scan"
+    await supabaseAdmin
+      .from('mri_scan_results')
+      .update({
+        completed_at: now,
+        completed_by: auth.user.id
+      })
+      .eq('health_check_id', id)
+      .eq('organization_id', auth.orgId)
+
+    // Auto-create repair items from flagged MRI results
+    const mriResult = await autoCreateMriRepairItems(id, auth.orgId)
+
+    // Build status history notes
+    let historyNotes = 'Check-in completed'
+    if (mriBypassed) {
+      historyNotes = `Check-in completed (MRI bypassed: ${mriItemsCompleted}/${mriItemsTotal || 0} items)`
+    }
+    if (mriResult.created > 0) {
+      historyNotes += `. ${mriResult.created} repair items created from MRI scan.`
+    }
+
+    // Record status change in history
+    await supabaseAdmin
+      .from('health_check_status_history')
+      .insert({
+        health_check_id: id,
+        from_status: 'awaiting_checkin',
+        to_status: 'created',
+        changed_by: auth.user.id,
+        change_source: 'user',
+        notes: historyNotes
+      })
+
+    // Notify via WebSocket
+    if (current.site_id) {
+      notifyHealthCheckStatusChanged(current.site_id, id, {
+        status: 'created',
+        previousStatus: 'awaiting_checkin',
+        vehicleReg: 'Unknown',
+        updatedBy: `${auth.user.firstName} ${auth.user.lastName}`
+      })
+    }
+
+    return c.json({
+      success: true,
+      healthCheck: {
+        id: healthCheck.id,
+        status: healthCheck.status,
+        checkedInAt: healthCheck.checked_in_at,
+        checkedInBy: healthCheck.checked_in_by,
+        mriItemsTotal: mriItemsTotal || 0,
+        mriItemsCompleted,
+        mriBypassed
+      },
+      mriRepairItems: {
+        created: mriResult.created
+      }
+    })
+  } catch (error) {
+    console.error('Complete check-in error:', error)
+    return c.json({ error: 'Failed to complete check-in' }, 500)
+  }
+})
+
+// POST /:id/skip-checkin - Skip check-in when feature is disabled mid-workflow (Admin only)
+// Allows vehicles stuck in awaiting_checkin to proceed without completing the full check-in process
+status.post('/:id/skip-checkin', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const body = await c.req.json().catch(() => ({}))
+    const reason = body.reason || 'Check-in skipped by admin'
+
+    // Get current health check
+    const { data: current, error: fetchError } = await supabaseAdmin
+      .from('health_checks')
+      .select('id, status, site_id')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    if (fetchError || !current) {
+      return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Only allow skipping from awaiting_checkin status
+    if (current.status !== 'awaiting_checkin') {
+      return c.json({ error: `Can only skip check-in from awaiting_checkin status, current status is ${current.status}` }, 400)
+    }
+
+    const now = new Date().toISOString()
+
+    // Update status to created, skipping the check-in process
+    const { data: healthCheck, error: updateError } = await supabaseAdmin
+      .from('health_checks')
+      .update({
+        status: 'created',
+        updated_at: now
+        // Note: We don't set checked_in_at or checked_in_by since check-in was skipped
+      })
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .select()
+      .single()
+
+    if (updateError) {
+      return c.json({ error: updateError.message }, 500)
+    }
+
+    // Record status change in history with skip reason
+    await supabaseAdmin
+      .from('health_check_status_history')
+      .insert({
+        health_check_id: id,
+        from_status: 'awaiting_checkin',
+        to_status: 'created',
+        changed_by: auth.user.id,
+        change_source: 'user',
+        notes: reason
+      })
+
+    // Notify via WebSocket
+    if (current.site_id) {
+      notifyHealthCheckStatusChanged(current.site_id, id, {
+        status: 'created',
+        previousStatus: 'awaiting_checkin',
+        vehicleReg: 'Unknown',
+        updatedBy: `${auth.user.firstName} ${auth.user.lastName}`
+      })
+    }
+
+    return c.json({
+      success: true,
+      healthCheck: {
+        id: healthCheck.id,
+        status: healthCheck.status
+      },
+      skippedAt: now,
+      reason
+    })
+  } catch (error) {
+    console.error('Skip check-in error:', error)
+    return c.json({ error: 'Failed to skip check-in' }, 500)
+  }
+})
+
+// PATCH /:id/checkin-data - Update check-in data fields (auto-save during check-in)
+status.patch('/:id/checkin-data', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const body = await c.req.json()
+
+    // Get current health check
+    const { data: current, error: fetchError } = await supabaseAdmin
+      .from('health_checks')
+      .select('id, status, checked_in_at')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    if (fetchError || !current) {
+      return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Allow updates during awaiting_checkin or if not yet checked-in
+    // After check-in is complete, only allow updates by org_admin
+    if (current.checked_in_at && !['super_admin', 'org_admin'].includes(auth.user.role)) {
+      return c.json({ error: 'Check-in data cannot be modified after completion' }, 403)
+    }
+
+    // Build update object with only allowed fields
+    const updateData: Record<string, unknown> = {
+      updated_at: new Date().toISOString()
+    }
+
+    // Check-in specific fields
+    if (body.mileageIn !== undefined || body.mileage_in !== undefined) {
+      updateData.mileage_in = body.mileageIn ?? body.mileage_in
+    }
+    if (body.timeRequired !== undefined || body.time_required !== undefined) {
+      updateData.time_required = body.timeRequired ?? body.time_required
+    }
+    if (body.keyLocation !== undefined || body.key_location !== undefined) {
+      updateData.key_location = body.keyLocation ?? body.key_location
+    }
+    if (body.checkinNotes !== undefined || body.checkin_notes !== undefined) {
+      updateData.checkin_notes = body.checkinNotes ?? body.checkin_notes
+    }
+    if (body.checkinNotesVisibleToTech !== undefined || body.checkin_notes_visible_to_tech !== undefined) {
+      updateData.checkin_notes_visible_to_tech = body.checkinNotesVisibleToTech ?? body.checkin_notes_visible_to_tech
+    }
+    // Customer waiting flag
+    if (body.customerWaiting !== undefined || body.customer_waiting !== undefined) {
+      updateData.customer_waiting = body.customerWaiting ?? body.customer_waiting
+    }
+
+    const { data: healthCheck, error: updateError } = await supabaseAdmin
+      .from('health_checks')
+      .update(updateData)
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .select()
+      .single()
+
+    if (updateError) {
+      return c.json({ error: updateError.message }, 500)
+    }
+
+    return c.json({
+      success: true,
+      healthCheck: {
+        id: healthCheck.id,
+        mileageIn: healthCheck.mileage_in,
+        timeRequired: healthCheck.time_required,
+        keyLocation: healthCheck.key_location,
+        checkinNotes: healthCheck.checkin_notes,
+        checkinNotesVisibleToTech: healthCheck.checkin_notes_visible_to_tech,
+        customerWaiting: healthCheck.customer_waiting
+      }
+    })
+  } catch (error) {
+    console.error('Update check-in data error:', error)
+    return c.json({ error: 'Failed to update check-in data' }, 500)
+  }
+})
+
+// GET /:id/checkin-data - Get check-in data for a health check
+status.get('/:id/checkin-data', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    // Get health check with check-in fields
+    const { data: healthCheck, error } = await supabaseAdmin
+      .from('health_checks')
+      .select(`
+        id, status,
+        mileage_in, time_required, key_location,
+        checkin_notes, checkin_notes_visible_to_tech,
+        customer_waiting, booked_repairs, loan_car_required,
+        checked_in_at, checked_in_by,
+        arrived_at,
+        vehicle:vehicles(id, registration, make, model, vin, customer:customers(id, first_name, last_name, email, mobile))
+      `)
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    if (error || !healthCheck) {
+      return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Fetch checked_in_by user separately if exists
+    let checkedInByUser = null
+    if (healthCheck.checked_in_by) {
+      const { data: userData } = await supabaseAdmin
+        .from('users')
+        .select('id, first_name, last_name')
+        .eq('id', healthCheck.checked_in_by)
+        .single()
+      if (userData) {
+        checkedInByUser = {
+          id: userData.id,
+          firstName: userData.first_name,
+          lastName: userData.last_name
+        }
+      }
+    }
+
+    // For technicians, hide notes if not visible
+    const isTechnician = auth.user.role === 'technician'
+    const showNotes = !isTechnician || healthCheck.checkin_notes_visible_to_tech
+
+    // Type assertion for vehicle relation (Supabase returns nested relations as arrays)
+    const vehicleRaw = healthCheck.vehicle as unknown
+    const vehicle = vehicleRaw as {
+      id: string
+      registration: string
+      make: string | null
+      model: string | null
+      vin: string | null
+      customer: {
+        id: string
+        first_name: string
+        last_name: string
+        email: string | null
+        mobile: string | null
+      } | null
+    } | null
+
+    return c.json({
+      id: healthCheck.id,
+      status: healthCheck.status,
+      mileageIn: healthCheck.mileage_in,
+      timeRequired: healthCheck.time_required,
+      keyLocation: healthCheck.key_location,
+      checkinNotes: showNotes ? healthCheck.checkin_notes : null,
+      checkinNotesVisibleToTech: healthCheck.checkin_notes_visible_to_tech,
+      customerWaiting: healthCheck.customer_waiting,
+      bookedRepairs: healthCheck.booked_repairs,
+      loanCarRequired: healthCheck.loan_car_required,
+      checkedInAt: healthCheck.checked_in_at,
+      checkedInBy: healthCheck.checked_in_by,
+      checkedInByUser,
+      arrivedAt: healthCheck.arrived_at,
+      vehicle: vehicle ? {
+        id: vehicle.id,
+        registration: vehicle.registration,
+        make: vehicle.make,
+        model: vehicle.model,
+        vin: vehicle.vin,
+        customer: vehicle.customer ? {
+          id: vehicle.customer.id,
+          firstName: vehicle.customer.first_name,
+          lastName: vehicle.customer.last_name,
+          email: vehicle.customer.email,
+          mobile: vehicle.customer.mobile
+        } : null
+      } : null
+    })
+  } catch (error) {
+    console.error('Get check-in data error:', error)
+    return c.json({ error: 'Failed to get check-in data' }, 500)
   }
 })
 
@@ -297,6 +718,14 @@ status.post('/:id/assign', authorize(['super_admin', 'org_admin', 'site_admin', 
       return c.json({ error: 'Health check not found' }, 404)
     }
 
+    // Block assignment if vehicle is awaiting check-in
+    if (current.status === 'awaiting_checkin') {
+      return c.json({
+        error: 'Cannot assign technician: vehicle must complete check-in first',
+        code: 'CHECKIN_REQUIRED'
+      }, 400)
+    }
+
     // Update health check with technician and status
     const newStatus = current.status === 'created' ? 'assigned' : current.status
     const { data: healthCheck, error } = await supabaseAdmin
@@ -327,6 +756,30 @@ status.post('/:id/assign', authorize(['super_admin', 'org_admin', 'site_admin', 
           change_source: 'user',
           notes: 'Technician assigned'
         })
+    }
+
+    // Notify the assigned technician (if assigned by someone else)
+    if (technicianId !== auth.user.id) {
+      // Get vehicle registration for the notification message
+      const { data: vehicleData } = await supabaseAdmin
+        .from('health_checks')
+        .select('vehicle:vehicles(registration)')
+        .eq('id', id)
+        .single()
+
+      const vehicleReg = (vehicleData?.vehicle as { registration?: string } | null)?.registration || 'Unknown'
+
+      await createNotification(
+        technicianId,
+        'health_check_assigned',
+        'New Job Assigned',
+        `You have been assigned to inspect ${vehicleReg}`,
+        {
+          healthCheckId: id,
+          priority: 'normal',
+          actionUrl: `/health-checks/${id}`
+        }
+      )
     }
 
     return c.json({

@@ -3,7 +3,8 @@ import { supabaseAdmin } from '../../lib/supabase.js'
 // Valid status transitions
 export const validTransitions: Record<string, string[]> = {
   // DMS Import arrival workflow (Phase D)
-  awaiting_arrival: ['created', 'no_show', 'cancelled'],  // Mark arrived → created, No show, or Cancel
+  awaiting_arrival: ['awaiting_checkin', 'created', 'no_show', 'cancelled'],  // Mark arrived → awaiting_checkin (if check-in enabled) or created (if disabled), No show, or Cancel
+  awaiting_checkin: ['created', 'cancelled'],  // Complete check-in → created, or Cancel
   no_show: ['awaiting_arrival', 'cancelled'],  // Can be rescheduled or cancelled
   // Standard workflow
   created: ['assigned', 'cancelled'],
@@ -146,6 +147,105 @@ export async function autoGenerateRepairItems(healthCheckId: string) {
     return { created: createdCount }
   } catch (error) {
     console.error('Auto-generate repair items error:', error)
+    return { created: 0, error: error instanceof Error ? error.message : 'Unknown error' }
+  }
+}
+
+// Helper function to auto-create repair items from flagged MRI results
+export async function autoCreateMriRepairItems(healthCheckId: string, organizationId: string) {
+  try {
+    // Get flagged MRI results (red or amber RAG status)
+    const { data: mriResults } = await supabaseAdmin
+      .from('mri_scan_results')
+      .select(`
+        id, rag_status, notes, mri_item_id,
+        mri_item:mri_items(id, name, description, item_type, severity_when_due, severity_when_yes, severity_when_no)
+      `)
+      .eq('health_check_id', healthCheckId)
+      .eq('organization_id', organizationId)
+      .in('rag_status', ['red', 'amber'])
+
+    if (!mriResults || mriResults.length === 0) {
+      return { created: 0 }
+    }
+
+    // Get existing MRI-sourced repair items to avoid duplicates
+    const { data: existingItems } = await supabaseAdmin
+      .from('repair_items')
+      .select('mri_result_id')
+      .eq('health_check_id', healthCheckId)
+      .eq('source', 'mri_scan')
+      .not('mri_result_id', 'is', null)
+
+    const existingMriResultIds = new Set(existingItems?.map(i => i.mri_result_id) || [])
+
+    // Filter to results that don't already have repair items
+    const resultsToCreate = mriResults.filter(r => !existingMriResultIds.has(r.id))
+
+    if (resultsToCreate.length === 0) {
+      return { created: 0 }
+    }
+
+    let createdCount = 0
+
+    for (const result of resultsToCreate) {
+      // Handle mri_item which may be object or array from Supabase
+      const mriItem = Array.isArray(result.mri_item)
+        ? result.mri_item[0]
+        : result.mri_item
+
+      if (!mriItem) continue
+
+      const typedMriItem = mriItem as {
+        id: string
+        name: string
+        description: string | null
+        item_type: string
+        severity_when_due: string | null
+        severity_when_yes: string | null
+        severity_when_no: string | null
+      }
+
+      // Build description including MRI notes if available
+      let description = typedMriItem.description || ''
+      if (result.notes) {
+        description = description ? `${description}\n\nMRI Notes: ${result.notes}` : `MRI Notes: ${result.notes}`
+      }
+
+      // Create the repair item with rag_status from MRI result
+      const { error: insertError } = await supabaseAdmin
+        .from('repair_items')
+        .insert({
+          health_check_id: healthCheckId,
+          organization_id: organizationId,
+          name: typedMriItem.name,
+          description: description || null,
+          is_group: false,
+          labour_total: 0,
+          parts_total: 0,
+          subtotal: 0,
+          vat_amount: 0,
+          total_inc_vat: 0,
+          labour_status: 'pending',
+          parts_status: 'pending',
+          quote_status: 'pending',
+          source: 'mri_scan',
+          mri_result_id: result.id,
+          rag_status: result.rag_status  // Use MRI result's rag_status
+        })
+
+      if (insertError) {
+        console.error('Failed to create MRI repair item:', insertError)
+        continue
+      }
+
+      createdCount++
+    }
+
+    console.log(`Auto-created ${createdCount} repair items from MRI scan for health check ${healthCheckId}`)
+    return { created: createdCount }
+  } catch (error) {
+    console.error('Auto-create MRI repair items error:', error)
     return { created: 0, error: error instanceof Error ? error.message : 'Unknown error' }
   }
 }

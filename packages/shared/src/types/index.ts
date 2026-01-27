@@ -8,6 +8,8 @@ export type UserRole =
 
 // Health check status workflow
 export type HealthCheckStatus =
+  | 'awaiting_arrival'
+  | 'awaiting_checkin'
   | 'created'
   | 'assigned'
   | 'in_progress'
@@ -26,6 +28,7 @@ export type HealthCheckStatus =
   | 'expired'
   | 'completed'
   | 'cancelled'
+  | 'no_show'
 
 // RAG status for check items
 export type RagStatus = 'green' | 'amber' | 'red' | 'not_checked'

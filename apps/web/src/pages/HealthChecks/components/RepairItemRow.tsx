@@ -412,6 +412,11 @@ export function RepairItemRow({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <span className="font-medium text-gray-900 truncate">{item.title}</span>
+              {item.source === 'mri_scan' && (
+                <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-none">
+                  MRI
+                </span>
+              )}
               {item.is_group && (
                 <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700 rounded-full">
                   GROUP{item.children && item.children.length > 0 && ` (${item.children.length})`}
@@ -594,6 +599,11 @@ export function RepairItemRow({
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-medium text-gray-900">{item.title}</span>
+                {item.source === 'mri_scan' && (
+                  <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-none">
+                    MRI
+                  </span>
+                )}
                 {item.is_group && (
                   <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700 rounded-full">
                     GROUP{item.children && item.children.length > 0 && ` (${item.children.length})`}

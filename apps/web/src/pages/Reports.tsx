@@ -46,6 +46,36 @@ interface BrakeDiscData {
   byTechnician: BrakeDiscTechnicianStat[]
 }
 
+interface MriBypassAdvisorStat {
+  id: string
+  name: string
+  totalCheckins: number
+  bypassed: number
+  bypassRate: number
+  avgCompletionRate: number
+}
+
+interface MriBypassData {
+  period: { from: string; to: string }
+  summary: {
+    totalCheckins: number
+    completedMri: number
+    bypassedCheckins: number
+    bypassRate: number
+  }
+  byAdvisor: MriBypassAdvisorStat[]
+  recentBypassed: Array<{
+    healthCheckId: string
+    vehicleReg: string
+    advisorName: string
+    siteName: string
+    checkedInAt: string
+    mriItemsTotal: number
+    mriItemsCompleted: number
+    completionRate: number
+  }>
+}
+
 interface ReportSummary {
   total: number
   completed: number
@@ -72,6 +102,7 @@ export default function Reports() {
   const token = session?.accessToken
   const [data, setData] = useState<ReportData | null>(null)
   const [brakeDiscData, setBrakeDiscData] = useState<BrakeDiscData | null>(null)
+  const [mriBypassData, setMriBypassData] = useState<MriBypassData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
@@ -99,8 +130,8 @@ export default function Reports() {
         dateFrom = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000)
       }
 
-      // Fetch main report data and brake disc data in parallel
-      const [reportData, brakeData] = await Promise.all([
+      // Fetch main report data, brake disc data, and MRI bypass data in parallel
+      const [reportData, brakeData, mriData] = await Promise.all([
         api<ReportData>(
           `/api/v1/reports?date_from=${dateFrom.toISOString()}&date_to=${today.toISOString()}&group_by=${groupBy}`,
           { token }
@@ -108,11 +139,16 @@ export default function Reports() {
         api<BrakeDiscData>(
           `/api/v1/reports/brake-disc-access?startDate=${dateFrom.toISOString()}&endDate=${today.toISOString()}`,
           { token }
+        ),
+        api<MriBypassData>(
+          `/api/v1/reports/mri-bypass?startDate=${dateFrom.toISOString()}&endDate=${today.toISOString()}`,
+          { token }
         )
       ])
 
       setData(reportData)
       setBrakeDiscData(brakeData)
+      setMriBypassData(mriData)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load reports')
     } finally {
@@ -461,6 +497,115 @@ export default function Reports() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* MRI Scan Bypass Report */}
+      <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="border-b border-gray-200 p-4">
+          <h2 className="font-semibold text-gray-900">MRI Scan Compliance</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Tracking when advisors complete check-in without fully completing MRI scan
+          </p>
+        </div>
+
+        {/* Summary stats */}
+        <div className="grid grid-cols-4 gap-4 p-4 border-b border-gray-200 bg-gray-50">
+          <div>
+            <div className="text-sm text-gray-500">Total Check-Ins</div>
+            <div className="text-xl font-bold text-gray-900">{mriBypassData?.summary.totalCheckins || 0}</div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-500">MRI Completed</div>
+            <div className="text-xl font-bold text-rag-green">{mriBypassData?.summary.completedMri || 0}</div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-500">MRI Bypassed</div>
+            <div className="text-xl font-bold text-rag-amber">{mriBypassData?.summary.bypassedCheckins || 0}</div>
+          </div>
+          <div>
+            <div className="text-sm text-gray-500">Bypass Rate</div>
+            <div className="text-xl font-bold text-rag-amber">{mriBypassData?.summary.bypassRate || 0}%</div>
+          </div>
+        </div>
+
+        {/* By advisor table */}
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Advisor</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Check-Ins</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Bypassed</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Bypass Rate</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Avg Completion</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {mriBypassData?.byAdvisor.map((advisor) => (
+                <tr key={advisor.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3 text-sm font-medium text-gray-900">{advisor.name}</td>
+                  <td className="px-4 py-3 text-sm text-gray-500 text-right">{advisor.totalCheckins}</td>
+                  <td className="px-4 py-3 text-sm text-right">
+                    {advisor.bypassed > 0 ? (
+                      <span className="font-medium text-rag-amber">{advisor.bypassed}</span>
+                    ) : (
+                      <span className="text-rag-green">0</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-right">
+                    {advisor.bypassRate > 0 ? (
+                      <span className="font-medium text-rag-amber">{advisor.bypassRate}%</span>
+                    ) : (
+                      <span className="text-rag-green">0%</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-right">
+                    <span className={advisor.avgCompletionRate >= 80 ? 'text-rag-green' : advisor.avgCompletionRate >= 50 ? 'text-rag-amber' : 'text-rag-red'}>
+                      {advisor.avgCompletionRate}%
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {(mriBypassData?.byAdvisor.length || 0) === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-gray-500 text-sm">
+                    No MRI check-in data available
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Recent bypassed instances */}
+        {(mriBypassData?.recentBypassed.length || 0) > 0 && (
+          <div className="border-t border-gray-200">
+            <div className="p-4 bg-gray-50 border-b border-gray-200">
+              <h3 className="text-sm font-medium text-gray-700">Recent Bypassed Check-Ins</h3>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {mriBypassData?.recentBypassed.slice(0, 5).map((item) => (
+                <div key={item.healthCheckId} className="px-4 py-3 flex items-center justify-between">
+                  <div>
+                    <span className="font-mono font-medium text-gray-900">{item.vehicleReg}</span>
+                    <span className="mx-2 text-gray-400">|</span>
+                    <span className="text-sm text-gray-600">{item.advisorName}</span>
+                    <span className="mx-2 text-gray-400">|</span>
+                    <span className="text-sm text-gray-500">{item.siteName}</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm text-rag-amber font-medium">
+                      {item.mriItemsCompleted}/{item.mriItemsTotal} items ({item.completionRate}%)
+                    </span>
+                    <div className="text-xs text-gray-400">
+                      {new Date(item.checkedInAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Detailed Breakdown */}

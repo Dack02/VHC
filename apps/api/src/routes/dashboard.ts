@@ -189,10 +189,8 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     const auth = c.get('auth')
     const { date_from, date_to, technician_id, advisor_id, site_id } = c.req.query()
 
-    // Default to last 7 days for board
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
-    const startDate = date_from || sevenDaysAgo
-
+    // No default date filter - show all active health checks
+    // Only apply date filter if explicitly provided
     let query = supabaseAdmin
       .from('health_checks')
       .select(`
@@ -220,8 +218,10 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       .is('deleted_at', null) // Exclude soft-deleted records
       // Exclude terminal states AND DMS pre-arrival states (awaiting_arrival has its own UI section)
       .not('status', 'in', '(completed,cancelled,expired,awaiting_arrival,no_show)')
-      .gte('created_at', startDate)
       .order('created_at', { ascending: false })
+
+    // Only apply date filter if explicitly provided
+    if (date_from) query = query.gte('created_at', date_from)
 
     if (site_id) query = query.eq('site_id', site_id)
     if (technician_id) query = query.eq('technician_id', technician_id)
@@ -531,7 +531,8 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         authorisationInfo: {
           status: workflowStatus.authorised,
           totalItems: totalAuthItems,
-          authorisedCount: authorisedCount
+          authorisedCount: authorisedCount,
+          authorisedBy: [] // Empty array - dashboard doesn't have detailed entry info
         },
         // Outcome aggregations for identified vs authorised
         identified_total: outcomes.identified_total,

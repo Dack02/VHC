@@ -172,10 +172,14 @@ export default function Dashboard() {
       setAwaitingCheckinLoading(true)
       const response = await api<{ healthChecks: Array<{
         id: string
-        arrived_at: string
+        arrived_at: string | null
         customer_waiting: boolean
-        vehicle: { registration: string; make: string; model: string }
-        customer: { first_name: string; last_name: string }
+        vehicle: {
+          registration: string
+          make: string
+          model: string
+          customer: { first_name: string; last_name: string } | null
+        } | null
       }> }>('/api/v1/health-checks?status=awaiting_checkin&limit=50', { token })
 
       setAwaitingCheckin((response.healthChecks || []).map(hc => ({
@@ -183,8 +187,8 @@ export default function Dashboard() {
         registration: hc.vehicle?.registration || 'Unknown',
         make: hc.vehicle?.make || '',
         model: hc.vehicle?.model || '',
-        customerName: hc.customer ? `${hc.customer.first_name} ${hc.customer.last_name}` : 'Unknown',
-        arrivedAt: hc.arrived_at,
+        customerName: hc.vehicle?.customer ? `${hc.vehicle.customer.first_name} ${hc.vehicle.customer.last_name}` : 'Unknown',
+        arrivedAt: hc.arrived_at || '',
         customerWaiting: hc.customer_waiting || false
       })))
     } catch (err) {
@@ -482,11 +486,12 @@ export default function Dashboard() {
           </div>
           <div className="divide-y divide-red-100">
             {awaitingCheckin.map((item) => {
-              // Calculate elapsed time
-              const arrivedTime = new Date(item.arrivedAt)
+              // Calculate elapsed time (handle null/invalid dates)
+              const arrivedTime = item.arrivedAt ? new Date(item.arrivedAt) : null
               const now = new Date()
-              const elapsedMinutes = Math.floor((now.getTime() - arrivedTime.getTime()) / (1000 * 60))
-              const isOverdue = elapsedMinutes >= 20
+              const isValidDate = arrivedTime && !isNaN(arrivedTime.getTime())
+              const elapsedMinutes = isValidDate ? Math.floor((now.getTime() - arrivedTime.getTime()) / (1000 * 60)) : null
+              const isOverdue = elapsedMinutes !== null && elapsedMinutes >= 20
 
               return (
                 <Link
@@ -525,11 +530,11 @@ export default function Dashboard() {
                             </svg>
                           )}
                           <span className={`font-medium ${isOverdue ? 'text-red-700 font-bold' : ''}`}>
-                            {elapsedMinutes}m
+                            {elapsedMinutes !== null ? `${elapsedMinutes}m` : '-'}
                           </span>
                         </div>
                         <div className="text-xs text-gray-400">
-                          Arrived {arrivedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {isValidDate ? `Arrived ${arrivedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Awaiting arrival'}
                         </div>
                       </div>
                       <span className="px-3 py-1.5 bg-red-600 text-white text-sm font-bold rounded-none">

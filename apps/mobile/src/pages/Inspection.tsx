@@ -58,6 +58,13 @@ export function Inspection() {
     fetchJob()
   }, [id])
 
+  // Set MRI Scan as default tab when check-in is enabled (MRI is at index 0)
+  useEffect(() => {
+    if (checkinEnabled && sections.length > 0) {
+      setCurrentSectionIndex(0)
+    }
+  }, [checkinEnabled, sections.length])
+
   const fetchJob = async () => {
     if (!session || !id) return
 
@@ -203,6 +210,25 @@ export function Inspection() {
         instances.forEach(({ result }) => {
           if (result?.status || result?.rag_status) count++
         })
+      }
+    })
+    return count
+  }
+
+  // Count mandatory incomplete items in a section
+  const sectionMandatoryIncomplete = (section: TemplateSection) => {
+    let count = 0
+    ;(section.items || []).forEach((item) => {
+      if (!item.isRequired) return
+      const instances = getItemInstances(item.id)
+      if (instances.length === 0) {
+        // Check for old key format (just item.id) for backward compatibility
+        const r = results.get(item.id) || results.get(getResultKey(item.id, 1))
+        if (!r?.status && !r?.rag_status) count++
+      } else {
+        // For mandatory items with duplicates, first instance must be complete
+        const firstInstance = instances[0]
+        if (!firstInstance?.result?.status && !firstInstance?.result?.rag_status) count++
       }
     })
     return count
@@ -570,7 +596,28 @@ export function Inspection() {
       {/* Section tabs */}
       <div className="bg-white border-b border-gray-200 overflow-x-auto">
         <div className="flex">
+          {/* MRI Scan tab - FIRST when check-in is enabled (index 0) */}
+          {checkinEnabled && (
+            <button
+              onClick={() => setCurrentSectionIndex(0)}
+              className={`
+                flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors
+                ${currentSectionIndex === 0
+                  ? 'border-primary text-primary bg-blue-50'
+                  : 'border-transparent text-gray-600 hover:text-gray-900'
+                }
+              `}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🔍</span>
+                <span className="whitespace-nowrap">MRI Scan</span>
+              </div>
+            </button>
+          )}
+
+          {/* Template section tabs (offset by 1 when checkin enabled) */}
           {sections.map((section, idx) => {
+            const tabIndex = checkinEnabled ? idx + 1 : idx
             const completed = sectionCompletedCount(section)
             const total = section.items?.length || 0
             const getStatus = (itemId: string) => {
@@ -580,13 +627,15 @@ export function Inspection() {
             const hasRed = section.items?.some((i) => getStatus(i.id) === 'red')
             const hasAmber = section.items?.some((i) => getStatus(i.id) === 'amber')
 
+            const mandatoryIncomplete = sectionMandatoryIncomplete(section)
+
             return (
               <button
                 key={section.id}
-                onClick={() => setCurrentSectionIndex(idx)}
+                onClick={() => setCurrentSectionIndex(tabIndex)}
                 className={`
                   flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors
-                  ${idx === currentSectionIndex
+                  ${tabIndex === currentSectionIndex
                     ? 'border-primary text-primary bg-blue-50'
                     : 'border-transparent text-gray-600 hover:text-gray-900'
                   }
@@ -599,29 +648,15 @@ export function Inspection() {
                     <span className="text-xs text-gray-400">{completed}/{total}</span>
                   )}
                   <span className="whitespace-nowrap">{section.name}</span>
+                  {mandatoryIncomplete > 0 && (
+                    <span className="w-5 h-5 rounded-full bg-rag-red text-white text-xs flex items-center justify-center font-bold">
+                      {mandatoryIncomplete}
+                    </span>
+                  )}
                 </div>
               </button>
             )
           })}
-
-          {/* MRI Scan tab - only show when check-in is enabled */}
-          {checkinEnabled && (
-            <button
-              onClick={() => setCurrentSectionIndex(sections.length)}
-              className={`
-                flex-shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors
-                ${currentSectionIndex === sections.length
-                  ? 'border-primary text-primary bg-blue-50'
-                  : 'border-transparent text-gray-600 hover:text-gray-900'
-                }
-              `}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-lg">🔍</span>
-                <span className="whitespace-nowrap">MRI Scan</span>
-              </div>
-            </button>
-          )}
         </div>
       </div>
 
@@ -631,10 +666,15 @@ export function Inspection() {
           <div className="bg-rag-red-bg text-rag-red p-4 mb-4">{error}</div>
         )}
 
-        {/* Show MRI Scan tab content when it's selected */}
-        {checkinEnabled && currentSectionIndex === sections.length ? (
-          <MriScanTab healthCheckId={id!} />
-        ) : currentSection?.items?.map((item) => {
+        {/* Show MRI Scan tab content when it's selected (index 0 when checkin enabled) */}
+        {checkinEnabled && currentSectionIndex === 0 ? (
+          <MriScanTab
+            healthCheckId={id!}
+            vehicle={job?.vehicle}
+            advisor={job?.advisor}
+            bookedRepairs={job?.booked_repairs}
+          />
+        ) : (checkinEnabled ? sections[currentSectionIndex - 1] : currentSection)?.items?.map((item) => {
           const instances = getItemInstances(item.id)
           const hasInstances = instances.length > 0
 
@@ -651,6 +691,7 @@ export function Inspection() {
                   totalInstances={1}
                   result={result}
                   expanded={expandedItem === key || expandedItem === item.id}
+                  isMandatory={item.isRequired}
                   onToggle={() => setExpandedItem(expandedItem === key ? null : key)}
                   onSave={(data) => saveResult(key, data)}
                   onAddPhoto={() => setPhotoItemId(key)}
@@ -677,6 +718,8 @@ export function Inspection() {
                 // Use displayIndex + 1 for display (1, 2, 3...) rather than raw instanceNumber
                 // This ensures sequential display even if database instance_numbers are non-sequential
                 const displayNumber = displayIndex + 1
+                // Only first instance of mandatory items is required
+                const isMandatoryInstance = item.isRequired && displayIndex === 0
                 return (
                   <InspectionItem
                     key={mapKey}
@@ -686,6 +729,7 @@ export function Inspection() {
                     totalInstances={instances.length}
                     result={result}
                     expanded={expandedItem === mapKey}
+                    isMandatory={isMandatoryInstance}
                     onToggle={() => setExpandedItem(expandedItem === mapKey ? null : mapKey)}
                     onSave={(data) => saveResult(mapKey, data)}
                     onAddPhoto={() => setPhotoItemId(mapKey)}
@@ -725,17 +769,20 @@ export function Inspection() {
           {(() => {
             const totalTabs = sections.length + (checkinEnabled ? 1 : 0)
             const isLastTab = currentSectionIndex >= totalTabs - 1
-            const isOnMriTab = checkinEnabled && currentSectionIndex === sections.length
+            const isOnMriTab = checkinEnabled && currentSectionIndex === 0
 
             if (isOnMriTab) {
-              // On MRI tab - just show Review & Complete
+              // On MRI tab (first tab) - show Next Section to go to inspection sections
               return (
-                <Button onClick={handleComplete} className="flex-1">
-                  Review & Complete
+                <Button
+                  onClick={() => setCurrentSectionIndex(1)}
+                  className="flex-1"
+                >
+                  Next Section
                 </Button>
               )
             } else if (isLastTab) {
-              // Last section (no MRI) - show Review & Complete
+              // Last section - show Review & Complete
               return (
                 <Button onClick={handleComplete} className="flex-1">
                   Review & Complete
@@ -817,6 +864,7 @@ interface InspectionItemProps {
   totalInstances: number
   result: Partial<CheckResult> | undefined
   expanded: boolean
+  isMandatory?: boolean
   onToggle: () => void
   onSave: (data: Partial<CheckResult>) => void
   onAddPhoto: () => void
@@ -834,6 +882,7 @@ function InspectionItem({
   totalInstances,
   result,
   expanded,
+  isMandatory,
   onToggle,
   onSave,
   onAddPhoto,
@@ -870,12 +919,13 @@ function InspectionItem({
   }
 
   const ragStatus = result?.status || result?.rag_status
+  const isMandatoryIncomplete = isMandatory && !ragStatus
 
   // Display name with instance number if there are multiple instances
   const displayName = totalInstances > 1 ? `${item.name} (${instanceNumber})` : item.name
 
   return (
-    <Card padding="none" className="overflow-hidden">
+    <Card padding="none" className={`overflow-hidden ${isMandatoryIncomplete ? 'ring-2 ring-rag-red' : ''}`}>
       {/* Item header - always visible */}
       <button
         onClick={onToggle}
@@ -884,6 +934,11 @@ function InspectionItem({
         <div className="flex items-center gap-3 flex-1 min-w-0">
           <RAGIndicator status={ragStatus || null} />
           <span className="font-medium truncate">{displayName}</span>
+          {isMandatory && (
+            <span className={`text-xs px-1.5 py-0.5 font-medium ${isMandatoryIncomplete ? 'bg-rag-red text-white' : 'bg-gray-200 text-gray-600'}`}>
+              Required
+            </span>
+          )}
           {instanceNumber > 1 && (
             <Badge variant="gray" size="sm">Duplicate</Badge>
           )}

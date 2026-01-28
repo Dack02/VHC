@@ -5,9 +5,25 @@ import { Card } from '../components/Card'
 
 interface MriScanTabProps {
   healthCheckId: string
+  vehicle?: {
+    make: string | null
+    model: string | null
+    year: number | null
+    registration: string
+  }
+  advisor?: {
+    id: string
+    first_name: string
+    last_name: string
+  } | null
+  bookedRepairs?: Array<{
+    code?: string
+    description?: string
+    notes?: string
+  }> | null
 }
 
-export function MriScanTab({ healthCheckId }: MriScanTabProps) {
+export function MriScanTab({ healthCheckId, vehicle, advisor, bookedRepairs }: MriScanTabProps) {
   const { session } = useAuth()
   const [mriData, setMriData] = useState<MriResultsResponse | null>(null)
   const [checkinData, setCheckinData] = useState<CheckinData | null>(null)
@@ -163,6 +179,70 @@ export function MriScanTab({ healthCheckId }: MriScanTabProps) {
           </div>
         </div>
       </Card>
+
+      {/* Vehicle Info */}
+      {vehicle && (vehicle.make || vehicle.model) && (
+        <Card padding="md">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+            VEHICLE
+          </h3>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gray-100 flex items-center justify-center text-xl">
+              <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h8m-8 4h8m-4 4v-4m-8 8h16a2 2 0 002-2V7a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <div>
+              <p className="font-medium text-gray-900">
+                {vehicle.make} {vehicle.model}
+                {vehicle.year && <span className="text-gray-500"> ({vehicle.year})</span>}
+              </p>
+              <p className="text-sm text-gray-500">{vehicle.registration}</p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Service Advisor */}
+      {advisor && (
+        <Card padding="md">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+            SERVICE ADVISOR
+          </h3>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-primary text-white flex items-center justify-center text-lg font-bold">
+              {advisor.first_name?.[0] || ''}{advisor.last_name?.[0] || ''}
+            </div>
+            <p className="font-medium text-gray-900">
+              {advisor.first_name} {advisor.last_name}
+            </p>
+          </div>
+        </Card>
+      )}
+
+      {/* Pre-Booked Work from DMS */}
+      {bookedRepairs && bookedRepairs.length > 0 && (
+        <Card padding="md">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+            PRE-BOOKED WORK
+          </h3>
+          <div className="space-y-2">
+            {bookedRepairs.map((repair, idx) => (
+              <div key={idx} className="flex items-start gap-2 p-2 bg-gray-50">
+                <span className="text-primary font-bold">•</span>
+                <div>
+                  <p className="text-sm font-medium text-gray-900">
+                    {repair.description || repair.code || 'Booked item'}
+                  </p>
+                  {repair.notes && (
+                    <p className="text-xs text-gray-500 mt-1">{repair.notes}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {/* Check-In Information */}
       {hasCheckinInfo && (

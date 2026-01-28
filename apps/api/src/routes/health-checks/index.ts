@@ -13,6 +13,7 @@ import repairItemsHCRouter from './repair-items-hc.js'
 import deletionRouter from './deletion.js'
 import workAuthoritySheetRouter from './work-authority-sheet.js'
 import mriResultsRouter from './mri-results.js'
+import customerActivityRouter from './customer-activity.js'
 
 const healthChecks = new Hono()
 
@@ -29,6 +30,7 @@ healthChecks.route('/', timelineRouter)             // /:id/timeline (unified ti
 healthChecks.route('/', checkResultsRouter)         // /:id/results
 healthChecks.route('/', repairItemsHCRouter)        // /:id/repair-items/*
 healthChecks.route('/', mriResultsRouter)           // /:id/mri-results
+healthChecks.route('/', customerActivityRouter)     // /:id/customer-activity
 healthChecks.route('/', statusRouter)               // /:id/status, /:id/clock-in, /:id/clock-out, etc.
 healthChecks.route('/', sendCustomerRouter)         // /:id/publish
 healthChecks.route('/', deletionRouter)             // DELETE /:id, POST /:id/delete, /bulk-delete, /:id/restore

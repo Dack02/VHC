@@ -32,7 +32,7 @@ sendCustomer.post('/:id/publish', authorize(['super_admin', 'org_admin', 'site_a
     }
 
     // Validate status allows sending
-    const sendableStatuses = ['ready_to_send', 'sent', 'expired']
+    const sendableStatuses = ['ready_to_send', 'sent', 'expired', 'opened', 'customer_viewed', 'customer_approved', 'customer_partial', 'customer_declined']
     if (!sendableStatuses.includes(healthCheck.status)) {
       return c.json({ error: `Cannot send health check in ${healthCheck.status} status` }, 400)
     }

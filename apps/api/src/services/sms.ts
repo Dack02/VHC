@@ -5,6 +5,12 @@
 
 import twilio from 'twilio'
 import { getSmsCredentials, SmsCredentials } from './credentials.js'
+import {
+  getOrganizationTemplate,
+  renderSmsMessage,
+  TemplateContext
+} from './template-renderer.js'
+import type { TemplateType } from './default-templates.js'
 
 // Legacy: Environment-based credentials for backward compatibility
 const envAccountSid = process.env.TWILIO_ACCOUNT_SID
@@ -124,16 +130,31 @@ export async function sendHealthCheckReadySms(
   dealershipName: string,
   organizationId?: string,
   repairItemsCount?: number,
-  quoteTotalIncVat?: number
+  quoteTotalIncVat?: number,
+  vehicleMakeModel?: string
 ): Promise<SmsResult> {
-  // Build message with optional repair items info
-  let message = `Hi ${customerName}, your vehicle health check for ${vehicleReg} is ready.`
+  // Get customizable template
+  const template = await getOrganizationTemplate(
+    organizationId,
+    'health_check_ready',
+    'sms'
+  )
 
-  if (repairItemsCount && repairItemsCount > 0 && quoteTotalIncVat !== undefined) {
-    message += ` ${repairItemsCount} item${repairItemsCount > 1 ? 's' : ''} recommended (£${quoteTotalIncVat.toFixed(2)} inc VAT).`
+  // Build context for template rendering
+  const firstName = customerName.split(' ')[0]
+  const context: TemplateContext = {
+    customerName,
+    customerFirstName: firstName,
+    vehicleReg,
+    vehicleMakeModel: vehicleMakeModel || '',
+    publicUrl,
+    dealershipName,
+    repairItemsCount: repairItemsCount || 0,
+    quoteTotalIncVat: quoteTotalIncVat || 0
   }
 
-  message += ` Review & authorize: ${publicUrl} - ${dealershipName}`
+  // Render template with context
+  const message = renderSmsMessage(template, context)
 
   return sendSms(to, message, organizationId)
 }
@@ -146,15 +167,31 @@ export async function sendReminderSms(
   customerName: string,
   vehicleReg: string,
   publicUrl: string,
-  _dealershipName: string,
+  dealershipName: string,
   hoursRemaining?: number,
   organizationId?: string
 ): Promise<SmsResult> {
-  let message = `Hi ${customerName}, reminder: Your health check for ${vehicleReg} is awaiting your response. View it here: ${publicUrl}`
+  // Use urgent template if less than 24 hours remaining
+  const isUrgent = hoursRemaining && hoursRemaining <= 24
+  const templateType: TemplateType = isUrgent ? 'reminder_urgent' : 'reminder'
 
-  if (hoursRemaining && hoursRemaining <= 24) {
-    message = `Hi ${customerName}, urgent: Your health check for ${vehicleReg} expires in ${hoursRemaining} hours. Please respond: ${publicUrl}`
+  // Get customizable template
+  const template = await getOrganizationTemplate(organizationId, templateType, 'sms')
+
+  // Build context for template rendering
+  const firstName = customerName.split(' ')[0]
+  const context: TemplateContext = {
+    customerName,
+    customerFirstName: firstName,
+    vehicleReg,
+    vehicleMakeModel: '',
+    publicUrl,
+    dealershipName,
+    hoursRemaining: hoursRemaining || 0
   }
+
+  // Render template with context
+  const message = renderSmsMessage(template, context)
 
   return sendSms(to, message, organizationId)
 }
@@ -171,17 +208,28 @@ export async function sendAuthorizationConfirmationSms(
   organizationId?: string,
   approvedCount?: number
 ): Promise<SmsResult> {
-  let message = `Thank you ${customerName}!`
+  // Get customizable template
+  const template = await getOrganizationTemplate(
+    organizationId,
+    'authorization_confirmation',
+    'sms'
+  )
 
-  if (approvedCount && approvedCount > 0) {
-    message += ` You've authorized ${approvedCount} item${approvedCount > 1 ? 's' : ''} (£${authorizedTotal.toFixed(2)}) on ${vehicleReg}.`
-  } else if (authorizedTotal > 0) {
-    message += ` You've authorized £${authorizedTotal.toFixed(2)} of work on ${vehicleReg}.`
-  } else {
-    message += ` Your response for ${vehicleReg} has been recorded.`
+  // Build context for template rendering
+  const firstName = customerName.split(' ')[0]
+  const context: TemplateContext = {
+    customerName,
+    customerFirstName: firstName,
+    vehicleReg,
+    vehicleMakeModel: '',
+    publicUrl: '',
+    dealershipName,
+    approvedCount: approvedCount || 0,
+    authorizedTotal: authorizedTotal || 0
   }
 
-  message += ` ${dealershipName} will be in touch shortly.`
+  // Render template with context
+  const message = renderSmsMessage(template, context)
 
   return sendSms(to, message, organizationId)
 }

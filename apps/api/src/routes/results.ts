@@ -461,6 +461,98 @@ results.post('/health-checks/:id/results/duplicate', authorize(['super_admin', '
   }
 })
 
+// GET /api/v1/health-checks/:id/validate-mandatory - Validate mandatory items are complete
+results.get('/health-checks/:id/validate-mandatory', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    // Get health check with template_id
+    const { data: healthCheck, error: hcError } = await supabaseAdmin
+      .from('health_checks')
+      .select('id, template_id')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    if (hcError || !healthCheck) {
+      return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    if (!healthCheck.template_id) {
+      // No template = no mandatory items
+      return c.json({ valid: true, incompleteItems: [] })
+    }
+
+    // Get all mandatory template items for this template
+    const { data: mandatoryItems, error: miError } = await supabaseAdmin
+      .from('template_items')
+      .select(`
+        id,
+        name,
+        section:template_sections!inner(
+          id,
+          name,
+          sort_order,
+          template_id
+        )
+      `)
+      .eq('is_required', true)
+      .eq('section.template_id', healthCheck.template_id)
+      .order('sort_order', { ascending: true })
+
+    if (miError) {
+      console.error('Error fetching mandatory items:', miError)
+      return c.json({ error: 'Failed to fetch mandatory items' }, 500)
+    }
+
+    if (!mandatoryItems || mandatoryItems.length === 0) {
+      return c.json({ valid: true, incompleteItems: [] })
+    }
+
+    // Get all check_results with rag_status set for this health check
+    const { data: completedResults, error: crError } = await supabaseAdmin
+      .from('check_results')
+      .select('template_item_id, rag_status')
+      .eq('health_check_id', id)
+      .not('rag_status', 'is', null)
+
+    if (crError) {
+      console.error('Error fetching check results:', crError)
+      return c.json({ error: 'Failed to fetch results' }, 500)
+    }
+
+    // Build set of completed template item IDs
+    const completedItemIds = new Set(
+      (completedResults || []).map(r => r.template_item_id)
+    )
+
+    // Find incomplete mandatory items
+    // Note: Supabase nested relations may return arrays, so we handle both cases
+    const incompleteItems = mandatoryItems
+      .filter(item => !completedItemIds.has(item.id))
+      .map(item => {
+        const section = Array.isArray(item.section) ? item.section[0] : item.section
+        return {
+          templateItemId: item.id,
+          itemName: item.name,
+          sectionId: (section as { id: string })?.id || '',
+          sectionName: (section as { name: string })?.name || '',
+          sectionSortOrder: (section as { sort_order: number })?.sort_order || 0
+        }
+      })
+      .sort((a, b) => a.sectionSortOrder - b.sectionSortOrder)
+
+    return c.json({
+      valid: incompleteItems.length === 0,
+      incompleteItems: incompleteItems.map(({ sectionSortOrder, ...rest }) => rest)
+    })
+  } catch (error) {
+    console.error('Validate mandatory error:', error)
+    return c.json({ error: 'Failed to validate mandatory items' }, 500)
+  }
+})
+
 // DELETE /api/v1/health-checks/:id/results/:resultId - Delete a result (e.g., remove a duplicate)
 results.delete('/health-checks/:id/results/:resultId', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {

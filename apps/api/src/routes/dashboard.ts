@@ -416,6 +416,47 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       })
     }
 
+    // Fetch timer data for in_progress health checks
+    interface TimerData {
+      total_closed_minutes: number
+      active_clock_in_at: string | null
+    }
+    const timerDataByHc: Record<string, TimerData> = {}
+
+    const inProgressIds = healthChecks
+      ?.filter(hc => hc.status === 'in_progress')
+      .map(hc => hc.id) || []
+
+    if (inProgressIds.length > 0) {
+      // Query time entries for in_progress health checks
+      const { data: timeEntries, error: timeError } = await supabaseAdmin
+        .from('technician_time_entries')
+        .select('health_check_id, clock_in_at, clock_out_at, duration_minutes')
+        .in('health_check_id', inProgressIds)
+
+      if (timeError) {
+        console.error('Error fetching time entries for timer:', timeError)
+      }
+
+      // Process time entries for each health check
+      timeEntries?.forEach(entry => {
+        if (!timerDataByHc[entry.health_check_id]) {
+          timerDataByHc[entry.health_check_id] = {
+            total_closed_minutes: 0,
+            active_clock_in_at: null
+          }
+        }
+
+        if (entry.clock_out_at) {
+          // Closed entry - add to total
+          timerDataByHc[entry.health_check_id].total_closed_minutes += entry.duration_minutes || 0
+        } else {
+          // Open entry - this is the active session
+          timerDataByHc[entry.health_check_id].active_clock_in_at = entry.clock_in_at
+        }
+      })
+    }
+
     // Helper function to calculate workflow status
     function calculateWorkflowStatus(
       // repairItems: non-group items for labour/parts calculation
@@ -542,7 +583,9 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         amber_identified: outcomes.amber_identified,
         amber_authorised: outcomes.amber_authorised,
         green_identified: outcomes.green_identified,
-        green_authorised: outcomes.green_authorised
+        green_authorised: outcomes.green_authorised,
+        // Timer data for in_progress inspections
+        timer_data: timerDataByHc[hc.id] || null
       }
 
       columns[column]?.push(card)

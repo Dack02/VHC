@@ -102,6 +102,8 @@ crud.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advi
         total_labour: hc.total_labour,
         total_parts: hc.total_parts,
         total_amount: hc.total_amount,
+        arrived_at: hc.arrived_at,
+        customer_waiting: hc.customer_waiting,
         created_at: hc.created_at,
         updated_at: hc.updated_at
       })),

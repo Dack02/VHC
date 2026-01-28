@@ -42,9 +42,12 @@ items.get('/template-items/:id', authorize(['super_admin', 'org_admin', 'site_ad
     }
 
     // Verify the item belongs to the user's organization
-    const section = (item.section as { template: { organization_id: string }[] }[] | null)?.[0]
-    const template = section?.template?.[0]
-    if (!template || template.organization_id !== auth.orgId) {
+    // Handle Supabase nested relation - can be array or single object
+    const sectionRaw = item.section
+    const section = Array.isArray(sectionRaw) ? sectionRaw[0] : sectionRaw
+    const templateRaw = (section as { template: unknown })?.template
+    const template = Array.isArray(templateRaw) ? templateRaw[0] : templateRaw
+    if (!template || (template as { organization_id: string }).organization_id !== auth.orgId) {
       return c.json({ error: 'Template item not found' }, 404)
     }
 
@@ -83,8 +86,10 @@ items.post('/sections/:sectionId/items', authorize(['super_admin', 'org_admin', 
       .eq('id', sectionId)
       .single()
 
-    const sectionTemplate = (section?.template as { organization_id: string }[] | null)?.[0]
-    if (!section || sectionTemplate?.organization_id !== auth.orgId) {
+    // Handle Supabase nested relation - can be array or single object
+    const templateRaw = section?.template
+    const sectionTemplate = Array.isArray(templateRaw) ? templateRaw[0] : templateRaw
+    if (!section || (sectionTemplate as { organization_id: string })?.organization_id !== auth.orgId) {
       return c.json({ error: 'Section not found' }, 404)
     }
 
@@ -107,7 +112,7 @@ items.post('/sections/:sectionId/items', authorize(['super_admin', 'org_admin', 
         description,
         item_type: itemType || 'rag',
         config: config || {},
-        is_required: isRequired ?? true,
+        is_required: isRequired ?? false,
         sort_order: sortOrder,
         reason_type: reasonType || null
       })
@@ -153,9 +158,12 @@ items.patch('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admin
       return c.json({ error: 'Item not found' }, 404)
     }
 
-    const existingSection = (existingItem.section as { template: { organization_id: string }[] }[] | null)?.[0]
-    const existingTemplate = existingSection?.template?.[0]
-    if (existingTemplate?.organization_id !== auth.orgId) {
+    // Handle Supabase nested relation - can be array or single object
+    const sectionRaw = existingItem.section
+    const existingSection = Array.isArray(sectionRaw) ? sectionRaw[0] : sectionRaw
+    const templateRaw = (existingSection as { template: unknown })?.template
+    const existingTemplate = Array.isArray(templateRaw) ? templateRaw[0] : templateRaw
+    if ((existingTemplate as { organization_id: string })?.organization_id !== auth.orgId) {
       return c.json({ error: 'Item not found' }, 404)
     }
 
@@ -211,9 +219,12 @@ items.delete('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admi
       return c.json({ error: 'Item not found' }, 404)
     }
 
-    const deleteSection = (existingItem.section as { template: { organization_id: string }[] }[] | null)?.[0]
-    const deleteTemplate = deleteSection?.template?.[0]
-    if (deleteTemplate?.organization_id !== auth.orgId) {
+    // Handle Supabase nested relation - can be array or single object
+    const sectionRaw = existingItem.section
+    const deleteSection = Array.isArray(sectionRaw) ? sectionRaw[0] : sectionRaw
+    const templateRaw = (deleteSection as { template: unknown })?.template
+    const deleteTemplate = Array.isArray(templateRaw) ? templateRaw[0] : templateRaw
+    if ((deleteTemplate as { organization_id: string })?.organization_id !== auth.orgId) {
       return c.json({ error: 'Item not found' }, 404)
     }
 
@@ -252,8 +263,10 @@ items.post('/sections/:sectionId/items/reorder', authorize(['super_admin', 'org_
       .eq('id', sectionId)
       .single()
 
-    const reorderTemplate = (section?.template as { organization_id: string }[] | null)?.[0]
-    if (!section || reorderTemplate?.organization_id !== auth.orgId) {
+    // Handle Supabase nested relation - can be array or single object
+    const templateRaw = section?.template
+    const reorderTemplate = Array.isArray(templateRaw) ? templateRaw[0] : templateRaw
+    if (!section || (reorderTemplate as { organization_id: string })?.organization_id !== auth.orgId) {
       return c.json({ error: 'Section not found' }, 404)
     }
 

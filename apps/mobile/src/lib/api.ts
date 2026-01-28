@@ -73,6 +73,18 @@ export interface HealthCheck {
   vehicle?: Vehicle
   customer?: Customer
   template?: Template
+  // Service advisor assigned to the job
+  advisor?: {
+    id: string
+    first_name: string
+    last_name: string
+  } | null
+  // Pre-booked work from DMS
+  booked_repairs?: Array<{
+    code?: string
+    description?: string
+    notes?: string
+  }> | null
 }
 
 export interface Vehicle {

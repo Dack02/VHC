@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
-import { HealthCheck, RepairItem, CheckResult, api, NewRepairItem } from '../../lib/api'
+import { HealthCheck, CheckResult, api, NewRepairItem } from '../../lib/api'
 
 // Type for selected reasons
 interface SelectedReason {
@@ -13,14 +13,31 @@ interface SelectedReason {
 
 interface CustomerPreviewModalProps {
   healthCheck: HealthCheck
-  repairItems: RepairItem[]
   newRepairItems?: NewRepairItem[]
   checkResults?: CheckResult[]
   onClose: () => void
   onSend: () => void
 }
 
-export function CustomerPreviewModal({ healthCheck, repairItems, newRepairItems, checkResults, onClose, onSend }: CustomerPreviewModalProps) {
+// Derive RAG status for an item (groups get highest severity from children)
+function deriveRagStatus(item: NewRepairItem): 'red' | 'amber' | null {
+  // For groups, derive from children's checkResults
+  if (item.isGroup && item.children && item.children.length > 0) {
+    let highestSeverity: 'red' | 'amber' | null = null
+    for (const child of item.children) {
+      const childRag = child.checkResults?.[0]?.ragStatus as 'red' | 'amber' | null
+      if (childRag === 'red') return 'red'
+      if (childRag === 'amber') highestSeverity = 'amber'
+    }
+    return highestSeverity
+  }
+
+  // For individual items, use direct ragStatus or derive from checkResults
+  if (item.ragStatus) return item.ragStatus as 'red' | 'amber' | null
+  return item.checkResults?.[0]?.ragStatus as 'red' | 'amber' | null
+}
+
+export function CustomerPreviewModal({ healthCheck, newRepairItems, checkResults, onClose, onSend }: CustomerPreviewModalProps) {
   const { session } = useAuth()
   const vehicle = healthCheck.vehicle
   const customer = healthCheck.vehicle?.customer
@@ -30,17 +47,40 @@ export function CustomerPreviewModal({ healthCheck, repairItems, newRepairItems,
   const [loadingReasons, setLoadingReasons] = useState(false)
   const fetchedRef = useRef(false)
 
-  // Only show visible items to customer
-  const visibleItems = useMemo(() => repairItems.filter(item => item.is_visible), [repairItems])
-  const redItems = useMemo(() => visibleItems.filter(item => item.rag_status === 'red'), [visibleItems])
-  const amberItems = useMemo(() => visibleItems.filter(item => item.rag_status === 'amber'), [visibleItems])
-
   // Get green items from check results
   const greenResults = useMemo(() => checkResults?.filter(r => r.rag_status === 'green') || [], [checkResults])
 
-  const totalParts = visibleItems.reduce((sum, i) => sum + i.parts_cost, 0)
-  const totalLabour = visibleItems.reduce((sum, i) => sum + i.labor_cost, 0)
-  const totalAmount = totalParts + totalLabour
+  // Get photos grouped by finding (only include_in_report photos)
+  const photosGroupedByFinding = useMemo(() => {
+    const groups: Array<{
+      findingName: string
+      ragStatus: 'red' | 'amber' | 'green'
+      photos: Array<{ id: string; url: string; thumbnailUrl: string | null; caption: string | null }>
+    }> = []
+
+    for (const result of checkResults || []) {
+      const photos = (result.media || [])
+        .filter(m => m.include_in_report !== false)
+        .map(m => ({
+          id: m.id,
+          url: m.url,
+          thumbnailUrl: m.thumbnail_url,
+          caption: m.caption || null
+        }))
+
+      if (photos.length > 0) {
+        groups.push({
+          findingName: result.template_item?.name || 'Unknown Item',
+          ragStatus: result.rag_status as 'red' | 'amber' | 'green',
+          photos
+        })
+      }
+    }
+
+    return groups
+  }, [checkResults])
+
+  const hasPhotos = photosGroupedByFinding.length > 0
 
   // Filter top-level new repair items (those without a parent)
   const topLevelNewRepairItems = useMemo(() =>
@@ -48,23 +88,54 @@ export function CustomerPreviewModal({ healthCheck, repairItems, newRepairItems,
     [newRepairItems]
   )
 
-  // Calculate totals for new repair items
-  const newRepairItemsTotals = useMemo(() => {
-    const subtotal = topLevelNewRepairItems.reduce((sum, item) => sum + item.subtotal, 0)
-    const vatAmount = topLevelNewRepairItems.reduce((sum, item) => sum + item.vatAmount, 0)
-    const totalIncVat = topLevelNewRepairItems.reduce((sum, item) => sum + item.totalIncVat, 0)
-    return { subtotal, vatAmount, totalIncVat }
+  // Categorize items by RAG status
+  const categorizedItems = useMemo(() => {
+    const urgentItems: NewRepairItem[] = []
+    const advisoryItems: NewRepairItem[] = []
+
+    for (const item of topLevelNewRepairItems) {
+      const rag = deriveRagStatus(item)
+      if (rag === 'red') urgentItems.push(item)
+      else if (rag === 'amber') advisoryItems.push(item)
+    }
+
+    return { urgentItems, advisoryItems }
   }, [topLevelNewRepairItems])
+
+  // Calculate totals for repair items (only urgent + advisory)
+  const repairItemsTotals = useMemo(() => {
+    const allItems = [...categorizedItems.urgentItems, ...categorizedItems.advisoryItems]
+    const subtotal = allItems.reduce((sum, item) => sum + item.subtotal, 0)
+    const vatAmount = allItems.reduce((sum, item) => sum + item.vatAmount, 0)
+    const totalIncVat = allItems.reduce((sum, item) => sum + item.totalIncVat, 0)
+    return { subtotal, vatAmount, totalIncVat }
+  }, [categorizedItems])
 
   // Memoize check result IDs to create stable dependency
   const checkResultIdsKey = useMemo(() => {
     const ids: string[] = []
-    visibleItems.forEach(item => {
-      if (item.check_result_id) ids.push(item.check_result_id)
-    })
+    // Get IDs from children's checkResults (since groups don't have direct check results)
+    for (const item of topLevelNewRepairItems) {
+      if (item.children) {
+        for (const child of item.children) {
+          if (child.checkResults) {
+            for (const cr of child.checkResults) {
+              ids.push(cr.id)
+            }
+          }
+        }
+      }
+      // Also get from item's own checkResults if it has them
+      if (item.checkResults) {
+        for (const cr of item.checkResults) {
+          ids.push(cr.id)
+        }
+      }
+    }
+    // Add green results
     greenResults.forEach(r => ids.push(r.id))
     return [...new Set(ids)].sort().join(',')
-  }, [visibleItems, greenResults])
+  }, [topLevelNewRepairItems, greenResults])
 
   // Fetch reasons ONCE when modal opens
   useEffect(() => {
@@ -111,11 +182,34 @@ export function CustomerPreviewModal({ healthCheck, repairItems, newRepairItems,
     return `Recommend addressing within ${Math.round(days / 30)} months`
   }
 
-  // Get reasons for a repair item
-  const getReasonsForItem = (item: RepairItem): SelectedReason[] => {
-    if (!item.check_result_id) return []
-    return reasonsByCheckResult[item.check_result_id] || []
+  // Get reasons for a new repair item (from its children's check results)
+  const getReasonsForNewItem = (item: NewRepairItem): SelectedReason[] => {
+    const reasons: SelectedReason[] = []
+
+    // Get reasons from children's check results
+    if (item.children) {
+      for (const child of item.children) {
+        if (child.checkResults) {
+          for (const cr of child.checkResults) {
+            const crReasons = reasonsByCheckResult[cr.id] || []
+            reasons.push(...crReasons)
+          }
+        }
+      }
+    }
+
+    // Also get from item's own checkResults
+    if (item.checkResults) {
+      for (const cr of item.checkResults) {
+        const crReasons = reasonsByCheckResult[cr.id] || []
+        reasons.push(...crReasons)
+      }
+    }
+
+    return reasons
   }
+
+  const hasRepairItems = categorizedItems.urgentItems.length > 0 || categorizedItems.advisoryItems.length > 0
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
@@ -165,179 +259,64 @@ export function CustomerPreviewModal({ healthCheck, repairItems, newRepairItems,
             </div>
           </div>
 
-          {/* Repair items */}
-          {visibleItems.length > 0 && (
-            <>
-              {/* Urgent Items */}
-              {redItems.length > 0 && (
-                <div className="mb-6">
-                  <h3 className="text-lg font-semibold text-red-700 mb-3 flex items-center gap-2">
-                    <span className="w-4 h-4 rounded-full bg-red-500" />
-                    Urgent Attention Required
-                  </h3>
-                  <div className="space-y-3">
-                    {redItems.map(item => {
-                      const reasons = getReasonsForItem(item)
-                      const hasReasons = reasons.length > 0
-                      const followUpInfo = reasons.find(r => r.followUpDays || r.followUpText)
-
-                      return (
-                        <div key={item.id} className="bg-red-50 border border-red-200 p-4">
-                          <div className="flex justify-between items-start">
-                            <div className="flex-1">
-                              <div className="font-medium text-gray-900">{item.title}</div>
-
-                              {/* Show reasons or description */}
-                              {hasReasons ? (
-                                <div className="mt-2">
-                                  {reasons.length > 1 && (
-                                    <div className="text-sm text-gray-700 mb-2">
-                                      We identified the following issues:
-                                    </div>
-                                  )}
-                                  <ul className="space-y-1">
-                                    {reasons.map((reason) => (
-                                      <li key={reason.id} className="text-sm text-gray-600 flex gap-2">
-                                        {reasons.length > 1 && (
-                                          <span className="text-red-400">&bull;</span>
-                                        )}
-                                        <span>{reason.customerDescription || reason.reasonText}</span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                  {followUpInfo && (
-                                    <div className="mt-2 text-sm text-red-600 font-medium">
-                                      {formatFollowUp(followUpInfo.followUpDays, followUpInfo.followUpText)}
-                                    </div>
-                                  )}
-                                </div>
-                              ) : item.description && (
-                                <div className="text-sm text-gray-600 mt-1">{item.description}</div>
-                              )}
-                            </div>
-                            <div className="text-right ml-4">
-                              <div className="font-bold text-gray-900">£{item.total_price.toFixed(2)}</div>
-                              <div className="text-xs text-gray-500">
-                                Parts: £{item.parts_cost.toFixed(2)} | Labour: £{item.labor_cost.toFixed(2)}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Advisory Items */}
-              {amberItems.length > 0 && (
-                <div className="mb-6">
-                  <h3 className="text-lg font-semibold text-yellow-700 mb-3 flex items-center gap-2">
-                    <span className="w-4 h-4 rounded-full bg-yellow-500" />
-                    Advisory Items
-                  </h3>
-                  <div className="space-y-3">
-                    {amberItems.map(item => {
-                      const reasons = getReasonsForItem(item)
-                      const hasReasons = reasons.length > 0
-                      const followUpInfo = reasons.find(r => r.followUpDays || r.followUpText)
-
-                      return (
-                        <div key={item.id} className="bg-yellow-50 border border-yellow-200 p-4">
-                          <div className="flex justify-between items-start">
-                            <div className="flex-1">
-                              <div className="font-medium text-gray-900">{item.title}</div>
-
-                              {/* Show reasons or description */}
-                              {hasReasons ? (
-                                <div className="mt-2">
-                                  {reasons.length > 1 && (
-                                    <div className="text-sm text-gray-700 mb-2">
-                                      We identified the following items to monitor:
-                                    </div>
-                                  )}
-                                  <ul className="space-y-1">
-                                    {reasons.map((reason) => (
-                                      <li key={reason.id} className="text-sm text-gray-600 flex gap-2">
-                                        {reasons.length > 1 && (
-                                          <span className="text-amber-400">&bull;</span>
-                                        )}
-                                        <span>{reason.customerDescription || reason.reasonText}</span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                  {followUpInfo && (
-                                    <div className="mt-2 text-sm text-amber-600 font-medium">
-                                      {formatFollowUp(followUpInfo.followUpDays, followUpInfo.followUpText)}
-                                    </div>
-                                  )}
-                                </div>
-                              ) : item.description && (
-                                <div className="text-sm text-gray-600 mt-1">{item.description}</div>
-                              )}
-                            </div>
-                            <div className="text-right ml-4">
-                              <div className="font-bold text-gray-900">£{item.total_price.toFixed(2)}</div>
-                              <div className="text-xs text-gray-500">
-                                Parts: £{item.parts_cost.toFixed(2)} | Labour: £{item.labor_cost.toFixed(2)}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Total */}
-              <div className="bg-gray-100 border border-gray-300 p-4">
-                <div className="flex justify-between mb-2">
-                  <span className="text-gray-600">Parts Total</span>
-                  <span className="font-medium">£{totalParts.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between mb-2">
-                  <span className="text-gray-600">Labour Total</span>
-                  <span className="font-medium">£{totalLabour.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-xl font-bold border-t border-gray-300 pt-2 mt-2">
-                  <span>Total</span>
-                  <span>£{totalAmount.toFixed(2)}</span>
-                </div>
+          {/* Urgent Items */}
+          {categorizedItems.urgentItems.length > 0 && (
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold text-red-700 mb-3 flex items-center gap-2">
+                <span className="w-4 h-4 rounded-full bg-red-500" />
+                Urgent Attention Required
+              </h3>
+              <div className="space-y-3">
+                {categorizedItems.urgentItems.map(item => (
+                  <RepairItemCard
+                    key={item.id}
+                    item={item}
+                    ragStatus="red"
+                    reasons={getReasonsForNewItem(item)}
+                    formatFollowUp={formatFollowUp}
+                    reasonsByCheckResult={reasonsByCheckResult}
+                  />
+                ))}
               </div>
-            </>
+            </div>
           )}
 
-          {/* New Repair Items (Phase 6+) */}
-          {topLevelNewRepairItems.length > 0 && (
-            <div className="mt-6">
-              <h3 className="text-lg font-semibold text-indigo-700 mb-3 flex items-center gap-2">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                </svg>
-                Recommended Repairs
+          {/* Advisory Items */}
+          {categorizedItems.advisoryItems.length > 0 && (
+            <div className="mb-6">
+              <h3 className="text-lg font-semibold text-amber-700 mb-3 flex items-center gap-2">
+                <span className="w-4 h-4 rounded-full bg-amber-500" />
+                Advisory Items
               </h3>
-              <div className="bg-indigo-50 border border-indigo-200">
-                <div className="divide-y divide-indigo-200">
-                  {topLevelNewRepairItems.map(item => (
-                    <NewRepairItemPreview key={item.id} item={item} />
-                  ))}
-                </div>
-                {/* Totals */}
-                <div className="bg-indigo-100 border-t border-indigo-200 p-4">
-                  <div className="flex justify-between mb-2 text-sm">
-                    <span className="text-indigo-700">Subtotal (ex VAT)</span>
-                    <span className="font-medium text-indigo-900">£{newRepairItemsTotals.subtotal.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between mb-2 text-sm">
-                    <span className="text-indigo-700">VAT (20%)</span>
-                    <span className="font-medium text-indigo-900">£{newRepairItemsTotals.vatAmount.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-lg font-bold border-t border-indigo-300 pt-2 mt-2">
-                    <span className="text-indigo-900">Total Inc VAT</span>
-                    <span className="text-indigo-900">£{newRepairItemsTotals.totalIncVat.toFixed(2)}</span>
-                  </div>
-                </div>
+              <div className="space-y-3">
+                {categorizedItems.advisoryItems.map(item => (
+                  <RepairItemCard
+                    key={item.id}
+                    item={item}
+                    ragStatus="amber"
+                    reasons={getReasonsForNewItem(item)}
+                    formatFollowUp={formatFollowUp}
+                    reasonsByCheckResult={reasonsByCheckResult}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Totals */}
+          {hasRepairItems && (
+            <div className="bg-gray-100 border border-gray-300 p-4 mt-4">
+              <div className="flex justify-between mb-2 text-sm">
+                <span className="text-gray-600">Subtotal (ex VAT)</span>
+                <span className="font-medium">£{repairItemsTotals.subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between mb-2 text-sm">
+                <span className="text-gray-600">VAT (20%)</span>
+                <span className="font-medium">£{repairItemsTotals.vatAmount.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-lg font-bold border-t border-gray-300 pt-2 mt-2">
+                <span>Total Inc VAT</span>
+                <span>£{repairItemsTotals.totalIncVat.toFixed(2)}</span>
               </div>
             </div>
           )}
@@ -358,10 +337,52 @@ export function CustomerPreviewModal({ healthCheck, repairItems, newRepairItems,
             </div>
           )}
 
-          {visibleItems.length === 0 && topLevelNewRepairItems.length === 0 && greenResults.length === 0 && (
+          {!hasRepairItems && greenResults.length === 0 && (
             <div className="text-center py-8 text-gray-500">
               <p className="text-lg font-medium text-green-600 mb-2">All Clear!</p>
               <p>Your vehicle has passed all inspection points.</p>
+            </div>
+          )}
+
+          {/* Photo Evidence Section */}
+          {hasPhotos && (
+            <div className="mt-6">
+              <h3 className="text-lg font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                Photo Evidence
+              </h3>
+              <div className="space-y-4">
+                {photosGroupedByFinding.map((group, idx) => (
+                  <div key={idx} className="border border-gray-200">
+                    {/* Finding header */}
+                    <div className={`px-3 py-2 flex items-center gap-2 ${
+                      group.ragStatus === 'red' ? 'bg-red-50 border-b border-red-200' :
+                      group.ragStatus === 'amber' ? 'bg-amber-50 border-b border-amber-200' :
+                      'bg-green-50 border-b border-green-200'
+                    }`}>
+                      <span className={`w-3 h-3 rounded-full ${
+                        group.ragStatus === 'red' ? 'bg-red-500' :
+                        group.ragStatus === 'amber' ? 'bg-amber-500' : 'bg-green-500'
+                      }`} />
+                      <span className="font-medium text-gray-900 text-sm">{group.findingName}</span>
+                    </div>
+                    {/* Photos grid - max 4 per row */}
+                    <div className="p-3 grid grid-cols-4 gap-2">
+                      {group.photos.map(photo => (
+                        <div key={photo.id} className="aspect-square bg-gray-100 overflow-hidden">
+                          <img
+                            src={photo.thumbnailUrl || photo.url}
+                            alt={photo.caption || group.findingName}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -386,6 +407,113 @@ export function CustomerPreviewModal({ healthCheck, repairItems, newRepairItems,
           >
             Send to Customer
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Repair Item Card - unified display for urgent/advisory items
+ */
+interface RepairItemCardProps {
+  item: NewRepairItem
+  ragStatus: 'red' | 'amber'
+  reasons: SelectedReason[]
+  formatFollowUp: (days?: number, text?: string) => string | null
+  reasonsByCheckResult: Record<string, SelectedReason[]>
+}
+
+function RepairItemCard({ item, ragStatus, reasons, formatFollowUp, reasonsByCheckResult }: RepairItemCardProps) {
+  const borderColor = ragStatus === 'red' ? 'border-l-red-500' : 'border-l-amber-500'
+  const bgColor = ragStatus === 'red' ? 'bg-red-50' : 'bg-amber-50'
+  const bulletColor = ragStatus === 'red' ? 'text-red-400' : 'text-amber-400'
+  const followUpColor = ragStatus === 'red' ? 'text-red-600' : 'text-amber-600'
+
+  const hasReasons = reasons.length > 0
+  const followUpInfo = reasons.find(r => r.followUpDays || r.followUpText)
+
+  return (
+    <div className={`${bgColor} border border-gray-200 border-l-4 ${borderColor} p-4`}>
+      <div className="flex justify-between items-start gap-4">
+        <div className="flex-1">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-gray-900">{item.name}</span>
+            {item.isGroup && (
+              <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700">
+                GROUP
+              </span>
+            )}
+          </div>
+
+          {/* Show reasons or description */}
+          {hasReasons ? (
+            <div className="mt-2">
+              {reasons.length > 1 && (
+                <div className="text-sm text-gray-700 mb-2">
+                  {ragStatus === 'red' ? 'We identified the following issues:' : 'We identified the following items to monitor:'}
+                </div>
+              )}
+              <ul className="space-y-1">
+                {reasons.map((reason) => (
+                  <li key={reason.id} className="text-sm text-gray-600 flex gap-2">
+                    {reasons.length > 1 && (
+                      <span className={bulletColor}>&bull;</span>
+                    )}
+                    <span>{reason.customerDescription || reason.reasonText}</span>
+                  </li>
+                ))}
+              </ul>
+              {followUpInfo && (
+                <div className={`mt-2 text-sm ${followUpColor} font-medium`}>
+                  {formatFollowUp(followUpInfo.followUpDays, followUpInfo.followUpText)}
+                </div>
+              )}
+            </div>
+          ) : item.description && (
+            <div className="text-sm text-gray-600 mt-1">{item.description}</div>
+          )}
+
+          {/* Nested children for groups */}
+          {item.isGroup && item.children && item.children.length > 0 && (
+            <div className="mt-3 p-3 bg-purple-50 border-l-2 border-purple-400">
+              <div className="text-xs font-semibold text-purple-700 uppercase mb-2">
+                Grouped Items ({item.children.length})
+              </div>
+              <div className="space-y-1">
+                {item.children.map(child => {
+                  const childRag = child.checkResults?.[0]?.ragStatus
+                  // Get reasons for this child's check results
+                  const childReasons = (child.checkResults || []).flatMap(cr =>
+                    reasonsByCheckResult[cr.id] || []
+                  )
+                  const childDescription = childReasons[0]?.customerDescription || childReasons[0]?.reasonText
+
+                  return (
+                    <div key={child.id} className="flex items-start gap-2 text-sm">
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 mt-1 ${
+                        childRag === 'red' ? 'bg-red-500' :
+                        childRag === 'amber' ? 'bg-amber-500' : 'bg-gray-400'
+                      }`} />
+                      <div>
+                        <span className="text-gray-700">{child.name}</span>
+                        {childDescription && (
+                          <span className="text-gray-500 ml-1">- {childDescription}</span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="text-right flex-shrink-0">
+          <div className="font-bold text-gray-900">£{item.totalIncVat.toFixed(2)}</div>
+          <div className="text-xs text-gray-500">Inc VAT</div>
+          <div className="text-xs text-gray-400 mt-1">
+            (£{item.subtotal.toFixed(2)} + £{item.vatAmount.toFixed(2)} VAT)
+          </div>
         </div>
       </div>
     </div>
@@ -445,76 +573,6 @@ function GreenItemsPreview({ results, reasonsByCheckResult }: GreenItemsPreviewP
           }
         </button>
       )}
-    </div>
-  )
-}
-
-/**
- * New Repair Item Preview - read-only preview for staff
- */
-interface NewRepairItemPreviewProps {
-  item: NewRepairItem
-}
-
-function NewRepairItemPreview({ item }: NewRepairItemPreviewProps) {
-  // Get RAG status from check results for children
-  const getChildRagStatus = (child: NonNullable<NewRepairItem['children']>[number]) => {
-    const ragStatus = child.checkResults?.[0]?.ragStatus as 'red' | 'amber' | null
-    return ragStatus
-  }
-
-  return (
-    <div className="p-4">
-      <div className="flex justify-between items-start gap-4">
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-gray-900">{item.name}</span>
-            {item.isGroup && (
-              <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700 rounded">
-                GROUP
-              </span>
-            )}
-            {item.options && item.options.length > 1 && (
-              <span className="text-xs text-gray-500">
-                {item.options.length} pricing options
-              </span>
-            )}
-          </div>
-          {item.description && (
-            <p className="text-sm text-gray-600 mt-1">{item.description}</p>
-          )}
-
-          {/* Children list for groups */}
-          {item.isGroup && item.children && item.children.length > 0 && (
-            <div className="mt-2 p-3 bg-purple-50 border-l-2 border-purple-400 rounded-r">
-              <div className="text-xs font-semibold text-purple-700 uppercase mb-2">
-                Grouped Items ({item.children.length})
-              </div>
-              <div className="space-y-1">
-                {item.children.map((child) => {
-                  const ragStatus = getChildRagStatus(child)
-                  return (
-                    <div key={child.id} className="flex items-center gap-2 text-sm">
-                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                        ragStatus === 'red' ? 'bg-red-500' :
-                        ragStatus === 'amber' ? 'bg-amber-500' : 'bg-gray-400'
-                      }`} />
-                      <span className="text-gray-700">{child.name}</span>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="text-right flex-shrink-0">
-          <div className="font-bold text-gray-900">£{item.totalIncVat.toFixed(2)}</div>
-          <div className="text-xs text-gray-500">Inc VAT</div>
-          <div className="text-xs text-gray-400 mt-1">
-            (£{item.subtotal.toFixed(2)} + £{item.vatAmount.toFixed(2)} VAT)
-          </div>
-        </div>
-      </div>
     </div>
   )
 }

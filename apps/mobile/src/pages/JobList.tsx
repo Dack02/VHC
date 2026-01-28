@@ -18,6 +18,7 @@ export function JobList() {
   const [refreshing, setRefreshing] = useState(false)
   const [filter, setFilter] = useState<FilterType>('mine')
   const [error, setError] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
 
   const fetchJobs = useCallback(async (showRefreshing = false) => {
     if (!session) return
@@ -37,12 +38,12 @@ export function JobList() {
         }
         params.set('status', 'assigned,in_progress,paused')
       } else if (filter === 'unassigned') {
-        // Show unassigned jobs (created status, no technician)
-        params.set('status', 'created')
+        // Show unassigned jobs (awaiting_checkin and created status, no technician)
+        params.set('status', 'awaiting_checkin,created')
         params.set('unassigned', 'true')
       } else {
-        // Show all jobs for the site (mine + unassigned)
-        params.set('status', 'created,assigned,in_progress,paused')
+        // Show all jobs for the site (mine + unassigned + awaiting check-in)
+        params.set('status', 'awaiting_checkin,created,assigned,in_progress,paused')
       }
 
       const data = await api<{ healthChecks: HealthCheck[] }>(
@@ -67,8 +68,21 @@ export function JobList() {
     fetchJobs(true)
   }
 
+  // Filter jobs by search query (registration number)
+  const filteredJobs = searchQuery.trim()
+    ? jobs.filter((job) => {
+        const registration = job.vehicle?.registration?.toLowerCase() || ''
+        const query = searchQuery.toLowerCase().trim()
+        return registration.includes(query)
+      })
+    : jobs
+
   const handleJobClick = async (job: HealthCheck) => {
-    if (job.status === 'created') {
+    if (job.status === 'awaiting_checkin') {
+      // Job is awaiting check-in by service advisor - can't claim yet
+      setError('This job is awaiting check-in by the service advisor')
+      return
+    } else if (job.status === 'created') {
       // Unassigned job - claim it first
       try {
         await api(
@@ -166,6 +180,55 @@ export function JobList() {
         </Button>
       </div>
 
+      {/* Search input */}
+      <div className="bg-white border-b border-gray-200 px-4 py-3">
+        <div className="relative">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <svg
+              className="h-5 w-5 text-gray-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
+            </svg>
+          </div>
+          <input
+            type="text"
+            placeholder="Search by registration..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-10 pr-10 py-3 border border-gray-300 bg-gray-50 text-base placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary rounded-none"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute inset-y-0 right-0 pr-3 flex items-center"
+              aria-label="Clear search"
+            >
+              <svg
+                className="h-5 w-5 text-gray-400 hover:text-gray-600"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Main content */}
       <main className="flex-1 p-4 space-y-3 overflow-auto">
         {error && (
@@ -182,22 +245,34 @@ export function JobList() {
           </div>
         )}
 
-        {jobs.length === 0 ? (
+        {filteredJobs.length === 0 ? (
           <Card variant="default" padding="lg" className="text-center">
             <div className="text-gray-400 mb-2">
               <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                {searchQuery ? (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                ) : (
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                )}
               </svg>
             </div>
             <p className="text-gray-600">
-              {filter === 'mine' && 'No jobs assigned to you'}
-              {filter === 'unassigned' && 'No unassigned jobs'}
-              {filter === 'all' && 'No jobs available'}
+              {searchQuery ? (
+                <>No jobs matching "{searchQuery}"</>
+              ) : (
+                <>
+                  {filter === 'mine' && 'No jobs assigned to you'}
+                  {filter === 'unassigned' && 'No unassigned jobs'}
+                  {filter === 'all' && 'No jobs available'}
+                </>
+              )}
             </p>
-            <p className="text-sm text-gray-500 mt-1">Pull down to refresh</p>
+            <p className="text-sm text-gray-500 mt-1">
+              {searchQuery ? 'Try a different search term' : 'Pull down to refresh'}
+            </p>
           </Card>
         ) : (
-          jobs.map((job) => (
+          filteredJobs.map((job) => (
             <JobCard key={job.id} job={job} onClick={() => handleJobClick(job)} />
           ))
         )}
@@ -252,10 +327,12 @@ function JobCard({ job, onClick }: JobCardProps) {
             : 'No deadline'}
         </span>
         <span className="flex items-center gap-1">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-          Tap to {job.status === 'created' ? 'claim' : job.status === 'assigned' ? 'start' : job.status === 'paused' ? 'resume' : 'continue'}
+          {job.status !== 'awaiting_checkin' && (
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          )}
+          {job.status === 'awaiting_checkin' ? 'Waiting for advisor' : `Tap to ${job.status === 'created' ? 'claim' : job.status === 'assigned' ? 'start' : job.status === 'paused' ? 'resume' : 'continue'}`}
         </span>
       </div>
 

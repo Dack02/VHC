@@ -24,6 +24,7 @@ import { useSocket, WS_EVENTS } from '../../contexts/SocketContext'
 import { api, HealthCheck, User } from '../../lib/api'
 import { WorkflowBadges, WorkflowLegend, WorkflowStatus, CompletionInfo, AuthorisationInfo } from '../../components/WorkflowBadges'
 import { Tooltip } from '../../components/ui/Tooltip'
+import { InspectionTimer } from '../../components/InspectionTimer'
 
 // Currency formatter helper
 const formatCurrency = (amount: number): string => {
@@ -122,6 +123,11 @@ interface HealthCheckCard {
   amber_authorised?: number
   green_identified?: number
   green_authorised?: number
+  // Timer data for in_progress inspections
+  timer_data?: {
+    total_closed_minutes: number
+    active_clock_in_at: string | null
+  } | null
 }
 
 interface Column {
@@ -278,14 +284,25 @@ function CardContent({ card }: { card: HealthCheckCard }) {
         </span>
       </div>
 
-      {/* Footer Bar: Status + Workflow Badges */}
+      {/* Footer Bar: Status + Timer + Workflow Badges */}
       <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-        {/* Status indicator */}
-        <div className="flex items-center gap-1.5 text-xs text-gray-600">
-          <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
-            <path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" />
-          </svg>
-          <span className="capitalize">{card.status.replace(/_/g, ' ')}</span>
+        {/* Status indicator and Timer */}
+        <div className="flex items-center gap-2 text-xs text-gray-600">
+          <div className="flex items-center gap-1.5">
+            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" />
+            </svg>
+            <span className="capitalize">{card.status.replace(/_/g, ' ')}</span>
+          </div>
+          {/* Timer for in_progress cards */}
+          {card.status === 'in_progress' && card.timer_data && (
+            <InspectionTimer
+              status={card.status}
+              totalClosedMinutes={card.timer_data.total_closed_minutes}
+              activeClockInAt={card.timer_data.active_clock_in_at}
+              variant="compact"
+            />
+          )}
         </div>
 
         {/* Workflow Badges (T-L-P-S-A) */}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { api, HealthCheck, CheckResult, RepairItem, TemplateSection, HealthCheckSummary, FullHealthCheckResponse, NewRepairItem, TimelineEvent } from '../../lib/api'
 import { WorkflowBadges, WorkflowStatus, calculateWorkflowStatus, calculateAuthorisationInfo, CompletionInfo, AuthorisationInfo } from '../../components/WorkflowBadges'
@@ -10,6 +10,7 @@ import { PartsTab } from './tabs/PartsTab'
 import { SummaryTab } from './tabs/SummaryTab'
 import { CheckInTab } from './tabs/CheckInTab'
 import { MriTab } from './tabs/MriTab'
+import { CustomerActivityTab } from './tabs/CustomerActivityTab'
 import { PublishModal } from './PublishModal'
 import { CustomerPreviewModal } from './CustomerPreviewModal'
 import { HealthCheckTabContent } from './components/HealthCheckTabContent'
@@ -17,6 +18,7 @@ import { CloseHealthCheckModal } from './components/CloseHealthCheckModal'
 import { AdvisorSelectionModal } from './components/AdvisorSelectionModal'
 import { WorkAuthoritySheetModal } from './components/WorkAuthoritySheetModal'
 import { CustomerEditModal } from './components/CustomerEditModal'
+import { InspectionTimer } from '../../components/InspectionTimer'
 
 // Hook for online/offline detection
 function useOnlineStatus() {
@@ -82,13 +84,19 @@ const statusColors: Record<string, string> = {
   no_show: 'bg-red-100 text-red-700'
 }
 
-type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'labour' | 'parts' | 'photos' | 'timeline'
+type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'labour' | 'parts' | 'photos' | 'timeline' | 'activity'
 
 export default function HealthCheckDetail() {
   const { id } = useParams<{ id: string }>()
   const { session, user } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const isOnline = useOnlineStatus()
+
+  // Get initial tab from URL query parameter
+  const validTabs: Tab[] = ['summary', 'checkin', 'mri', 'health-check', 'labour', 'parts', 'photos', 'timeline', 'activity']
+  const urlTab = searchParams.get('tab') as Tab | null
+  const initialTab: Tab = urlTab && validTabs.includes(urlTab) ? urlTab : 'health-check'
 
   // Permission check for changing advisor
   const canChangeAdvisor = user && ['super_admin', 'org_admin', 'site_admin', 'service_advisor'].includes(user.role)
@@ -107,7 +115,7 @@ export default function HealthCheckDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
-  const [activeTab, setActiveTab] = useState<Tab>('health-check')
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab)
   const [showPublishModal, setShowPublishModal] = useState(false)
   const [showPreviewModal, setShowPreviewModal] = useState(false)
   const [showCloseModal, setShowCloseModal] = useState(false)
@@ -116,6 +124,10 @@ export default function HealthCheckDetail() {
   const [showCustomerEditModal, setShowCustomerEditModal] = useState(false)
   const [generatingPDF, setGeneratingPDF] = useState(false)
   const [checkinEnabled, setCheckinEnabled] = useState(false)
+  const [timerData, setTimerData] = useState<{
+    total_closed_minutes: number
+    active_clock_in_at: string | null
+  } | null>(null)
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const fetchData = useCallback(async (options: { isRetry?: boolean; silent?: boolean } = {}) => {
@@ -160,6 +172,42 @@ export default function HealthCheckDetail() {
         { token: session.accessToken }
       )
       setTimeline(timelineData.timeline || [])
+
+      // Fetch timer data for in_progress health checks
+      if (hcData.healthCheck.status === 'in_progress') {
+        try {
+          const timeEntriesData = await api<{
+            entries: Array<{
+              clockIn: string
+              clockOut: string | null
+              durationMinutes: number | null
+            }>
+            totalMinutes: number
+          }>(
+            `/api/v1/health-checks/${id}/time-entries`,
+            { token: session.accessToken }
+          )
+
+          // Find active entry (no clockOut) to get active_clock_in_at
+          const activeEntry = timeEntriesData.entries?.find(e => !e.clockOut)
+
+          // Calculate closed minutes (from entries with clockOut)
+          const closedMinutes = timeEntriesData.entries
+            ?.filter(e => e.clockOut)
+            .reduce((sum, e) => sum + (e.durationMinutes || 0), 0) || 0
+
+          setTimerData({
+            total_closed_minutes: closedMinutes,
+            active_clock_in_at: activeEntry?.clockIn || null
+          })
+        } catch {
+          // Time entries not available, clear timer data
+          setTimerData(null)
+        }
+      } else {
+        // Not in_progress, clear timer data
+        setTimerData(null)
+      }
 
       // Fetch check-in settings for organization
       if (user?.organization?.id) {
@@ -410,14 +458,15 @@ export default function HealthCheckDetail() {
     { id: 'labour', label: 'Labour' },
     { id: 'parts', label: 'Parts' },
     { id: 'photos', label: 'Photos', badge: summary?.media_count },
-    { id: 'timeline', label: 'Timeline' }
+    { id: 'timeline', label: 'Timeline' },
+    { id: 'activity', label: 'Customer Activity' }
   ]
 
   // Determine available actions based on status
   const canStartReview = healthCheck.status === 'tech_completed'
   const canMarkReady = ['awaiting_review', 'awaiting_pricing'].includes(healthCheck.status)
   const canSend = healthCheck.status === 'ready_to_send'
-  const canResend = ['sent', 'expired'].includes(healthCheck.status)
+  const canResend = ['sent', 'expired', 'opened', 'customer_viewed', 'customer_approved', 'customer_partial', 'customer_declined'].includes(healthCheck.status)
   const canClose = ['authorized', 'declined', 'partial_response'].includes(healthCheck.status) && !healthCheck.closed_at
   const isClosed = !!healthCheck.closed_at
 
@@ -541,6 +590,7 @@ export default function HealthCheckDetail() {
         onAdvisorClick={() => setShowAdvisorModal(true)}
         canEditCustomer={canChangeAdvisor || undefined}
         onCustomerEditClick={() => setShowCustomerEditModal(true)}
+        timerData={timerData}
       />
 
       {/* Tab Navigation */}
@@ -591,6 +641,10 @@ export default function HealthCheckDetail() {
               // Optionally switch to health-check tab after check-in
               setActiveTab('health-check')
             }}
+            advisor={healthCheck.advisor || null}
+            onAdvisorChange={(advisor) => {
+              setHealthCheck({ ...healthCheck, advisor: advisor || undefined })
+            }}
           />
         )}
         {activeTab === 'mri' && (
@@ -627,6 +681,9 @@ export default function HealthCheckDetail() {
         {activeTab === 'timeline' && (
           <TimelineTab timeline={timeline} />
         )}
+        {activeTab === 'activity' && (
+          <CustomerActivityTab healthCheckId={id!} />
+        )}
       </div>
 
       {/* Modals */}
@@ -641,7 +698,6 @@ export default function HealthCheckDetail() {
       {showPreviewModal && (
         <CustomerPreviewModal
           healthCheck={healthCheck}
-          repairItems={repairItems}
           newRepairItems={newRepairItems}
           checkResults={results}
           onClose={() => setShowPreviewModal(false)}
@@ -743,9 +799,13 @@ interface VehicleInfoBarProps {
   onAdvisorClick?: () => void
   canEditCustomer?: boolean
   onCustomerEditClick?: () => void
+  timerData?: {
+    total_closed_minutes: number
+    active_clock_in_at: string | null
+  } | null
 }
 
-function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, labourCompletion, partsCompletion, authorisationInfo, canChangeAdvisor, onAdvisorClick, canEditCustomer, onCustomerEditClick }: VehicleInfoBarProps) {
+function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, labourCompletion, partsCompletion, authorisationInfo, canChangeAdvisor, onAdvisorClick, canEditCustomer, onCustomerEditClick, timerData }: VehicleInfoBarProps) {
   const vehicle = healthCheck.vehicle
   const customer = healthCheck.vehicle?.customer
   const [vinExpanded, setVinExpanded] = useState(false)
@@ -782,6 +842,15 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
             <span className={`inline-block px-3 py-1 text-sm font-medium rounded ${statusColors[healthCheck.status]}`}>
               {statusLabels[healthCheck.status]}
             </span>
+            {/* Timer for in_progress health checks */}
+            {healthCheck.status === 'in_progress' && timerData && (
+              <InspectionTimer
+                status={healthCheck.status}
+                totalClosedMinutes={timerData.total_closed_minutes}
+                activeClockInAt={timerData.active_clock_in_at}
+                variant="compact"
+              />
+            )}
             {workflowStatus && <WorkflowBadges status={workflowStatus} compact technicianCompletion={technicianCompletion} labourCompletion={labourCompletion} partsCompletion={partsCompletion} authorisationInfo={authorisationInfo} />}
           </div>
         </div>
@@ -1009,6 +1078,19 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
             )}
           </div>
         </div>
+
+        {/* Inspection Timer - shown when in_progress */}
+        {healthCheck.status === 'in_progress' && timerData && (
+          <div>
+            <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Inspection Time</div>
+            <InspectionTimer
+              status={healthCheck.status}
+              totalClosedMinutes={timerData.total_closed_minutes}
+              activeClockInAt={timerData.active_clock_in_at}
+              variant="full"
+            />
+          </div>
+        )}
 
         {/* Workflow Status */}
         {workflowStatus && (

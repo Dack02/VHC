@@ -45,6 +45,7 @@ export function Badge({
 
 // Status badge specifically for health check statuses
 type Status =
+  | 'awaiting_checkin'
   | 'created'
   | 'assigned'
   | 'in_progress'
@@ -63,6 +64,7 @@ type Status =
   | 'cancelled'
 
 const statusConfig: Record<Status, { label: string; variant: BadgeVariant }> = {
+  awaiting_checkin: { label: 'Awaiting Check In', variant: 'red' },
   created: { label: 'Created', variant: 'gray' },
   assigned: { label: 'Assigned', variant: 'primary' },
   in_progress: { label: 'In Progress', variant: 'amber' },

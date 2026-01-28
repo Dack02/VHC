@@ -820,6 +820,45 @@ status.post('/:id/clock-in', authorize(['super_admin', 'org_admin', 'site_admin'
       return c.json({ error: 'Not authorized to clock in to this health check' }, 403)
     }
 
+    // Check if MRI is required but not complete (only for technicians)
+    if (auth.user.role === 'technician' &&
+        (healthCheck.status === 'assigned' || healthCheck.status === 'paused')) {
+
+      // Check if org has check-in enabled
+      const { data: checkinSettings } = await supabaseAdmin
+        .from('organization_checkin_settings')
+        .select('checkin_enabled')
+        .eq('organization_id', auth.orgId)
+        .single()
+
+      if (checkinSettings?.checkin_enabled) {
+        // Check if org has any enabled MRI items
+        const { count: mriItemsCount } = await supabaseAdmin
+          .from('mri_items')
+          .select('*', { count: 'exact', head: true })
+          .eq('organization_id', auth.orgId)
+          .eq('enabled', true)
+          .is('deleted_at', null)
+
+        if ((mriItemsCount || 0) > 0) {
+          // Check if MRI scan is complete
+          const { data: mriResults } = await supabaseAdmin
+            .from('mri_scan_results')
+            .select('completed_at')
+            .eq('health_check_id', id)
+            .not('completed_at', 'is', null)
+            .limit(1)
+
+          if (!mriResults?.length) {
+            return c.json({
+              error: 'MRI scan must be completed before starting inspection',
+              code: 'MRI_NOT_COMPLETE'
+            }, 400)
+          }
+        }
+      }
+    }
+
     // Get vehicle registration for notifications
     const vehicleReg = (healthCheck.vehicle as unknown as { registration: string })?.registration || 'Unknown'
 
@@ -950,7 +989,7 @@ status.post('/:id/clock-out', authorize(['super_admin', 'org_admin', 'site_admin
     const { data: healthCheck } = await supabaseAdmin
       .from('health_checks')
       .select(`
-        id, status, technician_id, site_id,
+        id, status, technician_id, site_id, template_id,
         vehicle:vehicles(registration)
       `)
       .eq('id', id)
@@ -959,6 +998,58 @@ status.post('/:id/clock-out', authorize(['super_admin', 'org_admin', 'site_admin
 
     if (!healthCheck) {
       return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Validate mandatory items are complete before allowing completion
+    if (complete && healthCheck.template_id) {
+      // Get all mandatory template items for this template
+      const { data: mandatoryItems } = await supabaseAdmin
+        .from('template_items')
+        .select(`
+          id,
+          name,
+          section:template_sections!inner(
+            id,
+            name,
+            template_id
+          )
+        `)
+        .eq('is_required', true)
+        .eq('section.template_id', healthCheck.template_id)
+
+      if (mandatoryItems && mandatoryItems.length > 0) {
+        // Get all check_results with rag_status set for this health check
+        const { data: completedResults } = await supabaseAdmin
+          .from('check_results')
+          .select('template_item_id')
+          .eq('health_check_id', id)
+          .not('rag_status', 'is', null)
+
+        const completedItemIds = new Set(
+          (completedResults || []).map(r => r.template_item_id)
+        )
+
+        // Find incomplete mandatory items
+        // Note: Supabase nested relations may return arrays, so we handle both cases
+        const incompleteItems = mandatoryItems
+          .filter(item => !completedItemIds.has(item.id))
+          .map(item => {
+            const section = Array.isArray(item.section) ? item.section[0] : item.section
+            return {
+              templateItemId: item.id,
+              itemName: item.name,
+              sectionName: (section as { name: string })?.name || ''
+            }
+          })
+
+        if (incompleteItems.length > 0) {
+          return c.json({
+            error: `Cannot complete inspection: ${incompleteItems.length} required item${incompleteItems.length !== 1 ? 's are' : ' is'} incomplete`,
+            code: 'MANDATORY_ITEMS_INCOMPLETE',
+            incompleteItems
+          }, 400)
+        }
+      }
     }
 
     // Only assigned technician can clock out (or admins)

@@ -18,6 +18,17 @@ interface SelectedReason {
   followUpText?: string | null
 }
 
+// Type for mandatory validation response
+interface MandatoryValidation {
+  valid: boolean
+  incompleteItems: Array<{
+    templateItemId: string
+    itemName: string
+    sectionId: string
+    sectionName: string
+  }>
+}
+
 export function Summary() {
   const { id } = useParams<{ id: string }>()
   const { session } = useAuth()
@@ -28,6 +39,7 @@ export function Summary() {
   const [sections, setSections] = useState<TemplateSection[]>([])
   const [results, setResults] = useState<CheckResult[]>([])
   const [reasonsByResult, setReasonsByResult] = useState<Record<string, SelectedReason[]>>({})
+  const [mandatoryValidation, setMandatoryValidation] = useState<MandatoryValidation | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -88,6 +100,18 @@ export function Summary() {
       )
 
       setReasonsByResult(reasonsMap)
+
+      // Fetch mandatory items validation
+      try {
+        const validation = await api<MandatoryValidation>(
+          `/api/v1/health-checks/${id}/validate-mandatory`,
+          { token: session.access_token }
+        )
+        setMandatoryValidation(validation)
+      } catch {
+        // If validation fetch fails, assume valid (don't block submission)
+        setMandatoryValidation({ valid: true, incompleteItems: [] })
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load summary')
     } finally {
@@ -215,6 +239,12 @@ export function Summary() {
   const handleComplete = async () => {
     if (!session || !id) return
 
+    // Validate mandatory items are complete
+    if (mandatoryValidation && !mandatoryValidation.valid) {
+      setError(`Cannot complete: ${mandatoryValidation.incompleteItems.length} required item${mandatoryValidation.incompleteItems.length !== 1 ? 's are' : ' is'} incomplete`)
+      return
+    }
+
     // Validate signature is provided
     if (!technicianSignature) {
       setError('Please provide your signature to complete the inspection')
@@ -282,6 +312,33 @@ export function Summary() {
       </header>
 
       <main className="flex-1 p-4 space-y-4 overflow-auto">
+        {/* Mandatory Items Validation Banner */}
+        {mandatoryValidation && !mandatoryValidation.valid && (
+          <Card className="border-2 border-rag-red">
+            <CardHeader
+              title="Required Items Incomplete"
+              subtitle={`${mandatoryValidation.incompleteItems.length} required item${mandatoryValidation.incompleteItems.length !== 1 ? 's' : ''} must be completed`}
+            />
+            <CardContent>
+              <div className="space-y-2 mb-4">
+                {mandatoryValidation.incompleteItems.map((item) => (
+                  <div key={item.templateItemId} className="p-2 bg-rag-red-bg">
+                    <p className="font-medium text-gray-900">{item.itemName}</p>
+                    <p className="text-xs text-gray-500">{item.sectionName}</p>
+                  </div>
+                ))}
+              </div>
+              <Button
+                variant="secondary"
+                fullWidth
+                onClick={() => navigate(`/job/${id}/inspection`)}
+              >
+                Return to Inspection
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         {/* RAG Summary */}
         <Card>
           <CardHeader title="Results Summary" />
@@ -436,8 +493,12 @@ export function Summary() {
           size="lg"
           onClick={handleComplete}
           loading={submitting}
+          disabled={mandatoryValidation ? !mandatoryValidation.valid : false}
         >
-          Complete Inspection
+          {mandatoryValidation && !mandatoryValidation.valid
+            ? `Complete Required Items (${mandatoryValidation.incompleteItems.length} remaining)`
+            : 'Complete Inspection'
+          }
         </Button>
       </footer>
     </div>

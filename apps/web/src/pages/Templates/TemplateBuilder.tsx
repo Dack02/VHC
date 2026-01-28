@@ -274,7 +274,7 @@ export default function TemplateBuilder() {
     }
   }
 
-  const handleAddItem = async (sectionId: string, itemData: { name: string; itemType: string; reasonType?: string; config?: Record<string, unknown> }) => {
+  const handleAddItem = async (sectionId: string, itemData: { name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean }) => {
     try {
       const item = await api<TemplateItem>(`/api/v1/sections/${sectionId}/items`, {
         method: 'POST',
@@ -294,7 +294,7 @@ export default function TemplateBuilder() {
     }
   }
 
-  const handleUpdateItem = async (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null }) => {
+  const handleUpdateItem = async (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean }) => {
     try {
       await api(`/api/v1/items/${itemId}`, {
         method: 'PATCH',
@@ -694,7 +694,7 @@ interface SortableItemProps {
   item: TemplateItem
   isEditing: boolean
   onEdit: () => void
-  onSave: (updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null }) => void
+  onSave: (updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean }) => void
   onCancel: () => void
   onDelete: () => void
   reasonInfo?: { reasonCount: number; reasonType: string | null }
@@ -709,6 +709,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: item.id })
   const [editName, setEditName] = useState(item.name)
   const [editReasonType, setEditReasonType] = useState(item.reasonType || '')
+  const [editIsRequired, setEditIsRequired] = useState(item.isRequired || false)
   const [generating, setGenerating] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
 
@@ -729,7 +730,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
       if (!confirmed) return
     }
 
-    onSave({ name: editName, reasonType: newReasonType })
+    onSave({ name: editName, reasonType: newReasonType, isRequired: editIsRequired })
   }
 
   const handleManageReasons = () => {
@@ -796,6 +797,15 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
               </option>
             ))}
           </select>
+          <label className="flex items-center gap-1 text-xs text-gray-600 whitespace-nowrap">
+            <input
+              type="checkbox"
+              checked={editIsRequired}
+              onChange={(e) => setEditIsRequired(e.target.checked)}
+              className="w-3.5 h-3.5"
+            />
+            Required
+          </label>
           <button
             onClick={handleSave}
             className="text-xs px-3 py-1.5 bg-primary text-white rounded font-medium"
@@ -809,8 +819,13 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
       ) : (
         <>
           {/* Item Name */}
-          <div className="flex-1 min-w-0 truncate">
+          <div className="flex-1 min-w-0 truncate flex items-center gap-2">
             <span className="text-sm text-gray-800">{item.name}</span>
+            {item.isRequired && (
+              <span className="text-xs px-1.5 py-0.5 bg-rag-red text-white font-medium">
+                Required
+              </span>
+            )}
           </div>
 
           {/* Reason Type - muted pill badge */}
@@ -978,10 +993,11 @@ function AddSectionModal({ onClose, onSave }: { onClose: () => void; onSave: (na
   )
 }
 
-function AddItemModal({ onClose, onSave, reasonTypes }: { onClose: () => void; onSave: (itemData: { name: string; itemType: string; reasonType?: string; config?: Record<string, unknown> }) => void; reasonTypes: ReasonType[] }) {
+function AddItemModal({ onClose, onSave, reasonTypes }: { onClose: () => void; onSave: (itemData: { name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean }) => void; reasonTypes: ReasonType[] }) {
   const [name, setName] = useState('')
   const [itemType, setItemType] = useState('rag')
   const [reasonType, setReasonType] = useState('')
+  const [isRequired, setIsRequired] = useState(false)
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -1037,12 +1053,28 @@ function AddItemModal({ onClose, onSave, reasonTypes }: { onClose: () => void; o
               Items with the same reason type share the same reason library
             </p>
           </div>
+          <div>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isRequired}
+                onChange={(e) => setIsRequired(e.target.checked)}
+                className="w-4 h-4 text-primary border-gray-300"
+              />
+              <div>
+                <span className="text-sm font-medium text-gray-700">Required Item</span>
+                <p className="text-xs text-gray-500">
+                  Technicians must complete this item before submitting
+                </p>
+              </div>
+            </label>
+          </div>
           <div className="flex justify-end gap-2 pt-4">
             <button onClick={onClose} className="px-4 py-2 text-gray-600">
               Cancel
             </button>
             <button
-              onClick={() => onSave({ name, itemType, reasonType: reasonType || undefined })}
+              onClick={() => onSave({ name, itemType, reasonType: reasonType || undefined, isRequired })}
               disabled={!name.trim()}
               className="px-4 py-2 bg-primary text-white font-semibold disabled:opacity-50"
             >

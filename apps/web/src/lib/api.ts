@@ -658,3 +658,60 @@ export interface TimelineEvent {
     outcome_status?: string
   }
 }
+
+// Customer Activity types for the Customer Activity tab
+export interface CustomerActivitySummary {
+  totalViews: number
+  firstViewedAt: string | null
+  lastViewedAt: string | null
+  sentAt: string | null
+  responseStatus: 'pending' | 'partial' | 'complete'
+  approved: {
+    count: number
+    value: number
+  }
+  declined: {
+    count: number
+    value: number
+  }
+  deferred: {
+    count: number
+    value: number
+  }
+}
+
+export interface CustomerCommunication {
+  id: string
+  channel: 'email' | 'sms'
+  recipient: string
+  subject: string | null
+  status: string
+  errorMessage: string | null
+  sentAt: string
+  deliveredAt: string | null
+}
+
+export interface CustomerActivity {
+  id: string
+  type: string
+  repairItemId: string | null
+  metadata: Record<string, unknown> | null
+  ipAddress: string | null
+  deviceType: string
+  timestamp: string
+}
+
+export interface CustomerStatusChange {
+  id: string
+  fromStatus: string | null
+  toStatus: string
+  notes: string | null
+  timestamp: string
+}
+
+export interface CustomerActivityResponse {
+  summary: CustomerActivitySummary
+  communications: CustomerCommunication[]
+  activities: CustomerActivity[]
+  statusChanges: CustomerStatusChange[]
+}

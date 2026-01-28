@@ -47,11 +47,27 @@ interface MriSummary {
   flagged: number
 }
 
+interface Advisor {
+  id: string
+  first_name: string
+  last_name: string
+}
+
+interface EligibleUser {
+  id: string
+  firstName: string
+  lastName: string
+  role: string
+  isActive: boolean
+}
+
 interface CheckInTabProps {
   healthCheckId: string
   healthCheckStatus: string  // Used for status-based UI variations
   onUpdate: () => void
   onCheckInComplete?: () => void
+  advisor: Advisor | null
+  onAdvisorChange: (advisor: Advisor | null) => void
 }
 
 const KEY_LOCATIONS = [
@@ -64,7 +80,7 @@ const KEY_LOCATIONS = [
   'Other'
 ]
 
-export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheckInComplete }: CheckInTabProps) {
+export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheckInComplete, advisor, onAdvisorChange }: CheckInTabProps) {
   const { session, user } = useAuth()
   const toast = useToast()
   const [data, setData] = useState<CheckInData | null>(null)
@@ -77,6 +93,11 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
   const [showSkipModal, setShowSkipModal] = useState(false)
   const [showCustomerEditModal, setShowCustomerEditModal] = useState(false)
   const [mriSummary, setMriSummary] = useState<MriSummary | null>(null)
+
+  // Advisor selector state
+  const [eligibleAdvisors, setEligibleAdvisors] = useState<EligibleUser[]>([])
+  const [loadingAdvisors, setLoadingAdvisors] = useState(true)
+  const [savingAdvisor, setSavingAdvisor] = useState(false)
 
   // Form state
   const [mileageIn, setMileageIn] = useState<string>('')
@@ -128,6 +149,58 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  // Fetch eligible advisors for the dropdown
+  useEffect(() => {
+    const fetchAdvisors = async () => {
+      if (!session?.accessToken) return
+
+      try {
+        const data = await api<{ users: EligibleUser[] }>(
+          '/api/v1/users?limit=100',
+          { token: session.accessToken }
+        )
+
+        // Filter to only show users who can be advisors
+        const advisorRoles = ['service_advisor', 'site_admin', 'org_admin', 'super_admin']
+        const eligible = (data.users || []).filter(
+          u => advisorRoles.includes(u.role) && u.isActive
+        )
+
+        setEligibleAdvisors(eligible)
+      } catch {
+        console.error('Failed to load eligible advisors')
+      } finally {
+        setLoadingAdvisors(false)
+      }
+    }
+
+    fetchAdvisors()
+  }, [session?.accessToken])
+
+  // Handle advisor change
+  const handleAdvisorChange = async (newAdvisorId: string) => {
+    if (!session?.accessToken || savingAdvisor) return
+
+    setSavingAdvisor(true)
+    try {
+      const response = await api<{ advisor: Advisor | null }>(
+        `/api/v1/health-checks/${healthCheckId}`,
+        {
+          method: 'PATCH',
+          token: session.accessToken,
+          body: { advisorId: newAdvisorId || null }
+        }
+      )
+
+      onAdvisorChange(response.advisor || null)
+      toast.success('Advisor updated')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update advisor')
+    } finally {
+      setSavingAdvisor(false)
+    }
+  }
 
   // Auto-save function
   const autoSave = useCallback(async (field: string, value: unknown) => {
@@ -368,6 +441,35 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
           Saving...
         </div>
       )}
+
+      {/* Service Advisor Selector */}
+      <div className="bg-white border border-gray-200 rounded-none">
+        <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
+          <h3 className="font-semibold text-gray-900">Service Advisor</h3>
+        </div>
+        <div className="p-4">
+          {loadingAdvisors ? (
+            <div className="h-10 bg-gray-100 animate-pulse rounded-none"></div>
+          ) : (
+            <select
+              value={advisor?.id || ''}
+              onChange={(e) => handleAdvisorChange(e.target.value)}
+              disabled={savingAdvisor || isReadOnly}
+              className="w-full border border-gray-300 rounded-none px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100 disabled:cursor-not-allowed"
+            >
+              <option value="">-- Select Advisor --</option>
+              {eligibleAdvisors.map(u => (
+                <option key={u.id} value={u.id}>
+                  {u.firstName} {u.lastName}
+                </option>
+              ))}
+            </select>
+          )}
+          {savingAdvisor && (
+            <p className="text-sm text-gray-500 mt-1">Updating...</p>
+          )}
+        </div>
+      </div>
 
       {/* Vehicle Details */}
       <div className="bg-white border border-gray-200 rounded-none">

@@ -83,7 +83,6 @@ interface CheckResult {
     url: string
     thumbnail_url: string | null
     caption: string | null
-    annotation_data: unknown
   }>
 }
 
@@ -127,6 +126,7 @@ interface NewRepairItem {
   name: string
   description: string | null
   isGroup: boolean
+  ragStatus: 'red' | 'amber' | null
   labourTotal: number
   partsTotal: number
   subtotal: number
@@ -144,6 +144,7 @@ interface NewRepairItem {
   children?: Array<{
     name: string
     ragStatus: 'red' | 'amber' | null
+    vhcReason?: string | null
   }>
 }
 
@@ -166,11 +167,10 @@ export default function CustomerPortal() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expired, setExpired] = useState(false)
-  const [saving, setSaving] = useState<string | null>(null) // ID of item being saved
   const [showSignature, setShowSignature] = useState(false)
   const [signatureSubmitted, setSignatureSubmitted] = useState(false)
   const [selectedPhoto, setSelectedPhoto] = useState<{ url: string; caption: string | null } | null>(null)
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['urgent', 'advisory', 'repairs']))
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['urgent', 'advisory', 'repairs', 'photos']))
   // New repair items state
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({}) // repairItemId -> optionId
   const [savingNewRepairItem, setSavingNewRepairItem] = useState<string | null>(null)
@@ -227,95 +227,6 @@ export default function CustomerPortal() {
       root.style.removeProperty('--brand-primary-hover')
     }
   }, [data?.site?.organization?.settings])
-
-  // Handle authorize (using new repair-items endpoint)
-  const handleAuthorize = async (repairItemId: string) => {
-    if (!token || saving) return
-    setSaving(repairItemId)
-
-    try {
-      const response = await fetch(`${API_URL}/api/public/vhc/${token}/repair-items/${repairItemId}/approve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      })
-
-      if (!response.ok) {
-        const result = await response.json()
-        throw new Error(result.error || 'Failed to authorize')
-      }
-
-      // Update local state - update is_approved field (maps from customer_approved)
-      setData(prev => {
-        if (!prev) return prev
-        return {
-          ...prev,
-          repairItems: prev.repairItems.map(item =>
-            item.id === repairItemId
-              ? {
-                  ...item,
-                  is_approved: true,
-                  authorization: {
-                    repair_item_id: repairItemId,
-                    decision: 'approved',
-                    decided_at: new Date().toISOString(),
-                    signature_data: null
-                  }
-                }
-              : item
-          )
-        }
-      })
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to save. Please try again.')
-    } finally {
-      setSaving(null)
-    }
-  }
-
-  // Handle decline (using new repair-items endpoint)
-  const handleDecline = async (repairItemId: string) => {
-    if (!token || saving) return
-    setSaving(repairItemId)
-
-    try {
-      const response = await fetch(`${API_URL}/api/public/vhc/${token}/repair-items/${repairItemId}/decline`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to decline')
-      }
-
-      // Update local state - update is_approved field (maps from customer_approved)
-      setData(prev => {
-        if (!prev) return prev
-        return {
-          ...prev,
-          repairItems: prev.repairItems.map(item =>
-            item.id === repairItemId
-              ? {
-                  ...item,
-                  is_approved: false,
-                  authorization: {
-                    repair_item_id: repairItemId,
-                    decision: 'declined',
-                    decided_at: new Date().toISOString(),
-                    signature_data: null
-                  }
-                }
-              : item
-          )
-        }
-      })
-    } catch (err) {
-      alert('Failed to save. Please try again.')
-    } finally {
-      setSaving(null)
-    }
-  }
 
   // Initialize selected options when data loads (default to recommended or first option)
   useEffect(() => {
@@ -579,12 +490,7 @@ export default function CustomerPortal() {
     )
   }
 
-  const { healthCheck, vehicle, customer, site, repairItems, checkResults, newRepairItems, hasNewRepairItems } = data
-
-  // ===== LEGACY REPAIR ITEMS =====
-  // Separate items by RAG status
-  const urgentItems = repairItems.filter(item => item.rag_status === 'red')
-  const advisoryItems = repairItems.filter(item => item.rag_status === 'amber')
+  const { healthCheck, vehicle, customer, site, checkResults, newRepairItems, hasNewRepairItems } = data
 
   // Get all photos from check results
   const allPhotos = checkResults
@@ -595,14 +501,10 @@ export default function CustomerPortal() {
       ragStatus: r.rag_status
     })))
 
-  // Legacy repair items totals
-  const approvedItems = repairItems.filter(item => item.authorization?.decision === 'approved')
-  const approvedTotal = approvedItems.reduce((sum, item) => sum + item.total_price, 0)
-  const pendingItems = repairItems.filter(item => !item.authorization)
-  const allLegacyActioned = pendingItems.length === 0 && repairItems.length > 0
-  const hasLegacyApprovedItems = approvedItems.length > 0
+  // ===== NEW REPAIR ITEMS (Phase 6+) - Categorized by RAG status =====
+  const urgentNewItems = (newRepairItems || []).filter(item => item.ragStatus === 'red')
+  const advisoryNewItems = (newRepairItems || []).filter(item => item.ragStatus === 'amber')
 
-  // ===== NEW REPAIR ITEMS (Phase 6+) =====
   const approvedNewItems = (newRepairItems || []).filter(item => item.customerApproved === true)
   const declinedNewItems = (newRepairItems || []).filter(item => item.customerApproved === false)
   const pendingNewItems = (newRepairItems || []).filter(item => item.customerApproved === null)
@@ -700,7 +602,7 @@ export default function CustomerPortal() {
         </div>
 
         {/* Urgent Items Section */}
-        {urgentItems.length > 0 && (
+        {urgentNewItems.length > 0 && (
           <div className="bg-white shadow-sm border border-gray-200">
             <button
               onClick={() => toggleSection('urgent')}
@@ -711,7 +613,7 @@ export default function CustomerPortal() {
                   <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                 </svg>
                 <span className="font-semibold">Urgent Attention Required</span>
-                <span className="bg-white bg-opacity-20 px-2 py-0.5 text-sm">{urgentItems.length}</span>
+                <span className="bg-white bg-opacity-20 px-2 py-0.5 text-sm">{urgentNewItems.length}</span>
               </div>
               <svg className={`w-5 h-5 transition-transform ${expandedSections.has('urgent') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -719,15 +621,15 @@ export default function CustomerPortal() {
             </button>
             {expandedSections.has('urgent') && (
               <div className="divide-y divide-gray-200">
-                {urgentItems.map(item => (
-                  <RepairItemCard
+                {urgentNewItems.map(item => (
+                  <NewRepairItemCard
                     key={item.id}
                     item={item}
-                    photos={checkResults.find(r => r.id === item.check_result?.id)?.media || []}
-                    saving={saving === item.id}
-                    onAuthorize={() => handleAuthorize(item.id)}
-                    onDecline={() => handleDecline(item.id)}
-                    onPhotoClick={setSelectedPhoto}
+                    selectedOptionId={selectedOptions[item.id]}
+                    saving={savingNewRepairItem === item.id}
+                    onSelectOption={(optionId) => handleSelectOption(item.id, optionId)}
+                    onApprove={() => handleApproveNewRepairItem(item.id)}
+                    onDecline={() => handleDeclineNewRepairItem(item.id)}
                   />
                 ))}
               </div>
@@ -736,7 +638,7 @@ export default function CustomerPortal() {
         )}
 
         {/* Advisory Items Section */}
-        {advisoryItems.length > 0 && (
+        {advisoryNewItems.length > 0 && (
           <div className="bg-white shadow-sm border border-gray-200">
             <button
               onClick={() => toggleSection('advisory')}
@@ -747,7 +649,7 @@ export default function CustomerPortal() {
                   <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
                 </svg>
                 <span className="font-semibold">Advisory Items</span>
-                <span className="bg-white bg-opacity-20 px-2 py-0.5 text-sm">{advisoryItems.length}</span>
+                <span className="bg-white bg-opacity-20 px-2 py-0.5 text-sm">{advisoryNewItems.length}</span>
               </div>
               <svg className={`w-5 h-5 transition-transform ${expandedSections.has('advisory') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -755,15 +657,15 @@ export default function CustomerPortal() {
             </button>
             {expandedSections.has('advisory') && (
               <div className="divide-y divide-gray-200">
-                {advisoryItems.map(item => (
-                  <RepairItemCard
+                {advisoryNewItems.map(item => (
+                  <NewRepairItemCard
                     key={item.id}
                     item={item}
-                    photos={checkResults.find(r => r.id === item.check_result?.id)?.media || []}
-                    saving={saving === item.id}
-                    onAuthorize={() => handleAuthorize(item.id)}
-                    onDecline={() => handleDecline(item.id)}
-                    onPhotoClick={setSelectedPhoto}
+                    selectedOptionId={selectedOptions[item.id]}
+                    saving={savingNewRepairItem === item.id}
+                    onSelectOption={(optionId) => handleSelectOption(item.id, optionId)}
+                    onApprove={() => handleApproveNewRepairItem(item.id)}
+                    onDecline={() => handleDeclineNewRepairItem(item.id)}
                   />
                 ))}
               </div>
@@ -771,131 +673,92 @@ export default function CustomerPortal() {
           </div>
         )}
 
-        {/* NEW REPAIR ITEMS SECTION (Phase 6+) */}
-        {hasNewRepairItems && (newRepairItems || []).length > 0 && (
-          <div className="bg-white shadow-sm border border-gray-200">
-            <button
-              onClick={() => toggleSection('repairs')}
-              className="w-full px-4 py-3 flex items-center justify-between bg-indigo-600 text-white"
-            >
-              <div className="flex items-center gap-2">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                </svg>
-                <span className="font-semibold">Recommended Repairs</span>
-                <span className="bg-white bg-opacity-20 px-2 py-0.5 text-sm">{(newRepairItems || []).length}</span>
-              </div>
-              <svg className={`w-5 h-5 transition-transform ${expandedSections.has('repairs') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-            {expandedSections.has('repairs') && (
-              <div>
-                {/* Approve All / Decline All buttons */}
-                {pendingNewItems.length > 1 && (
-                  <div className="p-4 border-b border-gray-200 bg-gray-50">
-                    <div className="flex gap-3">
-                      <button
-                        onClick={handleApproveAllNewRepairItems}
-                        disabled={approvingAll || decliningAll}
-                        className="flex-1 py-2 bg-green-600 text-white font-medium text-sm hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
-                        {approvingAll ? (
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          <>
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                            Approve All ({pendingNewItems.length})
-                          </>
-                        )}
-                      </button>
-                      <button
-                        onClick={handleDeclineAllNewRepairItems}
-                        disabled={approvingAll || decliningAll}
-                        className="flex-1 py-2 bg-gray-200 text-gray-700 font-medium text-sm hover:bg-gray-300 disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
-                        {decliningAll ? (
-                          <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          <>
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                            Decline All
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
+        {/* Approve All / Decline All Section - only show if there are pending items */}
+        {pendingNewItems.length > 1 && (
+          <div className="bg-white shadow-sm border border-gray-200 p-4">
+            <div className="flex gap-3">
+              <button
+                onClick={handleApproveAllNewRepairItems}
+                disabled={approvingAll || decliningAll}
+                className="flex-1 py-2 bg-green-600 text-white font-medium text-sm hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {approvingAll ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Approve All ({pendingNewItems.length})
+                  </>
                 )}
-
-                {/* Repair items list */}
-                <div className="divide-y divide-gray-200">
-                  {(newRepairItems || []).map(item => (
-                    <NewRepairItemCard
-                      key={item.id}
-                      item={item}
-                      selectedOptionId={selectedOptions[item.id]}
-                      saving={savingNewRepairItem === item.id}
-                      onSelectOption={(optionId) => handleSelectOption(item.id, optionId)}
-                      onApprove={() => handleApproveNewRepairItem(item.id)}
-                      onDecline={() => handleDeclineNewRepairItem(item.id)}
-                    />
-                  ))}
-                </div>
-
-                {/* Quote Summary */}
-                {(newRepairItems || []).length > 0 && (
-                  <div className="p-4 bg-gray-50 border-t border-gray-200">
-                    <h4 className="font-semibold text-gray-900 mb-3">Quote Summary</h4>
-                    <div className="space-y-2 text-sm">
-                      {pendingNewItems.length > 0 && (
-                        <>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Subtotal (ex VAT)</span>
-                            <span className="font-medium">£{(pendingNewSubtotal + approvedNewSubtotal).toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">VAT (20%)</span>
-                            <span className="font-medium">£{(pendingNewVat + approvedNewVat).toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between text-base font-bold border-t pt-2 mt-2">
-                            <span>Total Inc VAT</span>
-                            <span>£{(pendingNewTotal + approvedNewTotal).toFixed(2)}</span>
-                          </div>
-                        </>
-                      )}
-                      {pendingNewItems.length === 0 && approvedNewItems.length > 0 && (
-                        <>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Items Approved</span>
-                            <span className="font-medium">{approvedNewItems.length}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Items Declined</span>
-                            <span className="font-medium">{declinedNewItems.length}</span>
-                          </div>
-                          <div className="flex justify-between border-t pt-2 mt-2">
-                            <span className="text-gray-600">Subtotal (ex VAT)</span>
-                            <span className="font-medium">£{approvedNewSubtotal.toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">VAT (20%)</span>
-                            <span className="font-medium">£{approvedNewVat.toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between text-base font-bold border-t pt-2 mt-2">
-                            <span>Total to Pay</span>
-                            <span className="text-green-600">£{approvedNewTotal.toFixed(2)}</span>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
+              </button>
+              <button
+                onClick={handleDeclineAllNewRepairItems}
+                disabled={approvingAll || decliningAll}
+                className="flex-1 py-2 bg-gray-200 text-gray-700 font-medium text-sm hover:bg-gray-300 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {decliningAll ? (
+                  <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Decline All
+                  </>
                 )}
-              </div>
-            )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Quote Summary */}
+        {(newRepairItems || []).length > 0 && (
+          <div className="bg-white shadow-sm border border-gray-200 p-4">
+            <h4 className="font-semibold text-gray-900 mb-3">Quote Summary</h4>
+            <div className="space-y-2 text-sm">
+              {pendingNewItems.length > 0 && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Subtotal (ex VAT)</span>
+                    <span className="font-medium">£{(pendingNewSubtotal + approvedNewSubtotal).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">VAT (20%)</span>
+                    <span className="font-medium">£{(pendingNewVat + approvedNewVat).toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-base font-bold border-t pt-2 mt-2">
+                    <span>Total Inc VAT</span>
+                    <span>£{(pendingNewTotal + approvedNewTotal).toFixed(2)}</span>
+                  </div>
+                </>
+              )}
+              {pendingNewItems.length === 0 && approvedNewItems.length > 0 && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Items Approved</span>
+                    <span className="font-medium">{approvedNewItems.length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Items Declined</span>
+                    <span className="font-medium">{declinedNewItems.length}</span>
+                  </div>
+                  <div className="flex justify-between border-t pt-2 mt-2">
+                    <span className="text-gray-600">Subtotal (ex VAT)</span>
+                    <span className="font-medium">£{approvedNewSubtotal.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">VAT (20%)</span>
+                    <span className="font-medium">£{approvedNewVat.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-base font-bold border-t pt-2 mt-2">
+                    <span>Total to Pay</span>
+                    <span className="text-green-600">£{approvedNewTotal.toFixed(2)}</span>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -954,7 +817,7 @@ export default function CustomerPortal() {
         )}
 
         {/* No repair items */}
-        {repairItems.length === 0 && (!hasNewRepairItems || (newRepairItems || []).length === 0) && (
+        {(!hasNewRepairItems || (newRepairItems || []).length === 0) && (
           <div className="bg-white shadow-sm border border-gray-200 p-8 text-center">
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -963,50 +826,6 @@ export default function CustomerPortal() {
             </div>
             <h2 className="text-xl font-bold text-gray-900 mb-2">All Clear!</h2>
             <p className="text-gray-600">Your vehicle passed all inspection points.</p>
-          </div>
-        )}
-
-        {/* Summary & Signature - Legacy repair items */}
-        {hasLegacyApprovedItems && allLegacyActioned && !hasNewRepairItems && !signatureSubmitted && (
-          <div className="bg-white shadow-sm border border-gray-200">
-            <div className="p-4 border-b border-gray-200">
-              <h3 className="font-semibold text-gray-900 mb-3">Summary</h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Items Approved</span>
-                  <span className="font-medium">{approvedItems.length}</span>
-                </div>
-                <div className="flex justify-between text-lg font-bold border-t pt-2">
-                  <span>Total to Pay</span>
-                  <span>£{approvedTotal.toFixed(2)}</span>
-                </div>
-              </div>
-            </div>
-
-            {!showSignature ? (
-              <div className="p-4">
-                <button
-                  onClick={() => setShowSignature(true)}
-                  className="w-full py-4 text-white font-semibold text-lg"
-                  style={{
-                    backgroundColor: 'var(--brand-primary, #3B82F6)'
-                  }}
-                  onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--brand-primary-hover, #2563EB)'}
-                  onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'var(--brand-primary, #3B82F6)'}
-                >
-                  Sign to Confirm
-                </button>
-                <p className="text-center text-xs text-gray-500 mt-2">
-                  By signing, you authorise the work above to be carried out
-                </p>
-              </div>
-            ) : (
-              <SignatureCapture
-                token={token!}
-                onComplete={() => setSignatureSubmitted(true)}
-                onCancel={() => setShowSignature(false)}
-              />
-            )}
           </div>
         )}
 
@@ -1119,177 +938,6 @@ export default function CustomerPortal() {
               <div className="text-center text-white mt-4 text-lg">{selectedPhoto.caption}</div>
             )}
           </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// Helper function to format follow-up recommendation
-function formatFollowUp(days?: number | null, text?: string | null): string | null {
-  if (text) return text
-  if (!days) return null
-  if (days <= 7) return 'Recommend addressing within 1 week'
-  if (days <= 30) return 'Recommend addressing within 1 month'
-  if (days <= 90) return 'Recommend addressing within 3 months'
-  if (days <= 180) return 'Recommend addressing within 6 months'
-  return `Recommend addressing within ${Math.round(days / 30)} months`
-}
-
-// Repair Item Card Component
-function RepairItemCard({
-  item,
-  photos,
-  saving,
-  onAuthorize,
-  onDecline,
-  onPhotoClick
-}: {
-  item: RepairItem
-  photos: Array<{ id: string; url: string; thumbnail_url: string | null; caption: string | null }>
-  saving: boolean
-  onAuthorize: () => void
-  onDecline: () => void
-  onPhotoClick: (photo: { url: string; caption: string | null }) => void
-}) {
-  const isAuthorized = item.authorization?.decision === 'approved'
-  const isDeclined = item.authorization?.decision === 'declined'
-  const hasDecision = isAuthorized || isDeclined
-
-  // Get reasons from the item
-  const reasons = item.reasons || []
-  const hasReasons = reasons.length > 0
-  const followUpInfo = reasons.find(r => r.followUpDays || r.followUpText)
-
-  return (
-    <div className="p-4">
-      <div className="flex justify-between items-start gap-4 mb-3">
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h4 className="font-semibold text-gray-900">{item.title}</h4>
-            {item.is_mot_failure && (
-              <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium">
-                MOT FAIL
-              </span>
-            )}
-          </div>
-
-          {/* Show reasons with customer descriptions */}
-          {hasReasons ? (
-            <div className="mt-2">
-              {reasons.length > 1 && (
-                <div className="text-sm text-gray-700 mb-1">
-                  {item.rag_status === 'red'
-                    ? 'We identified the following issues:'
-                    : 'We identified the following items to monitor:'}
-                </div>
-              )}
-              <ul className="space-y-1">
-                {reasons.map((reason) => (
-                  <li key={reason.id} className="text-sm text-gray-600 flex gap-2">
-                    {reasons.length > 1 && (
-                      <span className={item.rag_status === 'red' ? 'text-red-400' : 'text-amber-400'}>
-                        &bull;
-                      </span>
-                    )}
-                    <span>{reason.customerDescription || reason.reasonText}</span>
-                  </li>
-                ))}
-              </ul>
-              {followUpInfo && (
-                <div className={`mt-2 text-sm font-medium ${
-                  item.rag_status === 'red' ? 'text-red-600' : 'text-amber-600'
-                }`}>
-                  {formatFollowUp(followUpInfo.followUpDays, followUpInfo.followUpText)}
-                </div>
-              )}
-            </div>
-          ) : item.description && (
-            <p className="text-sm text-gray-600 mt-1">{item.description}</p>
-          )}
-        </div>
-        <div className="text-right flex-shrink-0">
-          <div className="font-bold text-gray-900 text-lg">£{item.total_price.toFixed(2)}</div>
-          <div className="text-xs text-gray-500">
-            Parts £{item.parts_cost.toFixed(2)} + Labour £{item.labor_cost.toFixed(2)}
-          </div>
-        </div>
-      </div>
-
-      {/* Photos */}
-      {photos.length > 0 && (
-        <div className="flex gap-2 mb-3 overflow-x-auto pb-2">
-          {photos.map(photo => (
-            <button
-              key={photo.id}
-              onClick={() => onPhotoClick({ url: photo.url, caption: item.title })}
-              className="flex-shrink-0 w-20 h-20 bg-gray-100 overflow-hidden"
-            >
-              <img
-                src={photo.thumbnail_url || photo.url}
-                alt=""
-                className="w-full h-full object-cover"
-              />
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Action Buttons or Status */}
-      {hasDecision ? (
-        <div className={`flex items-center gap-2 p-3 ${
-          isAuthorized ? 'bg-green-50 border border-green-200' : 'bg-gray-100 border border-gray-200'
-        }`}>
-          {isAuthorized ? (
-            <>
-              <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-              </svg>
-              <span className="text-green-700 font-medium">Approved</span>
-            </>
-          ) : (
-            <>
-              <svg className="w-5 h-5 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-              </svg>
-              <span className="text-gray-600 font-medium">Declined</span>
-            </>
-          )}
-        </div>
-      ) : (
-        <div className="flex gap-3">
-          <button
-            onClick={onAuthorize}
-            disabled={saving}
-            className="flex-1 py-3 bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {saving ? (
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <>
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                Approve
-              </>
-            )}
-          </button>
-          <button
-            onClick={onDecline}
-            disabled={saving}
-            className="flex-1 py-3 bg-gray-200 text-gray-700 font-semibold hover:bg-gray-300 disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {saving ? (
-              <div className="w-5 h-5 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <>
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-                Decline
-              </>
-            )}
-          </button>
         </div>
       )}
     </div>
@@ -1627,12 +1275,17 @@ function NewRepairItemCard({
                 </div>
                 <div className="space-y-1">
                   {item.children.map((child, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm">
-                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                    <div key={i} className="flex items-start gap-2 text-sm">
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 mt-1 ${
                         child.ragStatus === 'red' ? 'bg-red-500' :
                         child.ragStatus === 'amber' ? 'bg-amber-500' : 'bg-gray-400'
                       }`} />
-                      <span className="text-gray-700">{child.name}</span>
+                      <div>
+                        <span className="text-gray-700">{child.name}</span>
+                        {child.vhcReason && (
+                          <span className="text-gray-500 ml-1">- {child.vhcReason}</span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

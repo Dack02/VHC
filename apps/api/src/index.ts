@@ -46,6 +46,7 @@ import declinedReasons from './routes/declined-reasons.js'
 import deletedReasons from './routes/deleted-reasons.js'
 import supplierTypes from './routes/supplier-types.js'
 import checkinSettings from './routes/checkin-settings.js'
+import messageTemplates from './routes/message-templates.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
@@ -136,6 +137,9 @@ app.route('/api/v1/admin/reason-types', adminReasonTypes)
 
 // Organization notification settings (extends organizations routes)
 app.route('/api/v1/organizations', orgNotificationSettings)
+
+// Message templates (extends organizations routes)
+app.route('/api/v1/organizations', messageTemplates)
 
 // Org Admin routes (settings, sites with limits, users with limits, subscription view)
 app.route('/api/v1/organizations', orgAdmin)

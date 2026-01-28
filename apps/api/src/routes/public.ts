@@ -198,7 +198,6 @@ publicRoutes.get('/vhc/:token', async (c) => {
         storage_path,
         thumbnail_path,
         caption,
-        annotation_data,
         sort_order,
         include_in_report
       )
@@ -323,7 +322,45 @@ publicRoutes.get('/vhc/:token', async (c) => {
   const childrenByParentId = new Map<string, Array<{
     name: string
     ragStatus: 'red' | 'amber' | null
+    vhcReason?: string | null
   }>>()
+
+  // Collect all child check result IDs to fetch their reasons
+  const childCheckResultIds: string[] = []
+  for (const child of childItemsRaw || []) {
+    const childCheckResults = child.check_results || []
+    for (const link of childCheckResults) {
+      const cr = link?.check_result as { id?: string } | null
+      if (cr?.id) {
+        childCheckResultIds.push(cr.id)
+      }
+    }
+  }
+
+  // Fetch reasons for child check results
+  const childReasonsByCheckResult: Record<string, string | null> = {}
+  if (childCheckResultIds.length > 0) {
+    const { data: childReasons } = await supabaseAdmin
+      .from('check_result_reasons')
+      .select(`
+        check_result_id,
+        customer_description_override,
+        reason:item_reasons(
+          reason_text,
+          customer_description
+        )
+      `)
+      .in('check_result_id', childCheckResultIds)
+
+    // Build lookup: check_result_id -> first reason's customerDescription
+    for (const crr of childReasons || []) {
+      if (!childReasonsByCheckResult[crr.check_result_id]) {
+        const reason = crr.reason as { reason_text?: string; customer_description?: string } | null
+        childReasonsByCheckResult[crr.check_result_id] =
+          crr.customer_description_override || reason?.customer_description || reason?.reason_text || null
+      }
+    }
+  }
 
   for (const child of childItemsRaw || []) {
     const parentId = child.parent_repair_item_id
@@ -335,21 +372,31 @@ publicRoutes.get('/vhc/:token', async (c) => {
 
     // Derive rag_status from child's check results (red > amber)
     let childRagStatus: 'red' | 'amber' | null = null
+    let childVhcReason: string | null = null
     const childCheckResults = child.check_results || []
     for (const link of childCheckResults) {
-      const cr = link?.check_result as { rag_status?: string } | null
+      const cr = link?.check_result as { id?: string; rag_status?: string } | null
       if (cr?.rag_status === 'red') {
         childRagStatus = 'red'
+        // Get VHC reason for this check result
+        if (cr.id && childReasonsByCheckResult[cr.id] && !childVhcReason) {
+          childVhcReason = childReasonsByCheckResult[cr.id]
+        }
         break
       }
       if (cr?.rag_status === 'amber' && !childRagStatus) {
         childRagStatus = 'amber'
       }
+      // Capture the first VHC reason we find
+      if (cr?.id && childReasonsByCheckResult[cr.id] && !childVhcReason) {
+        childVhcReason = childReasonsByCheckResult[cr.id]
+      }
     }
 
     childrenByParentId.get(parentId)!.push({
       name: child.name,
-      ragStatus: childRagStatus
+      ragStatus: childRagStatus,
+      vhcReason: childVhcReason
     })
   }
 
@@ -442,11 +489,40 @@ publicRoutes.get('/vhc/:token', async (c) => {
     // Get children for groups
     const children = item.is_group ? (childrenByParentId.get(item.id) || []) : undefined
 
+    // Derive RAG status
+    let derivedRagStatus: 'red' | 'amber' | null = null
+
+    if (item.is_group && children && children.length > 0) {
+      // For groups, derive from children's ragStatus
+      for (const child of children) {
+        if (child.ragStatus === 'red') {
+          derivedRagStatus = 'red'
+          break
+        }
+        if (child.ragStatus === 'amber' && !derivedRagStatus) {
+          derivedRagStatus = 'amber'
+        }
+      }
+    } else {
+      // For individual items, derive from linked check results
+      for (const crId of linkedCrIds) {
+        const cr = (checkResults || []).find(r => r.id === crId)
+        if (cr?.rag_status === 'red') {
+          derivedRagStatus = 'red'
+          break
+        }
+        if (cr?.rag_status === 'amber' && !derivedRagStatus) {
+          derivedRagStatus = 'amber'
+        }
+      }
+    }
+
     return {
       id: item.id,
       name: item.name,
       description: item.description,
       isGroup: item.is_group,
+      ragStatus: derivedRagStatus,
       labourTotal: item.labour_total || 0,
       partsTotal: item.parts_total || 0,
       subtotal: item.subtotal || 0,
@@ -529,7 +605,6 @@ publicRoutes.get('/vhc/:token', async (c) => {
               url,
               thumbnail_url: url ? `${url}?width=200&height=200` : null,
               caption: m.caption,
-              annotation_data: m.annotation_data,
               sort_order: m.sort_order
             }
           })

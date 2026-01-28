@@ -39,6 +39,7 @@ import DeclinedReasons from './pages/Settings/DeclinedReasons'
 import DeletedReasons from './pages/Settings/DeletedReasons'
 import WorkflowSettings from './pages/Settings/WorkflowSettings'
 import MriItemsSettings from './pages/Settings/MriItemsSettings'
+import MessageTemplates from './pages/Settings/MessageTemplates'
 import CustomerPortal from './pages/CustomerPortal/CustomerPortal'
 import AdminLogin from './pages/Admin/AdminLogin'
 import AdminDashboard from './pages/Admin/AdminDashboard'
@@ -110,6 +111,7 @@ function App() {
                         <Route path="/settings/thresholds" element={<InspectionThresholds />} />
                         <Route path="/settings/integrations" element={<DMSIntegration />} />
                         <Route path="/settings/notifications" element={<NotificationSettings />} />
+                        <Route path="/settings/message-templates" element={<MessageTemplates />} />
                         <Route path="/settings/organization" element={<OrganizationSettings />} />
                         <Route path="/settings/subscription" element={<Subscription />} />
                         <Route path="/settings/reasons" element={<ReasonLibrary />} />

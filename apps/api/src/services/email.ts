@@ -6,6 +6,14 @@
 import { Resend } from 'resend'
 import { getEmailCredentials, EmailCredentials } from './credentials.js'
 import { supabaseAdmin } from '../lib/supabase.js'
+import {
+  getOrganizationTemplate,
+  renderTemplate,
+  renderEmailHtml,
+  renderEmailText,
+  TemplateContext
+} from './template-renderer.js'
+import type { TemplateType } from './default-templates.js'
 
 export interface OrganizationBranding {
   logoUrl?: string | null
@@ -233,162 +241,54 @@ export async function sendHealthCheckReadyEmail(
     ? await getOrganizationBranding(organizationId)
     : { primaryColor: '#3B82F6', organizationName: dealershipName }
 
-  const primaryColor = branding.primaryColor || '#3B82F6'
+  // Get customizable template
+  const template = await getOrganizationTemplate(
+    organizationId,
+    'health_check_ready',
+    'email'
+  )
 
-  const subject = `Your Vehicle Health Check is Ready - ${vehicleReg}`
+  // Build context for template rendering
+  const firstName = customerName.split(' ')[0]
+  const context: TemplateContext = {
+    customerName,
+    customerFirstName: firstName,
+    vehicleReg,
+    vehicleMakeModel,
+    publicUrl,
+    dealershipName: branding.organizationName || dealershipName,
+    dealershipPhone,
+    redCount,
+    amberCount,
+    greenCount,
+    quoteTotalIncVat,
+    repairItemsCount: repairItems?.length || 0
+  }
 
-  // Build header with logo or text
-  const headerContent = branding.logoUrl
-    ? `<img src="${branding.logoUrl}" alt="${branding.organizationName}" style="max-height: 48px; max-width: 200px; margin-bottom: 8px;">`
-    : `<h1 style="color: #ffffff; margin: 0; font-size: 24px;">Vehicle Health Check</h1>`
+  // Render subject with placeholders
+  const subject = renderTemplate(template.emailSubject || '', context)
 
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vehicle Health Check</title>
-</head>
-<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
-  <table cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-    <!-- Header -->
-    <tr>
-      <td style="background-color: ${primaryColor}; padding: 24px; text-align: center;">
-        ${headerContent}
-      </td>
-    </tr>
+  // Render full HTML email using template blocks
+  const html = renderEmailHtml({
+    template,
+    context,
+    branding,
+    showRagSummary: true,
+    repairItems,
+    quoteTotalIncVat,
+    customMessage,
+    expiryText: 'This link will expire in 72 hours. Please respond at your earliest convenience.'
+  })
 
-    <!-- Content -->
-    <tr>
-      <td style="padding: 32px 24px;">
-        <p style="margin: 0 0 16px; color: #333; font-size: 16px;">Hi ${customerName},</p>
-
-        <p style="margin: 0 0 24px; color: #333; font-size: 16px;">
-          Your vehicle health check for <strong>${vehicleReg}</strong> (${vehicleMakeModel}) is now ready for your review.
-        </p>
-
-        ${customMessage ? `<p style="margin: 0 0 24px; color: #333; font-size: 16px; padding: 16px; background-color: #f8f8f8; border-left: 4px solid ${primaryColor};">${customMessage}</p>` : ''}
-
-        <!-- Summary -->
-        <table cellpadding="0" cellspacing="0" width="100%" style="margin: 0 0 24px;">
-          <tr>
-            <td width="33%" style="text-align: center; padding: 16px; background-color: #fee2e2;">
-              <div style="font-size: 32px; font-weight: bold; color: #dc2626;">${redCount}</div>
-              <div style="font-size: 12px; color: #991b1b;">URGENT</div>
-            </td>
-            <td width="33%" style="text-align: center; padding: 16px; background-color: #fef9c3;">
-              <div style="font-size: 32px; font-weight: bold; color: #ca8a04;">${amberCount}</div>
-              <div style="font-size: 12px; color: #854d0e;">ADVISORY</div>
-            </td>
-            <td width="33%" style="text-align: center; padding: 16px; background-color: #dcfce7;">
-              <div style="font-size: 32px; font-weight: bold; color: #16a34a;">${greenCount}</div>
-              <div style="font-size: 12px; color: #166534;">PASSED</div>
-            </td>
-          </tr>
-        </table>
-
-        ${repairItems && repairItems.length > 0 ? `
-        <!-- Recommended Work -->
-        <div style="margin: 0 0 24px; background-color: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 8px; overflow: hidden;">
-          <div style="padding: 12px 16px; border-bottom: 1px solid #ddd6fe;">
-            <h3 style="margin: 0; color: #7c3aed; font-size: 16px;">Recommended Work</h3>
-          </div>
-          <div style="padding: 16px;">
-            ${repairItems.map(item => `
-              <div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #e9e5f5;">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                  <strong style="color: #1f2937;">${item.name}</strong>
-                  <span style="font-weight: 600; color: #7c3aed;">£${item.totalIncVat.toFixed(2)}</span>
-                </div>
-                ${item.linkedCheckResults.length > 0 ? `
-                  <div style="font-size: 12px; color: #6b7280; margin-bottom: 4px;">
-                    Related to: ${item.linkedCheckResults.join(', ')}
-                  </div>
-                ` : ''}
-                ${item.options.length > 0 ? `
-                  <div style="font-size: 12px; color: #4b5563;">
-                    ${item.options.length} option${item.options.length > 1 ? 's' : ''} available
-                    ${item.options.find(o => o.isRecommended) ? ` • Recommended: ${item.options.find(o => o.isRecommended)?.name}` : ''}
-                  </div>
-                ` : ''}
-              </div>
-            `).join('')}
-            ${quoteTotalIncVat !== undefined ? `
-              <div style="margin-top: 16px; padding-top: 16px; border-top: 2px solid #7c3aed;">
-                <div style="display: flex; justify-content: space-between;">
-                  <strong style="color: #1f2937; font-size: 16px;">Quote Total (Inc VAT)</strong>
-                  <strong style="color: #7c3aed; font-size: 18px;">£${quoteTotalIncVat.toFixed(2)}</strong>
-                </div>
-              </div>
-            ` : ''}
-          </div>
-        </div>
-        ` : ''}
-
-        <!-- CTA Button -->
-        <table cellpadding="0" cellspacing="0" width="100%" style="margin: 0 0 24px;">
-          <tr>
-            <td style="text-align: center;">
-              <a href="${publicUrl}" style="display: inline-block; background-color: ${primaryColor}; color: #ffffff; text-decoration: none; padding: 16px 32px; font-size: 18px; font-weight: bold;">
-                View Health Check
-              </a>
-            </td>
-          </tr>
-        </table>
-
-        <p style="margin: 0 0 16px; color: #666; font-size: 14px;">
-          Please review the findings and authorize any necessary repairs. You can approve or decline each item individually.
-        </p>
-
-        <p style="margin: 0; color: #666; font-size: 14px;">
-          If you have any questions, please call us at <strong>${dealershipPhone}</strong>.
-        </p>
-      </td>
-    </tr>
-
-    <!-- Footer -->
-    <tr>
-      <td style="background-color: #f4f4f4; padding: 24px; text-align: center;">
-        <p style="margin: 0 0 8px; color: #666; font-size: 14px;">${branding.organizationName || dealershipName}</p>
-        <p style="margin: 0; color: #999; font-size: 12px;">
-          This link will expire in 72 hours. Please respond at your earliest convenience.
-        </p>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-`
-
-  // Build repair items text section
-  const repairItemsText = repairItems && repairItems.length > 0
-    ? `
-Recommended Work:
-${repairItems.map(item => `- ${item.name}: £${item.totalIncVat.toFixed(2)}${item.options.length > 0 ? ` (${item.options.length} option${item.options.length > 1 ? 's' : ''} available)` : ''}`).join('\n')}
-${quoteTotalIncVat !== undefined ? `\nQuote Total (Inc VAT): £${quoteTotalIncVat.toFixed(2)}\n` : ''}
-`
-    : ''
-
-  const text = `
-Hi ${customerName},
-
-Your vehicle health check for ${vehicleReg} (${vehicleMakeModel}) is now ready for your review.
-
-${customMessage ? `Message from the dealership: ${customMessage}\n` : ''}
-Summary:
-- ${redCount} Urgent items requiring immediate attention
-- ${amberCount} Advisory items for your consideration
-- ${greenCount} Items passed inspection
-${repairItemsText}
-View your health check: ${publicUrl}
-
-Please review the findings and authorize any necessary repairs.
-
-If you have any questions, please call us at ${dealershipPhone}.
-
-${branding.organizationName || dealershipName}
-`
+  // Render plain text version
+  const text = renderEmailText({
+    template,
+    context,
+    branding,
+    showRagSummary: true,
+    repairItems,
+    quoteTotalIncVat
+  })
 
   return sendEmail({ to, subject, html, text, organizationId })
 }
@@ -411,74 +311,53 @@ export async function sendReminderEmail(
     ? await getOrganizationBranding(organizationId)
     : { primaryColor: '#3B82F6', organizationName: dealershipName }
 
-  const primaryColor = branding.primaryColor || '#3B82F6'
-
+  // Use urgent template if less than 24 hours remaining
   const isUrgent = hoursRemaining && hoursRemaining <= 24
-  const subject = isUrgent
-    ? `Urgent: Your Health Check Link Expires Soon - ${vehicleReg}`
-    : `Reminder: Your Vehicle Health Check Awaits - ${vehicleReg}`
+  const templateType: TemplateType = isUrgent ? 'reminder_urgent' : 'reminder'
 
-  // Build header with logo or text
-  const headerContent = branding.logoUrl
-    ? `<img src="${branding.logoUrl}" alt="${branding.organizationName}" style="max-height: 48px; max-width: 200px; margin-bottom: 8px;">`
-    : `<h1 style="color: #ffffff; margin: 0; font-size: 24px;">${isUrgent ? 'Action Required' : 'Reminder'}</h1>`
+  // Get customizable template
+  const template = await getOrganizationTemplate(organizationId, templateType, 'email')
 
-  const headerBg = isUrgent ? '#dc2626' : (branding.logoUrl ? primaryColor : '#ca8a04')
-  const buttonBg = isUrgent ? '#dc2626' : primaryColor
+  // Build context for template rendering
+  const firstName = customerName.split(' ')[0]
+  const context: TemplateContext = {
+    customerName,
+    customerFirstName: firstName,
+    vehicleReg,
+    vehicleMakeModel: '',
+    publicUrl,
+    dealershipName: branding.organizationName || dealershipName,
+    dealershipPhone,
+    hoursRemaining: hoursRemaining || 0
+  }
 
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-</head>
-<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
-  <table cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-    <tr>
-      <td style="background-color: ${headerBg}; padding: 24px; text-align: center;">
-        ${headerContent}
-      </td>
-    </tr>
+  // Render subject with placeholders
+  const subject = renderTemplate(template.emailSubject || '', context)
 
-    <tr>
-      <td style="padding: 32px 24px;">
-        <p style="margin: 0 0 16px; color: #333; font-size: 16px;">Hi ${customerName},</p>
+  // Header color: red for urgent, otherwise primary
+  const headerBackgroundColor = isUrgent ? '#dc2626' : undefined
 
-        <p style="margin: 0 0 24px; color: #333; font-size: 16px;">
-          ${isUrgent
-            ? `Your vehicle health check for <strong>${vehicleReg}</strong> will expire in ${hoursRemaining} hours. Please review and respond before the link expires.`
-            : `We noticed you haven't had a chance to review your vehicle health check for <strong>${vehicleReg}</strong> yet. Please take a moment to review the findings.`
-          }
-        </p>
+  // Render full HTML email using template blocks
+  const html = renderEmailHtml({
+    template,
+    context,
+    branding,
+    showRagSummary: false,
+    headerBackgroundColor,
+    expiryText: isUrgent
+      ? `Your link expires in ${hoursRemaining} hours.`
+      : 'Please respond at your earliest convenience.'
+  })
 
-        <table cellpadding="0" cellspacing="0" width="100%" style="margin: 0 0 24px;">
-          <tr>
-            <td style="text-align: center;">
-              <a href="${publicUrl}" style="display: inline-block; background-color: ${buttonBg}; color: #ffffff; text-decoration: none; padding: 16px 32px; font-size: 18px; font-weight: bold;">
-                View Health Check Now
-              </a>
-            </td>
-          </tr>
-        </table>
+  // Render plain text version
+  const text = renderEmailText({
+    template,
+    context,
+    branding,
+    showRagSummary: false
+  })
 
-        <p style="margin: 0; color: #666; font-size: 14px;">
-          Questions? Call us at <strong>${dealershipPhone}</strong>.
-        </p>
-      </td>
-    </tr>
-
-    <tr>
-      <td style="background-color: #f4f4f4; padding: 24px; text-align: center;">
-        <p style="margin: 0; color: #666; font-size: 14px;">${branding.organizationName || dealershipName}</p>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-`
-
-  return sendEmail({ to, subject, html, organizationId })
+  return sendEmail({ to, subject, html, text, organizationId })
 }
 
 /**
@@ -499,86 +378,53 @@ export async function sendAuthorizationConfirmationEmail(
     ? await getOrganizationBranding(organizationId)
     : { primaryColor: '#3B82F6', organizationName: dealershipName }
 
-  const subject = `Work Authorized - ${vehicleReg}`
+  // Get customizable template
+  const template = await getOrganizationTemplate(
+    organizationId,
+    'authorization_confirmation',
+    'email'
+  )
 
-  const itemsHtml = authorizedItems
-    .map(
-      (item) => `
-      <tr>
-        <td style="padding: 8px; border-bottom: 1px solid #eee;">${item.title}</td>
-        <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">£${item.price.toFixed(2)}</td>
-      </tr>
-    `
-    )
-    .join('')
+  // Build context for template rendering
+  const firstName = customerName.split(' ')[0]
+  const context: TemplateContext = {
+    customerName,
+    customerFirstName: firstName,
+    vehicleReg,
+    vehicleMakeModel: '',
+    publicUrl: '',
+    dealershipName: branding.organizationName || dealershipName,
+    dealershipPhone,
+    approvedCount: authorizedItems.length,
+    authorizedTotal: totalAuthorized
+  }
 
-  // Build header with logo or text
-  const headerContent = branding.logoUrl
-    ? `<img src="${branding.logoUrl}" alt="${branding.organizationName}" style="max-height: 48px; max-width: 200px; margin-bottom: 8px;">`
-    : `<h1 style="color: #ffffff; margin: 0; font-size: 24px;">Work Authorized</h1>`
+  // Render subject with placeholders
+  const subject = renderTemplate(template.emailSubject || '', context)
 
-  const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-</head>
-<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
-  <table cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-    <tr>
-      <td style="background-color: #16a34a; padding: 24px; text-align: center;">
-        ${headerContent}
-      </td>
-    </tr>
+  // Render full HTML email using template blocks - green header for confirmation
+  const html = renderEmailHtml({
+    template,
+    context,
+    branding,
+    showRagSummary: false,
+    headerBackgroundColor: '#16a34a', // Green for success
+    authorizedItems,
+    totalAuthorized,
+    expiryText: ''
+  })
 
-    <tr>
-      <td style="padding: 32px 24px;">
-        <p style="margin: 0 0 16px; color: #333; font-size: 16px;">Hi ${customerName},</p>
+  // Render plain text version
+  const text = renderEmailText({
+    template,
+    context,
+    branding,
+    showRagSummary: false,
+    authorizedItems,
+    totalAuthorized
+  })
 
-        <p style="margin: 0 0 24px; color: #333; font-size: 16px;">
-          Thank you for authorizing the following work on your vehicle <strong>${vehicleReg}</strong>:
-        </p>
-
-        <table cellpadding="0" cellspacing="0" width="100%" style="margin: 0 0 24px; border: 1px solid #eee;">
-          <thead>
-            <tr style="background-color: #f8f8f8;">
-              <th style="padding: 12px 8px; text-align: left; font-weight: bold;">Item</th>
-              <th style="padding: 12px 8px; text-align: right; font-weight: bold;">Price</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${itemsHtml}
-          </tbody>
-          <tfoot>
-            <tr style="background-color: #f8f8f8;">
-              <td style="padding: 12px 8px; font-weight: bold;">Total Authorized</td>
-              <td style="padding: 12px 8px; text-align: right; font-weight: bold; font-size: 18px;">£${totalAuthorized.toFixed(2)}</td>
-            </tr>
-          </tfoot>
-        </table>
-
-        <p style="margin: 0 0 16px; color: #333; font-size: 16px;">
-          We will begin work shortly and keep you updated on progress. If you have any questions, please don't hesitate to contact us.
-        </p>
-
-        <p style="margin: 0; color: #666; font-size: 14px;">
-          Call us: <strong>${dealershipPhone}</strong>
-        </p>
-      </td>
-    </tr>
-
-    <tr>
-      <td style="background-color: #f4f4f4; padding: 24px; text-align: center;">
-        <p style="margin: 0; color: #666; font-size: 14px;">${branding.organizationName || dealershipName}</p>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
-`
-
-  return sendEmail({ to, subject, html, organizationId })
+  return sendEmail({ to, subject, html, text, organizationId })
 }
 
 /**

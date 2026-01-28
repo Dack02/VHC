@@ -15,6 +15,8 @@ export function PreCheck() {
   const [error, setError] = useState<string | null>(null)
   const [mileage, setMileage] = useState('')
   const [starting, setStarting] = useState(false)
+  const [mriRequired, setMriRequired] = useState(false)
+  const [mriComplete, setMriComplete] = useState(true)
 
   useEffect(() => {
     fetchJob()
@@ -30,16 +32,39 @@ export function PreCheck() {
       )
       setJob(data.healthCheck)
 
+      // Check MRI status to determine if technician can start
+      let isMriRequired = false
+      let isMriComplete = true
+      try {
+        const mriData = await api<{ isMriComplete: boolean; progress: { total: number } }>(
+          `/api/v1/health-checks/${id}/mri-results`,
+          { token: session.access_token }
+        )
+        const hasMriItems = (mriData.progress?.total || 0) > 0
+        if (hasMriItems) {
+          isMriRequired = true
+          isMriComplete = mriData.isMriComplete
+          setMriRequired(true)
+          setMriComplete(mriData.isMriComplete)
+        }
+      } catch {
+        // MRI endpoint failed - assume not required
+      }
+
       // Check if this is a paused job that already has mileage - skip straight to inspection
+      // Only auto-resume if MRI is complete (or not required)
       const existingMileage = data.healthCheck.mileage_in
       if (data.healthCheck.status === 'paused' && existingMileage) {
-        // Resume directly - clock in and go to inspection
-        await api(`/api/v1/health-checks/${id}/clock-in`, {
-          method: 'POST',
-          token: session.access_token
-        })
-        navigate(`/job/${id}/inspection`, { replace: true })
-        return
+        if (!isMriRequired || isMriComplete) {
+          // Resume directly - clock in and go to inspection
+          await api(`/api/v1/health-checks/${id}/clock-in`, {
+            method: 'POST',
+            token: session.access_token
+          })
+          navigate(`/job/${id}/inspection`, { replace: true })
+          return
+        }
+        // MRI required but not complete - show page with warning
       }
 
       // Pre-fill mileage: first from health check, then from vehicle's last known
@@ -181,6 +206,23 @@ export function PreCheck() {
           </Card>
         )}
 
+        {/* MRI Not Complete Warning */}
+        {mriRequired && !mriComplete && (
+          <Card className="border-l-4 border-rag-amber bg-amber-50">
+            <CardContent>
+              <div className="flex items-start gap-3">
+                <span className="text-2xl text-rag-amber">&#9888;</span>
+                <div>
+                  <p className="font-medium text-gray-900">MRI Scan Required</p>
+                  <p className="text-sm text-gray-600">
+                    The service advisor must complete the MRI scan before you can start this inspection.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Mileage input */}
         <Card>
           <CardHeader
@@ -214,9 +256,15 @@ export function PreCheck() {
           size="lg"
           onClick={handleStartInspection}
           loading={starting}
+          disabled={mriRequired && !mriComplete}
         >
           {job.status === 'paused' ? 'Resume Inspection' : 'Start Inspection'}
         </Button>
+        {mriRequired && !mriComplete && (
+          <p className="text-center text-sm text-gray-500 mt-2">
+            Waiting for MRI scan completion
+          </p>
+        )}
       </footer>
     </div>
   )

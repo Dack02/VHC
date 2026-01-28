@@ -16,6 +16,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useAuth } from '../../../contexts/AuthContext'
 import { api, NewRepairItem, RepairPart, Supplier, PricingSettings, RepairItemChild } from '../../../lib/api'
 import { Tooltip } from '../../../components/ui/Tooltip'
+import { MarginCalculatorPopover } from '../../../components/MarginCalculatorPopover'
 
 interface PartsTabProps {
   healthCheckId: string
@@ -1294,6 +1295,8 @@ function MultiPartRow({
   const saveTriggeredRef = useRef(false)
   const [showAllocationMenu, setShowAllocationMenu] = useState(false)
   const [showQuickAddSupplierModal, setShowQuickAddSupplierModal] = useState(false)
+  const [showMarginCalc, setShowMarginCalc] = useState(false)
+  const marginCellRef = useRef<HTMLTableCellElement>(null)
 
   // Auto-calculate sell price when cost changes (if new part)
   useEffect(() => {
@@ -1561,9 +1564,31 @@ function MultiPartRow({
         />
       </td>
 
-      {/* Margin % */}
-      <td className="px-2 py-2 text-sm text-gray-600 text-right">
+      {/* Margin % - Clickable to open calculator */}
+      <td
+        ref={marginCellRef}
+        className={`px-2 py-2 text-sm text-right relative ${
+          costNum > 0
+            ? 'text-primary cursor-pointer hover:bg-primary/5 hover:underline'
+            : 'text-gray-600'
+        }`}
+        onClick={() => costNum > 0 && setShowMarginCalc(true)}
+        title={costNum > 0 ? 'Click to adjust margin' : undefined}
+      >
         {costNum > 0 && sellNum > 0 ? `${marginPercent.toFixed(1)}%` : '—'}
+        {showMarginCalc && costNum > 0 && (
+          <MarginCalculatorPopover
+            costPrice={costNum}
+            currentSellPrice={sellNum}
+            defaultMargin={defaultMargin}
+            anchorEl={marginCellRef.current}
+            onApply={(newSellPrice) => {
+              handleChange('sellPrice', newSellPrice.toFixed(2))
+              setShowMarginCalc(false)
+            }}
+            onClose={() => setShowMarginCalc(false)}
+          />
+        )}
       </td>
 
       {/* Total */}

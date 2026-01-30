@@ -405,8 +405,6 @@ onboarding.post('/invite-team', async (c) => {
       })
 
       if (linkData?.properties?.action_link) {
-        const webUrl = process.env.WEB_URL || process.env.PUBLIC_APP_URL || 'http://localhost:5181'
-        // Replace the default Supabase redirect with our app's login page
         const resetLink = linkData.properties.action_link
 
         const roleLabel = role.replace('_', ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())

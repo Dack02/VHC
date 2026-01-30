@@ -754,13 +754,16 @@ Follow these steps in order.
 
 ### Phase 1: Code Changes
 
-- [ ] Apply WebSocket CORS fix (Section 2.1)
-- [ ] Add `serve` dependency at root level (Section 2.2)
-- [ ] Update all `railway.toml` files (Section 2.3)
-- [ ] Create `apps/api/nixpacks.toml` for Chromium (Section 2.3)
-- [ ] Remove hardcoded PORT from railway.toml env sections (Section 2.4)
-- [ ] Update `.env.example` files (Section 2.5)
-- [ ] Create GitHub Actions workflow files (Section 5)
+- [x] Apply WebSocket CORS fix (Section 2.1)
+- [x] Add `serve` dependency at root level (Section 2.2)
+- [x] Update all `railway.toml` files (Section 2.3)
+- [x] Create `apps/api/nixpacks.toml` for Chromium (Section 2.3)
+- [x] Remove hardcoded PORT from railway.toml env sections (Section 2.4)
+- [x] Update `.env.example` files (Section 2.5)
+- [x] Create GitHub Actions workflow files (Section 5)
+- [x] Fix Vite resolve config for npm workspace hoisting (apps/web/vite.config.ts)
+- [x] Fix unused variable in onboarding.ts preventing API build
+- [x] Full monorepo build verified (all 4 packages: shared, api, web, mobile)
 - [ ] Commit all changes to `dev` branch
 
 ### Phase 2: Supabase Cloud

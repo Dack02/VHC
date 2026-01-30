@@ -299,7 +299,7 @@ return c.json({ error: 'Not found' }, 404)  // ← This pattern dominates
 
 ## 4. Request/Response Types
 
-### Shared Types Package (`@vhc/shared`)
+### Shared Types Package (`vhc-shared`)
 
 Located at `packages/shared/src/types/index.ts`:
 

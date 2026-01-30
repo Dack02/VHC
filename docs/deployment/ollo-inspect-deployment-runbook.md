@@ -131,7 +131,7 @@ npm install --save-dev serve
 
 ### 2.3 Fix Railway Build Commands for Monorepo (Blocking)
 
-Railway needs to build from the monorepo root because `@vhc/shared` must be built first. Each service in Railway should have its **root directory** set to the repo root (`/`), and the build/start commands should reference the specific app.
+Railway needs to build from the monorepo root because `vhc-shared` must be built first. Each service in Railway should have its **root directory** set to the repo root (`/`), and the build/start commands should reference the specific app.
 
 **`apps/api/railway.toml`** - update:
 ```toml
@@ -924,7 +924,7 @@ Supabase migrations are **forward-only**. To "rollback":
 
 **Fix:** Verify the `ALLOWED_ORIGINS` value in Railway includes your exact domain (with `https://`, no trailing slash). Both HTTP and WebSocket CORS must be configured.
 
-### Railway build fails with "Cannot find module @vhc/shared"
+### Railway build fails with "Cannot find module vhc-shared"
 
 **Cause:** The shared package isn't built before the app.
 

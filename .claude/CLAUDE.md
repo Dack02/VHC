@@ -17,7 +17,7 @@ VHC_v2/
 │   ├── web/          # React dashboard for advisors/managers (port 5181)
 │   └── mobile/       # React PWA for technicians (port 5182)
 ├── packages/
-│   └── shared/       # Shared TypeScript types (@vhc/shared)
+│   └── shared/       # Shared TypeScript types (vhc-shared)
 ├── supabase/
 │   ├── migrations/   # SQL migrations (timestamp format)
 │   └── config.toml   # Local dev config
@@ -38,9 +38,9 @@ VHC_v2/
 | AI | Anthropic Claude API |
 
 ## Shared Types Package
-Import types from `@vhc/shared`:
+Import types from `vhc-shared`:
 ```typescript
-import type { User, HealthCheck, RepairItem } from '@vhc/shared/types'
+import type { User, HealthCheck, RepairItem } from 'vhc-shared/types'
 ```
 
 Key types: Organization, Site, User, Customer, Vehicle, HealthCheck, RepairItem, CheckTemplate

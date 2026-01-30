@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
+import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface LabourCode {
   id: string
@@ -208,6 +209,7 @@ export default function LabourCodes() {
 
   return (
     <div>
+      <SettingsBackLink />
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Labour Codes</h1>

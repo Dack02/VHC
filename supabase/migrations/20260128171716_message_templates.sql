@@ -40,6 +40,10 @@ CREATE INDEX IF NOT EXISTS idx_org_message_templates_lookup
 -- Add RLS policies
 ALTER TABLE organization_message_templates ENABLE ROW LEVEL SECURITY;
 
+-- Drop policies if they already exist, then recreate
+DROP POLICY IF EXISTS "Users can view own org message templates" ON organization_message_templates;
+DROP POLICY IF EXISTS "Org admins can manage message templates" ON organization_message_templates;
+
 -- Policy: Users can view templates for their own organization
 CREATE POLICY "Users can view own org message templates"
   ON organization_message_templates

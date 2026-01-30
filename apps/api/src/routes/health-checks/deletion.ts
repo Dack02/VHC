@@ -62,19 +62,53 @@ deletion.post('/:id/delete', authorize(['super_admin', 'org_admin', 'site_admin'
     const auth = c.get('auth')
     const { id } = c.req.param()
     const body = await c.req.json()
-    const { reason, notes } = body as { reason: DeletionReason; notes?: string }
-
-    // Validate reason
-    if (!reason || !DELETION_REASONS.includes(reason)) {
-      return c.json({
-        error: 'Invalid deletion reason',
-        valid_reasons: DELETION_REASONS
-      }, 400)
+    const { reason, notes, hcDeletionReasonId } = body as {
+      reason?: DeletionReason
+      notes?: string
+      hcDeletionReasonId?: string
     }
 
-    // Require notes for 'other' reason
-    if (reason === 'other' && (!notes || notes.trim().length === 0)) {
-      return c.json({ error: 'Notes are required when reason is "other"' }, 400)
+    // Support new hcDeletionReasonId or legacy reason field
+    let resolvedReason: string | null = null
+    let resolvedReasonId: string | null = null
+
+    if (hcDeletionReasonId) {
+      // Validate hcDeletionReasonId exists for this org
+      const { data: hcReason } = await supabaseAdmin
+        .from('hc_deletion_reasons')
+        .select('id, reason, is_system')
+        .eq('id', hcDeletionReasonId)
+        .eq('organization_id', auth.orgId)
+        .eq('is_active', true)
+        .single()
+
+      if (!hcReason) {
+        return c.json({ error: 'Invalid HC deletion reason' }, 400)
+      }
+
+      // Require notes when "Other" is selected
+      if (hcReason.is_system && hcReason.reason === 'Other' && (!notes || notes.trim().length === 0)) {
+        return c.json({ error: 'Notes are required when reason is "Other"' }, 400)
+      }
+
+      resolvedReason = hcReason.reason
+      resolvedReasonId = hcReason.id
+    } else if (reason) {
+      // Legacy path
+      if (!DELETION_REASONS.includes(reason)) {
+        return c.json({
+          error: 'Invalid deletion reason',
+          valid_reasons: DELETION_REASONS
+        }, 400)
+      }
+
+      if (reason === 'other' && (!notes || notes.trim().length === 0)) {
+        return c.json({ error: 'Notes are required when reason is "other"' }, 400)
+      }
+
+      resolvedReason = reason
+    } else {
+      return c.json({ error: 'Either hcDeletionReasonId or reason is required' }, 400)
     }
 
     // Get health check
@@ -94,7 +128,7 @@ deletion.post('/:id/delete', authorize(['super_admin', 'org_admin', 'site_admin'
     }
 
     // Only allow deletion of certain statuses
-    const deletableStatuses = ['created', 'assigned', 'cancelled']
+    const deletableStatuses = ['created', 'assigned', 'cancelled', 'awaiting_checkin']
     if (!deletableStatuses.includes(healthCheck.status)) {
       return c.json({
         error: `Cannot delete health check in "${healthCheck.status}" status. Only "${deletableStatuses.join('", "')}" can be deleted.`
@@ -102,15 +136,20 @@ deletion.post('/:id/delete', authorize(['super_admin', 'org_admin', 'site_admin'
     }
 
     // Soft delete
+    const updateData: Record<string, unknown> = {
+      deleted_at: new Date().toISOString(),
+      deleted_by: auth.user.id,
+      deletion_reason: resolvedReason,
+      deletion_notes: notes?.trim() || null,
+      updated_at: new Date().toISOString()
+    }
+    if (resolvedReasonId) {
+      updateData.hc_deletion_reason_id = resolvedReasonId
+    }
+
     const { error } = await supabaseAdmin
       .from('health_checks')
-      .update({
-        deleted_at: new Date().toISOString(),
-        deleted_by: auth.user.id,
-        deletion_reason: reason,
-        deletion_notes: notes?.trim() || null,
-        updated_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('id', id)
       .eq('organization_id', auth.orgId)
 
@@ -127,13 +166,13 @@ deletion.post('/:id/delete', authorize(['super_admin', 'org_admin', 'site_admin'
         to_status: 'deleted',
         changed_by: auth.user.id,
         change_source: 'user',
-        notes: `Deleted: ${reason}${notes ? ` - ${notes}` : ''}`
+        notes: `Deleted: ${resolvedReason}${notes ? ` - ${notes}` : ''}`
       })
 
     return c.json({
       success: true,
       message: 'Health check deleted',
-      reason
+      reason: resolvedReason
     })
   } catch (error) {
     console.error('Delete health check error:', error)
@@ -146,10 +185,11 @@ deletion.post('/bulk-delete', authorize(['super_admin', 'org_admin', 'site_admin
   try {
     const auth = c.get('auth')
     const body = await c.req.json()
-    const { ids, reason, notes } = body as {
+    const { ids, reason, notes, hcDeletionReasonId } = body as {
       ids: string[]
-      reason: DeletionReason
+      reason?: DeletionReason
       notes?: string
+      hcDeletionReasonId?: string
     }
 
     // Validate inputs
@@ -161,15 +201,44 @@ deletion.post('/bulk-delete', authorize(['super_admin', 'org_admin', 'site_admin
       return c.json({ error: 'Maximum 100 health checks per bulk delete' }, 400)
     }
 
-    if (!reason || !DELETION_REASONS.includes(reason)) {
-      return c.json({
-        error: 'Invalid deletion reason',
-        valid_reasons: DELETION_REASONS
-      }, 400)
-    }
+    // Support new hcDeletionReasonId or legacy reason field
+    let resolvedReason: string | null = null
+    let resolvedReasonId: string | null = null
 
-    if (reason === 'other' && (!notes || notes.trim().length === 0)) {
-      return c.json({ error: 'Notes are required when reason is "other"' }, 400)
+    if (hcDeletionReasonId) {
+      const { data: hcReason } = await supabaseAdmin
+        .from('hc_deletion_reasons')
+        .select('id, reason, is_system')
+        .eq('id', hcDeletionReasonId)
+        .eq('organization_id', auth.orgId)
+        .eq('is_active', true)
+        .single()
+
+      if (!hcReason) {
+        return c.json({ error: 'Invalid HC deletion reason' }, 400)
+      }
+
+      if (hcReason.is_system && hcReason.reason === 'Other' && (!notes || notes.trim().length === 0)) {
+        return c.json({ error: 'Notes are required when reason is "Other"' }, 400)
+      }
+
+      resolvedReason = hcReason.reason
+      resolvedReasonId = hcReason.id
+    } else if (reason) {
+      if (!DELETION_REASONS.includes(reason)) {
+        return c.json({
+          error: 'Invalid deletion reason',
+          valid_reasons: DELETION_REASONS
+        }, 400)
+      }
+
+      if (reason === 'other' && (!notes || notes.trim().length === 0)) {
+        return c.json({ error: 'Notes are required when reason is "other"' }, 400)
+      }
+
+      resolvedReason = reason
+    } else {
+      return c.json({ error: 'Either hcDeletionReasonId or reason is required' }, 400)
     }
 
     // Get health checks
@@ -184,7 +253,7 @@ deletion.post('/bulk-delete', authorize(['super_admin', 'org_admin', 'site_admin
     }
 
     // Filter to only deletable ones
-    const deletableStatuses = ['created', 'assigned', 'cancelled']
+    const deletableStatuses = ['created', 'assigned', 'cancelled', 'awaiting_checkin']
     const deletable = healthChecks.filter(hc =>
       !hc.deleted_at && deletableStatuses.includes(hc.status)
     )
@@ -202,15 +271,20 @@ deletion.post('/bulk-delete', authorize(['super_admin', 'org_admin', 'site_admin
     const deletableIds = deletable.map(hc => hc.id)
 
     // Bulk soft delete
+    const updateData: Record<string, unknown> = {
+      deleted_at: new Date().toISOString(),
+      deleted_by: auth.user.id,
+      deletion_reason: resolvedReason,
+      deletion_notes: notes?.trim() || null,
+      updated_at: new Date().toISOString()
+    }
+    if (resolvedReasonId) {
+      updateData.hc_deletion_reason_id = resolvedReasonId
+    }
+
     const { error } = await supabaseAdmin
       .from('health_checks')
-      .update({
-        deleted_at: new Date().toISOString(),
-        deleted_by: auth.user.id,
-        deletion_reason: reason,
-        deletion_notes: notes?.trim() || null,
-        updated_at: new Date().toISOString()
-      })
+      .update(updateData)
       .in('id', deletableIds)
       .eq('organization_id', auth.orgId)
 
@@ -225,7 +299,7 @@ deletion.post('/bulk-delete', authorize(['super_admin', 'org_admin', 'site_admin
       to_status: 'deleted',
       changed_by: auth.user.id,
       change_source: 'user',
-      notes: `Bulk deleted: ${reason}${notes ? ` - ${notes}` : ''}`
+      notes: `Bulk deleted: ${resolvedReason}${notes ? ` - ${notes}` : ''}`
     }))
 
     await supabaseAdmin
@@ -237,7 +311,7 @@ deletion.post('/bulk-delete', authorize(['super_admin', 'org_admin', 'site_admin
       message: `${deletable.length} health check(s) deleted`,
       deleted: deletable.length,
       skipped: skipped.length,
-      reason
+      reason: resolvedReason
     })
   } catch (error) {
     console.error('Bulk delete health checks error:', error)
@@ -275,6 +349,7 @@ deletion.post('/:id/restore', authorize(['super_admin', 'org_admin', 'site_admin
         deleted_by: null,
         deletion_reason: null,
         deletion_notes: null,
+        hc_deletion_reason_id: null,
         status: 'created',  // Reset to created status
         updated_at: new Date().toISOString()
       })

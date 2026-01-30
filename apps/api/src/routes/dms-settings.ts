@@ -618,6 +618,7 @@ dmsSettings.post('/import', async (c) => {
     const date = body.date || new Date().toISOString().split('T')[0]
     const siteId = body.site_id
     const skipLimitCheck = body.skipLimitCheck === true  // Allow override with confirmation
+    const bookingIds: string[] | undefined = Array.isArray(body.bookingIds) ? body.bookingIds : undefined
 
     // Check if DMS is available
     const available = await isDmsAvailable(organizationId)
@@ -665,7 +666,8 @@ dmsSettings.post('/import', async (c) => {
         siteId,
         date,
         importType: 'manual',
-        triggeredBy: auth.user.id
+        triggeredBy: auth.user.id,
+        bookingIds
       })
 
       logger.info('Queued DMS import', { organizationId, date })
@@ -682,7 +684,8 @@ dmsSettings.post('/import', async (c) => {
         siteId,
         date,
         importType: 'manual',
-        triggeredBy: auth.user.id
+        triggeredBy: auth.user.id,
+        bookingIds
       })
 
       return c.json({

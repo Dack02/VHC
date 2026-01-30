@@ -574,7 +574,7 @@ export const SAMPLE_CONTEXT: TemplateContext = {
   customerFirstName: 'John',
   vehicleReg: 'AB21 XYZ',
   vehicleMakeModel: 'BMW 3 Series',
-  publicUrl: 'https://vhc.example.com/view/abc123',
+  publicUrl: 'https://inspect.ollosoft.io/view/abc123',
   dealershipName: 'Premier Motors',
   dealershipPhone: '01onal 123456',
   redCount: 2,

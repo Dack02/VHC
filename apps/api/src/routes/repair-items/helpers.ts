@@ -24,17 +24,24 @@ export async function verifyRepairItemAccess(repairItemId: string, orgId: string
 
 // Helper to verify repair option access
 export async function verifyRepairOptionAccess(optionId: string, orgId: string) {
-  const { data } = await supabaseAdmin
+  // Use explicit FK hint to avoid ambiguity: repair_options has repair_item_id -> repair_items.id
+  // but repair_items also has selected_option_id -> repair_options.id
+  const { data, error } = await supabaseAdmin
     .from('repair_options')
     .select(`
       id,
       repair_item_id,
-      repair_item:repair_items!inner(organization_id)
+      repair_item:repair_items!repair_options_repair_item_id_fkey(organization_id)
     `)
     .eq('id', optionId)
     .single()
 
-  // repair_item is returned as an array from the join, access first element
+  if (error) {
+    console.error('verifyRepairOptionAccess error:', error)
+    return null
+  }
+
+  // repair_item is returned as an object or array from the join
   const repairItem = Array.isArray(data?.repair_item) ? data.repair_item[0] : data?.repair_item
   if (!data || (repairItem as { organization_id?: string })?.organization_id !== orgId) {
     return null

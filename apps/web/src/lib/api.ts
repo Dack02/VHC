@@ -1,5 +1,16 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5180'
 
+// Active organization ID for multi-org header injection
+let _activeOrgId: string | null = null
+
+export function setActiveOrgId(orgId: string | null) {
+  _activeOrgId = orgId
+}
+
+export function getActiveOrgId(): string | null {
+  return _activeOrgId
+}
+
 interface ApiOptions {
   method?: string
   body?: unknown
@@ -82,6 +93,10 @@ export async function api<T>(endpoint: string, options: ApiOptions = {}): Promis
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
+  }
+
+  if (_activeOrgId) {
+    headers['X-Organization-Id'] = _activeOrgId
   }
 
   let lastError: ApiError | null = null
@@ -240,6 +255,8 @@ export interface HealthCheck {
   jobsheet_status?: string | null
   external_id?: string | null
   external_source?: string | null
+  // Soft deletion fields
+  deleted_at?: string | null
 }
 
 export interface Vehicle {
@@ -385,6 +402,9 @@ export interface RepairItem {
   no_parts_required?: boolean
   // Source tracking
   source?: 'inspection' | 'mri_scan' | 'manual' | null
+  // Repair options
+  options?: RepairOption[]
+  selected_option_id?: string | null
 }
 
 export interface StatusHistoryEntry {
@@ -695,6 +715,10 @@ export interface CustomerActivity {
   id: string
   type: string
   repairItemId: string | null
+  repairItemName: string | null
+  repairItemValue: number | null
+  totalAuthorisedValue: number | null
+  totalAuthorisedCount: number | null
   metadata: Record<string, unknown> | null
   ipAddress: string | null
   deviceType: string
@@ -714,4 +738,77 @@ export interface CustomerActivityResponse {
   communications: CustomerCommunication[]
   activities: CustomerActivity[]
   statusChanges: CustomerStatusChange[]
+}
+
+// ============================================================================
+// CUSTOMER MODULE TYPES
+// ============================================================================
+
+export interface CustomerDetail {
+  id: string
+  firstName: string
+  lastName: string
+  email: string | null
+  mobile: string | null
+  address: string | null
+  externalId: string | null
+  notes: string | null
+  notesUpdatedAt: string | null
+  notesUpdatedBy: string | null
+  notesUpdatedByUser: { firstName: string; lastName: string } | null
+  vehicles: CustomerVehicle[]
+  createdAt: string
+  updatedAt: string | null
+}
+
+export interface CustomerVehicle {
+  id: string
+  registration: string
+  vin: string | null
+  make: string | null
+  model: string | null
+  year: number | null
+  color: string | null
+  fuelType: string | null
+  engineSize: string | null
+}
+
+export interface CustomerStats {
+  totalHealthChecks: number
+  activeCount: number
+  lastVisit: string | null
+  totalAuthorisedValue: number
+  vehicleCount: number
+}
+
+export interface CustomerHealthCheckSummary {
+  id: string
+  status: string
+  vhcReference: string | null
+  createdAt: string
+  updatedAt: string
+  greenCount: number
+  amberCount: number
+  redCount: number
+  totalLabour: number
+  totalParts: number
+  totalAmount: number
+  mileageIn: number | null
+  vehicle: { id: string; registration: string; make: string | null; model: string | null; year: number | null } | null
+  technician: { id: string; first_name: string; last_name: string } | null
+  advisor: { id: string; first_name: string; last_name: string } | null
+}
+
+export interface CustomerCommRecord {
+  id: string
+  healthCheckId: string
+  vhcReference: string | null
+  vehicleReg: string | null
+  channel: 'email' | 'sms'
+  recipient: string
+  subject: string | null
+  messagePreview: string | null
+  status: string
+  errorMessage: string | null
+  sentAt: string
 }

@@ -127,7 +127,7 @@ export default function Step5Ready({ status, onComplete }: Props) {
           getting started guide
         </a>{' '}
         or{' '}
-        <a href="mailto:support@vhc.com" className="text-primary hover:underline">
+        <a href="mailto:support@ollosoft.co.uk" className="text-primary hover:underline">
           contact support
         </a>
       </p>

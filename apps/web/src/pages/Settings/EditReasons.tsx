@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { api } from '../../lib/api'
+import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface Category {
   id: string
@@ -203,6 +204,7 @@ export default function EditReasons() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
+      <SettingsBackLink />
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">

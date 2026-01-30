@@ -102,12 +102,36 @@ export function CustomerPreviewModal({ healthCheck, newRepairItems, checkResults
     return { urgentItems, advisoryItems }
   }, [topLevelNewRepairItems])
 
-  // Calculate totals for repair items (only urgent + advisory)
+  // Calculate totals for repair items (only urgent + advisory), option-aware
   const repairItemsTotals = useMemo(() => {
     const allItems = [...categorizedItems.urgentItems, ...categorizedItems.advisoryItems]
-    const subtotal = allItems.reduce((sum, item) => sum + item.subtotal, 0)
-    const vatAmount = allItems.reduce((sum, item) => sum + item.vatAmount, 0)
-    const totalIncVat = allItems.reduce((sum, item) => sum + item.totalIncVat, 0)
+    let subtotal = 0
+    let vatAmount = 0
+    let totalIncVat = 0
+
+    for (const item of allItems) {
+      const hasOptions = item.options && item.options.length > 0
+      if (hasOptions && item.selectedOptionId) {
+        const opt = item.options!.find(o => o.id === item.selectedOptionId)
+        if (opt) {
+          subtotal += opt.subtotal
+          vatAmount += opt.vatAmount
+          totalIncVat += opt.totalIncVat
+          continue
+        }
+      }
+      if (hasOptions) {
+        const opt = item.options!.find(o => o.isRecommended) || item.options![0]
+        subtotal += opt.subtotal
+        vatAmount += opt.vatAmount
+        totalIncVat += opt.totalIncVat
+      } else {
+        subtotal += item.subtotal
+        vatAmount += item.vatAmount
+        totalIncVat += item.totalIncVat
+      }
+    }
+
     return { subtotal, vatAmount, totalIncVat }
   }, [categorizedItems])
 
@@ -433,6 +457,15 @@ function RepairItemCard({ item, ragStatus, reasons, formatFollowUp, reasonsByChe
   const hasReasons = reasons.length > 0
   const followUpInfo = reasons.find(r => r.followUpDays || r.followUpText)
 
+  // Derive display price from options (selected > recommended > first) or base item
+  const hasOptions = item.options && item.options.length > 0
+  const selectedOption = hasOptions && item.selectedOptionId
+    ? item.options!.find(o => o.id === item.selectedOptionId)
+    : null
+  const displayOption = selectedOption
+    || (hasOptions ? item.options!.find(o => o.isRecommended) || item.options![0] : null)
+  const displayPrice = displayOption || item
+
   return (
     <div className={`${bgColor} border border-gray-200 border-l-4 ${borderColor} p-4`}>
       <div className="flex justify-between items-start gap-4">
@@ -446,8 +479,8 @@ function RepairItemCard({ item, ragStatus, reasons, formatFollowUp, reasonsByChe
             )}
           </div>
 
-          {/* Show reasons or description */}
-          {hasReasons ? (
+          {/* Show reasons or description (skip reasons for groups - shown in children section) */}
+          {!item.isGroup && hasReasons ? (
             <div className="mt-2">
               {reasons.length > 1 && (
                 <div className="text-sm text-gray-700 mb-2">
@@ -472,6 +505,39 @@ function RepairItemCard({ item, ragStatus, reasons, formatFollowUp, reasonsByChe
             </div>
           ) : item.description && (
             <div className="text-sm text-gray-600 mt-1">{item.description}</div>
+          )}
+
+          {/* Options list */}
+          {hasOptions && (
+            <div className="mt-3 space-y-1">
+              {item.options!.map(opt => (
+                <div
+                  key={opt.id}
+                  className={`flex items-center justify-between text-sm p-2 border ${
+                    opt.id === item.selectedOptionId
+                      ? 'border-blue-300 bg-blue-50'
+                      : opt.isRecommended
+                        ? 'border-green-300 bg-green-50'
+                        : 'border-gray-200 bg-white'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-800">{opt.name}</span>
+                    {opt.isRecommended && (
+                      <span className="text-xs font-medium text-green-700 bg-green-100 px-1.5 py-0.5">
+                        Recommended
+                      </span>
+                    )}
+                    {opt.id === item.selectedOptionId && (
+                      <span className="text-xs font-medium text-blue-700 bg-blue-100 px-1.5 py-0.5">
+                        Selected
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-medium text-gray-900">£{opt.totalIncVat.toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
           )}
 
           {/* Nested children for groups */}
@@ -509,10 +575,10 @@ function RepairItemCard({ item, ragStatus, reasons, formatFollowUp, reasonsByChe
           )}
         </div>
         <div className="text-right flex-shrink-0">
-          <div className="font-bold text-gray-900">£{item.totalIncVat.toFixed(2)}</div>
+          <div className="font-bold text-gray-900">£{displayPrice.totalIncVat.toFixed(2)}</div>
           <div className="text-xs text-gray-500">Inc VAT</div>
           <div className="text-xs text-gray-400 mt-1">
-            (£{item.subtotal.toFixed(2)} + £{item.vatAmount.toFixed(2)} VAT)
+            (£{displayPrice.subtotal.toFixed(2)} + £{displayPrice.vatAmount.toFixed(2)} VAT)
           </div>
         </div>
       </div>

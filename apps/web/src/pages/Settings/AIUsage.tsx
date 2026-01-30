@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { api } from '../../lib/api'
+import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface AIUsageData {
   currentPeriodGenerations: number
@@ -133,6 +134,7 @@ export default function AIUsage() {
 
   return (
     <div className="space-y-6">
+      <SettingsBackLink />
       <div>
         <h1 className="text-2xl font-bold text-gray-900">AI Usage</h1>
         <p className="text-gray-500 mt-1">Monitor your organization's AI generation usage</p>

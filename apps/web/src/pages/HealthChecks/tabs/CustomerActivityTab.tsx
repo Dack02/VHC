@@ -53,7 +53,7 @@ function getActivityStyle(type: string): { icon: React.ReactNode; bgColor: strin
         bgColor: 'bg-blue-500',
         label: 'Viewed Report'
       }
-    case 'approved':
+    case 'repair_item_approved':
       return {
         icon: (
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -61,9 +61,19 @@ function getActivityStyle(type: string): { icon: React.ReactNode; bgColor: strin
           </svg>
         ),
         bgColor: 'bg-green-500',
-        label: 'Approved Item'
+        label: 'Approved'
       }
-    case 'declined':
+    case 'approve_all':
+      return {
+        icon: (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+        ),
+        bgColor: 'bg-green-600',
+        label: 'Approved All Items'
+      }
+    case 'repair_item_declined':
       return {
         icon: (
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -71,7 +81,17 @@ function getActivityStyle(type: string): { icon: React.ReactNode; bgColor: strin
           </svg>
         ),
         bgColor: 'bg-red-500',
-        label: 'Declined Item'
+        label: 'Declined'
+      }
+    case 'decline_all':
+      return {
+        icon: (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        ),
+        bgColor: 'bg-red-600',
+        label: 'Declined All Items'
       }
     case 'deferred':
       return {
@@ -426,6 +446,48 @@ export function CustomerActivityTab({ healthCheckId }: CustomerActivityTabProps)
                               </div>
                             </div>
                           </div>
+
+                          {/* Repair item name and value for approval/decline activities */}
+                          {activity.repairItemName && (
+                            <div className="flex items-center justify-between mt-1">
+                              <span className="text-sm text-gray-700">{activity.repairItemName}</span>
+                              {activity.repairItemValue != null && activity.repairItemValue > 0 && (
+                                <span className={`text-sm font-semibold ${
+                                  activity.type === 'repair_item_approved' ? 'text-green-600' : 'text-red-600'
+                                }`}>
+                                  £{activity.repairItemValue.toFixed(2)}
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Total authorised value for signed activity */}
+                          {activity.type === 'signed' && activity.totalAuthorisedValue != null && (
+                            <div className="mt-2 p-2 bg-purple-50 border border-purple-200">
+                              <div className="flex items-center justify-between">
+                                <span className="text-sm text-purple-700">
+                                  {activity.totalAuthorisedCount} {activity.totalAuthorisedCount === 1 ? 'item' : 'items'} authorised
+                                </span>
+                                <span className="text-base font-bold text-purple-700">
+                                  £{activity.totalAuthorisedValue.toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Approve all metadata */}
+                          {activity.type === 'approve_all' && activity.metadata?.approvedCount != null && (
+                            <div className="mt-1 text-sm text-green-600">
+                              {String(activity.metadata.approvedCount)} items approved
+                            </div>
+                          )}
+
+                          {/* Decline all metadata */}
+                          {activity.type === 'decline_all' && activity.metadata?.declinedCount != null && (
+                            <div className="mt-1 text-sm text-red-600">
+                              {String(activity.metadata.declinedCount)} items declined
+                            </div>
+                          )}
 
                           <div className="flex items-center gap-3 mt-2">
                             {activity.deviceType && (

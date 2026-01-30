@@ -33,9 +33,7 @@ export function SummaryTab({ healthCheckId, sentAt, bookedRepairs, onUpdate }: S
   // Modal states
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
-  const [showAddOptionModal, setShowAddOptionModal] = useState(false)
   const [editingItem, setEditingItem] = useState<NewRepairItem | null>(null)
-  const [addOptionItemId, setAddOptionItemId] = useState<string | null>(null)
   const [preselectedCheckResultId, setPreselectedCheckResultId] = useState<string | null>(null)
 
   // Fetch data
@@ -135,25 +133,6 @@ export function SummaryTab({ healthCheckId, sentAt, bookedRepairs, onUpdate }: S
   const handleEditRepair = (item: NewRepairItem) => {
     setEditingItem(item)
     setShowEditModal(true)
-  }
-
-  const handleAddOption = (itemId: string) => {
-    setAddOptionItemId(itemId)
-    setShowAddOptionModal(true)
-  }
-
-  const handleSelectOption = async (itemId: string, optionId: string) => {
-    if (!session?.accessToken) return
-    try {
-      await api(`/api/v1/repair-items/${itemId}/select-option`, {
-        method: 'POST',
-        token: session.accessToken,
-        body: { option_id: optionId }
-      })
-      refreshData()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to select option')
-    }
   }
 
   const handleUngroup = async (itemId: string) => {
@@ -276,8 +255,6 @@ export function SummaryTab({ healthCheckId, sentAt, bookedRepairs, onUpdate }: S
                 item={item}
                 ragStatus={getRepairItemRag(item)}
                 onEdit={() => handleEditRepair(item)}
-                onAddOption={() => handleAddOption(item.id)}
-                onSelectOption={(optionId) => handleSelectOption(item.id, optionId)}
                 onUngroup={() => handleUngroup(item.id)}
               />
             ))
@@ -376,16 +353,6 @@ export function SummaryTab({ healthCheckId, sentAt, bookedRepairs, onUpdate }: S
         />
       )}
 
-      {showAddOptionModal && addOptionItemId && (
-        <AddOptionModal
-          repairItemId={addOptionItemId}
-          onClose={() => {
-            setShowAddOptionModal(false)
-            setAddOptionItemId(null)
-          }}
-          onAdded={refreshData}
-        />
-      )}
     </div>
   )
 }
@@ -415,12 +382,10 @@ interface RepairItemCardProps {
   item: NewRepairItem
   ragStatus: 'red' | 'amber' | 'green' | 'grey'
   onEdit: () => void
-  onAddOption: () => void
-  onSelectOption: (optionId: string) => void
   onUngroup?: () => void
 }
 
-function RepairItemCard({ item, ragStatus, onEdit, onAddOption, onSelectOption, onUngroup }: RepairItemCardProps) {
+function RepairItemCard({ item, ragStatus, onEdit, onUngroup }: RepairItemCardProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const hasOptions = item.options && item.options.length > 0
   const hasChildren = item.children && item.children.length > 0
@@ -505,44 +470,23 @@ function RepairItemCard({ item, ragStatus, onEdit, onAddOption, onSelectOption, 
         </div>
       )}
 
-      {/* Options or direct pricing */}
+      {/* Pricing display (read-only) */}
       {hasOptions ? (
-        <div className="ml-5 space-y-2 mb-3">
-          <div className="text-sm font-medium text-gray-700">Options:</div>
+        <div className="ml-5 mb-3 text-sm text-gray-600 space-y-1">
           {item.options!.map(option => (
-            <label
+            <div
               key={option.id}
-              className={`flex items-center justify-between p-3 rounded border cursor-pointer ${
-                item.selectedOptionId === option.id
-                  ? 'border-primary bg-primary/5'
-                  : 'border-gray-200 hover:border-gray-300'
+              className={`flex items-center justify-between ${
+                item.selectedOptionId === option.id ? 'text-gray-900 font-medium' : 'text-gray-400'
               }`}
             >
-              <div className="flex items-center gap-3">
-                <input
-                  type="radio"
-                  name={`option-${item.id}`}
-                  checked={item.selectedOptionId === option.id}
-                  onChange={() => onSelectOption(option.id)}
-                  className="text-primary focus:ring-primary"
-                />
-                <div>
-                  <span className="font-medium">{option.name}</span>
-                  {option.description && (
-                    <span className="text-sm text-gray-500 ml-2">({option.description})</span>
-                  )}
-                  {option.isRecommended && (
-                    <span className="ml-2 px-2 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded">
-                      RECOMMENDED
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="font-semibold">£{option.subtotal.toFixed(2)} + VAT</div>
-                <div className="text-xs text-gray-500">Inc VAT: £{option.totalIncVat.toFixed(2)}</div>
-              </div>
-            </label>
+              <span>
+                {item.selectedOptionId === option.id && 'Selected: '}
+                {option.name}
+                {option.isRecommended && ' (Recommended)'}
+              </span>
+              <span>£{option.totalIncVat.toFixed(2)}</span>
+            </div>
           ))}
         </div>
       ) : (
@@ -572,12 +516,6 @@ function RepairItemCard({ item, ragStatus, onEdit, onAddOption, onSelectOption, 
           className="px-3 py-1 text-sm text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
         >
           Edit
-        </button>
-        <button
-          onClick={onAddOption}
-          className="px-3 py-1 text-sm text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
-        >
-          Add Option
         </button>
         {/* Ungroup button for groups with children */}
         {item.isGroup && hasChildren && onUngroup && (
@@ -1071,124 +1009,3 @@ function EditRepairModal({ repairItem, checkResults, onClose, onSaved }: EditRep
   )
 }
 
-// ============================================================================
-// ADD OPTION MODAL
-// ============================================================================
-
-interface AddOptionModalProps {
-  repairItemId: string
-  onClose: () => void
-  onAdded: () => void
-}
-
-function AddOptionModal({ repairItemId, onClose, onAdded }: AddOptionModalProps) {
-  const { session } = useAuth()
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  // Form state
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [isRecommended, setIsRecommended] = useState(false)
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!session?.accessToken || !name.trim()) return
-
-    setSaving(true)
-    setError(null)
-
-    try {
-      await api(`/api/v1/repair-items/${repairItemId}/options`, {
-        method: 'POST',
-        token: session.accessToken,
-        body: {
-          name: name.trim(),
-          description: description.trim() || null,
-          is_recommended: isRecommended
-        }
-      })
-      onAdded()
-      onClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add option')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h3 className="text-lg font-semibold">Add Option</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {error && (
-            <div className="bg-red-50 text-red-700 p-3 rounded text-sm">{error}</div>
-          )}
-
-          {/* Name */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Option Name *</label>
-            <input
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="e.g., Standard, Premium, Budget"
-              required
-            />
-          </div>
-
-          {/* Description */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-            <textarea
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              rows={2}
-              className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="e.g., OEM quality parts with 12 month warranty"
-            />
-          </div>
-
-          {/* Recommended */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={isRecommended}
-              onChange={e => setIsRecommended(e.target.checked)}
-              className="rounded text-primary focus:ring-primary"
-            />
-            <span className="text-sm text-gray-700">Mark as recommended option</span>
-          </label>
-
-          {/* Actions */}
-          <div className="flex gap-3 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving || !name.trim()}
-              className="flex-1 px-4 py-2 bg-primary text-white rounded hover:bg-primary-dark disabled:opacity-50"
-            >
-              {saving ? 'Adding...' : 'Add Option'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}

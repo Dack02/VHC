@@ -39,7 +39,13 @@ async function getPlanLimits(organizationId: string): Promise<{
   const plan = planArray?.[0]
 
   if (!plan) {
-    return null
+    // No active subscription - allow unlimited usage (subscription not enforced yet)
+    return {
+      maxSites: -1,
+      maxUsers: -1,
+      maxHealthChecksPerMonth: -1,
+      maxStorageGb: -1
+    }
   }
 
   return {
@@ -74,7 +80,8 @@ export async function checkSiteLimit(organizationId: string): Promise<LimitCheck
 
   const currentSites = count || 0
 
-  if (currentSites >= limits.maxSites) {
+  // -1 means unlimited
+  if (limits.maxSites !== -1 && currentSites >= limits.maxSites) {
     return {
       allowed: false,
       current: currentSites,
@@ -114,7 +121,8 @@ export async function checkUserLimit(organizationId: string): Promise<LimitCheck
 
   const currentUsers = count || 0
 
-  if (currentUsers >= limits.maxUsers) {
+  // -1 means unlimited
+  if (limits.maxUsers !== -1 && currentUsers >= limits.maxUsers) {
     return {
       allowed: false,
       current: currentUsers,
@@ -157,7 +165,8 @@ export async function checkHealthCheckLimit(organizationId: string): Promise<Lim
 
   const currentHealthChecks = usage?.health_checks_created || 0
 
-  if (currentHealthChecks >= limits.maxHealthChecksPerMonth) {
+  // -1 means unlimited
+  if (limits.maxHealthChecksPerMonth !== -1 && currentHealthChecks >= limits.maxHealthChecksPerMonth) {
     return {
       allowed: false,
       current: currentHealthChecks,
@@ -201,7 +210,8 @@ export async function checkStorageLimit(organizationId: string, additionalBytes:
   const currentStorageBytes = (usage?.storage_used_bytes || 0) + additionalBytes
   const limitBytes = limits.maxStorageGb * 1024 * 1024 * 1024 // Convert GB to bytes
 
-  if (currentStorageBytes >= limitBytes) {
+  // -1 means unlimited
+  if (limits.maxStorageGb !== -1 && currentStorageBytes >= limitBytes) {
     const currentGb = (currentStorageBytes / (1024 * 1024 * 1024)).toFixed(2)
     return {
       allowed: false,

@@ -247,8 +247,11 @@ ai.get('/organizations/:id/ai-usage', authorize(['super_admin', 'org_admin', 'si
         id,
         action,
         items_generated,
+        template_item_id,
+        reason_type,
         created_at,
-        users(first_name, last_name, email)
+        users(first_name, last_name, email),
+        template_items(name)
       `)
       .eq('organization_id', id)
       .gte('created_at', start.toISOString())
@@ -257,25 +260,30 @@ ai.get('/organizations/:id/ai-usage', authorize(['super_admin', 'org_admin', 'si
 
     const recentGenerations = (recentLogs || []).map(log => {
       const user = extractRelation(log.users) as { first_name: string | null; last_name: string | null; email: string } | null
+      const templateItem = extractRelation(log.template_items) as { name: string } | null
       return {
-        date: log.created_at,
-        user: user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email : 'System',
+        id: log.id,
         action: log.action,
-        itemsCount: log.items_generated || 0
+        createdAt: log.created_at,
+        userName: user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email : 'System',
+        context: {
+          itemName: templateItem?.name || undefined,
+          reasonsCount: log.items_generated || undefined,
+          itemsCount: log.items_generated || undefined
+        }
       }
     })
 
     return c.json({
+      currentPeriodGenerations: usage.currentGenerations,
       limit: usage.monthlyLimit,
-      used: usage.currentGenerations,
       remaining: usage.monthlyLimit - usage.currentGenerations,
       percentageUsed: usage.percentageUsed,
-      period: {
-        start: start.toISOString().split('T')[0],
-        end: end.toISOString().split('T')[0]
-      },
+      periodStart: start.toISOString().split('T')[0],
+      periodEnd: end.toISOString().split('T')[0],
       costUsd: usage.currentCostUsd,
       isAiEnabled: usage.isAiEnabled,
+      aiEnabled: usage.isAiEnabled,
       recentGenerations
     })
   } catch (error) {
@@ -339,6 +347,10 @@ ai.get('/organizations/:id/ai-usage/history', authorize(['super_admin', 'org_adm
     const { id } = c.req.param()
     const page = parseInt(c.req.query('page') || '1')
     const limit = Math.min(50, parseInt(c.req.query('limit') || '20'))
+    const userId = c.req.query('userId')
+    const action = c.req.query('action')
+    const dateFrom = c.req.query('dateFrom')
+    const dateTo = c.req.query('dateTo')
 
     // Verify org access
     if (id !== auth.orgId && auth.user.role !== 'super_admin') {
@@ -347,8 +359,8 @@ ai.get('/organizations/:id/ai-usage/history', authorize(['super_admin', 'org_adm
 
     const offset = (page - 1) * limit
 
-    // Get logs with pagination
-    const { data: logs, error, count } = await supabaseAdmin
+    // Get logs with pagination and filters
+    let query = supabaseAdmin
       .from('ai_usage_logs')
       .select(`
         id,
@@ -357,10 +369,29 @@ ai.get('/organizations/:id/ai-usage/history', authorize(['super_admin', 'org_adm
         reason_type,
         created_at,
         template_item_id,
+        user_id,
+        input_tokens,
+        output_tokens,
+        total_cost_usd,
         users(first_name, last_name, email),
         template_items(name)
       `, { count: 'exact' })
       .eq('organization_id', id)
+
+    if (userId) {
+      query = query.eq('user_id', userId)
+    }
+    if (action) {
+      query = query.eq('action', action)
+    }
+    if (dateFrom) {
+      query = query.gte('created_at', `${dateFrom}T00:00:00.000Z`)
+    }
+    if (dateTo) {
+      query = query.lte('created_at', `${dateTo}T23:59:59.999Z`)
+    }
+
+    const { data: logs, error, count } = await query
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)
 
@@ -368,31 +399,37 @@ ai.get('/organizations/:id/ai-usage/history', authorize(['super_admin', 'org_adm
       throw new Error(`Failed to fetch history: ${error.message}`)
     }
 
-    const transformedLogs = (logs || []).map(log => {
+    const history = (logs || []).map(log => {
       const user = extractRelation(log.users) as { first_name: string | null; last_name: string | null; email: string } | null
       const templateItem = extractRelation(log.template_items) as { name: string } | null
 
       return {
         id: log.id,
+        action: log.action,
         createdAt: log.created_at,
         userName: user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email : 'System',
-        action: log.action,
-        itemsGenerated: log.items_generated,
-        templateItemName: templateItem?.name || null,
-        reasonType: log.reason_type
+        userId: log.user_id,
+        inputTokens: log.input_tokens || 0,
+        outputTokens: log.output_tokens || 0,
+        totalCost: parseFloat(String(log.total_cost_usd)) || 0,
+        context: {
+          itemName: templateItem?.name || undefined,
+          reasonsCount: log.items_generated || undefined,
+          itemsCount: log.items_generated || undefined
+        }
       }
     })
 
     const total = count || 0
-    const pages = Math.ceil(total / limit)
+    const totalPages = Math.ceil(total / limit)
 
     return c.json({
-      logs: transformedLogs,
+      history,
       pagination: {
         page,
         limit,
         total,
-        pages
+        totalPages
       }
     })
   } catch (error) {

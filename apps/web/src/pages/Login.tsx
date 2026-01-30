@@ -43,7 +43,7 @@ export default function Login() {
               isActive: true
             }))
           }
-          navigate('/admin')
+          navigate('/')
           return
         } catch {
           // Not a super admin, continue to regular dashboard

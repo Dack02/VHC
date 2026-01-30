@@ -3,12 +3,18 @@
  * Red/Amber/Green sections with finding rows showing name, description, deferred badge, and price
  */
 
-import type { RepairItemData, ResultData, CheckResultReasonsMap } from '../../types.js'
+import type { RepairItemData, ResultData, CheckResultReasonsMap, NewRepairItem } from '../../types.js'
 import { formatCurrency, formatDate } from '../../utils/formatters.js'
 
 interface ChildItem {
   name: string
   descriptions: string[]
+}
+
+interface FindingOptionItem {
+  name: string
+  totalIncVat: number
+  isRecommended: boolean
 }
 
 interface FindingItem {
@@ -18,15 +24,21 @@ interface FindingItem {
   price: number | null
   isDeferred: boolean
   deferredUntil: string | null
+  isAuthorised: boolean
+  isDeclined: boolean
+  outcomeDate: string | null
+  declinedReason: string | null
   status: 'red' | 'amber' | 'green'
   isGroup: boolean
   children: ChildItem[]
+  options: FindingOptionItem[]
 }
 
 interface FindingsGroupOptions {
   items: RepairItemData[]
   results: ResultData[]
   reasonsByCheckResult?: CheckResultReasonsMap
+  newRepairItems?: NewRepairItem[]
   status: 'red' | 'amber'
   maxItems?: number
 }
@@ -125,14 +137,30 @@ function renderChildItems(children: ChildItem[]): string {
 }
 
 /**
- * Render a single finding row - full descriptions, no truncation
- * Handles both regular items and grouped items
+ * Render options list for a finding row
  */
+function renderFindingOptions(options: FindingOptionItem[]): string {
+  if (options.length === 0) return ''
+
+  return `
+    <div class="finding-options">
+      ${options.map(opt => `
+        <div class="finding-option${opt.isRecommended ? ' recommended' : ''}">
+          <span class="finding-option-name">${opt.name}${opt.isRecommended ? ' <span class="recommended-badge">Recommended</span>' : ''}</span>
+          <span class="finding-option-price">${formatCurrency(opt.totalIncVat)}</span>
+        </div>
+      `).join('')}
+    </div>
+  `
+}
+
 function renderFindingRow(item: FindingItem): string {
-  // Format price or show POA
-  const priceDisplay = item.price !== null && item.price > 0
-    ? formatCurrency(item.price)
-    : 'POA'
+  const hasOptions = item.options.length > 0
+
+  // Format price or show POA (hide single price when options are shown)
+  const priceDisplay = hasOptions
+    ? ''
+    : (item.price !== null && item.price > 0 ? formatCurrency(item.price) : 'POA')
 
   // For grouped items, show group name as header and children with descriptions
   if (item.isGroup && item.children.length > 0) {
@@ -144,13 +172,22 @@ function renderFindingRow(item: FindingItem): string {
             <span class="group-badge">${item.children.length} items</span>
           </div>
           ${renderChildItems(item.children)}
+          ${renderFindingOptions(item.options)}
+          ${item.isAuthorised && item.outcomeDate ? `
+            <div class="finding-authorised">&#10003; Authorised on ${formatDate(item.outcomeDate)}</div>
+          ` : ''}
+          ${item.isDeclined && item.outcomeDate ? `
+            <div class="finding-declined">&#10007; Declined on ${formatDate(item.outcomeDate)}${item.declinedReason ? ` - ${item.declinedReason}` : ''}</div>
+          ` : ''}
           ${item.isDeferred && item.deferredUntil ? `
             <div class="finding-deferred">&#9201; Deferred until ${formatDate(item.deferredUntil)}</div>
           ` : ''}
         </div>
         <div class="finding-price">
+          ${item.isAuthorised ? `<span class="authorised-badge">Authorised</span>` : ''}
+          ${item.isDeclined ? `<span class="declined-badge">Declined</span>` : ''}
           ${item.isDeferred ? `<span class="deferred-badge">Deferred</span>` : ''}
-          <span class="price-value">${priceDisplay}</span>
+          ${priceDisplay ? `<span class="price-value">${priceDisplay}</span>` : ''}
         </div>
       </div>
     `
@@ -166,13 +203,22 @@ function renderFindingRow(item: FindingItem): string {
       <div class="finding-info">
         <div class="finding-name">${item.name}</div>
         ${descriptionsHtml}
+        ${renderFindingOptions(item.options)}
+        ${item.isAuthorised && item.outcomeDate ? `
+          <div class="finding-authorised">&#10003; Authorised on ${formatDate(item.outcomeDate)}</div>
+        ` : ''}
+        ${item.isDeclined && item.outcomeDate ? `
+          <div class="finding-declined">&#10007; Declined on ${formatDate(item.outcomeDate)}${item.declinedReason ? ` - ${item.declinedReason}` : ''}</div>
+        ` : ''}
         ${item.isDeferred && item.deferredUntil ? `
           <div class="finding-deferred">&#9201; Deferred until ${formatDate(item.deferredUntil)}</div>
         ` : ''}
       </div>
       <div class="finding-price">
+        ${item.isAuthorised ? `<span class="authorised-badge">Authorised</span>` : ''}
+        ${item.isDeclined ? `<span class="declined-badge">Declined</span>` : ''}
         ${item.isDeferred ? `<span class="deferred-badge">Deferred</span>` : ''}
-        <span class="price-value">${priceDisplay}</span>
+        ${priceDisplay ? `<span class="price-value">${priceDisplay}</span>` : ''}
       </div>
     </div>
   `
@@ -182,9 +228,12 @@ function renderFindingRow(item: FindingItem): string {
  * Render a findings group (red or amber)
  */
 export function renderFindingsGroup(options: FindingsGroupOptions): string {
-  const { items, results, reasonsByCheckResult = {}, status, maxItems = 5 } = options
+  const { items, results, reasonsByCheckResult = {}, newRepairItems = [], status, maxItems = 5 } = options
 
   if (items.length === 0) return ''
+
+  // Build lookup for new repair items by ID (to get options)
+  const newItemsById = new Map(newRepairItems.map(ni => [ni.id, ni]))
 
   // Transform items to finding items
   const findingItems: FindingItem[] = items.map(item => {
@@ -194,6 +243,16 @@ export function renderFindingsGroup(options: FindingsGroupOptions): string {
       descriptions: getChildDescriptions(child, results, reasonsByCheckResult)
     }))
 
+    // Look up options from new repair items
+    const newItem = newItemsById.get(item.id)
+    const itemOptions: FindingOptionItem[] = (newItem?.options || []).map(opt => ({
+      name: opt.name,
+      totalIncVat: opt.totalIncVat,
+      isRecommended: opt.isRecommended
+    }))
+
+    const outcomeStatus = item.outcome_status || null
+
     return {
       id: item.id,
       name: item.title,
@@ -201,9 +260,14 @@ export function renderFindingsGroup(options: FindingsGroupOptions): string {
       price: item.total_price ?? null,
       isDeferred: !!item.follow_up_date,
       deferredUntil: item.follow_up_date ?? null,
+      isAuthorised: outcomeStatus === 'authorised',
+      isDeclined: outcomeStatus === 'declined',
+      outcomeDate: item.outcome_set_at || null,
+      declinedReason: item.declined_reason || null,
       status: item.rag_status as 'red' | 'amber',
       isGroup: !!item.is_group,
-      children
+      children,
+      options: itemOptions
     }
   })
 

@@ -310,6 +310,7 @@ const dmsImportWorker = new Worker(
       date: string
       importType: 'manual' | 'scheduled'
       triggeredBy?: string
+      bookingIds?: string[]
     }
 
     if (job.data.type === 'dms_import') {
@@ -320,7 +321,8 @@ const dmsImportWorker = new Worker(
         siteId: importJob.siteId,
         date: importJob.date,
         importType: importJob.importType,
-        triggeredBy: importJob.triggeredBy
+        triggeredBy: importJob.triggeredBy,
+        bookingIds: importJob.bookingIds
       }
     } else {
       // Scheduled import - use today's date
@@ -711,6 +713,18 @@ async function processReminder(data: SendReminderJob) {
   // Don't send reminder if already responded
   if (['authorized', 'declined', 'completed'].includes(healthCheck.status)) {
     console.log(`Health check ${data.healthCheckId} already responded, skipping reminder`)
+    return
+  }
+
+  // Don't send reminder if reminders have been disabled for this organization
+  const { data: notifSettings } = await supabaseAdmin
+    .from('organization_notification_settings')
+    .select('default_reminder_enabled')
+    .eq('organization_id', healthCheck.organization_id)
+    .single()
+
+  if (notifSettings?.default_reminder_enabled === false) {
+    console.log(`Reminders disabled for org ${healthCheck.organization_id}, skipping reminder`)
     return
   }
 

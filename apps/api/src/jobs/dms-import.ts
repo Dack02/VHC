@@ -30,6 +30,7 @@ export interface ImportOptions {
   date: string  // YYYY-MM-DD
   importType: 'manual' | 'scheduled' | 'test'
   triggeredBy?: string  // user ID
+  bookingIds?: string[]  // selective import - only import these booking IDs
 }
 
 export interface ImportResult {
@@ -435,7 +436,8 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
     siteId,
     date,
     importType,
-    triggeredBy
+    triggeredBy,
+    bookingIds
   } = options
 
   const logContext = { organizationId, date, importType }
@@ -550,6 +552,12 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
       console.log('[DMS Import] Booking raw data:', JSON.stringify(booking, null, 2))
 
       try {
+        // If selective import, skip bookings not in the list
+        if (bookingIds && bookingIds.length > 0 && !bookingIds.includes(booking.bookingId)) {
+          result.bookingsSkipped++
+          continue
+        }
+
         // Skip cancelled/completed bookings
         if (['cancelled', 'completed'].includes(booking.status.toLowerCase())) {
           console.log('[DMS Import] Skipping - status is:', booking.status)

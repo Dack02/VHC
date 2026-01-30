@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useSuperAdminSafe } from '../../contexts/SuperAdminContext'
 import { api } from '../../lib/api'
+import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface ReasonType {
   id: string
@@ -215,6 +216,7 @@ export default function ReasonTypes() {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
+      <SettingsBackLink />
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

@@ -40,6 +40,21 @@ declare module 'hono' {
   }
 }
 
+// Database row shape for users table
+interface DbUser {
+  id: string
+  auth_id: string
+  email: string
+  first_name: string
+  last_name: string
+  role: string
+  organization_id: string
+  site_id: string | null
+  is_active: boolean
+  is_org_admin?: boolean
+  is_site_admin?: boolean
+}
+
 export async function authMiddleware(c: Context, next: Next) {
   const authHeader = c.req.header('Authorization')
 
@@ -58,13 +73,53 @@ export async function authMiddleware(c: Context, next: Next) {
     }
 
     // Get the user record from our users table
-    const { data: user, error: userError } = await supabaseAdmin
-      .from('users')
-      .select('*')
-      .eq('auth_id', authUser.id)
-      .single()
+    // With multi-org support, one auth_id can have multiple user rows.
+    // Use X-Organization-Id header to pick the correct one.
+    const requestedOrgId = c.req.header('X-Organization-Id')
 
-    if (userError || !user) {
+    let user: DbUser | null = null
+
+    if (requestedOrgId) {
+      // Specific org requested — fetch that exact user record
+      const { data, error: userError } = await supabaseAdmin
+        .from('users')
+        .select('*')
+        .eq('auth_id', authUser.id)
+        .eq('organization_id', requestedOrgId)
+        .single()
+
+      if (userError || !data) {
+        return c.json({ error: 'User not found for this organization' }, 401)
+      }
+      user = data
+    } else {
+      // No org header — resolve from user_preferences or fall back to first record
+      const { data: allUsers } = await supabaseAdmin
+        .from('users')
+        .select('*')
+        .eq('auth_id', authUser.id)
+        .eq('is_active', true)
+
+      if (!allUsers || allUsers.length === 0) {
+        return c.json({ error: 'User not found' }, 401)
+      }
+
+      if (allUsers.length === 1) {
+        user = allUsers[0]
+      } else {
+        // Multiple orgs — check user_preferences for last active
+        const { data: prefs } = await supabaseAdmin
+          .from('user_preferences')
+          .select('last_active_organization_id')
+          .eq('auth_id', authUser.id)
+          .single()
+
+        const preferredOrgId = prefs?.last_active_organization_id
+        user = allUsers.find((u: DbUser) => u.organization_id === preferredOrgId) || allUsers[0]
+      }
+    }
+
+    if (!user) {
       return c.json({ error: 'User not found' }, 401)
     }
 

@@ -47,7 +47,7 @@ interface SocketProviderProps {
 }
 
 export function SocketProvider({ children }: SocketProviderProps) {
-  const { session } = useAuth()
+  const { session, activeOrgId } = useAuth()
   const token = session?.accessToken
   const [socket, setSocket] = useState<Socket | null>(null)
   const [isConnected, setIsConnected] = useState(false)
@@ -66,7 +66,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
     const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5180'
 
     const newSocket = io(apiUrl, {
-      auth: { token },
+      auth: { token, organizationId: activeOrgId },
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 5,
       reconnectionDelay: 1000

@@ -29,6 +29,7 @@ export function generateCompactHealthCheckHTML(data: HealthCheckPDFData): string
     site,
     results,
     repairItems,
+    newRepairItems = [],
     reasonsByCheckResult = {},
     vehicle
   } = data
@@ -98,6 +99,7 @@ export function generateCompactHealthCheckHTML(data: HealthCheckPDFData): string
       items: redItems,
       results,
       reasonsByCheckResult,
+      newRepairItems,
       status: 'red',
       maxItems: 5
     })}
@@ -106,6 +108,7 @@ export function generateCompactHealthCheckHTML(data: HealthCheckPDFData): string
       items: amberItems,
       results,
       reasonsByCheckResult,
+      newRepairItems,
       status: 'amber',
       maxItems: 5
     })}

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { api } from '../../lib/api'
+import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface HistoryItem {
   id: string
@@ -157,6 +158,7 @@ export default function AIUsageHistory() {
 
   return (
     <div className="space-y-6">
+      <SettingsBackLink />
       <div className="flex items-center justify-between">
         <div>
           <button

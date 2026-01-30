@@ -43,7 +43,7 @@ export interface EmailRepairItem {
 
 // Legacy: Environment-based credentials for backward compatibility
 const envApiKey = process.env.RESEND_API_KEY
-const envFromEmail = process.env.RESEND_FROM_EMAIL || 'noreply@vhc.example.com'
+const envFromEmail = process.env.RESEND_FROM_EMAIL || 'noreply@ollosoft.co.uk'
 const envFromName = process.env.RESEND_FROM_NAME || 'Vehicle Health Check'
 
 // Legacy client for backward compatibility

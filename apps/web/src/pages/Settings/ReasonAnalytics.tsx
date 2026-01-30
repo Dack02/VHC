@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { api } from '../../lib/api'
+import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface ReasonStat {
   id: string
@@ -132,6 +133,7 @@ export default function ReasonAnalytics() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
+      <SettingsBackLink />
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

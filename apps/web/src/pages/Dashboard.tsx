@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useSocket, WS_EVENTS } from '../contexts/SocketContext'
 import { api } from '../lib/api'
+import DmsImportModal from './DmsImportModal'
 
 interface DashboardMetrics {
   totalToday: number
@@ -103,12 +104,15 @@ export default function Dashboard() {
   const [queues, setQueues] = useState<QueuesData | null>(null)
   const [technicians, setTechnicians] = useState<TechnicianWorkload[]>([])
   const [awaitingArrival, setAwaitingArrival] = useState<AwaitingArrivalItem[]>([])
+  const [awaitingArrivalTotal, setAwaitingArrivalTotal] = useState(0)
   const [awaitingArrivalLoading, setAwaitingArrivalLoading] = useState(false)
   const [awaitingCheckin, setAwaitingCheckin] = useState<AwaitingCheckinItem[]>([])
   const [awaitingCheckinLoading, setAwaitingCheckinLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [liveUpdate, setLiveUpdate] = useState<string | null>(null)
+  const [dmsEnabled, setDmsEnabled] = useState(false)
+  const [showDmsModal, setShowDmsModal] = useState(false)
 
   const token = session?.accessToken
 
@@ -156,8 +160,9 @@ export default function Dashboard() {
     if (!token) return
     try {
       setAwaitingArrivalLoading(true)
-      const response = await api<{ healthChecks: AwaitingArrivalItem[] }>('/api/v1/dms-settings/unactioned?limit=50', { token })
+      const response = await api<{ healthChecks: AwaitingArrivalItem[]; pagination: { total: number } }>('/api/v1/dms-settings/unactioned?limit=200', { token })
       setAwaitingArrival(response.healthChecks || [])
+      setAwaitingArrivalTotal(response.pagination?.total ?? response.healthChecks?.length ?? 0)
     } catch (err) {
       console.error('Failed to fetch awaiting arrival:', err)
     } finally {
@@ -198,25 +203,68 @@ export default function Dashboard() {
     }
   }, [token])
 
-  useEffect(() => {
-    fetchDashboard()
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchDashboard, 30000)
-    return () => clearInterval(interval)
+  // Check if DMS integration is enabled
+  const checkDmsEnabled = useCallback(async () => {
+    if (!token) return
+    try {
+      const settings = await api<{ enabled?: boolean; credentialsConfigured?: boolean }>('/api/v1/dms-settings/settings', { token })
+      setDmsEnabled(settings?.enabled === true && settings?.credentialsConfigured === true)
+    } catch {
+      setDmsEnabled(false)
+    }
+  }, [token])
+
+  // Debounced refresh for WebSocket events (500ms, leading + trailing)
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const lastCallRef = useRef<number>(0)
+
+  const debouncedRefresh = useMemo(() => {
+    return () => {
+      const now = Date.now()
+      // Leading edge: fire immediately if >500ms since last call
+      if (now - lastCallRef.current > 500) {
+        lastCallRef.current = now
+        fetchDashboard()
+        return
+      }
+      // Trailing edge: debounce subsequent calls
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+      debounceTimerRef.current = setTimeout(() => {
+        lastCallRef.current = Date.now()
+        fetchDashboard()
+      }, 500)
+    }
   }, [fetchDashboard])
 
-  // Initial fetch for awaiting arrival and check-in
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchDashboard()
+    // Only poll if WebSocket is disconnected (fallback)
+    if (!isConnected) {
+      const interval = setInterval(fetchDashboard, 30000)
+      return () => clearInterval(interval)
+    }
+  }, [fetchDashboard, isConnected])
+
+  // Initial fetch for awaiting arrival, check-in, and DMS status
   useEffect(() => {
     fetchAwaitingArrival()
     fetchAwaitingCheckin()
-  }, [fetchAwaitingArrival, fetchAwaitingCheckin])
+    checkDmsEnabled()
+  }, [fetchAwaitingArrival, fetchAwaitingCheckin, checkDmsEnabled])
 
-  // Subscribe to real-time WebSocket events
+  // Subscribe to real-time WebSocket events (debounced to prevent request storms)
   useEffect(() => {
     const handleStatusChange = (data: { healthCheckId: string; status: string; vehicleReg: string }) => {
       setLiveUpdate(`${data.vehicleReg} → ${data.status.replace('_', ' ')}`)
       setTimeout(() => setLiveUpdate(null), 3000)
-      fetchDashboard()
+      debouncedRefresh()
       // Refresh check-in list if status changed to/from awaiting_checkin
       if (data.status === 'awaiting_checkin' || data.status === 'created') {
         fetchAwaitingCheckin()
@@ -227,13 +275,13 @@ export default function Dashboard() {
       const actionText = data.action === 'authorized' ? 'Authorized' : data.action === 'declined' ? 'Declined' : 'Signed'
       setLiveUpdate(`${data.vehicleReg} - Customer ${actionText}!`)
       setTimeout(() => setLiveUpdate(null), 3000)
-      fetchDashboard()
+      debouncedRefresh()
     }
 
     const handleTechnicianClocked = (data: { technicianName: string; vehicleReg: string }) => {
       setLiveUpdate(`${data.technicianName} started ${data.vehicleReg}`)
       setTimeout(() => setLiveUpdate(null), 3000)
-      fetchDashboard()
+      debouncedRefresh()
     }
 
     on(WS_EVENTS.HEALTH_CHECK_STATUS_CHANGED, handleStatusChange)
@@ -249,7 +297,7 @@ export default function Dashboard() {
       off(WS_EVENTS.TECHNICIAN_CLOCKED_IN)
       off(WS_EVENTS.TECHNICIAN_CLOCKED_OUT)
     }
-  }, [on, off, fetchDashboard, fetchAwaitingCheckin])
+  }, [on, off, debouncedRefresh, fetchAwaitingCheckin])
 
   // Check if onboarding is incomplete (only show for org admins)
   const showOnboardingReminder =
@@ -383,6 +431,17 @@ export default function Dashboard() {
             </button>
           </div>
           {/* Quick Links */}
+          {dmsEnabled && (
+            <button
+              onClick={() => setShowDmsModal(true)}
+              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              DMS Import
+            </button>
+          )}
           <Link
             to="/health-checks"
             className="px-4 py-2 bg-primary text-white text-sm font-medium hover:bg-primary/90"
@@ -709,7 +768,7 @@ export default function Dashboard() {
           <div className="border-b border-gray-200 p-4 flex items-center justify-between bg-blue-50">
             <div>
               <h2 className="font-semibold text-primary">Awaiting Arrival</h2>
-              <p className="text-xs text-gray-500 mt-1">{awaitingArrival.length} vehicle{awaitingArrival.length !== 1 ? 's' : ''} waiting</p>
+              <p className="text-xs text-gray-500 mt-1">{awaitingArrivalTotal} vehicle{awaitingArrivalTotal !== 1 ? 's' : ''} waiting{awaitingArrivalTotal > awaitingArrival.length ? ` (showing ${awaitingArrival.length})` : ''}</p>
             </div>
             <div className="flex items-center gap-3">
               <button
@@ -796,6 +855,19 @@ export default function Dashboard() {
             ))}
           </div>
         </div>
+      )}
+
+      {/* DMS Import Modal */}
+      {token && (
+        <DmsImportModal
+          open={showDmsModal}
+          onClose={() => setShowDmsModal(false)}
+          onImportComplete={() => {
+            fetchAwaitingArrival()
+            fetchDashboard()
+          }}
+          token={token}
+        />
       )}
     </div>
   )

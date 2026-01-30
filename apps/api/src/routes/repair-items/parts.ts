@@ -548,10 +548,11 @@ partsRouter.delete('/repair-parts/:id', authorize(['super_admin', 'org_admin', '
         id,
         repair_item_id,
         repair_option_id,
-        repair_item:repair_items(organization_id),
-        repair_option:repair_options(
+        repair_item:repair_items!repair_parts_repair_item_id_fkey(organization_id),
+        repair_option:repair_options!repair_parts_repair_option_id_fkey(
           id,
-          repair_item:repair_items(organization_id)
+          repair_item_id,
+          repair_item:repair_items!repair_options_repair_item_id_fkey(organization_id)
         )
       `)
       .eq('id', id)
@@ -580,7 +581,7 @@ partsRouter.delete('/repair-parts/:id', authorize(['super_admin', 'org_admin', '
     // Get health_check_id and item name for audit before deletion
     let healthCheckId: string | null = null
     let itemName: string | null = null
-    const actualRepairItemId = repairItemId || repairOption?.id
+    const actualRepairItemId = repairItemId || repairOption?.repair_item_id
     if (actualRepairItemId) {
       const { data: repairItemData } = await supabaseAdmin
         .from('repair_items')

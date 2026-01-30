@@ -16,8 +16,9 @@ import { SelectedReason } from './ItemReasonsDisplay'
 import { SelectionActionBar } from './SelectionActionBar'
 import { CreateRepairGroupModal } from './CreateRepairGroupModal'
 import { BulkOutcomeActionBar } from './BulkOutcomeActionBar'
-import { BulkDeferModal, BulkDeclineModal } from './OutcomeModals'
+import { BulkDeferModal, BulkDeclineModal, DeferModal, DeclineModal, DeleteModal } from './OutcomeModals'
 import { calculateOutcomeStatus, OutcomeStatus } from './OutcomeButton'
+import { RepairOptionsModal } from './RepairOptionsModal'
 import { useToast } from '../../../contexts/ToastContext'
 
 interface HealthCheckTabContentProps {
@@ -60,6 +61,17 @@ export function HealthCheckTabContent({
   const [showBulkDeferModal, setShowBulkDeferModal] = useState(false)
   const [showBulkDeclineModal, setShowBulkDeclineModal] = useState(false)
   const [bulkActionLoading, setBulkActionLoading] = useState(false)
+
+  // Repair options modal state
+  const [optionsModalItemId, setOptionsModalItemId] = useState<string | null>(null)
+  const [optionsModalItemTitle, setOptionsModalItemTitle] = useState('')
+
+  // Lifted outcome modal state (single set of modals for all RepairItemRows)
+  const [activeOutcomeModal, setActiveOutcomeModal] = useState<{
+    type: 'defer' | 'decline' | 'delete'
+    itemId: string
+    itemTitle: string
+  } | null>(null)
 
   // Batch-loaded reasons for all check results
   const [reasonsByCheckResult, setReasonsByCheckResult] = useState<Record<string, SelectedReason[]>>({})
@@ -127,7 +139,7 @@ export function HealthCheckTabContent({
   // Attach children to groups
   const redItems = useMemo(() =>
     repairItems
-      .filter(item => item.rag_status === 'red' && !item.parent_repair_item_id)
+      .filter(item => item.rag_status === 'red' && !item.parent_repair_item_id && !item.deleted_at)
       .map(item => ({
         ...item,
         children: item.is_group ? childrenByParent.get(item.id) || [] : undefined
@@ -137,7 +149,7 @@ export function HealthCheckTabContent({
 
   const amberItems = useMemo(() =>
     repairItems
-      .filter(item => item.rag_status === 'amber' && !item.parent_repair_item_id)
+      .filter(item => item.rag_status === 'amber' && !item.parent_repair_item_id && !item.deleted_at)
       .map(item => ({
         ...item,
         children: item.is_group ? childrenByParent.get(item.id) || [] : undefined
@@ -169,7 +181,7 @@ export function HealthCheckTabContent({
     }
 
     return repairItems
-      .filter(item => !item.parent_repair_item_id && hasApproved(item))
+      .filter(item => !item.parent_repair_item_id && !item.deleted_at && hasApproved(item))
       .map(item => ({
         ...item,
         children: item.is_group ? childrenByParent.get(item.id) || [] : undefined
@@ -194,20 +206,29 @@ export function HealthCheckTabContent({
     }
 
     return repairItems
-      .filter(item => !item.parent_repair_item_id && hasDeclined(item))
+      .filter(item => !item.parent_repair_item_id && !item.deleted_at && hasDeclined(item))
       .map(item => ({
         ...item,
         children: item.is_group ? childrenByParent.get(item.id) || [] : undefined
       }))
   }, [repairItems, childrenByParent])
 
+  // Helper to get effective total price for an item (uses selected option if available)
+  const getItemEffectiveTotal = (item: RepairItem): number => {
+    if (item.options && item.options.length > 0 && item.selected_option_id) {
+      const selectedOpt = item.options.find(o => o.id === item.selected_option_id)
+      if (selectedOpt) return selectedOpt.totalIncVat
+    }
+    return item.total_price || 0
+  }
+
   // Calculate totals
-  const redTotal = redItems.reduce((sum, item) => sum + (item.total_price || 0), 0)
-  const amberTotal = amberItems.reduce((sum, item) => sum + (item.total_price || 0), 0)
-  const authorisedTotal = authorisedItems.reduce((sum, item) => sum + (item.total_price || 0), 0)
+  const redTotal = redItems.reduce((sum, item) => sum + getItemEffectiveTotal(item), 0)
+  const amberTotal = amberItems.reduce((sum, item) => sum + getItemEffectiveTotal(item), 0)
+  const authorisedTotal = authorisedItems.reduce((sum, item) => sum + getItemEffectiveTotal(item), 0)
   const authorisedCompletedTotal = authorisedItems
     .filter(item => item.work_completed_at)
-    .reduce((sum, item) => sum + (item.total_price || 0), 0)
+    .reduce((sum, item) => sum + getItemEffectiveTotal(item), 0)
 
   // Group green results by section
   const greenResultsBySection = useMemo(() => {
@@ -253,7 +274,7 @@ export function HealthCheckTabContent({
 
   // Helper to render special displays for tyre/brake items
   // Now rendered inside expanded sections, so no outer padding needed
-  const renderSpecialDisplay = (result: CheckResult | null) => {
+  const renderSpecialDisplay = useCallback((result: CheckResult | null) => {
     if (!result) return null
 
     if (isTyreItem(result) && result.value) {
@@ -265,7 +286,7 @@ export function HealthCheckTabContent({
     }
 
     return null
-  }
+  }, [])
 
   // Selection handlers
   const toggleSelection = useCallback((checkResultId: string) => {
@@ -312,7 +333,7 @@ export function HealthCheckTabContent({
     onUpdate()
   }
 
-  const handleUngroup = async (itemId: string) => {
+  const handleUngroup = useCallback(async (itemId: string) => {
     if (!session?.accessToken) return
     if (!confirm('Are you sure you want to ungroup these items? They will become individual repair items again.')) return
 
@@ -325,7 +346,70 @@ export function HealthCheckTabContent({
     } catch (err) {
       console.error('Failed to ungroup:', err)
     }
-  }
+  }, [session?.accessToken, onUpdate])
+
+  // Memoized callback to open outcome modals (lifted from RepairItemRow)
+  const openOutcomeModal = useCallback((type: 'defer' | 'decline' | 'delete', itemId: string, itemTitle: string) => {
+    setActiveOutcomeModal({ type, itemId, itemTitle })
+  }, [])
+
+  // Memoized callback to open manage options modal
+  const handleManageOptions = useCallback((itemId: string, itemTitle: string) => {
+    setOptionsModalItemId(itemId)
+    setOptionsModalItemTitle(itemTitle)
+  }, [])
+
+  // Outcome handlers for lifted modals
+  const handleOutcomeDefer = useCallback(async (deferredUntil: string, notes: string) => {
+    if (!session?.accessToken || !activeOutcomeModal) return
+    try {
+      await api(`/api/v1/repair-items/${activeOutcomeModal.itemId}/defer`, {
+        method: 'POST',
+        token: session.accessToken,
+        body: { deferred_until: deferredUntil, notes }
+      })
+      toast.success('Item deferred')
+      setActiveOutcomeModal(null)
+      onUpdate()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to defer')
+      throw err
+    }
+  }, [session?.accessToken, activeOutcomeModal, onUpdate, toast])
+
+  const handleOutcomeDecline = useCallback(async (declinedReasonId: string, notes: string) => {
+    if (!session?.accessToken || !activeOutcomeModal) return
+    try {
+      await api(`/api/v1/repair-items/${activeOutcomeModal.itemId}/decline`, {
+        method: 'POST',
+        token: session.accessToken,
+        body: { declined_reason_id: declinedReasonId, notes }
+      })
+      toast.success('Item declined')
+      setActiveOutcomeModal(null)
+      onUpdate()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to decline')
+      throw err
+    }
+  }, [session?.accessToken, activeOutcomeModal, onUpdate, toast])
+
+  const handleOutcomeDelete = useCallback(async (deletedReasonId: string, notes: string) => {
+    if (!session?.accessToken || !activeOutcomeModal) return
+    try {
+      await api(`/api/v1/repair-items/${activeOutcomeModal.itemId}/delete`, {
+        method: 'POST',
+        token: session.accessToken,
+        body: { deleted_reason_id: deletedReasonId, notes }
+      })
+      toast.success('Item deleted')
+      setActiveOutcomeModal(null)
+      onUpdate()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete')
+      throw err
+    }
+  }, [session?.accessToken, activeOutcomeModal, onUpdate, toast])
 
   // ==========================================================================
   // BULK OUTCOME SELECTION
@@ -623,6 +707,8 @@ export function HealthCheckTabContent({
                     onUpdate={onUpdate}
                     onPhotoClick={onPhotoClick}
                     onUngroup={item.is_group && item.children?.length ? () => handleUngroup(item.id) : undefined}
+                    onManageOptions={() => handleManageOptions(item.id, item.title)}
+                    onOpenModal={openOutcomeModal}
                     preloadedReasons={checkResultId ? reasonsByCheckResult[checkResultId] : undefined}
                     specialDisplay={renderSpecialDisplay(result)}
                   />
@@ -678,6 +764,8 @@ export function HealthCheckTabContent({
                     onUpdate={onUpdate}
                     onPhotoClick={onPhotoClick}
                     onUngroup={item.is_group && item.children?.length ? () => handleUngroup(item.id) : undefined}
+                    onManageOptions={() => handleManageOptions(item.id, item.title)}
+                    onOpenModal={openOutcomeModal}
                     preloadedReasons={checkResultId ? reasonsByCheckResult[checkResultId] : undefined}
                     specialDisplay={renderSpecialDisplay(result)}
                   />
@@ -770,6 +858,8 @@ export function HealthCheckTabContent({
                   onUpdate={onUpdate}
                   onPhotoClick={onPhotoClick}
                   onUngroup={item.is_group && item.children?.length ? () => handleUngroup(item.id) : undefined}
+                  onManageOptions={() => handleManageOptions(item.id, item.title)}
+                  onOpenModal={openOutcomeModal}
                   preloadedReasons={checkResultId ? reasonsByCheckResult[checkResultId] : undefined}
                 />
               </div>
@@ -865,6 +955,45 @@ export function HealthCheckTabContent({
         onClose={() => setShowBulkDeclineModal(false)}
         onConfirm={handleBulkDecline}
       />
+
+      {/* Repair Options modal */}
+      {optionsModalItemId && (
+        <RepairOptionsModal
+          repairItemId={optionsModalItemId}
+          repairItemTitle={optionsModalItemTitle}
+          onClose={() => {
+            setOptionsModalItemId(null)
+            setOptionsModalItemTitle('')
+          }}
+          onUpdate={onUpdate}
+        />
+      )}
+
+      {/* Lifted outcome modals (single set for all RepairItemRows) */}
+      {activeOutcomeModal?.type === 'defer' && (
+        <DeferModal
+          isOpen={true}
+          itemName={activeOutcomeModal.itemTitle}
+          onClose={() => setActiveOutcomeModal(null)}
+          onConfirm={handleOutcomeDefer}
+        />
+      )}
+      {activeOutcomeModal?.type === 'decline' && (
+        <DeclineModal
+          isOpen={true}
+          itemName={activeOutcomeModal.itemTitle}
+          onClose={() => setActiveOutcomeModal(null)}
+          onConfirm={handleOutcomeDecline}
+        />
+      )}
+      {activeOutcomeModal?.type === 'delete' && (
+        <DeleteModal
+          isOpen={true}
+          itemName={activeOutcomeModal.itemTitle}
+          onClose={() => setActiveOutcomeModal(null)}
+          onConfirm={handleOutcomeDelete}
+        />
+      )}
     </div>
   )
 }

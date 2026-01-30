@@ -74,6 +74,10 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         work_completed_at,
         source,
         rag_status,
+        outcome_status,
+        outcome_set_at,
+        declined_notes,
+        declined_reason:declined_reasons(reason),
         check_results:repair_item_check_results(
           check_result:check_results(id, rag_status)
         )
@@ -174,6 +178,10 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         }
       }
 
+      // Resolve declined reason text from join or notes
+      const declinedReasonObj = item.declined_reason as unknown as { reason: string } | null
+      const resolvedDeclinedReason = declinedReasonObj?.reason || (item as Record<string, unknown>).declined_notes as string | null || null
+
       return {
         id: item.id,
         check_result_id: firstCheckResultId || '',
@@ -187,6 +195,9 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         is_mot_failure: false, // is_mot_failure is on check_results, not repair_items
         follow_up_date: item.follow_up_date || null,
         work_completed_at: item.work_completed_at,
+        outcome_status: (item as Record<string, unknown>).outcome_status as string | null || null,
+        outcome_set_at: (item as Record<string, unknown>).outcome_set_at as string | null || null,
+        declined_reason: resolvedDeclinedReason,
         // Group info for rendering
         is_group: item.is_group,
         children: children.length > 0 ? children.map(c => ({
@@ -231,7 +242,11 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         customer_signature_data,
         customer_notes,
         selected_option_id,
-        options:repair_options(
+        outcome_status,
+        outcome_set_at,
+        declined_notes,
+        declined_reason:declined_reasons(reason),
+        options:repair_options!repair_options_repair_item_id_fkey(
           id,
           name,
           description,
@@ -293,6 +308,9 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
       customerSignatureData: string | null
       customerNotes: string | null
       selectedOptionId: string | null
+      outcomeStatus: string | null
+      outcomeSetAt: string | null
+      declinedReason: string | null
       options: Array<{
         id: string
         name: string
@@ -350,6 +368,12 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         customerSignatureData: item.customer_signature_data,
         customerNotes: item.customer_notes,
         selectedOptionId: item.selected_option_id,
+        outcomeStatus: (item as Record<string, unknown>).outcome_status as string | null || null,
+        outcomeSetAt: (item as Record<string, unknown>).outcome_set_at as string | null || null,
+        declinedReason: (() => {
+          const dr = (item as Record<string, unknown>).declined_reason as { reason: string } | null
+          return dr?.reason || (item as Record<string, unknown>).declined_notes as string | null || null
+        })(),
         options: (item.options || []).map((opt: Record<string, unknown>) => ({
           id: opt.id as string,
           name: opt.name as string,
@@ -404,6 +428,26 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
     const newRepairItems = allTransformedItems.filter(item => !item.parentRepairItemId)
 
     const hasNewRepairItems = newRepairItems.length > 0
+
+    // Fix legacy repairItems total_price when pricing lives on options
+    const newItemsById = new Map(allTransformedItems.map(item => [item.id, item]))
+    for (const legacyItem of repairItems) {
+      const newItem = newItemsById.get(legacyItem.id)
+      if (newItem && newItem.options.length > 0) {
+        const opt = newItem.selectedOptionId
+          ? newItem.options.find(o => o.id === newItem.selectedOptionId)
+          : null
+        const fallback = !opt
+          ? (newItem.options.find(o => o.isRecommended) || newItem.options[0])
+          : null
+        const priceSource = opt || fallback
+        if (priceSource) {
+          legacyItem.total_price = priceSource.totalIncVat
+          legacyItem.parts_cost = priceSource.partsTotal
+          legacyItem.labor_cost = priceSource.labourTotal
+        }
+      }
+    }
 
     // Fetch selected reasons for all check results
     const checkResultIds = (checkResults || []).map(r => r.id)
@@ -542,6 +586,9 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         is_mot_failure: i.is_mot_failure,
         follow_up_date: i.follow_up_date,
         work_completed_at: i.work_completed_at,
+        outcome_status: i.outcome_status,
+        outcome_set_at: i.outcome_set_at,
+        declined_reason: i.declined_reason,
         is_group: i.is_group,
         children: i.children
       })),

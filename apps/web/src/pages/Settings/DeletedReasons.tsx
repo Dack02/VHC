@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
+import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface DeletedReason {
   id: string
@@ -189,9 +190,10 @@ export default function DeletedReasons() {
 
   return (
     <div>
+      <SettingsBackLink />
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Deleted Reasons</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Repair Line Deletion Reasons</h1>
           <p className="text-sm text-gray-500 mt-1">
             Manage reasons for removing repair items from health checks
           </p>

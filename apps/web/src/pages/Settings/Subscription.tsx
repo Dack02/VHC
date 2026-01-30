@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
+import { api } from '../../lib/api'
+import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface SubscriptionPlan {
   id: string
@@ -49,23 +51,21 @@ export default function Subscription() {
     if (!orgId) return
 
     try {
-      const [subResponse, usageResponse] = await Promise.all([
-        fetch(`/api/v1/organizations/${orgId}/subscription`, {
-          headers: { Authorization: `Bearer ${session?.accessToken}` }
+      const [subData, usageData] = await Promise.allSettled([
+        api<SubscriptionData>(`/api/v1/organizations/${orgId}/subscription`, {
+          token: session?.accessToken
         }),
-        fetch(`/api/v1/organizations/${orgId}/usage`, {
-          headers: { Authorization: `Bearer ${session?.accessToken}` }
+        api<UsageData>(`/api/v1/organizations/${orgId}/usage`, {
+          token: session?.accessToken
         })
       ])
 
-      if (subResponse.ok) {
-        const subData = await subResponse.json()
-        setSubscription(subData)
+      if (subData.status === 'fulfilled') {
+        setSubscription(subData.value)
       }
 
-      if (usageResponse.ok) {
-        const usageData = await usageResponse.json()
-        setUsage(usageData)
+      if (usageData.status === 'fulfilled') {
+        setUsage(usageData.value)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load subscription data')
@@ -121,6 +121,7 @@ export default function Subscription() {
 
   return (
     <div className="max-w-4xl mx-auto">
+      <SettingsBackLink />
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Subscription</h1>
         <p className="text-gray-600 mt-1">
@@ -314,7 +315,7 @@ export default function Subscription() {
             <p className="text-gray-600 mt-1">Contact us to discuss upgrading your plan.</p>
           </div>
           <a
-            href="mailto:support@vhc.app"
+            href="mailto:support@ollosoft.co.uk"
             className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark transition-colors"
           >
             Contact Support

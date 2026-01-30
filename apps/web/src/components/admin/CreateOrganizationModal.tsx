@@ -171,7 +171,7 @@ export default function CreateOrganizationModal({ onClose, onCreated }: CreateOr
                   URL Slug
                 </label>
                 <div className="flex items-center">
-                  <span className="text-gray-500 text-sm mr-2">app.vhc.com/</span>
+                  <span className="text-gray-500 text-sm mr-2">inspect.ollosoft.io/</span>
                   <input
                     type="text"
                     value={orgSlug}

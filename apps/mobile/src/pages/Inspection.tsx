@@ -87,12 +87,14 @@ export function Inspection() {
         setCheckinEnabled(false)
       }
 
+      let templateSections: TemplateSection[] = []
       if (healthCheck.template_id) {
         const template = await api<{ sections?: TemplateSection[] }>(
           `/api/v1/templates/${healthCheck.template_id}`,
           { token: session.access_token }
         )
-        setSections(template.sections || [])
+        templateSections = template.sections || []
+        setSections(templateSections)
       }
 
       const { results: apiResults } = await api<{ results: CheckResult[] }>(
@@ -143,6 +145,27 @@ export function Inspection() {
           }
         }
       })
+
+      // Default non-mandatory items to green so techs only interact with issues
+      if (templateSections.length > 0) {
+        for (const section of templateSections) {
+          for (const item of (section.items || [])) {
+            if (item.isRequired) continue // Mandatory items must be explicitly set
+            const key = getResultKey(item.id, 1)
+            if (!resultsMap.has(key) && !resultsMap.has(item.id)) {
+              resultsMap.set(key, {
+                templateItemId: item.id,
+                template_item_id: item.id,
+                instanceNumber: 1,
+                instance_number: 1,
+                status: 'green',
+                rag_status: 'green',
+                _isDefault: true // Track that this is an auto-default
+              } as Partial<CheckResult> & { _isDefault?: boolean })
+            }
+          }
+        }
+      }
 
       setResults(resultsMap)
 
@@ -255,7 +278,8 @@ export function Inspection() {
       health_check_id: id!,
       status: newStatus,
       rag_status: newStatus,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      _isDefault: undefined // Clear default flag on explicit interaction
     }
 
     setResults((prev) => {
@@ -515,7 +539,17 @@ export function Inspection() {
     }
   }
 
-  const handleComplete = () => {
+  const handleComplete = async () => {
+    // Persist default-green items that the tech didn't interact with
+    const savePromises: Promise<void>[] = []
+    results.forEach((result, key) => {
+      if ((result as any)._isDefault) {
+        savePromises.push(saveResult(key, { status: 'green', rag_status: 'green' }))
+      }
+    })
+    if (savePromises.length > 0) {
+      await Promise.all(savePromises)
+    }
     navigate(`/job/${id}/summary`)
   }
 

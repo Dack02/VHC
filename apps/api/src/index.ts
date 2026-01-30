@@ -44,13 +44,14 @@ import suppliers from './routes/suppliers.js'
 import pricing from './routes/pricing.js'
 import declinedReasons from './routes/declined-reasons.js'
 import deletedReasons from './routes/deleted-reasons.js'
+import hcDeletionReasons from './routes/hc-deletion-reasons.js'
 import supplierTypes from './routes/supplier-types.js'
 import checkinSettings from './routes/checkin-settings.js'
 import messageTemplates from './routes/message-templates.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
-import { checkRedisConnection } from './services/queue.js'
+import { checkRedisConnection, updateRedisStatus } from './services/queue.js'
 
 const app = new Hono()
 
@@ -168,6 +169,9 @@ app.route('/api/v1/organizations/:orgId/declined-reasons', declinedReasons)
 // Deleted reasons routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/deleted-reasons', deletedReasons)
 
+// HC deletion reasons routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/hc-deletion-reasons', hcDeletionReasons)
+
 // Supplier types routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/supplier-types', supplierTypes)
 
@@ -196,10 +200,11 @@ initializeWebSocket(server as unknown as import('http').Server)
 
 // Check Redis connection (optional, for queue support)
 checkRedisConnection().then((connected) => {
+  updateRedisStatus(connected)
   if (connected) {
     logger.info('Redis connected - queue workers available')
   } else {
-    logger.info('Redis not available - queue features disabled')
+    logger.info('Redis not available - processing notifications directly')
   }
 })
 

@@ -8,6 +8,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
+import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface MriItem {
   id: string
@@ -206,6 +207,7 @@ export default function MriItemsSettings() {
 
   return (
     <div>
+      <SettingsBackLink />
       <div className="flex items-center justify-between mb-6">
         <div>
           <div className="flex items-center gap-3 mb-1">

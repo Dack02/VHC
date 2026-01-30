@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import { SuperAdminProvider } from './contexts/SuperAdminContext'
@@ -8,54 +9,70 @@ import { PageErrorBoundary } from './components/ErrorBoundary'
 import ProtectedLayout from './layouts/ProtectedLayout'
 import DashboardLayout from './layouts/DashboardLayout'
 import AdminLayout from './layouts/AdminLayout'
-import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
-import Users from './pages/Users'
-import TemplateList from './pages/Templates/TemplateList'
-import TemplateBuilder from './pages/Templates/TemplateBuilder'
-import Customers from './pages/Customers'
-import HealthCheckList from './pages/HealthChecks/HealthCheckList'
-import HealthCheckDetail from './pages/HealthChecks/HealthCheckDetail'
-import NewHealthCheck from './pages/HealthChecks/NewHealthCheck'
-import TyreManufacturers from './pages/Admin/TyreManufacturers'
-import TyreSizes from './pages/Admin/TyreSizes'
-import InspectionThresholds from './pages/Admin/InspectionThresholds'
-import DMSIntegration from './pages/Settings/DMSIntegration'
-import NotificationSettings from './pages/Settings/NotificationSettings'
-import OrganizationSettings from './pages/Settings/OrganizationSettings'
-import Subscription from './pages/Settings/Subscription'
-import ReasonLibrary from './pages/Settings/ReasonLibrary'
-import ReasonTypes from './pages/Settings/ReasonTypes'
-import EditReasons from './pages/Settings/EditReasons'
-import ReasonSubmissions from './pages/Settings/ReasonSubmissions'
-import ReasonAnalytics from './pages/Settings/ReasonAnalytics'
-import AIUsage from './pages/Settings/AIUsage'
-import AIUsageHistory from './pages/Settings/AIUsageHistory'
-import LabourCodes from './pages/Settings/LabourCodes'
-import Suppliers from './pages/Settings/Suppliers'
-import SupplierTypes from './pages/Settings/SupplierTypes'
-import PricingSettings from './pages/Settings/PricingSettings'
-import DeclinedReasons from './pages/Settings/DeclinedReasons'
-import DeletedReasons from './pages/Settings/DeletedReasons'
-import WorkflowSettings from './pages/Settings/WorkflowSettings'
-import MriItemsSettings from './pages/Settings/MriItemsSettings'
-import MessageTemplates from './pages/Settings/MessageTemplates'
-import CustomerPortal from './pages/CustomerPortal/CustomerPortal'
-import AdminLogin from './pages/Admin/AdminLogin'
-import AdminDashboard from './pages/Admin/AdminDashboard'
-import AdminOrganizations from './pages/Admin/AdminOrganizations'
-import AdminOrganizationDetail from './pages/Admin/AdminOrganizationDetail'
-import AdminPlans from './pages/Admin/AdminPlans'
-import AdminActivity from './pages/Admin/AdminActivity'
-import AdminSettings from './pages/Admin/AdminSettings'
-import AdminStarterTemplate from './pages/Admin/AdminStarterTemplate'
-import AIConfiguration from './pages/Admin/AIConfiguration'
-import AIUsageDashboard from './pages/Admin/AIUsageDashboard'
 import ImpersonationBanner from './components/admin/ImpersonationBanner'
 import SuspendedBanner from './components/SuspendedBanner'
-import Onboarding from './pages/Onboarding'
-import TechnicianWorkload from './pages/Dashboard/TechnicianWorkload'
-import Reports from './pages/Reports'
+
+// Eager: Login (entry point for unauthenticated users)
+import Login from './pages/Login'
+
+// Lazy: All other page components
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Users = lazy(() => import('./pages/Users'))
+const TemplateList = lazy(() => import('./pages/Templates/TemplateList'))
+const TemplateBuilder = lazy(() => import('./pages/Templates/TemplateBuilder'))
+const CustomerList = lazy(() => import('./pages/Customers/CustomerList'))
+const CustomerDetail = lazy(() => import('./pages/Customers/CustomerDetail'))
+const HealthCheckList = lazy(() => import('./pages/HealthChecks/HealthCheckList'))
+const HealthCheckDetail = lazy(() => import('./pages/HealthChecks/HealthCheckDetail'))
+const NewHealthCheck = lazy(() => import('./pages/HealthChecks/NewHealthCheck'))
+const TyreManufacturers = lazy(() => import('./pages/Admin/TyreManufacturers'))
+const TyreSizes = lazy(() => import('./pages/Admin/TyreSizes'))
+const InspectionThresholds = lazy(() => import('./pages/Admin/InspectionThresholds'))
+const DMSIntegration = lazy(() => import('./pages/Settings/DMSIntegration'))
+const NotificationSettings = lazy(() => import('./pages/Settings/NotificationSettings'))
+const OrganizationSettings = lazy(() => import('./pages/Settings/OrganizationSettings'))
+const Subscription = lazy(() => import('./pages/Settings/Subscription'))
+const ReasonLibrary = lazy(() => import('./pages/Settings/ReasonLibrary'))
+const ReasonTypes = lazy(() => import('./pages/Settings/ReasonTypes'))
+const EditReasons = lazy(() => import('./pages/Settings/EditReasons'))
+const ReasonSubmissions = lazy(() => import('./pages/Settings/ReasonSubmissions'))
+const ReasonAnalytics = lazy(() => import('./pages/Settings/ReasonAnalytics'))
+const AIUsage = lazy(() => import('./pages/Settings/AIUsage'))
+const AIUsageHistory = lazy(() => import('./pages/Settings/AIUsageHistory'))
+const LabourCodes = lazy(() => import('./pages/Settings/LabourCodes'))
+const Suppliers = lazy(() => import('./pages/Settings/Suppliers'))
+const SupplierTypes = lazy(() => import('./pages/Settings/SupplierTypes'))
+const PricingSettings = lazy(() => import('./pages/Settings/PricingSettings'))
+const DeclinedReasons = lazy(() => import('./pages/Settings/DeclinedReasons'))
+const DeletedReasons = lazy(() => import('./pages/Settings/DeletedReasons'))
+const HcDeletionReasons = lazy(() => import('./pages/Settings/HcDeletionReasons'))
+const WorkflowSettings = lazy(() => import('./pages/Settings/WorkflowSettings'))
+const MriItemsSettings = lazy(() => import('./pages/Settings/MriItemsSettings'))
+const MessageTemplates = lazy(() => import('./pages/Settings/MessageTemplates'))
+const SettingsHub = lazy(() => import('./pages/Settings/SettingsHub'))
+const CustomerPortal = lazy(() => import('./pages/CustomerPortal/CustomerPortal'))
+const AdminLogin = lazy(() => import('./pages/Admin/AdminLogin'))
+const AdminDashboard = lazy(() => import('./pages/Admin/AdminDashboard'))
+const AdminOrganizations = lazy(() => import('./pages/Admin/AdminOrganizations'))
+const AdminOrganizationDetail = lazy(() => import('./pages/Admin/AdminOrganizationDetail'))
+const AdminPlans = lazy(() => import('./pages/Admin/AdminPlans'))
+const AdminActivity = lazy(() => import('./pages/Admin/AdminActivity'))
+const AdminSettings = lazy(() => import('./pages/Admin/AdminSettings'))
+const AdminStarterTemplate = lazy(() => import('./pages/Admin/AdminStarterTemplate'))
+const AIConfiguration = lazy(() => import('./pages/Admin/AIConfiguration'))
+const AIUsageDashboard = lazy(() => import('./pages/Admin/AIUsageDashboard'))
+const Onboarding = lazy(() => import('./pages/Onboarding'))
+const TechnicianWorkload = lazy(() => import('./pages/Dashboard/TechnicianWorkload'))
+const Reports = lazy(() => import('./pages/Reports'))
+
+// Page loading fallback
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center h-64">
+      <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
+    </div>
+  )
+}
 
 function App() {
   return (
@@ -68,6 +85,7 @@ function App() {
                 <BrowserRouter>
                   <ImpersonationBanner />
                   <SuspendedBanner />
+                  <Suspense fallback={<PageLoader />}>
                   <Routes>
                     {/* Public routes */}
                     <Route path="/view/:token" element={<CustomerPortal />} />
@@ -103,11 +121,13 @@ function App() {
                         <Route path="/health-checks" element={<HealthCheckList />} />
                         <Route path="/health-checks/new" element={<NewHealthCheck />} />
                         <Route path="/health-checks/:id" element={<HealthCheckDetail />} />
-                        <Route path="/customers" element={<Customers />} />
+                        <Route path="/customers" element={<CustomerList />} />
+                        <Route path="/customers/:id" element={<CustomerDetail />} />
                         <Route path="/templates" element={<TemplateList />} />
                         <Route path="/templates/:id" element={<TemplateBuilder />} />
-                        <Route path="/admin/tyre-manufacturers" element={<TyreManufacturers />} />
-                        <Route path="/admin/tyre-sizes" element={<TyreSizes />} />
+                        <Route path="/settings" element={<SettingsHub />} />
+                        <Route path="/settings/tyre-manufacturers" element={<TyreManufacturers />} />
+                        <Route path="/settings/tyre-sizes" element={<TyreSizes />} />
                         <Route path="/settings/thresholds" element={<InspectionThresholds />} />
                         <Route path="/settings/integrations" element={<DMSIntegration />} />
                         <Route path="/settings/notifications" element={<NotificationSettings />} />
@@ -128,6 +148,7 @@ function App() {
                         <Route path="/settings/pricing" element={<PricingSettings />} />
                         <Route path="/settings/declined-reasons" element={<DeclinedReasons />} />
                         <Route path="/settings/deleted-reasons" element={<DeletedReasons />} />
+                        <Route path="/settings/vhc-deletion-reasons" element={<HcDeletionReasons />} />
                         <Route path="/settings/workflow" element={<WorkflowSettings />} />
                         <Route path="/settings/mri-items" element={<MriItemsSettings />} />
                       </Route>
@@ -135,6 +156,7 @@ function App() {
 
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Routes>
+                  </Suspense>
                 </BrowserRouter>
               </BrandingProvider>
             </SuperAdminProvider>

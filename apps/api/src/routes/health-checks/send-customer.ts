@@ -105,13 +105,23 @@ sendCustomer.post('/:id/publish', authorize(['super_admin', 'org_admin', 'site_a
       customMessage: message
     })
 
-    // Schedule automatic reminders
-    await scheduleHealthCheckReminders(
-      id,
-      new Date(),
-      expiresAt,
-      org?.settings
-    )
+    // Schedule automatic reminders (only if enabled)
+    const { data: notifSettings } = await supabaseAdmin
+      .from('organization_notification_settings')
+      .select('default_reminder_enabled')
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    if (notifSettings?.default_reminder_enabled !== false) {
+      await scheduleHealthCheckReminders(
+        id,
+        new Date(),
+        expiresAt,
+        org?.settings
+      )
+    } else {
+      console.log(`Reminders disabled for org ${auth.orgId}, skipping scheduling`)
+    }
 
     // Send real-time notification to staff
     if (healthCheck.site_id) {

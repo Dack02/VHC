@@ -4,6 +4,7 @@ import { authorize } from '../../middleware/auth.js'
 import { verifyHealthCheckAccess, verifyRepairItemAccess, formatRepairItem } from './helpers.js'
 
 const repairItemsRouter = new Hono()
+console.log('=== REPAIR ITEMS MODULE LOADED (v2 with option parts) ===')
 
 // GET /health-checks/:id/repair-items - List all repair items for health check
 repairItemsRouter.get('/health-checks/:id/repair-items', async (c) => {
@@ -46,7 +47,21 @@ repairItemsRouter.get('/health-checks/:id/repair-items', async (c) => {
           vat_amount,
           total_inc_vat,
           is_recommended,
-          sort_order
+          sort_order,
+          parts:repair_parts!repair_parts_repair_option_id_fkey(
+            id,
+            part_number,
+            description,
+            quantity,
+            supplier_id,
+            supplier_name,
+            cost_price,
+            sell_price,
+            line_total,
+            margin_percent,
+            markup_percent,
+            notes
+          )
         ),
         labour:repair_labour!repair_labour_repair_item_id_fkey(
           id,
@@ -76,6 +91,21 @@ repairItemsRouter.get('/health-checks/:id/repair-items', async (c) => {
       .eq('health_check_id', id)
       .is('parent_repair_item_id', null)
       .order('created_at', { ascending: true })
+
+    // DEBUG: Check raw data
+    if (items) {
+      const tyre = items.find((i: Record<string, unknown>) => i.name === 'Rear Right Tyre')
+      if (tyre) {
+        const opts = tyre.options as Array<Record<string, unknown>> | undefined
+        console.log('=== RAW OPTION DATA ===')
+        console.log('Has options:', !!opts, 'count:', opts?.length)
+        if (opts) {
+          opts.forEach((o: Record<string, unknown>) => {
+            console.log(`Option ${o.name}: keys=${Object.keys(o).join(',')}, has parts=${('parts' in o)}, parts count=${Array.isArray(o.parts) ? o.parts.length : 'N/A'}`)
+          })
+        }
+      }
+    }
 
     // Get children for groups (items with parent_repair_item_id)
     // Include labour data so children can have labour assigned individually
@@ -154,7 +184,21 @@ repairItemsRouter.get('/health-checks/:id/repair-items', async (c) => {
             vatAmount: parseFloat(opt.vat_amount as string) || 0,
             totalIncVat: parseFloat(opt.total_inc_vat as string) || 0,
             isRecommended: opt.is_recommended,
-            sortOrder: opt.sort_order
+            sortOrder: opt.sort_order,
+            parts: ((opt.parts as Record<string, unknown>[]) || []).map((part: Record<string, unknown>) => ({
+              id: part.id,
+              partNumber: part.part_number,
+              description: part.description,
+              quantity: parseFloat(part.quantity as string) || 0,
+              supplierId: part.supplier_id,
+              supplierName: part.supplier_name,
+              costPrice: parseFloat(part.cost_price as string) || 0,
+              sellPrice: parseFloat(part.sell_price as string) || 0,
+              lineTotal: parseFloat(part.line_total as string) || 0,
+              marginPercent: part.margin_percent ? parseFloat(part.margin_percent as string) : null,
+              markupPercent: part.markup_percent ? parseFloat(part.markup_percent as string) : null,
+              notes: part.notes
+            }))
           })) || [],
           labour: item.labour?.map((lab: Record<string, unknown>) => ({
             id: lab.id,

@@ -6,14 +6,17 @@ interface Plan {
   id: string
   name: string
   description: string
-  maxSites: number
-  maxUsersPerSite: number
-  maxHealthChecksPerMonth: number
-  maxStorageGb: number
-  features: string[]
-  priceMonthly: number
-  priceYearly: number
+  maxSites: number | null
+  maxUsers: number | null
+  maxHealthChecksPerMonth: number | null
+  maxStorageGb: number | null
+  features: Record<string, boolean> | null
+  priceMonthly: number | null
+  priceAnnual: number | null
+  currency: string
   isActive: boolean
+  sortOrder: number
+  subscriberCount: number
 }
 
 export default function AdminPlans() {
@@ -52,11 +55,11 @@ export default function AdminPlans() {
           name: editingPlan.name,
           description: editingPlan.description,
           maxSites: editingPlan.maxSites,
-          maxUsersPerSite: editingPlan.maxUsersPerSite,
+          maxUsers: editingPlan.maxUsers,
           maxHealthChecksPerMonth: editingPlan.maxHealthChecksPerMonth,
           maxStorageGb: editingPlan.maxStorageGb,
           priceMonthly: editingPlan.priceMonthly,
-          priceYearly: editingPlan.priceYearly,
+          priceAnnual: editingPlan.priceAnnual,
           isActive: editingPlan.isActive
         }
       })
@@ -107,19 +110,19 @@ export default function AdminPlans() {
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-500">Sites</span>
-                  <span className="font-medium">{plan.maxSites}</span>
+                  <span className="font-medium">{plan.maxSites ?? 'Unlimited'}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Users per Site</span>
-                  <span className="font-medium">{plan.maxUsersPerSite}</span>
+                  <span className="text-gray-500">Users</span>
+                  <span className="font-medium">{plan.maxUsers ?? 'Unlimited'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Checks / Month</span>
-                  <span className="font-medium">{plan.maxHealthChecksPerMonth.toLocaleString()}</span>
+                  <span className="font-medium">{plan.maxHealthChecksPerMonth?.toLocaleString() ?? 'Unlimited'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Storage</span>
-                  <span className="font-medium">{plan.maxStorageGb} GB</span>
+                  <span className="font-medium">{plan.maxStorageGb != null ? `${plan.maxStorageGb} GB` : 'Unlimited'}</span>
                 </div>
               </div>
 
@@ -127,12 +130,12 @@ export default function AdminPlans() {
                 <div className="flex justify-between items-baseline">
                   <div>
                     <span className="text-2xl font-bold text-gray-900">
-                      ${plan.priceMonthly}
+                      {plan.currency === 'GBP' ? '£' : '$'}{plan.priceMonthly}
                     </span>
                     <span className="text-gray-500 text-sm">/month</span>
                   </div>
                   <div className="text-sm text-gray-500">
-                    ${plan.priceYearly}/year
+                    {plan.currency === 'GBP' ? '£' : '$'}{plan.priceAnnual}/year
                   </div>
                 </div>
               </div>
@@ -189,17 +192,19 @@ export default function AdminPlans() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Max Sites</label>
                   <input
                     type="number"
-                    value={editingPlan.maxSites}
-                    onChange={(e) => setEditingPlan({ ...editingPlan, maxSites: parseInt(e.target.value) || 0 })}
+                    value={editingPlan.maxSites ?? ''}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, maxSites: e.target.value ? parseInt(e.target.value) : null })}
+                    placeholder="Leave empty for unlimited"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Users per Site</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Max Users</label>
                   <input
                     type="number"
-                    value={editingPlan.maxUsersPerSite}
-                    onChange={(e) => setEditingPlan({ ...editingPlan, maxUsersPerSite: parseInt(e.target.value) || 0 })}
+                    value={editingPlan.maxUsers ?? ''}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, maxUsers: e.target.value ? parseInt(e.target.value) : null })}
+                    placeholder="Leave empty for unlimited"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
@@ -210,8 +215,9 @@ export default function AdminPlans() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Checks / Month</label>
                   <input
                     type="number"
-                    value={editingPlan.maxHealthChecksPerMonth}
-                    onChange={(e) => setEditingPlan({ ...editingPlan, maxHealthChecksPerMonth: parseInt(e.target.value) || 0 })}
+                    value={editingPlan.maxHealthChecksPerMonth ?? ''}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, maxHealthChecksPerMonth: e.target.value ? parseInt(e.target.value) : null })}
+                    placeholder="Leave empty for unlimited"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
@@ -219,8 +225,9 @@ export default function AdminPlans() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Storage (GB)</label>
                   <input
                     type="number"
-                    value={editingPlan.maxStorageGb}
-                    onChange={(e) => setEditingPlan({ ...editingPlan, maxStorageGb: parseInt(e.target.value) || 0 })}
+                    value={editingPlan.maxStorageGb ?? ''}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, maxStorageGb: e.target.value ? parseInt(e.target.value) : null })}
+                    placeholder="Leave empty for unlimited"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
@@ -228,20 +235,20 @@ export default function AdminPlans() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Monthly Price ($)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Monthly Price ({editingPlan.currency === 'GBP' ? '£' : '$'})</label>
                   <input
                     type="number"
-                    value={editingPlan.priceMonthly}
+                    value={editingPlan.priceMonthly ?? ''}
                     onChange={(e) => setEditingPlan({ ...editingPlan, priceMonthly: parseFloat(e.target.value) || 0 })}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Yearly Price ($)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Yearly Price ({editingPlan.currency === 'GBP' ? '£' : '$'})</label>
                   <input
                     type="number"
-                    value={editingPlan.priceYearly}
-                    onChange={(e) => setEditingPlan({ ...editingPlan, priceYearly: parseFloat(e.target.value) || 0 })}
+                    value={editingPlan.priceAnnual ?? ''}
+                    onChange={(e) => setEditingPlan({ ...editingPlan, priceAnnual: parseFloat(e.target.value) || 0 })}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>

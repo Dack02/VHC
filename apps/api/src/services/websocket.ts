@@ -46,9 +46,9 @@ const getRoomName = {
  * Initialize WebSocket server
  */
 export function initializeWebSocket(httpServer: HttpServer): Server {
-  io = new Server(httpServer, {
-    cors: {
-      origin: [
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',')
+    : [
         'http://localhost:5181',
         'http://localhost:5182',
         'http://localhost:5183',
@@ -57,7 +57,11 @@ export function initializeWebSocket(httpServer: HttpServer): Server {
         'http://127.0.0.1:5182',
         'http://127.0.0.1:5183',
         'http://127.0.0.1:5184'
-      ],
+      ]
+
+  io = new Server(httpServer, {
+    cors: {
+      origin: allowedOrigins,
       credentials: true
     },
     pingTimeout: 60000,
@@ -131,6 +135,7 @@ async function handleConnection(socket: Socket) {
 
   // Handle authentication (optional - can be used for user-specific notifications)
   const token = socket.handshake.auth?.token
+  const handshakeOrgId = socket.handshake.auth?.organizationId
   let userId: string | null = null
   let organizationId: string | null = null
   let siteId: string | null = null
@@ -140,11 +145,17 @@ async function handleConnection(socket: Socket) {
       // Verify token and get user info
       const { data: { user } } = await supabaseAdmin.auth.getUser(token)
       if (user) {
-        const { data: userData } = await supabaseAdmin
+        // Multi-org: use organizationId from handshake to pick the right user record
+        let query = supabaseAdmin
           .from('users')
           .select('id, organization_id, site_id')
           .eq('auth_id', user.id)
-          .single()
+
+        if (handshakeOrgId) {
+          query = query.eq('organization_id', handshakeOrgId)
+        }
+
+        const { data: userData } = await query.limit(1).single()
 
         if (userData) {
           userId = userData.id

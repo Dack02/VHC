@@ -365,16 +365,23 @@ crud.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
         .eq('health_check_id', id)
 
       // Fetch repair items with linked check results via junction table (NEW schema)
-      let { data: repairItems } = await supabaseAdmin
+      // Note: repair_options FK hint needed because repair_items has TWO relationships to repair_options
+      // (repair_options.repair_item_id and repair_items.selected_option_id) - must disambiguate
+      let { data: repairItems, error: repairItemsError } = await supabaseAdmin
         .from('repair_items')
         .select(`
           *,
           check_results:repair_item_check_results(
             check_result:check_results(id, rag_status, notes)
-          )
+          ),
+          options:repair_options!repair_options_repair_item_id_fkey(id, name, description, labour_total, parts_total, subtotal, vat_amount, total_inc_vat, is_recommended, sort_order)
         `)
         .eq('health_check_id', id)
         .order('created_at', { ascending: true })
+
+      if (repairItemsError) {
+        console.error('Failed to fetch repair items with options:', repairItemsError)
+      }
 
       // Build a map of children by parent_repair_item_id for group rag_status derivation
       // Groups don't have direct check_results - their children do
@@ -403,7 +410,8 @@ crud.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
             *,
             check_results:repair_item_check_results(
               check_result:check_results(id, rag_status, notes)
-            )
+            ),
+            options:repair_options!repair_options_repair_item_id_fkey(id, name, description, labour_total, parts_total, subtotal, vat_amount, total_inc_vat, is_recommended, sort_order)
           `)
           .eq('health_check_id', id)
           .order('created_at', { ascending: true })
@@ -529,9 +537,15 @@ crud.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
           title: item.name, // NEW schema uses 'name', map to 'title' for backward compat
           description: item.description,
           rag_status: derivedRagStatus,
-          parts_cost: parseFloat(item.parts_total) || 0,
-          labor_cost: parseFloat(item.labour_total) || 0,
-          total_price: parseFloat(item.total_inc_vat) || 0,
+          parts_cost: parseFloat(item.selected_option_id && item.options?.length
+            ? (item.options.find((o: any) => o.id === item.selected_option_id)?.parts_total ?? item.parts_total)
+            : item.parts_total) || 0,
+          labor_cost: parseFloat(item.selected_option_id && item.options?.length
+            ? (item.options.find((o: any) => o.id === item.selected_option_id)?.labour_total ?? item.labour_total)
+            : item.labour_total) || 0,
+          total_price: parseFloat(item.selected_option_id && item.options?.length
+            ? (item.options.find((o: any) => o.id === item.selected_option_id)?.total_inc_vat ?? item.total_inc_vat)
+            : item.total_inc_vat) || 0,
           is_approved: item.customer_approved,
           is_visible: true, // NEW schema doesn't have is_visible, default to true
           is_mot_failure: false, // NEW schema doesn't have this on repair_items
@@ -559,7 +573,21 @@ crud.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
           deleted_at: item.deleted_at || null,
           deleted_reason_id: item.deleted_reason_id || null,
           // Source tracking for MRI items
-          source: item.source || null
+          source: item.source || null,
+          // Repair options
+          options: item.options?.map((opt: any) => ({
+            id: opt.id,
+            name: opt.name,
+            description: opt.description,
+            labourTotal: parseFloat(opt.labour_total) || 0,
+            partsTotal: parseFloat(opt.parts_total) || 0,
+            subtotal: parseFloat(opt.subtotal) || 0,
+            vatAmount: parseFloat(opt.vat_amount) || 0,
+            totalIncVat: parseFloat(opt.total_inc_vat) || 0,
+            isRecommended: opt.is_recommended,
+            sortOrder: opt.sort_order
+          })) || [],
+          selected_option_id: item.selected_option_id || null
         }
       })
 

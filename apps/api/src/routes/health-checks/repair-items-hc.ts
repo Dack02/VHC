@@ -153,7 +153,22 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
           vat_amount,
           total_inc_vat,
           is_recommended,
-          sort_order
+          sort_order,
+          parts:repair_parts!repair_parts_repair_option_id_fkey(
+            id,
+            part_number,
+            description,
+            quantity,
+            supplier_id,
+            supplier_name,
+            cost_price,
+            sell_price,
+            line_total,
+            margin_percent,
+            markup_percent,
+            notes,
+            allocation_type
+          )
         ),
         labour:repair_labour!repair_labour_repair_item_id_fkey(
           id,
@@ -178,7 +193,8 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
           line_total,
           margin_percent,
           markup_percent,
-          notes
+          notes,
+          allocation_type
         )
       `)
       .eq('health_check_id', id)
@@ -221,7 +237,8 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
           line_total,
           margin_percent,
           markup_percent,
-          notes
+          notes,
+          allocation_type
         )
       `)
       .eq('health_check_id', id)
@@ -301,7 +318,22 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
             vatAmount: parseFloat(opt.vat_amount as string) || 0,
             totalIncVat: parseFloat(opt.total_inc_vat as string) || 0,
             isRecommended: opt.is_recommended,
-            sortOrder: opt.sort_order
+            sortOrder: opt.sort_order,
+            parts: ((opt.parts as Array<Record<string, unknown>>) || []).map((part: Record<string, unknown>) => ({
+              id: part.id,
+              partNumber: part.part_number,
+              description: part.description,
+              quantity: parseFloat(part.quantity as string),
+              supplierId: part.supplier_id,
+              supplierName: part.supplier_name,
+              costPrice: parseFloat(part.cost_price as string),
+              sellPrice: parseFloat(part.sell_price as string),
+              lineTotal: parseFloat(part.line_total as string),
+              marginPercent: part.margin_percent ? parseFloat(part.margin_percent as string) : null,
+              markupPercent: part.markup_percent ? parseFloat(part.markup_percent as string) : null,
+              notes: part.notes,
+              allocationType: part.allocation_type || 'direct'
+            }))
           })) || [],
           labour: item.labour?.map((lab: Record<string, unknown>) => ({
             id: lab.id,
@@ -326,7 +358,8 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
             lineTotal: parseFloat(part.line_total as string),
             marginPercent: part.margin_percent ? parseFloat(part.margin_percent as string) : null,
             markupPercent: part.markup_percent ? parseFloat(part.markup_percent as string) : null,
-            notes: part.notes
+            notes: part.notes,
+            allocationType: part.allocation_type || 'direct'
           })) || [],
           // Include children for groups
           children: children.map((child: Record<string, unknown>) => ({
@@ -380,7 +413,8 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
               lineTotal: parseFloat(part.line_total as string),
               marginPercent: part.margin_percent ? parseFloat(part.margin_percent as string) : null,
               markupPercent: part.markup_percent ? parseFloat(part.markup_percent as string) : null,
-              notes: part.notes
+              notes: part.notes,
+              allocationType: part.allocation_type || 'direct'
             }))
           }))
         }

@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { api } from '../../lib/api'
+import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface Template {
   id: string
@@ -194,6 +195,7 @@ export default function ReasonLibrary() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
+      <SettingsBackLink />
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Reason Library</h1>

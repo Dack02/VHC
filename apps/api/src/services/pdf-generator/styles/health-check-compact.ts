@@ -473,7 +473,9 @@ export function getCompactStyles(): string {
       font-size: 8px;
       color: #6b7280;
       line-height: 1.4;
-      margin-bottom: 2px;
+      margin-bottom: 4px;
+      padding-left: 4px;
+      border-left: 2px solid #d1d5db;
     }
 
     .finding-deferred {
@@ -497,6 +499,38 @@ export function getCompactStyles(): string {
       padding: 2px 6px;
       text-transform: uppercase;
       border-radius: 4px;
+    }
+
+    .authorised-badge {
+      font-size: 7px;
+      font-weight: 600;
+      color: #059669;
+      background: #ECFDF5;
+      padding: 2px 6px;
+      text-transform: uppercase;
+      border-radius: 4px;
+    }
+
+    .declined-badge {
+      font-size: 7px;
+      font-weight: 600;
+      color: #6b7280;
+      background: #f3f4f6;
+      padding: 2px 6px;
+      text-transform: uppercase;
+      border-radius: 4px;
+    }
+
+    .finding-authorised {
+      font-size: 8px;
+      color: #059669;
+      margin-top: 2px;
+    }
+
+    .finding-declined {
+      font-size: 8px;
+      color: #6b7280;
+      margin-top: 2px;
     }
 
     .price-value {
@@ -550,7 +584,7 @@ export function getCompactStyles(): string {
     }
 
     .finding-child {
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
 
     .finding-child:last-child {
@@ -561,7 +595,51 @@ export function getCompactStyles(): string {
       font-size: 9px;
       font-weight: 500;
       color: #374151;
+      margin-bottom: 3px;
+    }
+
+    /* Repair options within findings */
+    .finding-options {
+      margin-top: 4px;
+    }
+
+    .finding-option {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 3px 8px;
       margin-bottom: 2px;
+      border: 1px solid #e5e7eb;
+      background: #ffffff;
+      font-size: 9px;
+      border-radius: 4px;
+    }
+
+    .finding-option.recommended {
+      border-color: #86efac;
+      background: #f0fdf4;
+    }
+
+    .finding-option-name {
+      color: #374151;
+    }
+
+    .finding-option .recommended-badge {
+      display: inline-block;
+      font-size: 7px;
+      font-weight: 600;
+      color: #15803d;
+      background: #dcfce7;
+      padding: 1px 4px;
+      margin-left: 4px;
+      text-transform: uppercase;
+    }
+
+    .finding-option-price {
+      font-weight: 600;
+      color: #1f2937;
+      flex-shrink: 0;
+      margin-left: 8px;
     }
 
     /* ===== FOOTER ===== */

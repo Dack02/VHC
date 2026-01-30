@@ -6,6 +6,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, requireOrgAdmin } from '../middleware/auth.js'
+import { sendEmail } from '../services/email.js'
 
 const onboarding = new Hono()
 
@@ -326,6 +327,14 @@ onboarding.post('/invite-team', async (c) => {
     .limit(1)
     .single()
 
+  // Get organization name for invite email
+  const { data: org } = await supabaseAdmin
+    .from('organizations')
+    .select('name')
+    .eq('id', organizationId)
+    .single()
+  const orgName = org?.name || 'Vehicle Health Check'
+
   const results = []
   const errors = []
 
@@ -389,11 +398,42 @@ onboarding.post('/invite-team', async (c) => {
         continue
       }
 
-      // Send password reset email for the user to set their password
-      await supabaseAdmin.auth.admin.generateLink({
+      // Generate a password reset link so the invited user can set their password
+      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
         type: 'recovery',
         email
       })
+
+      if (linkData?.properties?.action_link) {
+        const webUrl = process.env.WEB_URL || process.env.PUBLIC_APP_URL || 'http://localhost:5181'
+        // Replace the default Supabase redirect with our app's login page
+        const resetLink = linkData.properties.action_link
+
+        const roleLabel = role.replace('_', ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
+
+        await sendEmail({
+          to: email,
+          subject: `You've been invited to join ${orgName} on VHC`,
+          organizationId,
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #1a1a1a;">You've Been Invited!</h2>
+              <p>Hi ${firstName},</p>
+              <p><strong>${orgName}</strong> has invited you to join their team as a <strong>${roleLabel}</strong> on the Vehicle Health Check platform.</p>
+              <p>Click the button below to set your password and get started:</p>
+              <div style="text-align: center; margin: 32px 0;">
+                <a href="${resetLink}" style="background-color: #2563eb; color: white; padding: 12px 32px; text-decoration: none; font-weight: bold; display: inline-block;">Set Your Password</a>
+              </div>
+              <p style="color: #666; font-size: 14px;">If the button doesn't work, copy and paste this link into your browser:</p>
+              <p style="color: #666; font-size: 12px; word-break: break-all;">${resetLink}</p>
+              <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
+              <p style="color: #999; font-size: 12px;">This invite was sent by ${orgName} via Vehicle Health Check.</p>
+            </div>
+          `
+        })
+      } else {
+        console.warn(`Failed to generate invite link for ${email}:`, linkError?.message)
+      }
 
       results.push({
         email,

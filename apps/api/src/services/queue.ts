@@ -5,6 +5,17 @@
 import { Queue } from 'bullmq'
 import IORedis from 'ioredis'
 
+// Redis connection state tracking
+let redisConnected = false
+
+export function updateRedisStatus(connected: boolean) {
+  redisConnected = connected
+}
+
+export function isRedisConnected(): boolean {
+  return redisConnected
+}
+
 // Redis connection
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379'
 export const redis = new IORedis(redisUrl, {
@@ -196,6 +207,7 @@ export interface DmsImportJob {
   date: string  // YYYY-MM-DD
   importType: 'manual' | 'scheduled'
   triggeredBy?: string  // user ID for manual imports
+  bookingIds?: string[]  // selective import - only import these booking IDs
 }
 
 export interface DmsScheduledImportJob {
@@ -235,9 +247,42 @@ export async function queueNotification(job: NotificationJob) {
       customerMobile: (job as CustomerNotificationJob).customerMobile
     } : {})
   })
-  const result = await notificationQueue.add(job.type, job)
-  console.log(`[Queue] Notification job added with ID: ${result.id}`)
-  return result
+
+  // If Redis is not connected, process directly (in-process fallback)
+  if (!redisConnected) {
+    console.log(`[Queue] Redis not available - processing notification directly`)
+    try {
+      const { processNotificationDirect } = await import('./notification-processor.js')
+      await processNotificationDirect(job)
+      return null
+    } catch (err) {
+      console.error(`[Queue] Direct notification processing failed:`, err)
+      return null
+    }
+  }
+
+  // Redis is available - queue with a safety timeout to prevent hanging
+  try {
+    const timeoutMs = 5000
+    const result = await Promise.race([
+      notificationQueue.add(job.type, job),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Queue add timed out after 5s')), timeoutMs)
+      )
+    ])
+    console.log(`[Queue] Notification job added with ID: ${result.id}`)
+    return result
+  } catch (err) {
+    console.error(`[Queue] Failed to queue notification, falling back to direct processing:`, err)
+    // Fall back to direct processing on queue failure
+    try {
+      const { processNotificationDirect } = await import('./notification-processor.js')
+      await processNotificationDirect(job)
+    } catch (directErr) {
+      console.error(`[Queue] Direct notification processing also failed:`, directErr)
+    }
+    return null
+  }
 }
 
 export async function scheduleReminder(

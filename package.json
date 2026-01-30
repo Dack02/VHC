@@ -17,6 +17,7 @@
     "mobile:dev": "npm run dev --workspace=@vhc/mobile"
   },
   "devDependencies": {
+    "serve": "^14.2.5",
     "turbo": "^2.0.0"
   },
   "engines": {

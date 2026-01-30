@@ -6,6 +6,8 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { cancelHealthCheckReminders, notifyCustomerAction } from '../services/scheduler.js'
+import { sendAuthorizationConfirmationEmail } from '../services/email.js'
+import { sendAuthorizationConfirmationSms } from '../services/sms.js'
 
 const publicRoutes = new Hono()
 
@@ -907,6 +909,11 @@ publicRoutes.post('/vhc/:token/repair-items/sign', async (c) => {
     })
     .eq('id', healthCheck.id)
 
+  // Send authorization confirmation to customer
+  sendCustomerAuthorizationConfirmation(healthCheck.id).catch(err =>
+    console.error('Failed to send authorization confirmation:', err)
+  )
+
   return c.json({
     success: true,
     message: 'Signature saved successfully'
@@ -1120,6 +1127,137 @@ async function trackActivity(
 // as part of migration to new authorization system (customer_approved on repair_items)
 
 /**
+ * Helper: Send authorization confirmation email/SMS to customer
+ * Called once when health check transitions to 'authorized' status
+ */
+async function sendCustomerAuthorizationConfirmation(healthCheckId: string) {
+  try {
+    // Check if confirmation was already sent for this health check
+    const { data: existingLog } = await supabaseAdmin
+      .from('communication_logs')
+      .select('id')
+      .eq('health_check_id', healthCheckId)
+      .eq('template_id', 'authorization_confirmation')
+      .limit(1)
+      .single()
+
+    if (existingLog) {
+      console.log(`Authorization confirmation already sent for health check ${healthCheckId}, skipping`)
+      return
+    }
+
+    // Fetch health check with customer, vehicle, site, org details
+    const { data: hc } = await supabaseAdmin
+      .from('health_checks')
+      .select(`
+        id,
+        organization_id,
+        customer:customers(first_name, last_name, email, mobile),
+        vehicle:vehicles(registration),
+        site:sites(name, phone)
+      `)
+      .eq('id', healthCheckId)
+      .single()
+
+    if (!hc) return
+
+    const customer = hc.customer as unknown as { first_name: string; last_name: string; email: string; mobile: string }
+    const vehicle = hc.vehicle as unknown as { registration: string }
+    const site = hc.site as unknown as { name: string; phone: string }
+
+    if (!customer) return
+
+    const customerName = `${customer.first_name} ${customer.last_name}`
+    const vehicleReg = vehicle?.registration || ''
+    const dealershipName = site?.name || ''
+    const dealershipPhone = site?.phone || ''
+
+    // Get approved items with prices
+    const { data: approvedItems } = await supabaseAdmin
+      .from('repair_items')
+      .select('name, total_inc_vat, selected_option_id')
+      .eq('health_check_id', healthCheckId)
+      .eq('customer_approved', true)
+
+    if (!approvedItems || approvedItems.length === 0) return
+
+    // Build items list with correct prices (use selected option price if applicable)
+    const itemsList: Array<{ title: string; price: number }> = []
+    let totalAuthorized = 0
+
+    for (const item of approvedItems) {
+      let price = item.total_inc_vat || 0
+      if (item.selected_option_id) {
+        const { data: option } = await supabaseAdmin
+          .from('repair_options')
+          .select('total_inc_vat')
+          .eq('id', item.selected_option_id)
+          .single()
+        if (option?.total_inc_vat) price = option.total_inc_vat
+      }
+      itemsList.push({ title: item.name, price })
+      totalAuthorized += price
+    }
+
+    // Send email
+    if (customer.email) {
+      try {
+        await sendAuthorizationConfirmationEmail(
+          customer.email,
+          customerName,
+          vehicleReg,
+          itemsList,
+          totalAuthorized,
+          dealershipName,
+          dealershipPhone,
+          hc.organization_id
+        )
+
+        await supabaseAdmin.from('communication_logs').insert({
+          health_check_id: healthCheckId,
+          channel: 'email',
+          recipient: customer.email,
+          subject: `Authorization Confirmation - ${vehicleReg}`,
+          status: 'sent',
+          template_id: 'authorization_confirmation'
+        })
+      } catch (err) {
+        console.error('Failed to send authorization confirmation email:', err)
+      }
+    }
+
+    // Send SMS
+    if (customer.mobile) {
+      try {
+        await sendAuthorizationConfirmationSms(
+          customer.mobile,
+          customerName,
+          vehicleReg,
+          totalAuthorized,
+          dealershipName,
+          hc.organization_id,
+          approvedItems.length
+        )
+
+        await supabaseAdmin.from('communication_logs').insert({
+          health_check_id: healthCheckId,
+          channel: 'sms',
+          recipient: customer.mobile,
+          status: 'sent',
+          template_id: 'authorization_confirmation'
+        })
+      } catch (err) {
+        console.error('Failed to send authorization confirmation SMS:', err)
+      }
+    }
+
+    console.log(`Authorization confirmation sent for health check ${healthCheckId}`)
+  } catch (err) {
+    console.error('Error sending authorization confirmation:', err)
+  }
+}
+
+/**
  * Helper: Update health check status based on new repair items (Phase 6+)
  * This handles the customer_approved field on the repair_items table
  */
@@ -1210,6 +1348,12 @@ async function updateHealthCheckStatusForNewRepairItems(healthCheckId: string, s
         updateData.fully_responded_at = new Date().toISOString()
         // Cancel pending reminders when customer fully responds
         await cancelHealthCheckReminders(healthCheckId)
+        // Send authorization confirmation to customer
+        if (newStatus === 'authorized') {
+          sendCustomerAuthorizationConfirmation(healthCheckId).catch(err =>
+            console.error('Failed to send authorization confirmation:', err)
+          )
+        }
       } else if (newStatus === 'partial_response') {
         // Set first_response_at if not already set
         if (!healthCheck.first_response_at) {

@@ -132,9 +132,12 @@ export function renderNewRepairItemCard({ item, showDetailedBreakdown, isChild =
   const selectedOption = hasOptions && item.selectedOptionId
     ? item.options.find(o => o.id === item.selectedOptionId)
     : null
+  const fallbackOption = hasOptions && !selectedOption
+    ? (item.options.find(o => o.isRecommended) || item.options[0])
+    : null
 
-  // Get price info based on whether there's a selected option
-  const priceInfo = selectedOption || {
+  // Get price info based on selected option, fallback to recommended/first option, then base item
+  const priceInfo = selectedOption || fallbackOption || {
     subtotal: item.subtotal,
     vatAmount: item.vatAmount,
     totalIncVat: item.totalIncVat

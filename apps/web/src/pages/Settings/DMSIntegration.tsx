@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { api } from '../../lib/api'
+import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface DmsSettings {
   enabled: boolean
@@ -454,6 +455,7 @@ export default function DMSIntegration() {
 
   return (
     <div>
+      <SettingsBackLink />
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">DMS Integration</h1>

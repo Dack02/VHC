@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { api } from '../../lib/api'
 import { debounce } from '../../lib/utils'
+import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface Placeholder {
   key: string
@@ -442,6 +443,7 @@ export default function MessageTemplates() {
 
   return (
     <div className="p-6 max-w-6xl">
+      <SettingsBackLink />
       <h1 className="text-2xl font-bold mb-2">Message Templates</h1>
       <p className="text-gray-600 mb-6">
         Customize the SMS and email messages sent to customers when sharing health checks.

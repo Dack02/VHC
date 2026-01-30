@@ -18,6 +18,7 @@ import { CloseHealthCheckModal } from './components/CloseHealthCheckModal'
 import { AdvisorSelectionModal } from './components/AdvisorSelectionModal'
 import { WorkAuthoritySheetModal } from './components/WorkAuthoritySheetModal'
 import { CustomerEditModal } from './components/CustomerEditModal'
+import { HcDeletionModal } from './components/HcDeletionModal'
 import { InspectionTimer } from '../../components/InspectionTimer'
 
 // Hook for online/offline detection
@@ -122,6 +123,7 @@ export default function HealthCheckDetail() {
   const [showAdvisorModal, setShowAdvisorModal] = useState(false)
   const [showWorkAuthorityModal, setShowWorkAuthorityModal] = useState(false)
   const [showCustomerEditModal, setShowCustomerEditModal] = useState(false)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [generatingPDF, setGeneratingPDF] = useState(false)
   const [checkinEnabled, setCheckinEnabled] = useState(false)
   const [timerData, setTimerData] = useState<{
@@ -147,7 +149,7 @@ export default function HealthCheckDetail() {
     if (!isRetry) setError(null)
 
     try {
-      // Fetch health check with full advisor view data
+      // Fetch health check with full advisor view data (must complete first - others depend on it)
       const hcData = await api<FullHealthCheckResponse>(
         `/api/v1/health-checks/${id}?include=advisor`,
         { token: session.accessToken }
@@ -157,79 +159,84 @@ export default function HealthCheckDetail() {
       setRepairItems(hcData.repair_items || [])
       setSummary(hcData.summary || null)
 
-      // Fetch template sections
-      if (hcData.healthCheck.template_id) {
-        const templateData = await api<{ sections?: TemplateSection[] }>(
-          `/api/v1/templates/${hcData.healthCheck.template_id}`,
-          { token: session.accessToken }
-        )
-        setSections(templateData.sections || [])
-      }
-
-      // Fetch unified timeline (includes status history, labour/parts events, outcomes)
-      const timelineData = await api<{ timeline: TimelineEvent[] }>(
-        `/api/v1/health-checks/${id}/timeline`,
-        { token: session.accessToken }
-      )
-      setTimeline(timelineData.timeline || [])
-
-      // Fetch timer data for in_progress health checks
-      if (hcData.healthCheck.status === 'in_progress') {
-        try {
-          const timeEntriesData = await api<{
-            entries: Array<{
-              clockIn: string
-              clockOut: string | null
-              durationMinutes: number | null
-            }>
-            totalMinutes: number
-          }>(
-            `/api/v1/health-checks/${id}/time-entries`,
+      // Run remaining calls in parallel - they only depend on hcData
+      const [templateResult, timelineResult, timeEntriesResult, checkinResult, repairItemsResult] =
+        await Promise.allSettled([
+          // Template sections
+          hcData.healthCheck.template_id
+            ? api<{ sections?: TemplateSection[] }>(
+                `/api/v1/templates/${hcData.healthCheck.template_id}`,
+                { token: session.accessToken }
+              )
+            : Promise.resolve({ sections: [] as TemplateSection[] }),
+          // Timeline
+          api<{ timeline: TimelineEvent[] }>(
+            `/api/v1/health-checks/${id}/timeline`,
+            { token: session.accessToken }
+          ),
+          // Time entries (only for in_progress)
+          hcData.healthCheck.status === 'in_progress'
+            ? api<{
+                entries: Array<{
+                  clockIn: string
+                  clockOut: string | null
+                  durationMinutes: number | null
+                }>
+                totalMinutes: number
+              }>(
+                `/api/v1/health-checks/${id}/time-entries`,
+                { token: session.accessToken }
+              )
+            : Promise.resolve(null),
+          // Check-in settings
+          user?.organization?.id
+            ? api<{ checkinEnabled: boolean }>(
+                `/api/v1/organizations/${user.organization.id}/checkin-settings`,
+                { token: session.accessToken }
+              )
+            : Promise.resolve({ checkinEnabled: false }),
+          // Repair items for workflow status
+          api<{ repairItems: NewRepairItem[] }>(
+            `/api/v1/health-checks/${id}/repair-items`,
             { token: session.accessToken }
           )
+        ])
 
-          // Find active entry (no clockOut) to get active_clock_in_at
-          const activeEntry = timeEntriesData.entries?.find(e => !e.clockOut)
+      // Process template result
+      if (templateResult.status === 'fulfilled') {
+        setSections(templateResult.value?.sections || [])
+      }
 
-          // Calculate closed minutes (from entries with clockOut)
-          const closedMinutes = timeEntriesData.entries
-            ?.filter(e => e.clockOut)
-            .reduce((sum, e) => sum + (e.durationMinutes || 0), 0) || 0
+      // Process timeline result
+      if (timelineResult.status === 'fulfilled') {
+        setTimeline(timelineResult.value?.timeline || [])
+      }
 
-          setTimerData({
-            total_closed_minutes: closedMinutes,
-            active_clock_in_at: activeEntry?.clockIn || null
-          })
-        } catch {
-          // Time entries not available, clear timer data
-          setTimerData(null)
-        }
+      // Process time entries result
+      if (timeEntriesResult.status === 'fulfilled' && timeEntriesResult.value) {
+        const timeEntriesData = timeEntriesResult.value
+        const activeEntry = timeEntriesData.entries?.find(e => !e.clockOut)
+        const closedMinutes = timeEntriesData.entries
+          ?.filter(e => e.clockOut)
+          .reduce((sum, e) => sum + (e.durationMinutes || 0), 0) || 0
+        setTimerData({
+          total_closed_minutes: closedMinutes,
+          active_clock_in_at: activeEntry?.clockIn || null
+        })
       } else {
-        // Not in_progress, clear timer data
         setTimerData(null)
       }
 
-      // Fetch check-in settings for organization
-      if (user?.organization?.id) {
-        try {
-          const checkinSettings = await api<{ checkinEnabled: boolean }>(
-            `/api/v1/organizations/${user.organization.id}/checkin-settings`,
-            { token: session.accessToken }
-          )
-          setCheckinEnabled(checkinSettings.checkinEnabled || false)
-        } catch {
-          // Check-in settings not configured, leave as disabled
-          setCheckinEnabled(false)
-        }
+      // Process check-in settings result
+      if (checkinResult.status === 'fulfilled') {
+        setCheckinEnabled(checkinResult.value?.checkinEnabled || false)
+      } else {
+        setCheckinEnabled(false)
       }
 
-      // Fetch new repair items for workflow status
-      try {
-        const repairItemsData = await api<{ repairItems: NewRepairItem[] }>(
-          `/api/v1/health-checks/${id}/repair-items`,
-          { token: session.accessToken }
-        )
-        const items = repairItemsData.repairItems || []
+      // Process repair items result
+      if (repairItemsResult.status === 'fulfilled') {
+        const items = repairItemsResult.value?.repairItems || []
         setNewRepairItems(items)
 
         // Calculate workflow status from repair items (with tech timestamps)
@@ -244,7 +251,6 @@ export default function HealthCheckDetail() {
         setAuthorisationInfo(authInfo)
 
         // Aggregate completion info from repair items for L/P badge tooltips
-        // Find the latest labour and parts completion times across all items
         let latestLabour: NewRepairItem | null = null
         let latestParts: NewRepairItem | null = null
 
@@ -261,7 +267,6 @@ export default function HealthCheckDetail() {
           }
         }
 
-        // Set labour completion info
         if (latestLabour?.labourCompletedAt) {
           const userName = latestLabour.labourCompletedByUser
             ? `${latestLabour.labourCompletedByUser.first_name} ${latestLabour.labourCompletedByUser.last_name}`
@@ -274,7 +279,6 @@ export default function HealthCheckDetail() {
           setLabourCompletion(undefined)
         }
 
-        // Set parts completion info
         if (latestParts?.partsCompletedAt) {
           const userName = latestParts.partsCompletedByUser
             ? `${latestParts.partsCompletedByUser.first_name} ${latestParts.partsCompletedByUser.last_name}`
@@ -286,7 +290,7 @@ export default function HealthCheckDetail() {
         } else {
           setPartsCompletion(undefined)
         }
-      } catch {
+      } else {
         // Workflow status is optional, don't fail the whole page
         setWorkflowStatus(null)
         setLabourCompletion(undefined)
@@ -346,6 +350,18 @@ export default function HealthCheckDetail() {
 
   const handleClosed = () => {
     setShowCloseModal(false)
+    navigate('/health-checks')
+  }
+
+  const handleDelete = async (hcDeletionReasonId: string, notes: string) => {
+    if (!session?.accessToken || !id) return
+
+    await api(`/api/v1/health-checks/${id}/delete`, {
+      method: 'POST',
+      token: session.accessToken,
+      body: { hcDeletionReasonId, notes: notes || undefined }
+    })
+    setShowDeleteModal(false)
     navigate('/health-checks')
   }
 
@@ -467,6 +483,7 @@ export default function HealthCheckDetail() {
   const canMarkReady = ['awaiting_review', 'awaiting_pricing'].includes(healthCheck.status)
   const canSend = healthCheck.status === 'ready_to_send'
   const canResend = ['sent', 'expired', 'opened', 'customer_viewed', 'customer_approved', 'customer_partial', 'customer_declined'].includes(healthCheck.status)
+  const canDelete = ['created', 'assigned', 'cancelled', 'awaiting_checkin'].includes(healthCheck.status) && !healthCheck.deleted_at
   const canClose = ['authorized', 'declined', 'partial_response'].includes(healthCheck.status) && !healthCheck.closed_at
   const isClosed = !!healthCheck.closed_at
 
@@ -568,6 +585,19 @@ export default function HealthCheckDetail() {
               <span className="px-3 md:px-4 py-2 bg-green-100 text-green-800 text-sm font-medium rounded whitespace-nowrap">
                 Closed
               </span>
+            )}
+            {canDelete && (
+              <button
+                onClick={() => setShowDeleteModal(true)}
+                className="px-3 md:px-4 py-2 bg-red-600 text-white text-sm font-medium hover:bg-red-700 rounded whitespace-nowrap"
+              >
+                <span className="hidden md:inline">Delete</span>
+                <span className="md:hidden">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </span>
+              </button>
             )}
           </div>
         </div>
@@ -767,6 +797,13 @@ export default function HealthCheckDetail() {
           }}
         />
       )}
+      <HcDeletionModal
+        isOpen={showDeleteModal}
+        vhcReference={healthCheck.vhc_reference ?? undefined}
+        vehicleRegistration={healthCheck.vehicle?.registration}
+        onClose={() => setShowDeleteModal(false)}
+        onConfirm={handleDelete}
+      />
     </div>
   )
 }
@@ -867,7 +904,11 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
           <div>
             <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Customer</div>
             <div className="text-sm font-medium text-gray-900">
-              {customer ? `${customer.first_name} ${customer.last_name}` : '-'}
+              {customer ? (
+                <Link to={`/customers/${customer.id}`} className="text-primary hover:text-primary-dark">
+                  {customer.first_name} {customer.last_name}
+                </Link>
+              ) : '-'}
             </div>
           </div>
         </div>
@@ -982,7 +1023,11 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
         <div>
           <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Customer</div>
           <div className="text-sm font-medium text-gray-900">
-            {customer ? `${customer.first_name} ${customer.last_name}` : '-'}
+            {customer ? (
+              <Link to={`/customers/${customer.id}`} className="text-primary hover:text-primary-dark">
+                {customer.first_name} {customer.last_name}
+              </Link>
+            ) : '-'}
           </div>
         </div>
 

@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
+import { api } from '../../lib/api'
+import SettingsBackLink from '../../components/SettingsBackLink'
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5180'
 
 interface OrganizationSettingsData {
   id: string
@@ -56,13 +60,9 @@ export default function OrganizationSettings() {
     if (!orgId) return
 
     try {
-      const response = await fetch(`/api/v1/organizations/${orgId}/settings`, {
-        headers: { Authorization: `Bearer ${session?.accessToken}` }
+      const data = await api<OrganizationSettingsData>(`/api/v1/organizations/${orgId}/settings`, {
+        token: session?.accessToken
       })
-
-      if (!response.ok) throw new Error('Failed to fetch settings')
-
-      const data = await response.json()
       setSettings(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings')
@@ -79,42 +79,29 @@ export default function OrganizationSettings() {
     setSuccess(null)
 
     try {
-      const response = await fetch(`/api/v1/organizations/${orgId}/settings`, {
+      await api(`/api/v1/organizations/${orgId}/settings`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session?.accessToken}`
-        },
-        body: JSON.stringify({
-          // Branding
+        token: session?.accessToken,
+        body: {
           primaryColor: settings.primaryColor,
           secondaryColor: settings.secondaryColor,
-          // Business
           legalName: settings.legalName,
           companyNumber: settings.companyNumber,
           vatNumber: settings.vatNumber,
-          // Address
           addressLine1: settings.addressLine1,
           addressLine2: settings.addressLine2,
           city: settings.city,
           county: settings.county,
           postcode: settings.postcode,
           country: settings.country,
-          // Contact
           phone: settings.phone,
           email: settings.email,
           website: settings.website,
-          // Preferences
           timezone: settings.timezone,
           dateFormat: settings.dateFormat,
           currency: settings.currency
-        })
+        }
       })
-
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || 'Failed to save settings')
-      }
 
       setSuccess('Settings saved successfully')
       setTimeout(() => setSuccess(null), 3000)
@@ -136,7 +123,7 @@ export default function OrganizationSettings() {
       formData.append('file', file)
       formData.append('type', type)
 
-      const response = await fetch(`/api/v1/organizations/${orgId}/settings/logo`, {
+      const response = await fetch(`${API_URL}/api/v1/organizations/${orgId}/settings/logo`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${session?.accessToken}` },
         body: formData
@@ -186,6 +173,7 @@ export default function OrganizationSettings() {
 
   return (
     <div className="max-w-4xl mx-auto">
+      <SettingsBackLink />
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Organization Settings</h1>
         <p className="text-gray-600 mt-1">

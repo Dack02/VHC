@@ -8,6 +8,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
+import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface CheckinSettings {
   checkinEnabled: boolean
@@ -105,6 +106,7 @@ export default function WorkflowSettings() {
 
   return (
     <div>
+      <SettingsBackLink />
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Workflow Settings</h1>

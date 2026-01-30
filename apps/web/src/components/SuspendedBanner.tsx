@@ -23,7 +23,7 @@ export default function SuspendedBanner() {
           </div>
         </div>
         <a
-          href="mailto:support@vhc.com"
+          href="mailto:support@ollosoft.co.uk"
           className="bg-white text-red-600 px-4 py-1.5 rounded text-sm font-medium hover:bg-red-50 transition-colors"
         >
           Contact Support

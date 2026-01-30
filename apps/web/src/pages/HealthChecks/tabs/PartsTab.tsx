@@ -14,9 +14,10 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useAuth } from '../../../contexts/AuthContext'
-import { api, NewRepairItem, RepairPart, Supplier, PricingSettings, RepairItemChild } from '../../../lib/api'
+import { api, NewRepairItem, RepairPart, RepairOption, Supplier, PricingSettings, RepairItemChild } from '../../../lib/api'
 import { Tooltip } from '../../../components/ui/Tooltip'
 import { MarginCalculatorPopover } from '../../../components/MarginCalculatorPopover'
+import { RepairOptionsModal } from '../components/RepairOptionsModal'
 
 interface PartsTabProps {
   healthCheckId: string
@@ -33,7 +34,7 @@ interface RowEditState {
   supplierId: string
   costPrice: string
   sellPrice: string
-  allocationType: 'shared' | 'direct'  // For new parts
+  allocationType: 'shared' | 'direct' | 'option'  // For new parts
   isDirty: boolean
   isSaving: boolean
   error: string | null
@@ -50,6 +51,8 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
   const [markingComplete, setMarkingComplete] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [showOtherPartModal, setShowOtherPartModal] = useState(false)
+  const [optionsModalItemId, setOptionsModalItemId] = useState<string | null>(null)
+  const [optionsModalItemTitle, setOptionsModalItemTitle] = useState('')
 
   // Expand/collapse state for groups
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
@@ -93,8 +96,8 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
   }, [])
 
   // Add a new part row for a specific section
-  const addNewPartRow = useCallback((repairItemId: string, sectionType: 'shared' | 'direct' | 'standalone') => {
-    const key = `${repairItemId}-${sectionType}`
+  const addNewPartRow = useCallback((repairItemId: string, sectionType: 'shared' | 'direct' | 'standalone' | 'option', optionId?: string) => {
+    const key = sectionType === 'option' && optionId ? `${optionId}-option` : `${repairItemId}-${sectionType}`
     setNewPartRows(prev => {
       const next = new Map(prev)
       const current = next.get(key) || 0
@@ -102,13 +105,12 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
       return next
     })
     // Auto-expand the section when adding a part
-    const sectionKey = `${repairItemId}-${sectionType}`
-    setExpandedSections(prev => new Set(prev).add(sectionKey))
+    setExpandedSections(prev => new Set(prev).add(key))
   }, [])
 
   // Remove a new part row (cancel without saving)
-  const removeNewPartRow = useCallback((repairItemId: string, sectionType: 'shared' | 'direct' | 'standalone', index: number) => {
-    const key = `${repairItemId}-${sectionType}`
+  const removeNewPartRow = useCallback((repairItemId: string, sectionType: 'shared' | 'direct' | 'standalone' | 'option', index: number, optionId?: string) => {
+    const key = sectionType === 'option' && optionId ? `${optionId}-option` : `${repairItemId}-${sectionType}`
     setNewPartRows(prev => {
       const next = new Map(prev)
       const current = next.get(key) || 0
@@ -118,7 +120,9 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
       return next
     })
     // Clear the edit state for this new row
-    const rowKey = `new-${repairItemId}-${sectionType}-${index}`
+    const rowKey = sectionType === 'option' && optionId
+      ? `new-${optionId}-option-${index}`
+      : `new-${repairItemId}-${sectionType}-${index}`
     setEditStates(prev => {
       const next = new Map(prev)
       next.delete(rowKey)
@@ -297,7 +301,7 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
   }, [session?.accessToken, healthCheckId, onUpdate, clearNewPartRows])
 
   // Get or initialize edit state for a row (keyed by rowKey)
-  const getEditState = useCallback((rowKey: string, repairItemId: string, part?: RepairPart, allocationType: 'shared' | 'direct' = 'direct'): RowEditState => {
+  const getEditState = useCallback((rowKey: string, repairItemId: string, part?: RepairPart, allocationType: 'shared' | 'direct' | 'option' = 'direct'): RowEditState => {
     const existing = editStates.get(rowKey)
     if (existing) return existing
 
@@ -365,7 +369,8 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
       sellPrice: string
       allocationType?: 'shared' | 'direct'
     },
-    existingPartId?: string
+    existingPartId?: string,
+    optionId?: string
   ) => {
     if (!session?.accessToken) return false
 
@@ -381,7 +386,7 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
 
     try {
       if (existingPartId) {
-        // Update existing part
+        // Update existing part (works the same for item or option parts)
         await api(`/api/v1/repair-parts/${existingPartId}`, {
           method: 'PATCH',
           token: session.accessToken,
@@ -395,8 +400,22 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
             allocation_type: partData.allocationType || 'direct'
           }
         })
+      } else if (optionId) {
+        // Create new part on option
+        await api(`/api/v1/repair-options/${optionId}/parts`, {
+          method: 'POST',
+          token: session.accessToken,
+          body: {
+            part_number: partData.partNumber?.trim() || null,
+            description: partData.description.trim(),
+            quantity: qty,
+            supplier_id: partData.supplierId || null,
+            cost_price: costPriceNum,
+            sell_price: sellPriceNum
+          }
+        })
       } else {
-        // Create new part
+        // Create new part on repair item
         await api(`/api/v1/repair-items/${repairItemId}/parts`, {
           method: 'POST',
           token: session.accessToken,
@@ -723,12 +742,23 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                         {groupTotal > 0 ? `£${groupTotal.toFixed(2)}` : '—'}
                       </td>
                       <td className="px-2 py-2 text-center">
-                        <button
-                          onClick={() => toggleGroup(item.id)}
-                          className="text-xs text-gray-500 hover:text-gray-700"
-                        >
-                          {isExpanded ? 'Collapse' : 'Expand'}
-                        </button>
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => {
+                              setOptionsModalItemId(item.id)
+                              setOptionsModalItemTitle(item.name)
+                            }}
+                            className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                          >
+                            Options
+                          </button>
+                          <button
+                            onClick={() => toggleGroup(item.id)}
+                            className="text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            {isExpanded ? 'Collapse' : 'Expand'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
 
@@ -834,6 +864,149 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                               )
                             })}
                           </>
+                        )}
+
+                        {/* OPTION SUB-SECTIONS (for groups with options) */}
+                        {(item.options || []).map((option: RepairOption) => {
+                          const optionSectionKey = `${option.id}-option`
+                          const isOptionExpanded = expandedSections.has(optionSectionKey)
+                          const optionParts: RepairPart[] = option.parts || []
+                          const newOptionRowCount = newPartRows.get(`${option.id}-option`) || 0
+                          const optionPartsTotal = optionParts.reduce((sum: number, p: RepairPart) => sum + p.lineTotal, 0)
+                          const isSelected = item.selectedOptionId === option.id
+
+                          return (
+                            <React.Fragment key={`option-section-${option.id}`}>
+                              {/* Option Section Header */}
+                              <tr className="bg-indigo-50 border-l-4 border-l-indigo-300">
+                                <td className="px-2 py-2"></td>
+                                <td className="px-2 py-2 text-sm" colSpan={8}>
+                                  <div className="flex items-center gap-2 pl-4">
+                                    <button
+                                      onClick={() => toggleSection(optionSectionKey)}
+                                      className="p-0.5 hover:bg-indigo-100 rounded transition-colors"
+                                    >
+                                      <svg
+                                        className={`w-3 h-3 text-indigo-600 transition-transform ${isOptionExpanded ? 'rotate-90' : ''}`}
+                                        fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                      >
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                      </svg>
+                                    </button>
+                                    <span className="text-indigo-700 font-medium">Option: {option.name}</span>
+                                    {option.isRecommended && (
+                                      <span className="px-1.5 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded-none">
+                                        RECOMMENDED
+                                      </span>
+                                    )}
+                                    {isSelected && (
+                                      <span className="px-1.5 py-0.5 text-xs font-medium text-primary bg-primary/10 rounded-none">
+                                        SELECTED
+                                      </span>
+                                    )}
+                                    <span className="px-1.5 py-0.5 text-xs text-indigo-600 bg-indigo-100 rounded">
+                                      {optionParts.length} part{optionParts.length !== 1 ? 's' : ''}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="px-2 py-2 text-sm text-indigo-700 text-right">
+                                  {optionPartsTotal > 0 ? `£${optionPartsTotal.toFixed(2)}` : '—'}
+                                </td>
+                                <td className="px-2 py-2 text-center">
+                                  <button
+                                    onClick={() => addNewPartRow(item.id, 'option', option.id)}
+                                    className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                                  >
+                                    + Add
+                                  </button>
+                                </td>
+                              </tr>
+
+                              {/* Option Parts Rows */}
+                              {isOptionExpanded && (
+                                <>
+                                  {optionParts.map((part, partIdx) => {
+                                    const rowKey = part.id
+                                    return (
+                                      <MultiPartRow
+                                        key={rowKey}
+                                        rowKey={rowKey}
+                                        repairItemId={item.id}
+                                        part={part}
+                                        isNew={false}
+                                        sectionType="option"
+                                        rowIndex={itemIndex * 100 + 50 + partIdx}
+                                        suppliers={suppliers}
+                                        defaultMargin={defaultMargin}
+                                        editState={getEditState(rowKey, item.id, part, 'option')}
+                                        isLoading={actionLoading === part.id}
+                                        onUpdateEditState={(updates) => updateEditState(rowKey, item.id, updates)}
+                                        onSave={(partData, existingPartId) => saveRowPart(rowKey, item.id, partData, existingPartId)}
+                                        onDelete={() => handleDeletePart(part.id, rowKey)}
+                                        onClear={() => clearEditState(rowKey)}
+                                        onSupplierAdded={handleSupplierAdded}
+                                        registerRef={registerRef}
+                                        focusNext={focusNext}
+                                        focusPrev={focusPrev}
+                                        indent={2}
+                                      />
+                                    )
+                                  })}
+                                  {/* New option part rows */}
+                                  {Array.from({ length: newOptionRowCount }).map((_, idx) => {
+                                    const rowKey = `new-${option.id}-option-${idx}`
+                                    return (
+                                      <MultiPartRow
+                                        key={rowKey}
+                                        rowKey={rowKey}
+                                        repairItemId={item.id}
+                                        part={null}
+                                        isNew={true}
+                                        sectionType="option"
+                                        rowIndex={itemIndex * 100 + 50 + optionParts.length + idx}
+                                        suppliers={suppliers}
+                                        defaultMargin={defaultMargin}
+                                        editState={getEditState(rowKey, item.id, undefined, 'option')}
+                                        isLoading={false}
+                                        onUpdateEditState={(updates) => updateEditState(rowKey, item.id, updates)}
+                                        onSave={(partData) => saveRowPart(rowKey, item.id, partData, undefined, option.id)}
+                                        onDelete={() => removeNewPartRow(item.id, 'option', idx, option.id)}
+                                        onSupplierAdded={handleSupplierAdded}
+                                        onClear={() => {
+                                          clearEditState(rowKey)
+                                          removeNewPartRow(item.id, 'option', idx, option.id)
+                                        }}
+                                        registerRef={registerRef}
+                                        focusNext={focusNext}
+                                        focusPrev={focusPrev}
+                                        indent={2}
+                                      />
+                                    )
+                                  })}
+                                </>
+                              )}
+                            </React.Fragment>
+                          )
+                        })}
+
+                        {/* Manage Options button for groups */}
+                        {(item.options?.length || 0) > 0 && (
+                          <tr className="bg-gray-50">
+                            <td className="px-2 py-1"></td>
+                            <td className="px-2 py-1 text-sm" colSpan={10}>
+                              <div className="pl-4">
+                                <button
+                                  onClick={() => {
+                                    setOptionsModalItemId(item.id)
+                                    setOptionsModalItemTitle(item.name)
+                                  }}
+                                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                                >
+                                  Manage Options
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
                         )}
 
                         {/* CHILD CONCERN SECTIONS */}
@@ -1039,6 +1212,15 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                       </td>
                       <td className="px-2 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => {
+                              setOptionsModalItemId(item.id)
+                              setOptionsModalItemTitle(item.name)
+                            }}
+                            className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                          >
+                            Options
+                          </button>
                           {!item.noPartsRequired && (
                             <button
                               onClick={() => addNewPartRow(item.id, 'standalone')}
@@ -1131,6 +1313,129 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                             />
                           )
                         })}
+
+                        {/* OPTION SUB-SECTIONS (for standalone items with options) */}
+                        {(item.options || []).map((option: RepairOption) => {
+                          const optionSectionKey = `${option.id}-option`
+                          const isOptionExpanded = expandedSections.has(optionSectionKey)
+                          const optionParts: RepairPart[] = option.parts || []
+                          const newOptionRowCount = newPartRows.get(`${option.id}-option`) || 0
+                          const optionPartsTotal = optionParts.reduce((sum: number, p: RepairPart) => sum + p.lineTotal, 0)
+                          const isSelected = item.selectedOptionId === option.id
+
+                          return (
+                            <React.Fragment key={`option-section-${option.id}`}>
+                              {/* Option Section Header */}
+                              <tr className="bg-indigo-50 border-l-4 border-l-indigo-300">
+                                <td className="px-2 py-2"></td>
+                                <td className="px-2 py-2 text-sm" colSpan={8}>
+                                  <div className="flex items-center gap-2 pl-2">
+                                    <button
+                                      onClick={() => toggleSection(optionSectionKey)}
+                                      className="p-0.5 hover:bg-indigo-100 rounded transition-colors"
+                                    >
+                                      <svg
+                                        className={`w-3 h-3 text-indigo-600 transition-transform ${isOptionExpanded ? 'rotate-90' : ''}`}
+                                        fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                      >
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                      </svg>
+                                    </button>
+                                    <span className="text-indigo-700 font-medium">Option: {option.name}</span>
+                                    {option.isRecommended && (
+                                      <span className="px-1.5 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded-none">
+                                        RECOMMENDED
+                                      </span>
+                                    )}
+                                    {isSelected && (
+                                      <span className="px-1.5 py-0.5 text-xs font-medium text-primary bg-primary/10 rounded-none">
+                                        SELECTED
+                                      </span>
+                                    )}
+                                    <span className="px-1.5 py-0.5 text-xs text-indigo-600 bg-indigo-100 rounded">
+                                      {optionParts.length} part{optionParts.length !== 1 ? 's' : ''}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="px-2 py-2 text-sm text-indigo-700 text-right">
+                                  {optionPartsTotal > 0 ? `£${optionPartsTotal.toFixed(2)}` : '—'}
+                                </td>
+                                <td className="px-2 py-2 text-center">
+                                  <button
+                                    onClick={() => addNewPartRow(item.id, 'option', option.id)}
+                                    className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                                  >
+                                    + Add
+                                  </button>
+                                </td>
+                              </tr>
+
+                              {/* Option Parts Rows */}
+                              {isOptionExpanded && (
+                                <>
+                                  {optionParts.map((part, partIdx) => {
+                                    const rowKey = part.id
+                                    return (
+                                      <MultiPartRow
+                                        key={rowKey}
+                                        rowKey={rowKey}
+                                        repairItemId={item.id}
+                                        part={part}
+                                        isNew={false}
+                                        sectionType="option"
+                                        rowIndex={itemIndex * 100 + 50 + partIdx}
+                                        suppliers={suppliers}
+                                        defaultMargin={defaultMargin}
+                                        editState={getEditState(rowKey, item.id, part, 'option')}
+                                        isLoading={actionLoading === part.id}
+                                        onUpdateEditState={(updates) => updateEditState(rowKey, item.id, updates)}
+                                        onSave={(partData, existingPartId) => saveRowPart(rowKey, item.id, partData, existingPartId)}
+                                        onDelete={() => handleDeletePart(part.id, rowKey)}
+                                        onClear={() => clearEditState(rowKey)}
+                                        onSupplierAdded={handleSupplierAdded}
+                                        registerRef={registerRef}
+                                        focusNext={focusNext}
+                                        focusPrev={focusPrev}
+                                        indent={1}
+                                      />
+                                    )
+                                  })}
+                                  {/* New option part rows */}
+                                  {Array.from({ length: newOptionRowCount }).map((_, idx) => {
+                                    const rowKey = `new-${option.id}-option-${idx}`
+                                    return (
+                                      <MultiPartRow
+                                        key={rowKey}
+                                        rowKey={rowKey}
+                                        repairItemId={item.id}
+                                        part={null}
+                                        isNew={true}
+                                        sectionType="option"
+                                        rowIndex={itemIndex * 100 + 50 + optionParts.length + idx}
+                                        suppliers={suppliers}
+                                        defaultMargin={defaultMargin}
+                                        editState={getEditState(rowKey, item.id, undefined, 'option')}
+                                        isLoading={false}
+                                        onUpdateEditState={(updates) => updateEditState(rowKey, item.id, updates)}
+                                        onSave={(partData) => saveRowPart(rowKey, item.id, partData, undefined, option.id)}
+                                        onDelete={() => removeNewPartRow(item.id, 'option', idx, option.id)}
+                                        onSupplierAdded={handleSupplierAdded}
+                                        onClear={() => {
+                                          clearEditState(rowKey)
+                                          removeNewPartRow(item.id, 'option', idx, option.id)
+                                        }}
+                                        registerRef={registerRef}
+                                        focusNext={focusNext}
+                                        focusPrev={focusPrev}
+                                        indent={1}
+                                      />
+                                    )
+                                  })}
+                                </>
+                              )}
+                            </React.Fragment>
+                          )
+                        })}
                       </>
                     )}
                   </React.Fragment>
@@ -1205,6 +1510,16 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
         Add Other Part
       </button>
 
+      {/* Repair Options Modal */}
+      {optionsModalItemId && (
+        <RepairOptionsModal
+          repairItemId={optionsModalItemId}
+          repairItemTitle={optionsModalItemTitle}
+          onClose={() => setOptionsModalItemId(null)}
+          onUpdate={refetchData}
+        />
+      )}
+
       {/* Add Other Part Modal */}
       {showOtherPartModal && (
         <AddOtherPartModal
@@ -1242,7 +1557,7 @@ interface MultiPartRowProps {
   repairItemId: string
   part: RepairPart | null
   isNew: boolean
-  sectionType: 'shared' | 'direct' | 'standalone'
+  sectionType: 'shared' | 'direct' | 'standalone' | 'option'
   rowIndex: number
   suppliers: Supplier[]
   defaultMargin: number
@@ -1450,7 +1765,7 @@ function MultiPartRow({
 
   // Indentation padding
   const indentClass = indent === 1 ? 'pl-4' : indent === 2 ? 'pl-8' : 'pl-12'
-  const borderColor = sectionType === 'shared' ? 'border-l-purple-200' : 'border-l-gray-100'
+  const borderColor = sectionType === 'shared' ? 'border-l-purple-200' : sectionType === 'option' ? 'border-l-indigo-200' : 'border-l-gray-100'
 
   const rowClass = editState.saveSuccess
     ? `bg-green-50 transition-colors duration-500 border-l-4 ${borderColor}`

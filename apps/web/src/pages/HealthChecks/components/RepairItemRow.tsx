@@ -3,13 +3,12 @@
  * Displays a repair item with inline editing, pricing, and action controls
  */
 
-import { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../../../contexts/AuthContext'
 import { useToast } from '../../../contexts/ToastContext'
 import { api, RepairItem, CheckResult } from '../../../lib/api'
 import { ItemReasonsDisplay, GreenReasonsDisplay } from './ItemReasonsDisplay'
 import { OutcomeButton, calculateOutcomeStatus, OutcomeStatus } from './OutcomeButton'
-import { DeferModal, DeclineModal, DeleteModal } from './OutcomeModals'
 
 interface RepairItemRowProps {
   healthCheckId: string
@@ -20,6 +19,8 @@ interface RepairItemRowProps {
   onUpdate: () => void
   onPhotoClick?: (resultId: string) => void
   onUngroup?: () => void     // Callback to ungroup a grouped item
+  onManageOptions?: () => void  // Callback to open repair options modal
+  onOpenModal?: (type: 'defer' | 'decline' | 'delete', itemId: string, itemTitle: string) => void  // Callback to open outcome modal at parent level
   preloadedReasons?: Array<{
     id: string
     itemReasonId: string
@@ -30,7 +31,7 @@ interface RepairItemRowProps {
   specialDisplay?: React.ReactNode  // Tyre/brake display shown when expanded
 }
 
-export function RepairItemRow({
+export const RepairItemRow = React.memo(function RepairItemRow({
   healthCheckId,
   item: initialItem,
   result,
@@ -39,6 +40,8 @@ export function RepairItemRow({
   onUpdate,
   onPhotoClick,
   onUngroup,
+  onManageOptions,
+  onOpenModal,
   preloadedReasons,
   specialDisplay
 }: RepairItemRowProps) {
@@ -50,10 +53,6 @@ export function RepairItemRow({
   const [savingField, setSavingField] = useState<string | null>(null) // Track which field is saving
   const [error, setError] = useState<string | null>(null)
 
-  // Outcome modal states
-  const [showDeferModal, setShowDeferModal] = useState(false)
-  const [showDeclineModal, setShowDeclineModal] = useState(false)
-  const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [outcomeLoading, setOutcomeLoading] = useState(false)
 
   // Local copy of item for optimistic updates
@@ -82,6 +81,12 @@ export function RepairItemRow({
   }, [editingField])
 
   const mediaCount = result?.media?.length || 0
+
+  // Repair options state
+  const hasOptions = item.options && item.options.length > 0
+  const selectedOption = hasOptions && item.selected_option_id
+    ? item.options!.find(o => o.id === item.selected_option_id)
+    : null
 
   // Calculate total
   const calculatedTotal = (parseFloat(partsPrice) || 0) + (parseFloat(laborPrice) || 0)
@@ -260,86 +265,6 @@ export function RepairItemRow({
     }
   }
 
-  const handleDefer = async (deferredUntil: string, notes: string) => {
-    if (!session?.accessToken) return
-    setOutcomeLoading(true)
-    try {
-      await api(`/api/v1/repair-items/${item.id}/defer`, {
-        method: 'POST',
-        token: session.accessToken,
-        body: { deferred_until: deferredUntil, notes }
-      })
-      // Optimistic update
-      setItem(prev => ({
-        ...prev,
-        outcome_status: 'deferred',
-        outcome_set_at: new Date().toISOString(),
-        outcome_source: 'manual',
-        deferred_until: deferredUntil,
-        deferred_notes: notes
-      }))
-      toast.success('Item deferred')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to defer')
-      throw err
-    } finally {
-      setOutcomeLoading(false)
-    }
-  }
-
-  const handleDecline = async (declinedReasonId: string, notes: string) => {
-    if (!session?.accessToken) return
-    setOutcomeLoading(true)
-    try {
-      await api(`/api/v1/repair-items/${item.id}/decline`, {
-        method: 'POST',
-        token: session.accessToken,
-        body: { declined_reason_id: declinedReasonId, notes }
-      })
-      // Optimistic update
-      setItem(prev => ({
-        ...prev,
-        outcome_status: 'declined',
-        outcome_set_at: new Date().toISOString(),
-        outcome_source: 'manual',
-        declined_reason_id: declinedReasonId,
-        declined_notes: notes
-      }))
-      toast.success('Item declined')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to decline')
-      throw err
-    } finally {
-      setOutcomeLoading(false)
-    }
-  }
-
-  const handleDelete = async (deletedReasonId: string, notes: string) => {
-    if (!session?.accessToken) return
-    setOutcomeLoading(true)
-    try {
-      await api(`/api/v1/repair-items/${item.id}/delete`, {
-        method: 'POST',
-        token: session.accessToken,
-        body: { deleted_reason_id: deletedReasonId, notes }
-      })
-      // Optimistic update
-      setItem(prev => ({
-        ...prev,
-        outcome_status: 'deleted',
-        deleted_at: new Date().toISOString(),
-        deleted_reason_id: deletedReasonId,
-        deleted_notes: notes
-      }))
-      toast.success('Item deleted')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete')
-      throw err
-    } finally {
-      setOutcomeLoading(false)
-    }
-  }
-
   const handleReset = async () => {
     if (!session?.accessToken) return
     if (!confirm('Are you sure you want to reset this item? This will clear the outcome status.')) return
@@ -367,6 +292,7 @@ export function RepairItemRow({
         deleted_notes: null
       }))
       toast.success('Item reset')
+      onUpdate()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to reset')
     } finally {
@@ -422,6 +348,16 @@ export function RepairItemRow({
                   GROUP{item.children && item.children.length > 0 && ` (${item.children.length})`}
                 </span>
               )}
+              {hasOptions && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onManageOptions?.() }}
+                  className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-700 rounded-none hover:bg-indigo-200 cursor-pointer"
+                  title="Manage repair options"
+                >
+                  {item.options!.length} OPTION{item.options!.length !== 1 ? 'S' : ''}
+                  {selectedOption && ' (selected)'}
+                </button>
+              )}
             </div>
             {item.description && !expanded && (
               <div className="text-sm text-gray-500 truncate">{item.description}</div>
@@ -460,86 +396,108 @@ export function RepairItemRow({
             </span>
           </label>
 
-          {/* Parts price */}
-          <div className="w-20 text-right">
-            {savingField === 'parts_cost' ? (
-              <div className="flex justify-end"><LoadingSpinner /></div>
-            ) : editingField === 'parts_cost' ? (
-              <input
-                ref={inputRef}
-                type="number"
-                step="0.01"
-                value={partsPrice}
-                onChange={(e) => setPartsPrice(e.target.value)}
-                onBlur={() => handlePriceBlur('parts_cost')}
-                onKeyDown={(e) => handlePriceKeyDown(e, 'parts_cost')}
-                className="w-full px-2 py-1 text-right text-sm border border-primary rounded focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-            ) : (
-              <button
-                onClick={() => setEditingField('parts_cost')}
-                className="text-sm text-gray-700 hover:text-primary hover:underline"
-                title="Click to edit parts price"
-              >
-                {formatCurrency(item.parts_cost || 0)}
-              </button>
-            )}
-            <div className="text-xs text-gray-400">Parts</div>
-          </div>
+          {/* Pricing columns - show option pricing if options exist, otherwise inline editable */}
+          {hasOptions ? (
+            <>
+              <div className="w-20 text-right">
+                <span className="text-sm text-gray-500">{formatCurrency(selectedOption?.partsTotal ?? 0)}</span>
+                <div className="text-xs text-gray-400">Parts</div>
+              </div>
+              <div className="w-20 text-right">
+                <span className="text-sm text-gray-500">{formatCurrency(selectedOption?.labourTotal ?? 0)}</span>
+                <div className="text-xs text-gray-400">Labour</div>
+              </div>
+              <div className="w-24 text-right">
+                <span className="text-sm font-semibold text-gray-900">
+                  {selectedOption ? formatCurrency(selectedOption.totalIncVat) : '£0.00'}
+                </span>
+                <div className="text-xs text-gray-400">{selectedOption ? 'Total' : 'No option selected'}</div>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Parts price */}
+              <div className="w-20 text-right">
+                {savingField === 'parts_cost' ? (
+                  <div className="flex justify-end"><LoadingSpinner /></div>
+                ) : editingField === 'parts_cost' ? (
+                  <input
+                    ref={inputRef}
+                    type="number"
+                    step="0.01"
+                    value={partsPrice}
+                    onChange={(e) => setPartsPrice(e.target.value)}
+                    onBlur={() => handlePriceBlur('parts_cost')}
+                    onKeyDown={(e) => handlePriceKeyDown(e, 'parts_cost')}
+                    className="w-full px-2 py-1 text-right text-sm border border-primary rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                ) : (
+                  <button
+                    onClick={() => setEditingField('parts_cost')}
+                    className="text-sm text-gray-700 hover:text-primary hover:underline"
+                    title="Click to edit parts price"
+                  >
+                    {formatCurrency(item.parts_cost || 0)}
+                  </button>
+                )}
+                <div className="text-xs text-gray-400">Parts</div>
+              </div>
 
-          {/* Labour price */}
-          <div className="w-20 text-right">
-            {savingField === 'labor_cost' ? (
-              <div className="flex justify-end"><LoadingSpinner /></div>
-            ) : editingField === 'labor_cost' ? (
-              <input
-                ref={inputRef}
-                type="number"
-                step="0.01"
-                value={laborPrice}
-                onChange={(e) => setLaborPrice(e.target.value)}
-                onBlur={() => handlePriceBlur('labor_cost')}
-                onKeyDown={(e) => handlePriceKeyDown(e, 'labor_cost')}
-                className="w-full px-2 py-1 text-right text-sm border border-primary rounded focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-            ) : (
-              <button
-                onClick={() => setEditingField('labor_cost')}
-                className="text-sm text-gray-700 hover:text-primary hover:underline"
-                title="Click to edit labour price"
-              >
-                {formatCurrency(item.labor_cost || 0)}
-              </button>
-            )}
-            <div className="text-xs text-gray-400">Labour</div>
-          </div>
+              {/* Labour price */}
+              <div className="w-20 text-right">
+                {savingField === 'labor_cost' ? (
+                  <div className="flex justify-end"><LoadingSpinner /></div>
+                ) : editingField === 'labor_cost' ? (
+                  <input
+                    ref={inputRef}
+                    type="number"
+                    step="0.01"
+                    value={laborPrice}
+                    onChange={(e) => setLaborPrice(e.target.value)}
+                    onBlur={() => handlePriceBlur('labor_cost')}
+                    onKeyDown={(e) => handlePriceKeyDown(e, 'labor_cost')}
+                    className="w-full px-2 py-1 text-right text-sm border border-primary rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                ) : (
+                  <button
+                    onClick={() => setEditingField('labor_cost')}
+                    className="text-sm text-gray-700 hover:text-primary hover:underline"
+                    title="Click to edit labour price"
+                  >
+                    {formatCurrency(item.labor_cost || 0)}
+                  </button>
+                )}
+                <div className="text-xs text-gray-400">Labour</div>
+              </div>
 
-          {/* Total price (editable) */}
-          <div className="w-24 text-right">
-            {savingField === 'total_price' ? (
-              <div className="flex justify-end"><LoadingSpinner /></div>
-            ) : editingField === 'total_price' ? (
-              <input
-                ref={inputRef}
-                type="number"
-                step="0.01"
-                value={totalPrice}
-                onChange={(e) => setTotalPrice(e.target.value)}
-                onBlur={() => handlePriceBlur('total_price')}
-                onKeyDown={(e) => handlePriceKeyDown(e, 'total_price')}
-                className="w-full px-2 py-1 text-right text-sm border border-primary rounded focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-            ) : (
-              <button
-                onClick={() => setEditingField('total_price')}
-                className="text-sm font-semibold text-gray-900 hover:text-primary hover:underline"
-                title="Click to edit total price"
-              >
-                {formatCurrency(item.total_price || calculatedTotal)}
-              </button>
-            )}
-            <div className="text-xs text-gray-400">Total</div>
-          </div>
+              {/* Total price (editable) */}
+              <div className="w-24 text-right">
+                {savingField === 'total_price' ? (
+                  <div className="flex justify-end"><LoadingSpinner /></div>
+                ) : editingField === 'total_price' ? (
+                  <input
+                    ref={inputRef}
+                    type="number"
+                    step="0.01"
+                    value={totalPrice}
+                    onChange={(e) => setTotalPrice(e.target.value)}
+                    onBlur={() => handlePriceBlur('total_price')}
+                    onKeyDown={(e) => handlePriceKeyDown(e, 'total_price')}
+                    className="w-full px-2 py-1 text-right text-sm border border-primary rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                ) : (
+                  <button
+                    onClick={() => setEditingField('total_price')}
+                    className="text-sm font-semibold text-gray-900 hover:text-primary hover:underline"
+                    title="Click to edit total price"
+                  >
+                    {formatCurrency(item.total_price || calculatedTotal)}
+                  </button>
+                )}
+                <div className="text-xs text-gray-400">Total</div>
+              </div>
+            </>
+          )}
 
           {/* Work complete checkbox (for authorised items) */}
           {showWorkComplete && (
@@ -569,9 +527,9 @@ export function RepairItemRow({
               deferredUntil={item.deferred_until}
               declinedReason={item.declined_reason?.reason}
               onAuthorise={handleAuthorise}
-              onDefer={() => setShowDeferModal(true)}
-              onDecline={() => setShowDeclineModal(true)}
-              onDelete={() => setShowDeleteModal(true)}
+              onDefer={() => onOpenModal?.('defer', item.id, item.title)}
+              onDecline={() => onOpenModal?.('decline', item.id, item.title)}
+              onDelete={() => onOpenModal?.('delete', item.id, item.title)}
               onReset={handleReset}
               loading={outcomeLoading}
             />
@@ -608,6 +566,16 @@ export function RepairItemRow({
                   <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-700 rounded-full">
                     GROUP{item.children && item.children.length > 0 && ` (${item.children.length})`}
                   </span>
+                )}
+                {hasOptions && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onManageOptions?.() }}
+                    className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-700 rounded-none hover:bg-indigo-200 cursor-pointer"
+                    title="Manage repair options"
+                  >
+                    {item.options!.length} OPTION{item.options!.length !== 1 ? 'S' : ''}
+                    {selectedOption && ' (selected)'}
+                  </button>
                 )}
               </div>
               {item.description && !expanded && (
@@ -652,83 +620,104 @@ export function RepairItemRow({
           <div className="flex items-center gap-4 mt-3 ml-7">
             {/* Pricing grid */}
             <div className="flex-1 grid grid-cols-3 gap-2">
-              {/* Parts */}
-              <div className="text-center">
-                {savingField === 'parts_cost' ? (
-                  <div className="flex justify-center"><LoadingSpinner /></div>
-                ) : editingField === 'parts_cost' ? (
-                  <input
-                    ref={inputRef}
-                    type="number"
-                    step="0.01"
-                    value={partsPrice}
-                    onChange={(e) => setPartsPrice(e.target.value)}
-                    onBlur={() => handlePriceBlur('parts_cost')}
-                    onKeyDown={(e) => handlePriceKeyDown(e, 'parts_cost')}
-                    className="w-full px-2 py-1 text-center text-sm border border-primary rounded focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                ) : (
-                  <button
-                    onClick={() => setEditingField('parts_cost')}
-                    className="text-sm text-gray-700 hover:text-primary"
-                  >
-                    {formatCurrency(item.parts_cost || 0)}
-                  </button>
-                )}
-                <div className="text-xs text-gray-400">Parts</div>
-              </div>
+              {hasOptions ? (
+                <>
+                  <div className="text-center">
+                    <span className="text-sm text-gray-500">{formatCurrency(selectedOption?.partsTotal ?? 0)}</span>
+                    <div className="text-xs text-gray-400">Parts</div>
+                  </div>
+                  <div className="text-center">
+                    <span className="text-sm text-gray-500">{formatCurrency(selectedOption?.labourTotal ?? 0)}</span>
+                    <div className="text-xs text-gray-400">Labour</div>
+                  </div>
+                  <div className="text-center">
+                    <span className="text-sm font-semibold text-gray-900">
+                      {selectedOption ? formatCurrency(selectedOption.totalIncVat) : '£0.00'}
+                    </span>
+                    <div className="text-xs text-gray-400">{selectedOption ? 'Total' : 'No option'}</div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Parts */}
+                  <div className="text-center">
+                    {savingField === 'parts_cost' ? (
+                      <div className="flex justify-center"><LoadingSpinner /></div>
+                    ) : editingField === 'parts_cost' ? (
+                      <input
+                        ref={inputRef}
+                        type="number"
+                        step="0.01"
+                        value={partsPrice}
+                        onChange={(e) => setPartsPrice(e.target.value)}
+                        onBlur={() => handlePriceBlur('parts_cost')}
+                        onKeyDown={(e) => handlePriceKeyDown(e, 'parts_cost')}
+                        className="w-full px-2 py-1 text-center text-sm border border-primary rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => setEditingField('parts_cost')}
+                        className="text-sm text-gray-700 hover:text-primary"
+                      >
+                        {formatCurrency(item.parts_cost || 0)}
+                      </button>
+                    )}
+                    <div className="text-xs text-gray-400">Parts</div>
+                  </div>
 
-              {/* Labour */}
-              <div className="text-center">
-                {savingField === 'labor_cost' ? (
-                  <div className="flex justify-center"><LoadingSpinner /></div>
-                ) : editingField === 'labor_cost' ? (
-                  <input
-                    ref={inputRef}
-                    type="number"
-                    step="0.01"
-                    value={laborPrice}
-                    onChange={(e) => setLaborPrice(e.target.value)}
-                    onBlur={() => handlePriceBlur('labor_cost')}
-                    onKeyDown={(e) => handlePriceKeyDown(e, 'labor_cost')}
-                    className="w-full px-2 py-1 text-center text-sm border border-primary rounded focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                ) : (
-                  <button
-                    onClick={() => setEditingField('labor_cost')}
-                    className="text-sm text-gray-700 hover:text-primary"
-                  >
-                    {formatCurrency(item.labor_cost || 0)}
-                  </button>
-                )}
-                <div className="text-xs text-gray-400">Labour</div>
-              </div>
+                  {/* Labour */}
+                  <div className="text-center">
+                    {savingField === 'labor_cost' ? (
+                      <div className="flex justify-center"><LoadingSpinner /></div>
+                    ) : editingField === 'labor_cost' ? (
+                      <input
+                        ref={inputRef}
+                        type="number"
+                        step="0.01"
+                        value={laborPrice}
+                        onChange={(e) => setLaborPrice(e.target.value)}
+                        onBlur={() => handlePriceBlur('labor_cost')}
+                        onKeyDown={(e) => handlePriceKeyDown(e, 'labor_cost')}
+                        className="w-full px-2 py-1 text-center text-sm border border-primary rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => setEditingField('labor_cost')}
+                        className="text-sm text-gray-700 hover:text-primary"
+                      >
+                        {formatCurrency(item.labor_cost || 0)}
+                      </button>
+                    )}
+                    <div className="text-xs text-gray-400">Labour</div>
+                  </div>
 
-              {/* Total */}
-              <div className="text-center">
-                {savingField === 'total_price' ? (
-                  <div className="flex justify-center"><LoadingSpinner /></div>
-                ) : editingField === 'total_price' ? (
-                  <input
-                    ref={inputRef}
-                    type="number"
-                    step="0.01"
-                    value={totalPrice}
-                    onChange={(e) => setTotalPrice(e.target.value)}
-                    onBlur={() => handlePriceBlur('total_price')}
-                    onKeyDown={(e) => handlePriceKeyDown(e, 'total_price')}
-                    className="w-full px-2 py-1 text-center text-sm border border-primary rounded focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                ) : (
-                  <button
-                    onClick={() => setEditingField('total_price')}
-                    className="text-sm font-semibold text-gray-900 hover:text-primary"
-                  >
-                    {formatCurrency(item.total_price || calculatedTotal)}
-                  </button>
-                )}
-                <div className="text-xs text-gray-400">Total</div>
-              </div>
+                  {/* Total */}
+                  <div className="text-center">
+                    {savingField === 'total_price' ? (
+                      <div className="flex justify-center"><LoadingSpinner /></div>
+                    ) : editingField === 'total_price' ? (
+                      <input
+                        ref={inputRef}
+                        type="number"
+                        step="0.01"
+                        value={totalPrice}
+                        onChange={(e) => setTotalPrice(e.target.value)}
+                        onBlur={() => handlePriceBlur('total_price')}
+                        onKeyDown={(e) => handlePriceKeyDown(e, 'total_price')}
+                        className="w-full px-2 py-1 text-center text-sm border border-primary rounded focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => setEditingField('total_price')}
+                        className="text-sm font-semibold text-gray-900 hover:text-primary"
+                      >
+                        {formatCurrency(item.total_price || calculatedTotal)}
+                      </button>
+                    )}
+                    <div className="text-xs text-gray-400">Total</div>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Work complete checkbox (for authorised items) */}
@@ -759,9 +748,9 @@ export function RepairItemRow({
                 deferredUntil={item.deferred_until}
                 declinedReason={item.declined_reason?.reason}
                 onAuthorise={handleAuthorise}
-                onDefer={() => setShowDeferModal(true)}
-                onDecline={() => setShowDeclineModal(true)}
-                onDelete={() => setShowDeleteModal(true)}
+                onDefer={() => onOpenModal?.('defer', item.id, item.title)}
+                onDecline={() => onOpenModal?.('decline', item.id, item.title)}
+                onDelete={() => onOpenModal?.('delete', item.id, item.title)}
                 onReset={handleReset}
                 loading={outcomeLoading}
               />
@@ -841,6 +830,55 @@ export function RepairItemRow({
             </div>
           )}
 
+          {/* Repair Options section */}
+          {hasOptions ? (
+            <div className="mb-3">
+              <div className="text-xs font-medium text-gray-500 uppercase mb-2">Repair Options</div>
+              <div className="space-y-2">
+                {item.options!.map(option => (
+                  <div
+                    key={option.id}
+                    className={`text-sm p-2 border rounded-none ${
+                      item.selected_option_id === option.id
+                        ? 'border-primary bg-primary/5'
+                        : 'border-gray-200 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{option.name}</span>
+                      {item.selected_option_id === option.id && (
+                        <span className="px-1.5 py-0.5 text-xs font-medium text-primary bg-primary/10 rounded-none">SELECTED</span>
+                      )}
+                      {option.isRecommended && (
+                        <span className="px-1.5 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded-none">RECOMMENDED</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      Labour: {formatCurrency(option.labourTotal)} | Parts: {formatCurrency(option.partsTotal)} | Total: {formatCurrency(option.totalIncVat)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {onManageOptions && (
+                <button
+                  onClick={onManageOptions}
+                  className="mt-2 px-3 py-1.5 text-sm text-primary border border-primary rounded-none hover:bg-primary hover:text-white"
+                >
+                  Manage Options
+                </button>
+              )}
+            </div>
+          ) : onManageOptions ? (
+            <div className="mb-3">
+              <button
+                onClick={onManageOptions}
+                className="px-3 py-1.5 text-sm text-gray-600 border border-dashed border-gray-300 rounded-none hover:border-primary hover:text-primary"
+              >
+                + Add Repair Options
+              </button>
+            </div>
+          ) : null}
+
           {/* Work completion info */}
           {item.work_completed_at && (
             <div className="text-xs text-green-600">
@@ -864,28 +902,9 @@ export function RepairItemRow({
         </div>
       )}
 
-      {/* Outcome Modals */}
-      <DeferModal
-        isOpen={showDeferModal}
-        itemName={item.title}
-        onClose={() => setShowDeferModal(false)}
-        onConfirm={handleDefer}
-      />
-      <DeclineModal
-        isOpen={showDeclineModal}
-        itemName={item.title}
-        onClose={() => setShowDeclineModal(false)}
-        onConfirm={handleDecline}
-      />
-      <DeleteModal
-        isOpen={showDeleteModal}
-        itemName={item.title}
-        onClose={() => setShowDeleteModal(false)}
-        onConfirm={handleDelete}
-      />
     </div>
   )
-}
+})
 
 /**
  * GreenItemRow - Simplified row for passed items

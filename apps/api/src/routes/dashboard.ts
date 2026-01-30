@@ -269,7 +269,7 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
 
     if (healthCheckIds.length > 0) {
       // Query ALL repair items - use stored totals directly (labour_total, parts_total, total_inc_vat)
-      // These are the source of truth, same as crud.ts endpoint
+      // When a selected_option_id exists, use the option's totals instead (price options feature)
       const { data: repairData, error: repairError } = await supabaseAdmin
         .from('repair_items')
         .select(`
@@ -285,6 +285,7 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
           customer_approved,
           is_group,
           parent_repair_item_id,
+          selected_option_id,
           check_results:repair_item_check_results(
             check_result:check_results(rag_status)
           )
@@ -295,17 +296,43 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         console.error('Error fetching repair items for workflow:', repairError)
       }
 
+      // Fetch selected option totals separately to avoid FK join issues
+      const selectedOptionIds = (repairData || [])
+        .map(item => item.selected_option_id)
+        .filter((id): id is string => !!id)
+
+      let optionTotalsMap: Record<string, { labour_total: any; parts_total: any; total_inc_vat: any }> = {}
+      if (selectedOptionIds.length > 0) {
+        const { data: optionData } = await supabaseAdmin
+          .from('repair_options')
+          .select('id, labour_total, parts_total, total_inc_vat')
+          .in('id', selectedOptionIds)
+
+        if (optionData) {
+          for (const opt of optionData) {
+            optionTotalsMap[opt.id] = opt
+          }
+        }
+      }
+
       // Default VAT rate for calculating total when total_inc_vat is 0 but labour/parts exist
       const VAT_RATE = 0.20
 
       repairData?.forEach(item => {
-        // Use stored total_inc_vat, or calculate from labour_total + parts_total if not set
-        let totalIncVat = parseFloat(String(item.total_inc_vat ?? 0)) || 0
+        // When a selected option exists, use its totals instead of the repair item's own totals
+        // (price options feature: labour/parts are added to the option, not the item directly)
+        const selectedOpt = item.selected_option_id ? optionTotalsMap[item.selected_option_id] : null
+
+        const srcTotalIncVat = selectedOpt?.total_inc_vat ?? item.total_inc_vat
+        const srcLabourTotal = selectedOpt?.labour_total ?? item.labour_total
+        const srcPartsTotal = selectedOpt?.parts_total ?? item.parts_total
+
+        let totalIncVat = parseFloat(String(srcTotalIncVat ?? 0)) || 0
 
         // If total_inc_vat is 0 but labour_total/parts_total exist, calculate total
         if (totalIncVat === 0) {
-          const labourTotal = parseFloat(String(item.labour_total ?? 0)) || 0
-          const partsTotal = parseFloat(String(item.parts_total ?? 0)) || 0
+          const labourTotal = parseFloat(String(srcLabourTotal ?? 0)) || 0
+          const partsTotal = parseFloat(String(srcPartsTotal ?? 0)) || 0
 
           if (labourTotal > 0 || partsTotal > 0) {
             const subtotal = labourTotal + partsTotal

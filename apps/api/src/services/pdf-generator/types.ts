@@ -107,6 +107,9 @@ export interface RepairItemData {
   is_mot_failure?: boolean
   follow_up_date?: string | null
   work_completed_at?: string | null
+  outcome_status?: string | null
+  outcome_set_at?: string | null
+  declined_reason?: string | null
   // Group info for rendering grouped items
   is_group?: boolean
   children?: Array<{ name: string; rag_status: string; description?: string | null; check_result_id?: string }>

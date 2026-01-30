@@ -1,0 +1,36 @@
+name: Deploy to Dev
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+jobs:
+  migrate-dev:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.DEV_DB_PASSWORD }}
+      SUPABASE_PROJECT_ID: ${{ secrets.DEV_PROJECT_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Link to Dev Supabase project
+        run: supabase link --project-ref $SUPABASE_PROJECT_ID
+
+      - name: Push database migrations
+        run: supabase db push
+
+      - name: Deployment summary
+        run: |
+          echo "## Dev Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "- Migrations applied to dev Supabase project" >> $GITHUB_STEP_SUMMARY
+          echo "- Railway will auto-deploy from dev branch" >> $GITHUB_STEP_SUMMARY
+          echo "- Web: https://dev.inspect.ollosoft.io" >> $GITHUB_STEP_SUMMARY
+          echo "- API: https://api.dev.inspect.ollosoft.io" >> $GITHUB_STEP_SUMMARY

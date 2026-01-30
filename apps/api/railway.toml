@@ -3,11 +3,11 @@
 
 [build]
 builder = "NIXPACKS"
-buildCommand = "cd ../.. && npm install && npm run build -w packages/shared && npm run build -w apps/api"
-nixpacksConfigPath = "nixpacks.toml"
+buildCommand = "npm install && npm run build -w packages/shared && npm run build -w apps/api"
+nixpacksConfigPath = "apps/api/nixpacks.toml"
 
 [deploy]
-startCommand = "node dist/index.js"
+startCommand = "node apps/api/dist/index.js"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "ON_FAILURE"

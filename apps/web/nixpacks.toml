@@ -1,0 +1,11 @@
+# Nixpacks Configuration for VHC Web App
+# Static React SPA - no system packages needed
+
+[phases.install]
+cmds = ["npm install"]
+
+[phases.build]
+cmds = ["npm run build -w packages/shared", "npm run build -w apps/web"]
+
+[start]
+cmd = "npx serve -s apps/web/dist -l $PORT"

@@ -3,10 +3,11 @@
 
 [build]
 builder = "NIXPACKS"
-buildCommand = "cd ../.. && npm install && npm run build -w packages/shared && npm run build -w apps/mobile"
+buildCommand = "npm install && npm run build -w packages/shared && npm run build -w apps/mobile"
+nixpacksConfigPath = "apps/mobile/nixpacks.toml"
 
 [deploy]
-startCommand = "npx serve -s dist -l $PORT"
+startCommand = "npx serve -s apps/mobile/dist -l $PORT"
 healthcheckPath = "/"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"

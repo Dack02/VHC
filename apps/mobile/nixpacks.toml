@@ -1,0 +1,11 @@
+# Nixpacks Configuration for VHC Mobile App (PWA)
+# Static React PWA - no system packages needed
+
+[phases.install]
+cmds = ["npm install"]
+
+[phases.build]
+cmds = ["npm run build -w packages/shared", "npm run build -w apps/mobile"]
+
+[start]
+cmd = "npx serve -s apps/mobile/dist -l $PORT"

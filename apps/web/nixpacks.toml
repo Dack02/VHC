@@ -5,7 +5,7 @@
 cmds = ["npm install"]
 
 [phases.build]
-cmds = ["npm run build -w packages/shared", "npm run build -w apps/web"]
+cmds = ["npm run build -w @vhc/shared", "npm run build -w @vhc/web"]
 
 [start]
 cmd = "npx serve -s apps/web/dist -l $PORT"

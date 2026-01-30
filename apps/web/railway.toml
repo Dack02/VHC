@@ -3,10 +3,10 @@
 
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm install && npm run build -w packages/shared && npm run build -w apps/web"
+buildCommand = "cd ../.. && npm install && npm run build -w packages/shared && npm run build -w apps/web"
 
 [deploy]
-startCommand = "npx serve -s apps/web/dist -l $PORT"
+startCommand = "npx serve -s dist -l $PORT"
 healthcheckPath = "/"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"

@@ -479,7 +479,7 @@ export default function HealthCheckDetail() {
   ]
 
   // Determine available actions based on status
-  const canMarkReady = ['awaiting_review', 'awaiting_pricing', 'tech_completed'].includes(healthCheck.status)
+  const canMarkReady = ['awaiting_review', 'awaiting_pricing'].includes(healthCheck.status)
   const canSend = healthCheck.status === 'ready_to_send'
   const canResend = ['sent', 'expired', 'opened', 'customer_viewed', 'customer_approved', 'customer_partial', 'customer_declined'].includes(healthCheck.status)
   const canDelete = ['created', 'assigned', 'cancelled', 'awaiting_checkin'].includes(healthCheck.status) && !healthCheck.deleted_at

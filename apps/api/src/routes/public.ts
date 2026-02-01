@@ -296,6 +296,8 @@ publicRoutes.get('/vhc/:token', async (c) => {
       customer_approved_at,
       customer_declined_reason,
       selected_option_id,
+      rag_status,
+      source,
       created_at
     `)
     .eq('health_check_id', healthCheck.id)
@@ -505,8 +507,8 @@ publicRoutes.get('/vhc/:token', async (c) => {
           derivedRagStatus = 'amber'
         }
       }
-    } else {
-      // For individual items, derive from linked check results
+    } else if (linkedCrIds.length > 0) {
+      // For individual items with linked check results, derive from those
       for (const crId of linkedCrIds) {
         const cr = (checkResults || []).find(r => r.id === crId)
         if (cr?.rag_status === 'red') {
@@ -517,6 +519,11 @@ publicRoutes.get('/vhc/:token', async (c) => {
           derivedRagStatus = 'amber'
         }
       }
+    }
+
+    // Fallback: use stored rag_status (e.g. MRI items store RAG directly)
+    if (!derivedRagStatus && item.rag_status) {
+      derivedRagStatus = item.rag_status as 'red' | 'amber'
     }
 
     return {

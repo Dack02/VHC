@@ -878,12 +878,14 @@ export async function generateAllReasonsForTemplate(
   itemsProcessed: number
   typesProcessed: number
   reasonsCreated: number
+  itemsSkipped: number
   errors: string[]
 }> {
   const errors: string[] = []
   let itemsProcessed = 0
   let typesProcessed = 0
   let reasonsCreated = 0
+  let itemsSkipped = 0
 
   // Check limits before starting (fail fast)
   await checkGenerationAllowed(organizationId)
@@ -896,7 +898,7 @@ export async function generateAllReasonsForTemplate(
     .select(`
       id,
       name,
-      items:template_items(id, name, description, reason_type)
+      items:template_items(id, name, description, reason_type, exclude_from_ai)
     `)
     .eq('template_id', templateId)
     .order('sort_order')
@@ -912,6 +914,12 @@ export async function generateAllReasonsForTemplate(
   for (const section of sections) {
     const items = Array.isArray(section.items) ? section.items : []
     for (const item of items) {
+      // Skip items excluded from AI generation
+      if (item.exclude_from_ai) {
+        itemsSkipped++
+        continue
+      }
+
       if (item.reason_type) {
         // This item has a reason type - we'll generate for the type instead
         if (!processedTypes.has(item.reason_type)) {
@@ -1003,6 +1011,7 @@ export async function generateAllReasonsForTemplate(
     itemsProcessed,
     typesProcessed,
     reasonsCreated,
+    itemsSkipped,
     errors
   }
 }

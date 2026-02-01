@@ -114,6 +114,7 @@ items.get('/template-items/:id', authorize(['super_admin', 'org_admin', 'site_ad
         config,
         is_required,
         requires_location,
+        exclude_from_ai,
         sort_order,
         section:template_sections(
           id,
@@ -151,6 +152,7 @@ items.get('/template-items/:id', authorize(['super_admin', 'org_admin', 'site_ad
       config: item.config,
       isRequired: item.is_required,
       requiresLocation: item.requires_location,
+      excludeFromAi: item.exclude_from_ai,
       sortOrder: item.sort_order
     })
   } catch (error) {
@@ -165,7 +167,7 @@ items.post('/sections/:sectionId/items', authorize(['super_admin', 'org_admin', 
     const auth = c.get('auth')
     const { sectionId } = c.req.param()
     const body = await c.req.json()
-    const { name, description, itemType, config, isRequired, reasonType, sourceItemId, requiresLocation } = body
+    const { name, description, itemType, config, isRequired, reasonType, sourceItemId, requiresLocation, excludeFromAi } = body
 
     if (!name) {
       return c.json({ error: 'Item name is required' }, 400)
@@ -206,6 +208,7 @@ items.post('/sections/:sectionId/items', authorize(['super_admin', 'org_admin', 
         config: config || {},
         is_required: isRequired ?? false,
         requires_location: requiresLocation ?? false,
+        exclude_from_ai: excludeFromAi ?? false,
         sort_order: sortOrder,
         reason_type: reasonType || null
       })
@@ -255,6 +258,7 @@ items.post('/sections/:sectionId/items', authorize(['super_admin', 'org_admin', 
       config: item.config,
       isRequired: item.is_required,
       requiresLocation: item.requires_location,
+      excludeFromAi: item.exclude_from_ai,
       sortOrder: item.sort_order,
       reasonType: item.reason_type
     }, 201)
@@ -270,7 +274,7 @@ items.patch('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admin
     const auth = c.get('auth')
     const { itemId } = c.req.param()
     const body = await c.req.json()
-    const { name, description, itemType, config, isRequired, reasonType, requiresLocation } = body
+    const { name, description, itemType, config, isRequired, reasonType, requiresLocation, excludeFromAi } = body
 
     // Verify item belongs to a template in this org
     const { data: existingItem } = await supabaseAdmin
@@ -299,6 +303,7 @@ items.patch('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admin
     if (config !== undefined) updateData.config = config
     if (isRequired !== undefined) updateData.is_required = isRequired
     if (requiresLocation !== undefined) updateData.requires_location = requiresLocation
+    if (excludeFromAi !== undefined) updateData.exclude_from_ai = excludeFromAi
     if (reasonType !== undefined) updateData.reason_type = reasonType || null
 
     const { data: item, error } = await supabaseAdmin
@@ -320,6 +325,7 @@ items.patch('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admin
       config: item.config,
       isRequired: item.is_required,
       requiresLocation: item.requires_location,
+      excludeFromAi: item.exclude_from_ai,
       sortOrder: item.sort_order,
       reasonType: item.reason_type
     })

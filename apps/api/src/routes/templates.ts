@@ -134,7 +134,8 @@ templates.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'serv
             isRequired: item.is_required,
             requiresLocation: item.requires_location,
             sortOrder: item.sort_order,
-            reasonType: item.reason_type
+            reasonType: item.reason_type,
+            excludeFromAi: item.exclude_from_ai
           }))
       }))
 
@@ -317,7 +318,8 @@ templates.post('/:id/duplicate', authorize(['super_admin', 'org_admin', 'site_ad
             is_required: item.is_required,
             requires_location: item.requires_location,
             sort_order: item.sort_order,
-            reason_type: item.reason_type
+            reason_type: item.reason_type,
+            exclude_from_ai: item.exclude_from_ai
           })
       }
     }

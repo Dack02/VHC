@@ -155,6 +155,7 @@ export interface TemplateItem {
   requiresLocation?: boolean
   sortOrder: number
   config: Record<string, unknown>
+  excludeFromAi?: boolean
   createdAt: Date
 }
 

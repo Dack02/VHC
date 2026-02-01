@@ -36,6 +36,7 @@ interface TemplateItem {
   config: Record<string, unknown>
   isRequired: boolean
   requiresLocation?: boolean
+  excludeFromAi?: boolean
   sortOrder: number
   reasonType?: string | null
 }
@@ -136,13 +137,15 @@ export default function TemplateBuilder() {
         itemsProcessed: number
         typesProcessed: number
         reasonsCreated: number
+        itemsSkipped?: number
       }>(`/api/v1/templates/${id}/generate-all-reasons`, {
         method: 'POST',
         token: session?.accessToken
       })
+      const skippedMsg = data.itemsSkipped ? ` (${data.itemsSkipped} excluded from AI)` : ''
       setGenerateResult({
         success: true,
-        message: `Generated ${data.reasonsCreated} reasons for ${data.itemsProcessed} items and ${data.typesProcessed} types`
+        message: `Generated ${data.reasonsCreated} reasons for ${data.itemsProcessed} items and ${data.typesProcessed} types${skippedMsg}`
       })
       fetchReasonCounts()
     } catch (err) {
@@ -276,7 +279,7 @@ export default function TemplateBuilder() {
     }
   }
 
-  const handleAddItem = async (sectionId: string, itemData: { name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; requiresLocation?: boolean }, keepOpen?: boolean): Promise<boolean> => {
+  const handleAddItem = async (sectionId: string, itemData: { name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean }, keepOpen?: boolean): Promise<boolean> => {
     try {
       const item = await api<TemplateItem>(`/api/v1/sections/${sectionId}/items`, {
         method: 'POST',
@@ -300,7 +303,7 @@ export default function TemplateBuilder() {
     }
   }
 
-  const handleAddItems = async (sectionId: string, items: Array<{ name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; requiresLocation?: boolean; sourceItemId?: string }>) => {
+  const handleAddItems = async (sectionId: string, items: Array<{ name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean; sourceItemId?: string }>) => {
     if (items.length === 0) return
     try {
       const addedItems: TemplateItem[] = []
@@ -326,7 +329,7 @@ export default function TemplateBuilder() {
     }
   }
 
-  const handleUpdateItem = async (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean }) => {
+  const handleUpdateItem = async (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean }) => {
     try {
       await api(`/api/v1/items/${itemId}`, {
         method: 'PATCH',
@@ -427,6 +430,12 @@ export default function TemplateBuilder() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => window.open(`/templates/${id}/print`, '_blank')}
+            className="px-3 py-1.5 text-sm font-medium border border-gray-300 text-gray-600 hover:bg-gray-50"
+          >
+            Print
+          </button>
           <button
             onClick={handleGenerateAllReasons}
             disabled={generatingReasons}
@@ -564,11 +573,11 @@ interface SortableSectionProps {
   isInlineAdding: boolean
   onStartInlineAdd: () => void
   onCancelInlineAdd: () => void
-  onInlineAddItem: (itemData: { name: string; itemType: string; reasonType?: string; isRequired?: boolean; requiresLocation?: boolean }) => Promise<boolean>
+  onInlineAddItem: (itemData: { name: string; itemType: string; reasonType?: string; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean }) => Promise<boolean>
   onOpenImportModal: () => void
   editingItemId: string | null
   onEditItem: (itemId: string) => void
-  onSaveItem: (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean }) => void
+  onSaveItem: (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean }) => void
   onCancelEditItem: () => void
   onDeleteItem: (itemId: string) => void
   onItemDragEnd: (event: DragEndEvent) => void
@@ -704,13 +713,14 @@ function SortableSection({
 
       {/* Column Headers */}
       {(section.items.length > 0 || isInlineAdding) && (
-        <div className="hidden sm:grid grid-cols-[32px_1fr_100px_90px_48px_48px_150px] gap-2 px-4 py-2 bg-gray-100 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
+        <div className="hidden sm:grid grid-cols-[32px_1fr_100px_90px_48px_48px_48px_150px] gap-2 px-4 py-2 bg-gray-100 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
           <div></div>
           <div>Item Name</div>
           <div>Item Type</div>
           <div>Reason Type</div>
           <div>Req</div>
           <div>Loc</div>
+          <div>AI</div>
           <div className="text-right">Actions</div>
         </div>
       )}
@@ -774,7 +784,7 @@ interface SortableItemProps {
   item: TemplateItem
   isEditing: boolean
   onEdit: () => void
-  onSave: (updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean }) => void
+  onSave: (updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean }) => void
   onCancel: () => void
   onDelete: () => void
   reasonInfo?: { reasonCount: number; reasonType: string | null }
@@ -792,6 +802,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
   const [editReasonType, setEditReasonType] = useState(item.reasonType || '')
   const [editIsRequired, setEditIsRequired] = useState(item.isRequired || false)
   const [editRequiresLocation, setEditRequiresLocation] = useState(item.requiresLocation || false)
+  const [editExcludeFromAi, setEditExcludeFromAi] = useState(item.excludeFromAi || false)
   const [generating, setGenerating] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
 
@@ -812,7 +823,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
       if (!confirmed) return
     }
 
-    onSave({ name: editName, reasonType: newReasonType, isRequired: editIsRequired, requiresLocation: editRequiresLocation })
+    onSave({ name: editName, reasonType: newReasonType, isRequired: editIsRequired, requiresLocation: editRequiresLocation, excludeFromAi: editExcludeFromAi })
   }
 
   const handleManageReasons = () => {
@@ -855,9 +866,9 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
     <div
       ref={setNodeRef}
       style={style}
-      className={`h-12 px-4 flex sm:grid sm:grid-cols-[32px_1fr_100px_90px_48px_48px_150px] gap-2 items-center border-b border-gray-100 last:border-b-0 ${
+      className={`h-12 px-4 flex sm:grid sm:grid-cols-[32px_1fr_100px_90px_48px_48px_48px_150px] gap-2 items-center border-b border-gray-100 last:border-b-0 ${
         isEven ? 'bg-white' : 'bg-gray-50/50'
-      } ${hasNoReasons ? '!bg-amber-50/50' : ''} hover:bg-blue-50/30`}
+      } ${hasNoReasons && !item.excludeFromAi ? '!bg-amber-50/50' : ''} hover:bg-blue-50/30`}
     >
       {/* Drag Handle */}
       <button {...attributes} {...listeners} className="cursor-grab text-gray-300 hover:text-gray-500 flex-shrink-0">
@@ -868,7 +879,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
 
       {isEditing ? (
         /* Inline Edit Mode - spans remaining columns */
-        <div className="col-span-6 flex items-center gap-2 flex-1 min-w-0">
+        <div className="col-span-7 flex items-center gap-2 flex-1 min-w-0">
           <input
             type="text"
             value={editName}
@@ -906,6 +917,15 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
               className="w-3.5 h-3.5"
             />
             Loc
+          </label>
+          <label className="flex items-center gap-1 text-xs text-gray-600 whitespace-nowrap" title="Exclude from AI reason generation">
+            <input
+              type="checkbox"
+              checked={editExcludeFromAi}
+              onChange={(e) => setEditExcludeFromAi(e.target.checked)}
+              className="w-3.5 h-3.5"
+            />
+            No AI
           </label>
           <button
             onClick={handleSave}
@@ -960,6 +980,15 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
             )}
           </div>
 
+          {/* Exclude from AI */}
+          <div className="hidden sm:flex items-center justify-center">
+            {item.excludeFromAi && (
+              <span className="text-xs px-1.5 py-0.5 bg-gray-500 text-white font-medium" title="Excluded from AI generation">
+                No AI
+              </span>
+            )}
+          </div>
+
           {/* Actions */}
           <div className="flex items-center justify-end gap-1 flex-shrink-0">
             {/* Mobile: Show required badge inline */}
@@ -969,7 +998,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
               </span>
             )}
 
-            {hasNoReasons ? (
+            {hasNoReasons && !item.excludeFromAi ? (
               <button
                 onClick={handleGenerateReasons}
                 disabled={generating}
@@ -1019,7 +1048,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
                         Manage Reasons
                       </button>
                     )}
-                    {hasNoReasons && (
+                    {hasNoReasons && !item.excludeFromAi && (
                       <button
                         onClick={() => { handleGenerateReasons(); setShowMenu(false); }}
                         disabled={generating}
@@ -1053,7 +1082,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
 
 function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
   reasonTypes: ReasonType[]
-  onAdd: (itemData: { name: string; itemType: string; reasonType?: string; isRequired?: boolean; requiresLocation?: boolean }) => Promise<boolean>
+  onAdd: (itemData: { name: string; itemType: string; reasonType?: string; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean }) => Promise<boolean>
   onCancel: () => void
 }) {
   const [name, setName] = useState('')
@@ -1061,6 +1090,7 @@ function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
   const [reasonType, setReasonType] = useState('')
   const [isRequired, setIsRequired] = useState(false)
   const [requiresLocation, setRequiresLocation] = useState(false)
+  const [excludeFromAi, setExcludeFromAi] = useState(false)
   const [saving, setSaving] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -1072,7 +1102,8 @@ function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
       itemType,
       reasonType: reasonType || undefined,
       isRequired,
-      requiresLocation
+      requiresLocation,
+      excludeFromAi
     })
     setSaving(false)
     if (success) {
@@ -1081,6 +1112,7 @@ function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
       setReasonType('')
       setIsRequired(false)
       setRequiresLocation(false)
+      setExcludeFromAi(false)
       inputRef.current?.focus()
     }
   }
@@ -1095,7 +1127,7 @@ function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
   }
 
   return (
-    <div className="px-4 py-2 bg-blue-50/40 border-b border-blue-100 grid grid-cols-[32px_1fr_120px] sm:grid-cols-[32px_1fr_100px_90px_48px_48px_150px] gap-2 items-center">
+    <div className="px-4 py-2 bg-blue-50/40 border-b border-blue-100 grid grid-cols-[32px_1fr_120px] sm:grid-cols-[32px_1fr_100px_90px_48px_48px_48px_150px] gap-2 items-center">
       {/* Grayed-out drag handle for alignment */}
       <div className="text-gray-200">
         <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
@@ -1171,6 +1203,18 @@ function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
           checked={requiresLocation}
           onChange={(e) => setRequiresLocation(e.target.checked)}
           className="w-3.5 h-3.5"
+          disabled={saving}
+        />
+      </div>
+
+      {/* Exclude from AI checkbox - hidden on mobile */}
+      <div className="hidden sm:flex items-center justify-center">
+        <input
+          type="checkbox"
+          checked={excludeFromAi}
+          onChange={(e) => setExcludeFromAi(e.target.checked)}
+          className="w-3.5 h-3.5"
+          title="Exclude from AI generation"
           disabled={saving}
         />
       </div>

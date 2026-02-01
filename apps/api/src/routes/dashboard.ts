@@ -269,6 +269,10 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     }
     let outcomesByHc: Record<string, OutcomeAggregation> = {}
 
+    // MRI (Manufacturer Recommended Items) aggregation maps
+    let mriCountByHc: Record<string, number> = {}
+    let mriTotalByHc: Record<string, number> = {}
+
     if (healthCheckIds.length > 0) {
       // Query ALL repair items - use stored totals directly (labour_total, parts_total, total_inc_vat)
       // When a selected_option_id exists, use the option's totals instead (price options feature)
@@ -288,6 +292,7 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
           is_group,
           parent_repair_item_id,
           selected_option_id,
+          mri_result_id,
           check_results:repair_item_check_results(
             check_result:check_results(rag_status)
           )
@@ -316,6 +321,17 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
           }
         }
       }
+
+      // Query MRI scan results (red/amber items that need attention)
+      const { data: mriData } = await supabaseAdmin
+        .from('mri_scan_results')
+        .select('health_check_id, rag_status')
+        .in('health_check_id', healthCheckIds)
+        .in('rag_status', ['red', 'amber'])
+
+      mriData?.forEach(r => {
+        mriCountByHc[r.health_check_id] = (mriCountByHc[r.health_check_id] || 0) + 1
+      })
 
       // Default VAT rate for calculating total when total_inc_vat is 0 but labour/parts exist
       const VAT_RATE = 0.20
@@ -368,6 +384,11 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
               derivedRagStatus = 'green'
             }
           }
+        }
+
+        // Accumulate MRI-sourced repair item totals (non-deleted items with mri_result_id)
+        if ((item as any).mri_result_id && !isDeleted) {
+          mriTotalByHc[item.health_check_id] = (mriTotalByHc[item.health_check_id] || 0) + totalIncVat
         }
 
         // For totals and outcome aggregations: only count top-level items (not children) to avoid double-counting
@@ -613,6 +634,9 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         amber_authorised: outcomes.amber_authorised,
         green_identified: outcomes.green_identified,
         green_authorised: outcomes.green_authorised,
+        // MRI (Manufacturer Recommended Items) data
+        mri_count: mriCountByHc[hc.id] || 0,
+        mri_total: mriTotalByHc[hc.id] || 0,
         // Timer data for in_progress inspections
         timer_data: timerDataByHc[hc.id] || null
       }

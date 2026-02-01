@@ -20,6 +20,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Users = lazy(() => import('./pages/Users'))
 const TemplateList = lazy(() => import('./pages/Templates/TemplateList'))
 const TemplateBuilder = lazy(() => import('./pages/Templates/TemplateBuilder'))
+const TemplatePrint = lazy(() => import('./pages/Templates/TemplatePrint'))
 const CustomerList = lazy(() => import('./pages/Customers/CustomerList'))
 const CustomerDetail = lazy(() => import('./pages/Customers/CustomerDetail'))
 const HealthCheckList = lazy(() => import('./pages/HealthChecks/HealthCheckList'))
@@ -112,6 +113,7 @@ function App() {
                     {/* Onboarding route (protected but no dashboard layout) */}
                     <Route element={<ProtectedLayout />}>
                       <Route path="/onboarding" element={<Onboarding />} />
+                      <Route path="/templates/:id/print" element={<TemplatePrint />} />
                     </Route>
 
                     {/* Main app routes */}

@@ -123,6 +123,9 @@ interface HealthCheckCard {
   amber_authorised?: number
   green_identified?: number
   green_authorised?: number
+  // MRI (Manufacturer Recommended Items) data
+  mri_count?: number
+  mri_total?: number
   // Timer data for in_progress inspections
   timer_data?: {
     total_closed_minutes: number
@@ -267,6 +270,16 @@ function CardContent({ card }: { card: HealthCheckCard }) {
           </span>
         </span>
       </div>
+
+      {/* MRI Badge - only show if there are MRI items */}
+      {(card.mri_count ?? 0) > 0 && (
+        <div className="flex items-center gap-1.5 text-xs mb-2">
+          <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded font-semibold">MRI</span>
+          <span className="text-gray-700 font-medium">
+            {card.mri_count} {formatCurrency(card.mri_total ?? 0)}
+          </span>
+        </div>
+      )}
 
       {/* Total Identified vs Authorised KPI */}
       <div className="flex items-center gap-4 text-xs mb-2">

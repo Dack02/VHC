@@ -136,6 +136,12 @@ export default function TemplateList() {
                     Edit
                   </button>
                   <button
+                    onClick={() => window.open(`/templates/${template.id}/print`, '_blank')}
+                    className="px-3 py-1.5 text-sm font-medium text-gray-600 border border-gray-300 hover:bg-gray-50"
+                  >
+                    Print
+                  </button>
+                  <button
                     onClick={() => handleDuplicate(template)}
                     className="px-3 py-1.5 text-sm font-medium text-gray-600 border border-gray-300 hover:bg-gray-50"
                   >

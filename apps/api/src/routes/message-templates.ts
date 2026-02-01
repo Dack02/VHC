@@ -144,7 +144,7 @@ messageTemplatesRoutes.get('/:id/message-templates/:templateType/:channel', asyn
  */
 messageTemplatesRoutes.patch(
   '/:id/message-templates/:templateType/:channel',
-  requireOrgAdmin,
+  requireOrgAdmin(),
   async c => {
     const auth = c.get('auth')
     const organizationId = c.req.param('id')
@@ -230,7 +230,7 @@ messageTemplatesRoutes.patch(
  */
 messageTemplatesRoutes.post(
   '/:id/message-templates/:templateType/:channel/reset',
-  requireOrgAdmin,
+  requireOrgAdmin(),
   async c => {
     const auth = c.get('auth')
     const organizationId = c.req.param('id')

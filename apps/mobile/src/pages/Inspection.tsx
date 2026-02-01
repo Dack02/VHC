@@ -302,7 +302,13 @@ export function Inspection() {
             const r = results.get(key)
             if (r?.status || r?.rag_status) hasAnyLocResult = true
           })
-          if (!hasAnyLocResult) mandatoryIncomplete++
+          // Also check the standard (non-location) key as fallback - item is complete
+          // if measurements were entered even before location assignment
+          if (!hasAnyLocResult) {
+            const stdKey = getResultKey(item.id, 1)
+            const stdResult = results.get(stdKey) || results.get(item.id)
+            if (!stdResult?.status && !stdResult?.rag_status) mandatoryIncomplete++
+          }
           return
         }
 
@@ -622,13 +628,15 @@ export function Inspection() {
             vehicleLocationName: r.vehicleLocationName,
             vehicle_location_name: r.vehicleLocationName,
             status: ragStatus,
-            rag_status: ragStatus
+            rag_status: ragStatus,
+            value
           })
         }
-        // Remove the default green entry for this item (if present)
+        // Remove the standard (non-location) entry for this item now that we have
+        // location-specific results. This includes both auto-default entries and entries
+        // created by the initial measurement save before location assignment.
         const defaultKey = getResultKey(templateItemId, 1)
-        const defaultResult = newResults.get(defaultKey) as (Partial<CheckResult> & { _isDefault?: boolean }) | undefined
-        if (defaultResult?._isDefault) {
+        if (newResults.has(defaultKey)) {
           newResults.delete(defaultKey)
         }
         return newResults
@@ -915,6 +923,9 @@ export function Inspection() {
                     isMandatory={item.isRequired}
                     onToggle={() => handleToggle(standardKey)}
                     onSave={(data) => {
+                      // Always save the result immediately so rag_status is set
+                      // This ensures the item is marked complete even before location assignment
+                      saveResult(standardKey, data)
                       const rag = data.status || data.rag_status
                       if (rag && (rag === 'red' || rag === 'amber' || rag === 'green')) {
                         setLocationPickerState({

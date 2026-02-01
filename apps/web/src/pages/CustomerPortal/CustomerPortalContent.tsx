@@ -984,9 +984,6 @@ function NewRepairItemCard({
                   <span className="font-medium text-gray-900">£{option.totalIncVat.toFixed(2)}</span>
                   <span className="text-gray-500 ml-1">(inc VAT)</span>
                 </div>
-                <div className="text-xs text-gray-400 mt-0.5">
-                  Parts £{option.partsTotal.toFixed(2)} + Labour £{option.labourTotal.toFixed(2)}
-                </div>
               </div>
             </label>
           ))}
@@ -1010,29 +1007,6 @@ function NewRepairItemCard({
         </div>
       )}
 
-      {/* No options - show price breakdown */}
-      {!hasOptions && !hasDecision && (
-        <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
-          <div className="text-sm space-y-1">
-            <div className="flex justify-between">
-              <span className="text-gray-600">Parts</span>
-              <span>£{item.partsTotal.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Labour</span>
-              <span>£{item.labourTotal.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-xs text-gray-500 border-t pt-1 mt-1">
-              <span>Subtotal (ex VAT)</span>
-              <span>£{item.subtotal.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-xs text-gray-500">
-              <span>VAT</span>
-              <span>£{item.vatAmount.toFixed(2)}</span>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Action Buttons or Status */}
       {hasDecision ? (

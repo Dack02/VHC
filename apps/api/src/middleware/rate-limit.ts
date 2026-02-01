@@ -164,10 +164,12 @@ export function rateLimit(config: RateLimitConfig) {
  * Note: All limits are automatically multiplied by 10 in development
  */
 export const RateLimiters = {
-  // Standard API rate limit: 100 requests per minute
+  // Standard API rate limit: 200 requests per minute per endpoint
+  // Uses path-based keys so different endpoints have separate buckets
   standard: () => rateLimit({
     windowMs: 60 * 1000,
-    maxRequests: 100,
+    maxRequests: 200,
+    includePathInKey: true,
   }),
 
   // Auth endpoints: 30 requests per minute (allows for token refresh + login attempts)

@@ -165,6 +165,7 @@ ai.post('/templates/:id/generate-all-reasons', authorize(['super_admin', 'org_ad
       itemsProcessed: result.itemsProcessed,
       typesProcessed: result.typesProcessed,
       reasonsCreated: result.reasonsCreated,
+      itemsSkipped: result.itemsSkipped,
       errors: result.errors.length > 0 ? result.errors : undefined
     })
   } catch (error) {

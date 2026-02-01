@@ -32,10 +32,19 @@ repairItemsHC.post('/:hcId/repair-items/:itemId/work-done', authorize(['super_ad
       })
       .eq('id', itemId)
       .eq('health_check_id', healthCheckId)
-      .select()
+      .select('id, work_completed_at, work_completed_by')
       .single()
 
     if (error) {
+      console.error('[work-done POST] Supabase update error:', {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+        itemId,
+        healthCheckId,
+        userId: auth.user.id
+      })
       return c.json({ error: error.message }, 500)
     }
 

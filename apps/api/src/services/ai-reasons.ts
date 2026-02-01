@@ -470,24 +470,24 @@ ITEM TYPE: ${reasonType || 'unique'}
 
 TONE SETTING: ${toneDescription}
 
-Generate reasons for ALL three RAG statuses:
+Generate reasons for RED and AMBER RAG statuses only:
 - RED reasons: Immediate safety concerns, failures, must-fix items
 - AMBER reasons: Wear items, advisory items, should address soon
-- GREEN reasons: Positive findings, checked and OK, reassuring confirmations
+
+Do NOT generate GREEN/positive reasons.
 
 For each reason, provide:
 1. reason_text: What the technician selects (concise, max 50 chars)
 2. technical_description: For the service advisor (2-3 sentences, technical detail)
 3. customer_description: For the customer (2-3 sentences, ${customerTone}, explain WHY it matters)
-4. default_rag: 'red', 'amber', or 'green'
-5. category: 'safety', 'wear', 'maintenance', 'advisory', or 'positive'
+4. default_rag: 'red' or 'amber'
+5. category: 'safety', 'wear', 'maintenance', or 'advisory'
 
 IMPORTANT:
 - Use UK English spelling (tyre, colour, centre, honour)
 - Customer descriptions should be ${customerTone}
 - Explain safety implications where relevant
 - Include common wear-related reasons and failure modes
-- Include at least 2-3 GREEN/positive reasons (e.g., "Good condition", "Within specification")
 
 Return ONLY a valid JSON array with no additional text:
 [
@@ -495,12 +495,12 @@ Return ONLY a valid JSON array with no additional text:
     "reason_text": "...",
     "technical_description": "...",
     "customer_description": "...",
-    "default_rag": "red|amber|green",
-    "category": "safety|wear|maintenance|advisory|positive"
+    "default_rag": "red|amber",
+    "category": "safety|wear|maintenance|advisory"
   }
 ]
 
-Generate 8-12 relevant reasons covering red, amber, AND green findings.`
+Generate 8-18 relevant reasons covering red and amber findings.`
 }
 
 /**
@@ -608,7 +608,7 @@ async function callClaudeAPIWithUsage(prompt: string): Promise<AIGenerationResul
 
   const response = await client.messages.create({
     model,
-    max_tokens: 4000,
+    max_tokens: 6000,
     messages: [{ role: 'user', content: prompt }]
   })
 
@@ -941,8 +941,44 @@ export async function generateAllReasonsForTemplate(
     }
   }
 
-  // Generate for reason types first
+  // Check which reason types already have reasons (skip them)
+  const typesToGenerate: string[] = []
   for (const reasonType of processedTypes) {
+    const { count } = await supabaseAdmin
+      .from('item_reasons')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', organizationId)
+      .eq('reason_type', reasonType)
+      .eq('is_active', true)
+
+    if (!count || count === 0) {
+      typesToGenerate.push(reasonType)
+    } else {
+      logger.info('Skipping reason type - already has reasons', { reasonType, existingCount: count })
+      itemsSkipped++
+    }
+  }
+
+  // Check which unique items already have reasons (skip them)
+  const itemsToGenerate: Array<{ item: TemplateItemInfo; sectionName: string }> = []
+  for (const entry of uniqueItems) {
+    const { count } = await supabaseAdmin
+      .from('item_reasons')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', organizationId)
+      .eq('template_item_id', entry.item.id)
+      .eq('is_active', true)
+
+    if (!count || count === 0) {
+      itemsToGenerate.push(entry)
+    } else {
+      logger.info('Skipping item - already has reasons', { itemName: entry.item.name, existingCount: count })
+      itemsSkipped++
+    }
+  }
+
+  // Generate for reason types that don't have reasons yet
+  for (const reasonType of typesToGenerate) {
     try {
       // Check limits before each generation
       await checkGenerationAllowed(organizationId)
@@ -974,8 +1010,8 @@ export async function generateAllReasonsForTemplate(
     }
   }
 
-  // Generate for unique items
-  for (const { item } of uniqueItems) {
+  // Generate for unique items that don't have reasons yet
+  for (const { item } of itemsToGenerate) {
     try {
       // Check limits before each generation
       await checkGenerationAllowed(organizationId)

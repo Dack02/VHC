@@ -144,7 +144,8 @@ export default function ReasonLibrary() {
         errors?: string[]
       }>(`/api/v1/templates/${selectedTemplateId}/generate-all-reasons`, {
         method: 'POST',
-        token: session?.accessToken
+        token: session?.accessToken,
+        timeout: 300000
       })
 
       if (result.success) {

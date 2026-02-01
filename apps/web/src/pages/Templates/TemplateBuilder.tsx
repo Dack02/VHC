@@ -140,7 +140,8 @@ export default function TemplateBuilder() {
         itemsSkipped?: number
       }>(`/api/v1/templates/${id}/generate-all-reasons`, {
         method: 'POST',
-        token: session?.accessToken
+        token: session?.accessToken,
+        timeout: 300000
       })
       const skippedMsg = data.itemsSkipped ? ` (${data.itemsSkipped} excluded from AI)` : ''
       setGenerateResult({

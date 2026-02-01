@@ -386,16 +386,16 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
           }
         }
 
-        // Accumulate MRI-sourced repair item totals (non-deleted items with mri_result_id)
-        if ((item as any).mri_result_id && !isDeleted) {
-          mriTotalByHc[item.health_check_id] = (mriTotalByHc[item.health_check_id] || 0) + totalIncVat
-        }
-
         // For totals and outcome aggregations: only count top-level items (not children) to avoid double-counting
         // Children's pricing rolls up to parent groups
         if (!isChild) {
           // Initialize totals if needed
           repairTotals[item.health_check_id] = (repairTotals[item.health_check_id] || 0) + totalIncVat
+
+          // Accumulate MRI-sourced repair item totals (non-deleted, top-level items with mri_result_id)
+          if ((item as any).mri_result_id && !isDeleted) {
+            mriTotalByHc[item.health_check_id] = (mriTotalByHc[item.health_check_id] || 0) + totalIncVat
+          }
 
           // Initialize outcome aggregation if needed
           if (!outcomesByHc[item.health_check_id]) {

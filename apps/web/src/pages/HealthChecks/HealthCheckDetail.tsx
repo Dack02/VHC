@@ -483,7 +483,7 @@ export default function HealthCheckDetail() {
   const canSend = healthCheck.status === 'ready_to_send'
   const canResend = ['sent', 'expired', 'opened', 'customer_viewed', 'customer_approved', 'customer_partial', 'customer_declined'].includes(healthCheck.status)
   const canDelete = ['created', 'assigned', 'cancelled', 'awaiting_checkin'].includes(healthCheck.status) && !healthCheck.deleted_at
-  const canClose = ['authorized', 'declined', 'partial_response'].includes(healthCheck.status) && !healthCheck.closed_at
+  const canClose = ['sent', 'expired', 'opened', 'partial_response', 'authorized', 'declined'].includes(healthCheck.status) && !healthCheck.closed_at
   const isClosed = !!healthCheck.closed_at
 
   return (

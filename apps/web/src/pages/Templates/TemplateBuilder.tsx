@@ -837,7 +837,8 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
 
   const itemTypeLabel = (t: string) => {
     const labels: Record<string, string> = {
-      rag: 'RAG', tyre_depth: 'Tyre', brake_measurement: 'Brake',
+      rag: 'RAG', tyre_depth: 'Tyre', tyre_details: 'Tyre Details',
+      brake_measurement: 'Brake', brake_fluid: 'Brake Fluid',
       fluid_level: 'Fluid', measurement: 'Measure', yes_no: 'Y/N',
       text: 'Text', number: 'Number', select: 'Select'
     }
@@ -1125,7 +1126,9 @@ function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
       >
         <option value="rag">RAG</option>
         <option value="tyre_depth">Tyre</option>
+        <option value="tyre_details">Tyre Details</option>
         <option value="brake_measurement">Brake</option>
+        <option value="brake_fluid">Brake Fluid</option>
         <option value="fluid_level">Fluid</option>
         <option value="measurement">Measure</option>
         <option value="yes_no">Y/N</option>
@@ -1340,7 +1343,8 @@ function AddItemModal({ onClose, onSaveBatch, session }: {
 
   const itemTypeLabel = (t: string) => {
     const labels: Record<string, string> = {
-      rag: 'RAG', tyre_depth: 'Tyre', brake_measurement: 'Brake',
+      rag: 'RAG', tyre_depth: 'Tyre', tyre_details: 'Tyre Details',
+      brake_measurement: 'Brake', brake_fluid: 'Brake Fluid',
       fluid_level: 'Fluid', measurement: 'Measure', yes_no: 'Y/N',
       text: 'Text', number: 'Number', select: 'Select'
     }

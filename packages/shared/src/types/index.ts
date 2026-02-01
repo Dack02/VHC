@@ -43,7 +43,9 @@ export type ItemType =
   | 'select'
   | 'multi_select'
   | 'tyre_depth'
+  | 'tyre_details'
   | 'brake_measurement'
+  | 'brake_fluid'
   | 'fluid_level'
 
 // Organization

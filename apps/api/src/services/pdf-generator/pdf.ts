@@ -1,76 +1,90 @@
 /**
  * PDF Rendering Service
- * Shared Puppeteer logic for rendering HTML to PDF
+ * Uses puppeteer-core (no bundled browser, no env-var magic) with
+ * system-installed Chromium from Nix packages on Railway.
  */
 
-import puppeteer from 'puppeteer'
-import { existsSync } from 'fs'
+import puppeteer from 'puppeteer-core'
+import { existsSync, readdirSync } from 'fs'
 import { execSync } from 'child_process'
+import { join } from 'path'
 
 /**
- * Check if a chromium binary is a real executable (not a snap wrapper).
- * Ubuntu's apt chromium package is a stub that requires snap, which doesn't
- * work in containers.
+ * Find the Nix-installed chromium binary by searching the Nix store.
+ * Nixpacks installs packages via nix-env, which places binaries in
+ * /nix/store/<hash>-chromium-<ver>/bin/chromium.
  */
-function isRealChromium(binPath: string): boolean {
-  if (!existsSync(binPath)) return false
+function findNixChromium(): string | undefined {
   try {
-    // Snap wrappers fail with exit code 1 and print "requires the chromium snap"
-    execSync(`"${binPath}" --version`, { encoding: 'utf-8', timeout: 5000 })
-    return true
+    const nixStore = '/nix/store'
+    if (!existsSync(nixStore)) return undefined
+    const entries = readdirSync(nixStore)
+    // Look for the chromium package directory (not a wrapper)
+    for (const entry of entries) {
+      if (entry.includes('chromium') && !entry.includes('wrapper')) {
+        const binPath = join(nixStore, entry, 'bin', 'chromium')
+        if (existsSync(binPath)) return binPath
+      }
+    }
   } catch {
-    return false
+    // Nix store not accessible
   }
+  return undefined
 }
 
 /**
  * Resolve the Chromium executable path.
- * Checks Nix profile paths first (where nixpacks installs packages),
- * then env var, then common system paths. Validates each candidate
- * is a real binary (not a snap wrapper). Clears PUPPETEER_EXECUTABLE_PATH
- * if broken to prevent Puppeteer's internal resolution from using it.
+ * puppeteer-core requires an explicit path — it will not auto-detect.
  */
-function resolveExecutablePath(): string | undefined {
-  // Clear broken env var early so Puppeteer never falls back to it
+function resolveExecutablePath(): string {
+  // 1. PUPPETEER_EXECUTABLE_PATH env var (if it actually exists on disk)
   const envPath = process.env.PUPPETEER_EXECUTABLE_PATH
-  if (envPath && !existsSync(envPath)) {
-    console.warn(`[PDF] PUPPETEER_EXECUTABLE_PATH=${envPath} does not exist, clearing`)
-    delete process.env.PUPPETEER_EXECUTABLE_PATH
+  if (envPath && existsSync(envPath)) {
+    console.log(`[PDF] Using chromium from env var: ${envPath}`)
+    return envPath
   }
 
-  // Nix profile paths (where nixpacks/nix-env installs binaries) — check first
-  const nixPaths = [
+  // 2. Nix profile paths
+  const profilePaths = [
     '/root/.nix-profile/bin/chromium',
     '/nix/var/nix/profiles/default/bin/chromium',
   ]
-  for (const p of nixPaths) {
+  for (const p of profilePaths) {
     if (existsSync(p)) {
-      console.log(`[PDF] Found Nix chromium at ${p}`)
-      delete process.env.PUPPETEER_EXECUTABLE_PATH
+      console.log(`[PDF] Using Nix profile chromium: ${p}`)
       return p
     }
   }
 
-  // Env var (if it still exists and points to a real binary)
-  if (envPath && isRealChromium(envPath)) {
-    return envPath
+  // 3. Search the Nix store directly
+  const nixPath = findNixChromium()
+  if (nixPath) {
+    console.log(`[PDF] Using Nix store chromium: ${nixPath}`)
+    return nixPath
   }
 
-  // Search PATH — but validate it's not a snap wrapper
-  for (const name of ['chromium', 'chromium-browser', 'google-chrome-stable']) {
-    try {
-      const whichPath = execSync(`which ${name}`, { encoding: 'utf-8' }).trim()
-      if (whichPath && isRealChromium(whichPath)) {
-        delete process.env.PUPPETEER_EXECUTABLE_PATH
-        return whichPath
+  // 4. Common system paths (skip snap wrappers by testing --version)
+  const systemPaths = [
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+  ]
+  for (const p of systemPaths) {
+    if (existsSync(p)) {
+      try {
+        execSync(`"${p}" --version`, { encoding: 'utf-8', timeout: 5000 })
+        console.log(`[PDF] Using system chromium: ${p}`)
+        return p
+      } catch {
+        console.warn(`[PDF] Skipping ${p} (snap wrapper or broken)`)
       }
-    } catch {
-      // not in PATH
     }
   }
 
-  // Nothing found — fall back to Puppeteer's bundled browser
-  return undefined
+  throw new Error(
+    '[PDF] No Chromium binary found. Searched: env var, Nix profile, Nix store, system paths.'
+  )
 }
 
 /**
@@ -78,11 +92,10 @@ function resolveExecutablePath(): string | undefined {
  */
 export async function renderHTMLToPDF(html: string): Promise<Buffer> {
   const executablePath = resolveExecutablePath()
-  console.log(`[PDF] Using chromium at: ${executablePath ?? '(puppeteer bundled)'}`)
   const browser = await puppeteer.launch({
     headless: true,
+    executablePath,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    ...(executablePath && { executablePath })
   })
 
   try {

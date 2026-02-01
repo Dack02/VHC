@@ -5,17 +5,33 @@
 
 import puppeteer from 'puppeteer'
 import { existsSync } from 'fs'
+import { execSync } from 'child_process'
 
 /**
  * Resolve the Chromium executable path.
- * Uses PUPPETEER_EXECUTABLE_PATH if set and the file exists,
- * otherwise falls back to Puppeteer's bundled browser.
+ * Priority:
+ *  1. PUPPETEER_EXECUTABLE_PATH env var (if set and file exists)
+ *  2. System chromium found via `which` (covers Nix-installed binaries)
+ *  3. Puppeteer's bundled browser (undefined triggers default)
  */
 function resolveExecutablePath(): string | undefined {
+  // Check explicit env var
   const envPath = process.env.PUPPETEER_EXECUTABLE_PATH
   if (envPath && existsSync(envPath)) {
     return envPath
   }
+
+  // Find system chromium (works with Nix packages on Railway)
+  try {
+    const whichPath = execSync('which chromium', { encoding: 'utf-8' }).trim()
+    if (whichPath && existsSync(whichPath)) {
+      return whichPath
+    }
+  } catch {
+    // chromium not in PATH
+  }
+
+  // Fall back to Puppeteer's bundled browser
   return undefined
 }
 

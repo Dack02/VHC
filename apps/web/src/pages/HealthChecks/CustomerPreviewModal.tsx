@@ -202,10 +202,25 @@ export function CustomerPreviewModal({ healthCheck, newRepairItems, checkResults
         isRecommended: opt.isRecommended
       }))
 
+      // Derive customer description from linked check result reasons (sales library)
+      let customerDescription = item.description || null
+      if (!customerDescription && item.checkResults) {
+        for (const cr of item.checkResults) {
+          const reasons = reasonsByCheckResult[cr.id]
+          if (reasons && reasons.length > 0) {
+            const desc = reasons[0].customerDescription || reasons[0].reasonText
+            if (desc) {
+              customerDescription = desc
+              break
+            }
+          }
+        }
+      }
+
       return {
         id: item.id,
         name: item.name,
-        description: item.description,
+        description: customerDescription,
         isGroup: item.isGroup,
         ragStatus,
         labourTotal: item.labourTotal,

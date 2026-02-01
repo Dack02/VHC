@@ -35,6 +35,7 @@ interface TemplateItem {
   itemType: string
   config: Record<string, unknown>
   isRequired: boolean
+  requiresLocation?: boolean
   sortOrder: number
   reasonType?: string | null
 }
@@ -68,6 +69,7 @@ export default function TemplateBuilder() {
   const [editingItem, setEditingItem] = useState<string | null>(null)
   const [showAddSectionModal, setShowAddSectionModal] = useState(false)
   const [addItemToSection, setAddItemToSection] = useState<string | null>(null)
+  const [inlineAddSection, setInlineAddSection] = useState<string | null>(null)
   const [itemReasonCounts, setItemReasonCounts] = useState<Record<string, { reasonCount: number; reasonType: string | null }>>({})
   const [generatingReasons, setGeneratingReasons] = useState(false)
   const [generateResult, setGenerateResult] = useState<{ success: boolean; message: string } | null>(null)
@@ -274,7 +276,7 @@ export default function TemplateBuilder() {
     }
   }
 
-  const handleAddItem = async (sectionId: string, itemData: { name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean }) => {
+  const handleAddItem = async (sectionId: string, itemData: { name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; requiresLocation?: boolean }, keepOpen?: boolean): Promise<boolean> => {
     try {
       const item = await api<TemplateItem>(`/api/v1/sections/${sectionId}/items`, {
         method: 'POST',
@@ -287,14 +289,18 @@ export default function TemplateBuilder() {
           s.id === sectionId ? { ...s, items: [...s.items, item] } : s
         )
       })
-      setAddItemToSection(null)
+      if (!keepOpen) {
+        setAddItemToSection(null)
+      }
       fetchReasonCounts()
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add item')
+      return false
     }
   }
 
-  const handleAddItems = async (sectionId: string, items: Array<{ name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; sourceItemId?: string }>) => {
+  const handleAddItems = async (sectionId: string, items: Array<{ name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; requiresLocation?: boolean; sourceItemId?: string }>) => {
     if (items.length === 0) return
     try {
       const addedItems: TemplateItem[] = []
@@ -320,7 +326,7 @@ export default function TemplateBuilder() {
     }
   }
 
-  const handleUpdateItem = async (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean }) => {
+  const handleUpdateItem = async (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean }) => {
     try {
       await api(`/api/v1/items/${itemId}`, {
         method: 'PATCH',
@@ -488,7 +494,19 @@ export default function TemplateBuilder() {
                 onSave={(updates) => handleUpdateSection(section.id, updates)}
                 onCancel={() => setEditingSection(null)}
                 onDelete={() => handleDeleteSection(section.id)}
-                onAddItem={() => setAddItemToSection(section.id)}
+                isInlineAdding={inlineAddSection === section.id}
+                onStartInlineAdd={() => {
+                  setAddItemToSection(null)
+                  setInlineAddSection(section.id)
+                }}
+                onCancelInlineAdd={() => setInlineAddSection(null)}
+                onInlineAddItem={async (itemData) => {
+                  return handleAddItem(section.id, itemData, true)
+                }}
+                onOpenImportModal={() => {
+                  setInlineAddSection(null)
+                  setAddItemToSection(section.id)
+                }}
                 editingItemId={editingItem}
                 onEditItem={(itemId) => setEditingItem(itemId)}
                 onSaveItem={(itemId, updates) => handleUpdateItem(itemId, updates)}
@@ -524,13 +542,11 @@ export default function TemplateBuilder() {
         />
       )}
 
-      {/* Add Item Modal */}
+      {/* Import Items Modal */}
       {addItemToSection && (
         <AddItemModal
           onClose={() => setAddItemToSection(null)}
-          onSave={(itemData) => handleAddItem(addItemToSection, itemData)}
           onSaveBatch={(items) => handleAddItems(addItemToSection, items)}
-          reasonTypes={reasonTypes}
           session={session}
         />
       )}
@@ -545,10 +561,14 @@ interface SortableSectionProps {
   onSave: (updates: { name?: string; description?: string }) => void
   onCancel: () => void
   onDelete: () => void
-  onAddItem: () => void
+  isInlineAdding: boolean
+  onStartInlineAdd: () => void
+  onCancelInlineAdd: () => void
+  onInlineAddItem: (itemData: { name: string; itemType: string; reasonType?: string; isRequired?: boolean; requiresLocation?: boolean }) => Promise<boolean>
+  onOpenImportModal: () => void
   editingItemId: string | null
   onEditItem: (itemId: string) => void
-  onSaveItem: (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null }) => void
+  onSaveItem: (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean }) => void
   onCancelEditItem: () => void
   onDeleteItem: (itemId: string) => void
   onItemDragEnd: (event: DragEndEvent) => void
@@ -566,7 +586,11 @@ function SortableSection({
   onSave,
   onCancel,
   onDelete,
-  onAddItem,
+  isInlineAdding,
+  onStartInlineAdd,
+  onCancelInlineAdd,
+  onInlineAddItem,
+  onOpenImportModal,
   editingItemId,
   onEditItem,
   onSaveItem,
@@ -679,12 +703,14 @@ function SortableSection({
       </div>
 
       {/* Column Headers */}
-      {section.items.length > 0 && (
-        <div className="hidden sm:grid grid-cols-[32px_1fr_120px_100px_140px] gap-2 px-4 py-2 bg-gray-100 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
+      {(section.items.length > 0 || isInlineAdding) && (
+        <div className="hidden sm:grid grid-cols-[32px_1fr_100px_90px_48px_48px_150px] gap-2 px-4 py-2 bg-gray-100 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
           <div></div>
           <div>Item Name</div>
-          <div>Type</div>
-          <div>Reasons</div>
+          <div>Item Type</div>
+          <div>Reason Type</div>
+          <div>Req</div>
+          <div>Loc</div>
           <div className="text-right">Actions</div>
         </div>
       )}
@@ -714,13 +740,30 @@ function SortableSection({
         </SortableContext>
       </DndContext>
 
-      {/* Add Item Button */}
-      <div className="px-4 py-3 border-t border-gray-100">
+      {/* Inline New Item Row */}
+      {isInlineAdding && (
+        <InlineNewItemRow
+          reasonTypes={reasonTypes}
+          onAdd={onInlineAddItem}
+          onCancel={onCancelInlineAdd}
+        />
+      )}
+
+      {/* Add Item Buttons */}
+      <div className="px-4 py-3 border-t border-gray-100 flex items-center gap-4">
+        {!isInlineAdding && (
+          <button
+            onClick={onStartInlineAdd}
+            className="text-sm text-primary hover:text-primary-dark font-medium"
+          >
+            + Add Item
+          </button>
+        )}
         <button
-          onClick={onAddItem}
-          className="text-sm text-primary hover:text-primary-dark font-medium"
+          onClick={onOpenImportModal}
+          className="text-sm text-gray-500 hover:text-gray-700 font-medium"
         >
-          + Add Item
+          Import from existing
         </button>
       </div>
     </div>
@@ -731,7 +774,7 @@ interface SortableItemProps {
   item: TemplateItem
   isEditing: boolean
   onEdit: () => void
-  onSave: (updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean }) => void
+  onSave: (updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean }) => void
   onCancel: () => void
   onDelete: () => void
   reasonInfo?: { reasonCount: number; reasonType: string | null }
@@ -748,6 +791,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
   const [editName, setEditName] = useState(item.name)
   const [editReasonType, setEditReasonType] = useState(item.reasonType || '')
   const [editIsRequired, setEditIsRequired] = useState(item.isRequired || false)
+  const [editRequiresLocation, setEditRequiresLocation] = useState(item.requiresLocation || false)
   const [generating, setGenerating] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
 
@@ -768,7 +812,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
       if (!confirmed) return
     }
 
-    onSave({ name: editName, reasonType: newReasonType, isRequired: editIsRequired })
+    onSave({ name: editName, reasonType: newReasonType, isRequired: editIsRequired, requiresLocation: editRequiresLocation })
   }
 
   const handleManageReasons = () => {
@@ -791,6 +835,15 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
   const reasonCount = reasonInfo?.reasonCount ?? 0
   const hasNoReasons = reasonCount === 0
 
+  const itemTypeLabel = (t: string) => {
+    const labels: Record<string, string> = {
+      rag: 'RAG', tyre_depth: 'Tyre', brake_measurement: 'Brake',
+      fluid_level: 'Fluid', measurement: 'Measure', yes_no: 'Y/N',
+      text: 'Text', number: 'Number', select: 'Select'
+    }
+    return labels[t] || t
+  }
+
   // Get reason type display label
   const getReasonTypeLabel = (type: string) => {
     const found = reasonTypes.find(rt => rt.id === type)
@@ -801,7 +854,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
     <div
       ref={setNodeRef}
       style={style}
-      className={`h-12 px-4 flex sm:grid sm:grid-cols-[32px_1fr_120px_100px_140px] gap-2 items-center border-b border-gray-100 last:border-b-0 ${
+      className={`h-12 px-4 flex sm:grid sm:grid-cols-[32px_1fr_100px_90px_48px_48px_150px] gap-2 items-center border-b border-gray-100 last:border-b-0 ${
         isEven ? 'bg-white' : 'bg-gray-50/50'
       } ${hasNoReasons ? '!bg-amber-50/50' : ''} hover:bg-blue-50/30`}
     >
@@ -814,7 +867,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
 
       {isEditing ? (
         /* Inline Edit Mode - spans remaining columns */
-        <div className="col-span-4 flex items-center gap-2 flex-1 min-w-0">
+        <div className="col-span-6 flex items-center gap-2 flex-1 min-w-0">
           <input
             type="text"
             value={editName}
@@ -842,7 +895,16 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
               onChange={(e) => setEditIsRequired(e.target.checked)}
               className="w-3.5 h-3.5"
             />
-            Required
+            Req
+          </label>
+          <label className="flex items-center gap-1 text-xs text-gray-600 whitespace-nowrap">
+            <input
+              type="checkbox"
+              checked={editRequiresLocation}
+              onChange={(e) => setEditRequiresLocation(e.target.checked)}
+              className="w-3.5 h-3.5"
+            />
+            Loc
           </label>
           <button
             onClick={handleSave}
@@ -859,17 +921,19 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
           {/* Item Name */}
           <div className="flex-1 min-w-0 truncate flex items-center gap-2">
             <span className="text-sm text-gray-800">{item.name}</span>
-            {item.isRequired && (
-              <span className="text-xs px-1.5 py-0.5 bg-rag-red text-white font-medium">
-                Required
-              </span>
-            )}
           </div>
 
-          {/* Reason Type - muted pill badge */}
+          {/* Item Type */}
+          <div className="hidden sm:flex items-center">
+            <span className="text-[11px] px-2 py-0.5 bg-gray-100 text-gray-600 font-medium">
+              {itemTypeLabel(item.itemType)}
+            </span>
+          </div>
+
+          {/* Reason Type */}
           <div className="hidden sm:flex items-center">
             {item.reasonType ? (
-              <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full">
+              <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full truncate">
                 {getReasonTypeLabel(item.reasonType)}
               </span>
             ) : (
@@ -877,35 +941,32 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
             )}
           </div>
 
-          {/* Reasons Count with icon */}
-          <div className="hidden sm:flex items-center">
-            {hasNoReasons ? (
-              <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full inline-flex items-center gap-1">
-                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                </svg>
-                0
+          {/* Required */}
+          <div className="hidden sm:flex items-center justify-center">
+            {item.isRequired && (
+              <span className="text-xs px-1.5 py-0.5 bg-rag-red text-white font-medium">
+                Req
               </span>
-            ) : (
-              <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full inline-flex items-center gap-1">
-                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                </svg>
-                {reasonCount}
+            )}
+          </div>
+
+          {/* Location */}
+          <div className="hidden sm:flex items-center justify-center">
+            {item.requiresLocation && (
+              <span className="text-xs px-1.5 py-0.5 bg-blue-600 text-white font-medium">
+                Loc
               </span>
             )}
           </div>
 
           {/* Actions */}
           <div className="flex items-center justify-end gap-1 flex-shrink-0">
-            {/* Mobile: Show reasons badge inline */}
-            <span className="sm:hidden text-xs">
-              {hasNoReasons ? (
-                <span className="text-amber-600">0</span>
-              ) : (
-                <span className="text-green-600">{reasonCount}</span>
-              )}
-            </span>
+            {/* Mobile: Show required badge inline */}
+            {item.isRequired && (
+              <span className="sm:hidden text-xs px-1.5 py-0.5 bg-rag-red text-white font-medium">
+                Req
+              </span>
+            )}
 
             {hasNoReasons ? (
               <button
@@ -989,6 +1050,149 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
   )
 }
 
+function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
+  reasonTypes: ReasonType[]
+  onAdd: (itemData: { name: string; itemType: string; reasonType?: string; isRequired?: boolean; requiresLocation?: boolean }) => Promise<boolean>
+  onCancel: () => void
+}) {
+  const [name, setName] = useState('')
+  const [itemType, setItemType] = useState('rag')
+  const [reasonType, setReasonType] = useState('')
+  const [isRequired, setIsRequired] = useState(false)
+  const [requiresLocation, setRequiresLocation] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const handleSubmit = async () => {
+    if (!name.trim() || saving) return
+    setSaving(true)
+    const success = await onAdd({
+      name: name.trim(),
+      itemType,
+      reasonType: reasonType || undefined,
+      isRequired,
+      requiresLocation
+    })
+    setSaving(false)
+    if (success) {
+      setName('')
+      setItemType('rag')
+      setReasonType('')
+      setIsRequired(false)
+      setRequiresLocation(false)
+      inputRef.current?.focus()
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleSubmit()
+    } else if (e.key === 'Escape') {
+      onCancel()
+    }
+  }
+
+  return (
+    <div className="px-4 py-2 bg-blue-50/40 border-b border-blue-100 grid grid-cols-[32px_1fr_120px] sm:grid-cols-[32px_1fr_100px_90px_48px_48px_150px] gap-2 items-center">
+      {/* Grayed-out drag handle for alignment */}
+      <div className="text-gray-200">
+        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M7 2a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 2zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 8zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 14zm6-12a2 2 0 1 0 .001 4.001A2 2 0 0 0 13 2zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 13 8zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 13 14z" />
+        </svg>
+      </div>
+
+      {/* Name input */}
+      <input
+        ref={inputRef}
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={handleKeyDown}
+        className="w-full px-2 py-1.5 border border-gray-300 bg-white text-sm focus:border-primary focus:ring-1 focus:ring-primary"
+        placeholder="Item name..."
+        autoFocus
+        disabled={saving}
+      />
+
+      {/* Item Type select - hidden on mobile, shown on sm+ */}
+      <select
+        value={itemType}
+        onChange={(e) => setItemType(e.target.value)}
+        onKeyDown={handleKeyDown}
+        className="hidden sm:block px-1.5 py-1.5 border border-gray-300 bg-white text-xs"
+        disabled={saving}
+      >
+        <option value="rag">RAG</option>
+        <option value="tyre_depth">Tyre</option>
+        <option value="brake_measurement">Brake</option>
+        <option value="fluid_level">Fluid</option>
+        <option value="measurement">Measure</option>
+        <option value="yes_no">Y/N</option>
+        <option value="text">Text</option>
+        <option value="number">Number</option>
+        <option value="select">Select</option>
+      </select>
+
+      {/* Reason Type select - hidden on mobile */}
+      <select
+        value={reasonType}
+        onChange={(e) => setReasonType(e.target.value)}
+        onKeyDown={handleKeyDown}
+        className="hidden sm:block px-1.5 py-1.5 border border-gray-300 bg-white text-xs"
+        disabled={saving}
+      >
+        <option value="">None</option>
+        {reasonTypes.map((rt) => (
+          <option key={rt.id} value={rt.id}>
+            {rt.name}
+          </option>
+        ))}
+      </select>
+
+      {/* Required checkbox - hidden on mobile */}
+      <div className="hidden sm:flex items-center justify-center">
+        <input
+          type="checkbox"
+          checked={isRequired}
+          onChange={(e) => setIsRequired(e.target.checked)}
+          className="w-3.5 h-3.5"
+          disabled={saving}
+        />
+      </div>
+
+      {/* Location checkbox - hidden on mobile */}
+      <div className="hidden sm:flex items-center justify-center">
+        <input
+          type="checkbox"
+          checked={requiresLocation}
+          onChange={(e) => setRequiresLocation(e.target.checked)}
+          className="w-3.5 h-3.5"
+          disabled={saving}
+        />
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center justify-end gap-1">
+        <button
+          onClick={handleSubmit}
+          disabled={!name.trim() || saving}
+          className="text-xs px-3 py-1.5 bg-primary text-white font-medium disabled:opacity-50"
+        >
+          {saving ? 'Adding...' : 'Add'}
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={saving}
+          className="text-xs px-2 py-1.5 text-gray-600 hover:text-gray-800"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function AddSectionModal({ onClose, onSave }: { onClose: () => void; onSave: (name: string, description?: string) => void }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -1050,26 +1254,17 @@ interface ExistingItem {
   sourceTemplateName: string | null
 }
 
-function AddItemModal({ onClose, onSave, onSaveBatch, reasonTypes, session }: {
+function AddItemModal({ onClose, onSaveBatch, session }: {
   onClose: () => void
-  onSave: (itemData: { name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean }) => void
   onSaveBatch: (items: Array<{ name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; sourceItemId?: string }>) => void
-  reasonTypes: ReasonType[]
   session: { accessToken?: string } | null
 }) {
-  const [mode, setMode] = useState<'search' | 'manual'>('search')
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<ExistingItem[]>([])
   const [searching, setSearching] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [adding, setAdding] = useState(false)
-
-  // Manual mode state
-  const [name, setName] = useState('')
-  const [itemType, setItemType] = useState('rag')
-  const [reasonType, setReasonType] = useState('')
-  const [isRequired, setIsRequired] = useState(false)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -1098,11 +1293,10 @@ function AddItemModal({ onClose, onSave, onSaveBatch, reasonTypes, session }: {
   }, [session?.accessToken])
 
   useEffect(() => {
-    if (mode !== 'search') return
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => fetchItems(searchQuery), 300)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [searchQuery, mode, fetchItems])
+  }, [searchQuery, fetchItems])
 
   const handleShowAll = () => {
     fetchItems('', true)
@@ -1144,11 +1338,6 @@ function AddItemModal({ onClose, onSave, onSaveBatch, reasonTypes, session }: {
     onSaveBatch(items)
   }
 
-  const handleSwitchToManual = (prefill?: string) => {
-    if (prefill) setName(prefill)
-    setMode('manual')
-  }
-
   const itemTypeLabel = (t: string) => {
     const labels: Record<string, string> = {
       rag: 'RAG', tyre_depth: 'Tyre', brake_measurement: 'Brake',
@@ -1165,7 +1354,7 @@ function AddItemModal({ onClose, onSave, onSaveBatch, reasonTypes, session }: {
       <div className="bg-white w-full max-w-lg shadow-xl flex flex-col" style={{ maxHeight: '85vh' }}>
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-          <h2 className="text-lg font-semibold text-gray-900">Add Item</h2>
+          <h2 className="text-lg font-semibold text-gray-900">Import Existing Items</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1173,290 +1362,163 @@ function AddItemModal({ onClose, onSave, onSaveBatch, reasonTypes, session }: {
           </button>
         </div>
 
-        {/* Tab toggle */}
-        <div className="flex flex-shrink-0 bg-gray-50">
-          <button
-            onClick={() => setMode('search')}
-            className={`flex-1 px-4 py-3 text-sm font-medium text-center transition-colors ${
-              mode === 'search'
-                ? 'text-primary border-b-2 border-primary bg-white'
-                : 'text-gray-500 hover:text-gray-700 border-b-2 border-transparent'
-            }`}
-          >
-            <span className="flex items-center justify-center gap-1.5">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              Search Existing
-            </span>
-          </button>
-          <button
-            onClick={() => setMode('manual')}
-            className={`flex-1 px-4 py-3 text-sm font-medium text-center transition-colors ${
-              mode === 'manual'
-                ? 'text-primary border-b-2 border-primary bg-white'
-                : 'text-gray-500 hover:text-gray-700 border-b-2 border-transparent'
-            }`}
-          >
-            <span className="flex items-center justify-center gap-1.5">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              Create New
-            </span>
-          </button>
-        </div>
-
         {/* Body */}
         <div className="flex-1 overflow-hidden flex flex-col">
-          {mode === 'search' ? (
-            <div className="flex flex-col flex-1 overflow-hidden">
-              {/* Search input area */}
-              <div className="px-5 pt-5 pb-3 flex-shrink-0">
-                <div className="relative">
-                  <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          {/* Search input area */}
+          <div className="px-5 pt-5 pb-3 flex-shrink-0">
+            <div className="relative">
+              <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-3 py-2.5 border border-gray-300 bg-gray-50 focus:bg-white focus:border-primary focus:ring-1 focus:ring-primary text-sm transition-colors"
+                placeholder="Search items from other templates..."
+                autoFocus
+              />
+            </div>
+          </div>
+
+          {/* Results area */}
+          <div className="flex-1 overflow-y-auto px-5 pb-4">
+            {searching && (
+              <div className="flex items-center justify-center gap-2 py-8 text-sm text-gray-500">
+                <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Searching...
+              </div>
+            )}
+
+            {!searching && searchResults.length > 0 && (
+              <div>
+                {/* Header row with select all */}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs font-medium text-gray-400 uppercase tracking-wide">
+                    {searchResults.length} item{searchResults.length !== 1 ? 's' : ''} found
+                  </div>
+                  <button
+                    onClick={toggleAll}
+                    className="text-xs font-medium text-primary hover:text-primary-dark"
+                  >
+                    {allSelected ? 'Deselect All' : 'Select All'}
+                  </button>
+                </div>
+                <div className="border border-gray-200 divide-y divide-gray-100 overflow-hidden">
+                  {searchResults.map((item, idx) => {
+                    const isSelected = selected.has(item.name)
+                    return (
+                      <button
+                        key={idx}
+                        onClick={() => toggleItem(item.name)}
+                        className={`w-full px-3.5 py-3 text-left transition-colors flex items-center gap-3 group ${
+                          isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        {/* Checkbox */}
+                        <div className={`w-4.5 h-4.5 flex-shrink-0 border-2 flex items-center justify-center transition-colors ${
+                          isSelected
+                            ? 'bg-primary border-primary'
+                            : 'border-gray-300 group-hover:border-gray-400'
+                        }`}>
+                          {isSelected && (
+                            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className={`text-sm font-medium truncate ${isSelected ? 'text-primary' : 'text-gray-900'}`}>{item.name}</div>
+                          {item.sourceTemplateName && (
+                            <div className="text-xs text-gray-400 truncate mt-0.5">from {item.sourceTemplateName}</div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <span className="text-[11px] px-2 py-0.5 bg-gray-100 text-gray-600 font-medium">
+                            {itemTypeLabel(item.itemType)}
+                          </span>
+                          {item.reasonType && (
+                            <span className="text-[11px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full">
+                              {item.reasonType}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {!searching && hasSearched && searchResults.length === 0 && (
+              <div className="text-center py-8">
+                <div className="w-10 h-10 mx-auto mb-3 bg-gray-100 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                   </svg>
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-3 py-2.5 border border-gray-300 bg-gray-50 focus:bg-white focus:border-primary focus:ring-1 focus:ring-primary text-sm transition-colors"
-                    placeholder="Search items from other templates..."
-                    autoFocus
-                  />
                 </div>
+                <p className="text-sm text-gray-500">No existing items found</p>
               </div>
+            )}
 
-              {/* Results area */}
-              <div className="flex-1 overflow-y-auto px-5 pb-4">
-                {searching && (
-                  <div className="flex items-center justify-center gap-2 py-8 text-sm text-gray-500">
-                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Searching...
-                  </div>
-                )}
-
-                {!searching && searchResults.length > 0 && (
-                  <div>
-                    {/* Header row with select all */}
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-xs font-medium text-gray-400 uppercase tracking-wide">
-                        {searchResults.length} item{searchResults.length !== 1 ? 's' : ''} found
-                      </div>
-                      <button
-                        onClick={toggleAll}
-                        className="text-xs font-medium text-primary hover:text-primary-dark"
-                      >
-                        {allSelected ? 'Deselect All' : 'Select All'}
-                      </button>
-                    </div>
-                    <div className="border border-gray-200 divide-y divide-gray-100 overflow-hidden">
-                      {searchResults.map((item, idx) => {
-                        const isSelected = selected.has(item.name)
-                        return (
-                          <button
-                            key={idx}
-                            onClick={() => toggleItem(item.name)}
-                            className={`w-full px-3.5 py-3 text-left transition-colors flex items-center gap-3 group ${
-                              isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'
-                            }`}
-                          >
-                            {/* Checkbox */}
-                            <div className={`w-4.5 h-4.5 flex-shrink-0 border-2 flex items-center justify-center transition-colors ${
-                              isSelected
-                                ? 'bg-primary border-primary'
-                                : 'border-gray-300 group-hover:border-gray-400'
-                            }`}>
-                              {isSelected && (
-                                <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                </svg>
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className={`text-sm font-medium truncate ${isSelected ? 'text-primary' : 'text-gray-900'}`}>{item.name}</div>
-                              {item.sourceTemplateName && (
-                                <div className="text-xs text-gray-400 truncate mt-0.5">from {item.sourceTemplateName}</div>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-1.5 flex-shrink-0">
-                              <span className="text-[11px] px-2 py-0.5 bg-gray-100 text-gray-600 font-medium">
-                                {itemTypeLabel(item.itemType)}
-                              </span>
-                              {item.reasonType && (
-                                <span className="text-[11px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full">
-                                  {item.reasonType}
-                                </span>
-                              )}
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {!searching && hasSearched && searchResults.length === 0 && (
-                  <div className="text-center py-8">
-                    <div className="w-10 h-10 mx-auto mb-3 bg-gray-100 flex items-center justify-center">
-                      <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                      </svg>
-                    </div>
-                    <p className="text-sm text-gray-500 mb-1">No existing items found</p>
-                    {searchQuery.length >= 2 && (
-                      <button
-                        onClick={() => handleSwitchToManual(searchQuery)}
-                        className="text-sm text-primary hover:text-primary-dark font-medium mt-2 inline-flex items-center gap-1"
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                        </svg>
-                        Create &ldquo;{searchQuery}&rdquo; as new item
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {!searching && !hasSearched && (
-                  <div className="text-center py-8">
-                    <div className="w-10 h-10 mx-auto mb-3 bg-gray-100 flex items-center justify-center">
-                      <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                      </svg>
-                    </div>
-                    <p className="text-sm text-gray-500 mb-3">Type to search or browse all items</p>
-                    <button
-                      onClick={handleShowAll}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                      </svg>
-                      Show All Items
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Footer */}
-              <div className="px-5 py-3 border-t border-gray-200 flex items-center justify-between flex-shrink-0 bg-gray-50">
-                <div className="text-xs text-gray-500">
-                  {selected.size > 0 ? (
-                    <span className="font-medium text-primary">{selected.size} item{selected.size !== 1 ? 's' : ''} selected</span>
-                  ) : hasSearched && searchResults.length > 0 ? (
-                    'Select items to add'
-                  ) : null}
+            {!searching && !hasSearched && (
+              <div className="text-center py-8">
+                <div className="w-10 h-10 mx-auto mb-3 bg-gray-100 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                  </svg>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">
-                    Cancel
-                  </button>
-                  {selected.size > 0 && (
-                    <button
-                      onClick={handleAddSelected}
-                      disabled={adding}
-                      className="px-5 py-2 bg-primary text-white text-sm font-semibold disabled:opacity-50 hover:bg-primary-dark transition-colors inline-flex items-center gap-1.5"
-                    >
-                      {adding ? (
-                        <>
-                          <svg className="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                          </svg>
-                          Adding...
-                        </>
-                      ) : (
-                        <>Add {selected.size} Item{selected.size !== 1 ? 's' : ''}</>
-                      )}
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="p-5 space-y-4 overflow-y-auto">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Item Name</label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full px-3 py-2.5 border border-gray-300 bg-gray-50 focus:bg-white focus:border-primary focus:ring-1 focus:ring-primary text-sm transition-colors"
-                  placeholder="e.g., Engine Oil Level"
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Item Type</label>
-                <select
-                  value={itemType}
-                  onChange={(e) => setItemType(e.target.value)}
-                  className="w-full px-3 py-2.5 border border-gray-300 bg-gray-50 focus:bg-white focus:border-primary text-sm"
-                >
-                  <option value="rag">RAG (Red/Amber/Green)</option>
-                  <option value="tyre_depth">Tyre Depth</option>
-                  <option value="brake_measurement">Brake Measurement</option>
-                  <option value="fluid_level">Fluid Level</option>
-                  <option value="measurement">Measurement</option>
-                  <option value="yes_no">Yes/No</option>
-                  <option value="text">Text</option>
-                  <option value="number">Number</option>
-                  <option value="select">Select</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Reason Type</label>
-                <select
-                  value={reasonType}
-                  onChange={(e) => setReasonType(e.target.value)}
-                  className="w-full px-3 py-2.5 border border-gray-300 bg-gray-50 focus:bg-white focus:border-primary text-sm"
-                >
-                  <option value="">None (unique item reasons)</option>
-                  {reasonTypes.map((rt) => (
-                    <option key={rt.id} value={rt.id}>
-                      {rt.name}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  Items with the same reason type share the same reason library
-                </p>
-              </div>
-              <div>
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={isRequired}
-                    onChange={(e) => setIsRequired(e.target.checked)}
-                    className="w-4 h-4 text-primary border-gray-300"
-                  />
-                  <div>
-                    <span className="text-sm font-medium text-gray-700">Required Item</span>
-                    <p className="text-xs text-gray-500">
-                      Technicians must complete this item before submitting
-                    </p>
-                  </div>
-                </label>
-              </div>
-              <div className="flex justify-end gap-2 pt-4 border-t border-gray-100">
-                <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">
-                  Cancel
-                </button>
+                <p className="text-sm text-gray-500 mb-3">Type to search or browse all items</p>
                 <button
-                  onClick={() => onSave({ name, itemType, reasonType: reasonType || undefined, isRequired })}
-                  disabled={!name.trim()}
-                  className="px-5 py-2 bg-primary text-white text-sm font-semibold disabled:opacity-50 hover:bg-primary-dark transition-colors"
+                  onClick={handleShowAll}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
                 >
-                  Add Item
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                  </svg>
+                  Show All Items
                 </button>
               </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="px-5 py-3 border-t border-gray-200 flex items-center justify-between flex-shrink-0 bg-gray-50">
+            <div className="text-xs text-gray-500">
+              {selected.size > 0 ? (
+                <span className="font-medium text-primary">{selected.size} item{selected.size !== 1 ? 's' : ''} selected</span>
+              ) : hasSearched && searchResults.length > 0 ? (
+                'Select items to add'
+              ) : null}
             </div>
-          )}
+            <div className="flex items-center gap-2">
+              <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">
+                Cancel
+              </button>
+              {selected.size > 0 && (
+                <button
+                  onClick={handleAddSelected}
+                  disabled={adding}
+                  className="px-5 py-2 bg-primary text-white text-sm font-semibold disabled:opacity-50 hover:bg-primary-dark transition-colors inline-flex items-center gap-1.5"
+                >
+                  {adding ? (
+                    <>
+                      <svg className="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Adding...
+                    </>
+                  ) : (
+                    <>Add {selected.size} Item{selected.size !== 1 ? 's' : ''}</>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

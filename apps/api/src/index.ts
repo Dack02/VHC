@@ -48,6 +48,7 @@ import hcDeletionReasons from './routes/hc-deletion-reasons.js'
 import supplierTypes from './routes/supplier-types.js'
 import checkinSettings from './routes/checkin-settings.js'
 import messageTemplates from './routes/message-templates.js'
+import vehicleLocations from './routes/vehicle-locations.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
@@ -174,6 +175,9 @@ app.route('/api/v1/organizations/:orgId/hc-deletion-reasons', hcDeletionReasons)
 
 // Supplier types routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/supplier-types', supplierTypes)
+
+// Vehicle locations routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/vehicle-locations', vehicleLocations)
 
 // Check-in settings and MRI items routes (nested under organizations)
 app.route('/api/v1/organizations', checkinSettings)

@@ -33,7 +33,8 @@ results.get('/health-checks/:id/results', authorize(['super_admin', 'org_admin',
       .select(`
         *,
         media:result_media(*),
-        template_item:template_items(id, name, item_type, config)
+        template_item:template_items(id, name, item_type, config),
+        vehicle_location:vehicle_locations(name, short_name)
       `)
       .eq('health_check_id', id)
       .order('created_at', { ascending: true })
@@ -49,6 +50,9 @@ results.get('/health-checks/:id/results', authorize(['super_admin', 'org_admin',
         template_item_id: r.template_item_id,
         instanceNumber: r.instance_number || 1,
         instance_number: r.instance_number || 1,
+        vehicleLocationId: r.vehicle_location_id || null,
+        vehicleLocationName: r.vehicle_location_name || r.vehicle_location?.name || null,
+        vehicleLocationShortName: r.vehicle_location?.short_name || null,
         templateItem: r.template_item ? {
           id: r.template_item.id,
           name: r.template_item.name,
@@ -82,7 +86,7 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
     const auth = c.get('auth')
     const { id } = c.req.param()
     const body = await c.req.json()
-    const { templateItemId, status, value, notes, is_mot_failure, instanceNumber } = body
+    const { templateItemId, status, value, notes, is_mot_failure, instanceNumber, vehicleLocationId, vehicleLocationName } = body
 
     if (!templateItemId) {
       return c.json({ error: 'Template item ID is required' }, 400)
@@ -96,14 +100,21 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
     // Determine instance number to use (default to 1)
     const targetInstanceNumber = instanceNumber || 1
 
-    // Check if result already exists for this item + instance number
-    const { data: existing } = await supabaseAdmin
+    // Check if result already exists for this item + instance number + location
+    let existingQuery = supabaseAdmin
       .from('check_results')
       .select('id')
       .eq('health_check_id', id)
       .eq('template_item_id', templateItemId)
       .eq('instance_number', targetInstanceNumber)
-      .single()
+
+    if (vehicleLocationId) {
+      existingQuery = existingQuery.eq('vehicle_location_id', vehicleLocationId)
+    } else {
+      existingQuery = existingQuery.is('vehicle_location_id', null)
+    }
+
+    const { data: existing } = await existingQuery.single()
 
     // SAFEGUARD: If no exact match found but results exist for this template item,
     // update the first instance instead of creating a new duplicate
@@ -154,17 +165,22 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
       result = data
     } else {
       // Create new result
+      const insertData: Record<string, unknown> = {
+        health_check_id: id,
+        template_item_id: templateItemId,
+        instance_number: targetInstanceNumber,
+        rag_status: status,
+        value,
+        notes,
+        is_mot_failure: is_mot_failure || false
+      }
+      if (vehicleLocationId) {
+        insertData.vehicle_location_id = vehicleLocationId
+        insertData.vehicle_location_name = vehicleLocationName || null
+      }
       const { data, error } = await supabaseAdmin
         .from('check_results')
-        .insert({
-          health_check_id: id,
-          template_item_id: templateItemId,
-          instance_number: targetInstanceNumber,
-          rag_status: status,
-          value,
-          notes,
-          is_mot_failure: is_mot_failure || false
-        })
+        .insert(insertData)
         .select()
         .single()
 
@@ -246,6 +262,8 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
       templateItemId: result.template_item_id,
       instanceNumber: result.instance_number || 1,
       instance_number: result.instance_number || 1,
+      vehicleLocationId: result.vehicle_location_id || null,
+      vehicleLocationName: result.vehicle_location_name || null,
       status: result.rag_status,
       value: result.value,
       notes: result.notes,
@@ -278,17 +296,24 @@ results.post('/health-checks/:id/results/batch', authorize(['super_admin', 'org_
 
     const savedResults = []
     for (const r of resultsToSave) {
-      const { templateItemId, status, value, notes, instanceNumber } = r
+      const { templateItemId, status, value, notes, instanceNumber, vehicleLocationId, vehicleLocationName } = r
       const targetInstanceNumber = instanceNumber || 1
 
-      // Check if result already exists for this item + instance
-      const { data: existing } = await supabaseAdmin
+      // Check if result already exists for this item + instance + location
+      let existingQuery = supabaseAdmin
         .from('check_results')
         .select('id')
         .eq('health_check_id', id)
         .eq('template_item_id', templateItemId)
         .eq('instance_number', targetInstanceNumber)
-        .single()
+
+      if (vehicleLocationId) {
+        existingQuery = existingQuery.eq('vehicle_location_id', vehicleLocationId)
+      } else {
+        existingQuery = existingQuery.is('vehicle_location_id', null)
+      }
+
+      const { data: existing } = await existingQuery.single()
 
       let result
       if (existing) {
@@ -300,16 +325,21 @@ results.post('/health-checks/:id/results/batch', authorize(['super_admin', 'org_
           .single()
         result = data
       } else {
+        const insertData: Record<string, unknown> = {
+          health_check_id: id,
+          template_item_id: templateItemId,
+          instance_number: targetInstanceNumber,
+          rag_status: status,
+          value,
+          notes
+        }
+        if (vehicleLocationId) {
+          insertData.vehicle_location_id = vehicleLocationId
+          insertData.vehicle_location_name = vehicleLocationName || null
+        }
         const { data } = await supabaseAdmin
           .from('check_results')
-          .insert({
-            health_check_id: id,
-            template_item_id: templateItemId,
-            instance_number: targetInstanceNumber,
-            rag_status: status,
-            value,
-            notes
-          })
+          .insert(insertData)
           .select()
           .single()
         result = data
@@ -320,6 +350,8 @@ results.post('/health-checks/:id/results/batch', authorize(['super_admin', 'org_
           id: result.id,
           templateItemId: result.template_item_id,
           instanceNumber: result.instance_number || 1,
+          vehicleLocationId: result.vehicle_location_id || null,
+          vehicleLocationName: result.vehicle_location_name || null,
           status: result.rag_status,
           value: result.value
         })

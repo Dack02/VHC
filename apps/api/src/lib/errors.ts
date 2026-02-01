@@ -142,7 +142,7 @@ export const Errors = {
     { requiredRoles: roles }
   ),
   orgMismatch: () => new ApiError(
-    'Resource belongs to a different organization',
+    'Resource belongs to a different organisation',
     ErrorCodes.AUTHZ_ORG_MISMATCH,
     403
   ),

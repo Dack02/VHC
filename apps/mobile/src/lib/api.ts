@@ -129,12 +129,16 @@ export interface TemplateItem {
   config: Record<string, unknown>
   sortOrder: number
   isRequired: boolean
+  requiresLocation?: boolean
 }
 
 export interface CheckResult {
   id: string
   templateItemId: string
   instanceNumber?: number  // For duplicate items (e.g., two oil leaks), default 1
+  vehicleLocationId?: string
+  vehicleLocationName?: string
+  vehicleLocationShortName?: string
   status: 'green' | 'amber' | 'red' | null
   value: unknown
   notes: string | null
@@ -145,6 +149,16 @@ export interface CheckResult {
   template_item_id?: string
   instance_number?: number
   rag_status?: 'green' | 'amber' | 'red' | null
+  vehicle_location_id?: string
+  vehicle_location_name?: string
+}
+
+export interface VehicleLocation {
+  id: string
+  name: string
+  shortName: string
+  sortOrder: number
+  isActive: boolean
 }
 
 export interface ResultMedia {

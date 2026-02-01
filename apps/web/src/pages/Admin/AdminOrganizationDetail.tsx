@@ -271,12 +271,12 @@ export default function AdminOrganizationDetail() {
   if (!org) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500">Organization not found</p>
+        <p className="text-gray-500">Organisation not found</p>
         <button
           onClick={() => navigate('/admin/organizations')}
           className="mt-4 text-indigo-600 hover:text-indigo-700"
         >
-          Back to Organizations
+          Back to Organisations
         </button>
       </div>
     )
@@ -303,7 +303,7 @@ export default function AdminOrganizationDetail() {
             <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
-            Back to Organizations
+            Back to Organisations
           </button>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold text-gray-900">{org.name}</h1>
@@ -390,7 +390,7 @@ export default function AdminOrganizationDetail() {
 
           {/* Organization Info */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <h3 className="font-semibold text-gray-900 mb-4">Organization Info</h3>
+            <h3 className="font-semibold text-gray-900 mb-4">Organisation Info</h3>
             <dl className="space-y-3">
               <div className="flex justify-between">
                 <dt className="text-gray-500">Created</dt>

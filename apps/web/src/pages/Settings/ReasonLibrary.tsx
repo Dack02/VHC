@@ -324,7 +324,7 @@ export default function ReasonLibrary() {
       <div className="bg-white shadow rounded-lg p-4 mt-6">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="font-medium text-gray-900">Organization Tone</h3>
+            <h3 className="font-medium text-gray-900">Organisation Tone</h3>
             <p className="text-sm text-gray-500">Used for AI-generated descriptions</p>
           </div>
           <select

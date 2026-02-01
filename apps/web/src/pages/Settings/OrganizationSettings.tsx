@@ -175,9 +175,9 @@ export default function OrganizationSettings() {
     <div className="max-w-4xl mx-auto">
       <SettingsBackLink />
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Organization Settings</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Organisation Settings</h1>
         <p className="text-gray-600 mt-1">
-          Manage your organization's branding, business details, and preferences.
+          Manage your organisation's branding, business details, and preferences.
         </p>
       </div>
 

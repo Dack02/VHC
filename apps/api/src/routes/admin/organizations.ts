@@ -346,7 +346,7 @@ adminOrgRoutes.get('/:id', async (c) => {
     .single()
 
   if (error || !org) {
-    return c.json({ error: 'Organization not found' }, 404)
+    return c.json({ error: 'Organisation not found' }, 404)
   }
 
   // Get counts
@@ -514,7 +514,7 @@ adminOrgRoutes.delete('/:id', async (c) => {
     .single()
 
   if (!org) {
-    return c.json({ error: 'Organization not found' }, 404)
+    return c.json({ error: 'Organisation not found' }, 404)
   }
 
   // Soft delete by setting status to cancelled
@@ -571,7 +571,7 @@ adminOrgRoutes.post('/:id/suspend', async (c) => {
     .single()
 
   if (!org) {
-    return c.json({ error: 'Organization not found' }, 404)
+    return c.json({ error: 'Organisation not found' }, 404)
   }
 
   if (org.status === 'suspended') {
@@ -620,7 +620,7 @@ adminOrgRoutes.post('/:id/activate', async (c) => {
     .single()
 
   if (!org) {
-    return c.json({ error: 'Organization not found' }, 404)
+    return c.json({ error: 'Organisation not found' }, 404)
   }
 
   if (org.status === 'active') {
@@ -956,7 +956,7 @@ adminOrgRoutes.get('/:id/ai-settings', async (c) => {
       .single()
 
     if (!org) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Get or create AI settings
@@ -1037,7 +1037,7 @@ adminOrgRoutes.patch('/:id/ai-settings', async (c) => {
       .single()
 
     if (!org) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Validate limit
@@ -1109,7 +1109,7 @@ adminOrgRoutes.post('/:id/ai-settings/reset-period', async (c) => {
       .single()
 
     if (!org) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Get current settings

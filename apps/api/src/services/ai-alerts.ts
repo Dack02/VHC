@@ -66,7 +66,7 @@ export async function checkOrgLimitWarning(organizationId: string): Promise<bool
         p_organization_id: organizationId,
         p_threshold_value: 80,
         p_current_value: percentUsed,
-        p_message: `Organization has used ${usage.current_generations} of ${usage.monthly_limit} AI generations (${Math.round(percentUsed)}%)`
+        p_message: `Organisation has used ${usage.current_generations} of ${usage.monthly_limit} AI generations (${Math.round(percentUsed)}%)`
       })
 
       // Update org settings to mark warning as sent
@@ -120,7 +120,7 @@ export async function checkOrgLimitReached(organizationId: string): Promise<bool
         p_organization_id: organizationId,
         p_threshold_value: 100,
         p_current_value: percentUsed,
-        p_message: `Organization has reached their monthly AI generation limit (${usage.current_generations}/${usage.monthly_limit})`
+        p_message: `Organisation has reached their monthly AI generation limit (${usage.current_generations}/${usage.monthly_limit})`
       })
 
       // Update org settings to mark limit reached as sent

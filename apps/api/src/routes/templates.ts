@@ -132,6 +132,7 @@ templates.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'serv
             itemType: item.item_type,
             config: item.config,
             isRequired: item.is_required,
+            requiresLocation: item.requires_location,
             sortOrder: item.sort_order,
             reasonType: item.reason_type
           }))
@@ -193,12 +194,39 @@ templates.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin']), a
   }
 })
 
-// DELETE /api/v1/templates/:id - Soft delete template
+// DELETE /api/v1/templates/:id - Delete template (soft by default, hard with ?hard=true)
 templates.delete('/:id', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
   try {
     const auth = c.get('auth')
     const { id } = c.req.param()
+    const hard = c.req.query('hard') === 'true'
 
+    if (hard) {
+      // Check if any health checks reference this template
+      const { count } = await supabaseAdmin
+        .from('health_checks')
+        .select('id', { count: 'exact', head: true })
+        .eq('template_id', id)
+
+      if (count && count > 0) {
+        return c.json({ error: `Cannot hard delete: ${count} health check(s) reference this template. Use soft delete instead.` }, 409)
+      }
+
+      // Hard delete — cascades to sections → items → reasons
+      const { error } = await supabaseAdmin
+        .from('check_templates')
+        .delete()
+        .eq('id', id)
+        .eq('organization_id', auth.orgId)
+
+      if (error) {
+        return c.json({ error: error.message }, 500)
+      }
+
+      return c.json({ message: 'Template permanently deleted' })
+    }
+
+    // Soft delete (existing behavior)
     const { error } = await supabaseAdmin
       .from('check_templates')
       .update({ is_active: false, updated_at: new Date().toISOString() })
@@ -287,6 +315,7 @@ templates.post('/:id/duplicate', authorize(['super_admin', 'org_admin', 'site_ad
             item_type: item.item_type,
             config: item.config,
             is_required: item.is_required,
+            requires_location: item.requires_location,
             sort_order: item.sort_order,
             reason_type: item.reason_type
           })

@@ -49,6 +49,7 @@ const HcDeletionReasons = lazy(() => import('./pages/Settings/HcDeletionReasons'
 const WorkflowSettings = lazy(() => import('./pages/Settings/WorkflowSettings'))
 const MriItemsSettings = lazy(() => import('./pages/Settings/MriItemsSettings'))
 const MessageTemplates = lazy(() => import('./pages/Settings/MessageTemplates'))
+const VehicleLocations = lazy(() => import('./pages/Settings/VehicleLocations'))
 const SettingsHub = lazy(() => import('./pages/Settings/SettingsHub'))
 const CustomerPortal = lazy(() => import('./pages/CustomerPortal/CustomerPortal'))
 const AdminLogin = lazy(() => import('./pages/Admin/AdminLogin'))
@@ -149,6 +150,7 @@ function App() {
                         <Route path="/settings/declined-reasons" element={<DeclinedReasons />} />
                         <Route path="/settings/deleted-reasons" element={<DeletedReasons />} />
                         <Route path="/settings/vhc-deletion-reasons" element={<HcDeletionReasons />} />
+                        <Route path="/settings/vehicle-locations" element={<VehicleLocations />} />
                         <Route path="/settings/workflow" element={<WorkflowSettings />} />
                         <Route path="/settings/mri-items" element={<MriItemsSettings />} />
                       </Route>

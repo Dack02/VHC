@@ -15,7 +15,7 @@ labourCodes.get('/', async (c) => {
 
     // Users can only access their own organization's labour codes
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { data: codes, error } = await supabaseAdmin
@@ -60,7 +60,7 @@ labourCodes.post('/', authorize(['super_admin', 'org_admin', 'site_admin']), asy
 
     // Users can only create in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { code, description, hourly_rate, is_vat_exempt, is_default } = body
@@ -137,7 +137,7 @@ labourCodes.post('/seed-defaults', authorize(['super_admin', 'org_admin', 'site_
 
     // Users can only seed in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Check if any labour codes already exist
@@ -196,7 +196,7 @@ labourCodes.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin']),
 
     // Users can only update in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { code, description, hourly_rate, is_vat_exempt, is_default, sort_order } = body
@@ -272,7 +272,7 @@ labourCodes.delete('/:id', authorize(['super_admin', 'org_admin', 'site_admin'])
 
     // Users can only delete in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Check if the labour code exists and belongs to this org

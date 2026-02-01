@@ -12,7 +12,7 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useAuth } from '../../../contexts/AuthContext'
-import { api, NewRepairItem, RepairLabour, LabourCode, RepairItemChild } from '../../../lib/api'
+import { api, NewRepairItem, RepairLabour, LabourCode, RepairItemChild, PricingSettings } from '../../../lib/api'
 import { Tooltip } from '../../../components/ui/Tooltip'
 
 interface LabourTabProps {
@@ -57,6 +57,7 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
   const [markingComplete, setMarkingComplete] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [showOtherLabourModal, setShowOtherLabourModal] = useState(false)
+  const [pricingSettings, setPricingSettings] = useState<PricingSettings | null>(null)
 
   // Expand/collapse state for groups
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
@@ -89,7 +90,7 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
       setError(null)
 
       try {
-        const [itemsRes, codesRes] = await Promise.all([
+        const [itemsRes, codesRes, pricingRes] = await Promise.all([
           api<{ repairItems: NewRepairItem[] }>(
             `/api/v1/health-checks/${healthCheckId}/repair-items`,
             { token: session.accessToken }
@@ -97,11 +98,16 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
           api<{ labourCodes: LabourCode[] }>(
             `/api/v1/organizations/${user.organization.id}/labour-codes`,
             { token: session.accessToken }
+          ),
+          api<{ settings: PricingSettings }>(
+            `/api/v1/organizations/${user.organization.id}/pricing-settings`,
+            { token: session.accessToken }
           )
         ])
 
         setRepairItems(itemsRes.repairItems || [])
         setLabourCodes(codesRes.labourCodes || [])
+        setPricingSettings(pricingRes.settings || null)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load data')
       } finally {
@@ -282,8 +288,12 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
       }
     })
 
-    return { totalLabour: totalLabourAmount, vatExempt, vatLiable }
-  }, [repairItems])
+    const vatRate = pricingSettings?.vatRate || 20
+    const vatAmount = Math.round(vatLiable * (vatRate / 100) * 100) / 100
+    const totalIncVat = totalLabourAmount + vatAmount
+
+    return { totalLabour: totalLabourAmount, vatExempt, vatLiable, vatRate, vatAmount, totalIncVat }
+  }, [repairItems, pricingSettings])
 
   // Calculate group total (group labour + all children labour)
   const calculateGroupTotal = useCallback((item: NewRepairItem): number => {
@@ -790,7 +800,7 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
       <div className="bg-white border border-gray-200 rounded-lg p-4">
         <div className="flex flex-wrap justify-between items-start gap-4">
           <div className="space-y-1">
-            <div className="flex gap-8">
+            <div className="flex gap-8 flex-wrap">
               <div>
                 <span className="text-sm text-gray-500">Total Labour:</span>
                 <span className="ml-2 font-semibold">£{totals.totalLabour.toFixed(2)}</span>
@@ -802,6 +812,14 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
               <div>
                 <span className="text-sm text-gray-500">VAT Liable:</span>
                 <span className="ml-2 text-gray-700">£{totals.vatLiable.toFixed(2)}</span>
+              </div>
+              <div>
+                <span className="text-sm text-gray-500">VAT ({totals.vatRate}%):</span>
+                <span className="ml-2 text-gray-700">£{totals.vatAmount.toFixed(2)}</span>
+              </div>
+              <div>
+                <span className="text-sm text-gray-500">Total inc VAT:</span>
+                <span className="ml-2 font-semibold">£{totals.totalIncVat.toFixed(2)}</span>
               </div>
             </div>
             {!allActioned && (

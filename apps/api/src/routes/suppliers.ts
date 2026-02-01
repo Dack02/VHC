@@ -15,7 +15,7 @@ suppliers.get('/', async (c) => {
 
     // Users can only access their own organization's suppliers
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Check for ?include_inactive=true query param
@@ -90,7 +90,7 @@ suppliers.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
 
     // Users can only create in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const {
@@ -173,7 +173,7 @@ suppliers.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'se
 
     // Users can only update in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const {
@@ -274,7 +274,7 @@ suppliers.delete('/:id', authorize(['super_admin', 'org_admin', 'site_admin']), 
 
     // Users can only delete in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Check if the supplier exists and belongs to this org

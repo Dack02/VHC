@@ -112,17 +112,34 @@ export function MriScanSection({ healthCheckId, isReadOnly = false, onComplete }
     }
   }, [])
 
+  // Calculate progress from current items
+  const calculateProgress = (items: Record<string, MriItem[]>) => {
+    let completed = 0
+    let total = 0
+    for (const category of Object.keys(items)) {
+      for (const item of items[category]) {
+        total++
+        if (item.result && (
+          item.result.nextDueDate ||
+          item.result.nextDueMileage ||
+          item.result.dateNa ||
+          item.result.mileageNa ||
+          item.result.dueIfNotReplaced ||
+          item.result.recommendedThisVisit ||
+          item.result.notDueYet ||
+          item.result.yesNoValue !== null
+        )) {
+          completed++
+        }
+      }
+    }
+    return { completed, total }
+  }
+
   // Auto-save a single item result
   const saveItemResult = useCallback(async (
     mriItemId: string,
-    updates: {
-      nextDueDate?: string | null
-      nextDueMileage?: number | null
-      dueIfNotReplaced?: boolean
-      recommendedThisVisit?: boolean
-      yesNoValue?: boolean | null
-      notes?: string | null
-    }
+    updates: MriResultUpdate
   ) => {
     if (!session?.accessToken || isReadOnly) return
 
@@ -343,12 +360,14 @@ export function MriScanSection({ healthCheckId, isReadOnly = false, onComplete }
                       // Optimistic update
                       setData(prev => {
                         if (!prev) return prev
+                        const newItems = {
+                          ...prev.items,
+                          [category]: updateItemResult(prev.items[category], item.id, updates)
+                        }
                         return {
                           ...prev,
-                          items: {
-                            ...prev.items,
-                            [category]: updateItemResult(prev.items[category], item.id, updates)
-                          }
+                          items: newItems,
+                          progress: calculateProgress(newItems)
                         }
                       })
                       // Save to server

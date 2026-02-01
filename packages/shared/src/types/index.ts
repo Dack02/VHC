@@ -150,6 +150,7 @@ export interface TemplateItem {
   description?: string
   itemType: ItemType
   isRequired: boolean
+  requiresLocation?: boolean
   sortOrder: number
   config: Record<string, unknown>
   createdAt: Date
@@ -211,11 +212,25 @@ export interface CheckResult {
   healthCheckId: string
   templateItemId: string
   instanceNumber: number  // For duplicate items (e.g., two oil leaks), default 1
+  vehicleLocationId?: string
+  vehicleLocationName?: string
   ragStatus?: RagStatus
   value?: Record<string, unknown>
   notes?: string
   checkedAt?: Date
   checkedBy?: string
+  createdAt: Date
+  updatedAt: Date
+}
+
+// Vehicle Location
+export interface VehicleLocation {
+  id: string
+  organizationId: string
+  name: string
+  shortName: string
+  sortOrder: number
+  isActive: boolean
   createdAt: Date
   updatedAt: Date
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useMemo, memo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { api, HealthCheck, TemplateSection, TemplateItem, CheckResult, CheckinSettings } from '../lib/api'
@@ -17,7 +17,9 @@ import { MultiSelectInput } from '../components/MultiSelectInput'
 import { Badge } from '../components/Badge'
 import { db } from '../lib/db'
 import { ReasonSelector } from '../components/ReasonSelector'
+import { LocationPicker } from '../components/LocationPicker'
 import { MriScanTab } from './MriScanTab'
+import type { VehicleLocation } from '../lib/api'
 
 // State for tracking which item has ReasonSelector open
 interface ReasonSelectorState {
@@ -26,6 +28,15 @@ interface ReasonSelectorState {
   templateItemName: string
   checkResultId?: string
   currentRag: 'red' | 'amber' | 'green' | null
+}
+
+// State for tracking which item has LocationPicker open
+interface LocationPickerState {
+  templateItemId: string
+  templateItemName: string
+  ragStatus: 'red' | 'amber' | 'green'
+  value?: unknown
+  notes?: string | null
 }
 
 export function Inspection() {
@@ -49,10 +60,17 @@ export function Inspection() {
   const [reasonSelectorItem, setReasonSelectorItem] = useState<ReasonSelectorState | null>(null)
   // Track reason counts per check result (keyed by check result ID)
   const [reasonCounts, setReasonCounts] = useState<Map<string, number>>(new Map())
+  // Vehicle locations for location-required items
+  const [vehicleLocations, setVehicleLocations] = useState<VehicleLocation[]>([])
+  const [locationPickerState, setLocationPickerState] = useState<LocationPickerState | null>(null)
+  const [pendingLocationReasons, setPendingLocationReasons] = useState<ReasonSelectorState[]>([])
 
   // Helper to generate result key
-  const getResultKey = (templateItemId: string, instanceNumber: number = 1) =>
-    `${templateItemId}-${instanceNumber}`
+  // For location-based results, we use templateItemId-loc-locationId format
+  const getResultKey = (templateItemId: string, instanceNumber: number = 1, vehicleLocationId?: string) =>
+    vehicleLocationId
+      ? `${templateItemId}-loc-${vehicleLocationId}`
+      : `${templateItemId}-${instanceNumber}`
 
   useEffect(() => {
     fetchJob()
@@ -69,46 +87,56 @@ export function Inspection() {
     if (!session || !id) return
 
     try {
+      // Phase 1: Fetch health check (needed for org_id and template_id)
       const { healthCheck } = await api<{ healthCheck: HealthCheck }>(
         `/api/v1/health-checks/${id}`,
         { token: session.access_token }
       )
       setJob(healthCheck)
 
-      // Fetch check-in settings to determine if MRI tab should be shown
-      try {
-        const settings = await api<CheckinSettings>(
+      // Phase 2: Fetch settings, locations, template, and results in parallel
+      const [checkinSettings, locationsResp, templateResp, resultsResp] = await Promise.all([
+        api<CheckinSettings>(
           `/api/v1/organizations/${healthCheck.organization_id}/checkin-settings`,
           { token: session.access_token }
-        )
-        setCheckinEnabled(settings.checkinEnabled)
-      } catch {
-        // If we can't fetch settings, assume check-in is not enabled
-        setCheckinEnabled(false)
-      }
+        ).catch(() => ({ checkinEnabled: false }) as CheckinSettings),
 
-      let templateSections: TemplateSection[] = []
-      if (healthCheck.template_id) {
-        const template = await api<{ sections?: TemplateSection[] }>(
-          `/api/v1/templates/${healthCheck.template_id}`,
+        api<{ locations: VehicleLocation[] }>(
+          `/api/v1/organizations/${healthCheck.organization_id}/vehicle-locations`,
+          { token: session.access_token }
+        ).catch(() => ({ locations: [] as VehicleLocation[] })),
+
+        healthCheck.template_id
+          ? api<{ sections?: TemplateSection[] }>(
+              `/api/v1/templates/${healthCheck.template_id}`,
+              { token: session.access_token }
+            )
+          : Promise.resolve({ sections: [] as TemplateSection[] }),
+
+        api<{ results: CheckResult[] }>(
+          `/api/v1/health-checks/${id}/results`,
           { token: session.access_token }
         )
-        templateSections = template.sections || []
-        setSections(templateSections)
-      }
+      ])
 
-      const { results: apiResults } = await api<{ results: CheckResult[] }>(
-        `/api/v1/health-checks/${id}/results`,
-        { token: session.access_token }
-      )
+      setCheckinEnabled(checkinSettings.checkinEnabled)
+
+      const fetchedLocations = locationsResp.locations || []
+      setVehicleLocations(fetchedLocations)
+
+      const templateSections = templateResp.sections || []
+      setSections(templateSections)
+
+      const apiResults = resultsResp.results
 
       const resultsMap = new Map<string, Partial<CheckResult>>()
       apiResults.forEach((r) => {
         // Handle both camelCase (API) and snake_case (offline storage) formats
         const itemId = r.templateItemId || r.template_item_id
         const instanceNum = r.instanceNumber || r.instance_number || 1
+        const locId = r.vehicleLocationId || r.vehicle_location_id
         if (itemId) {
-          const key = getResultKey(itemId, instanceNum)
+          const key = getResultKey(itemId, instanceNum, locId || undefined)
           resultsMap.set(key, {
             ...r,
             // Normalize to have both formats for compatibility
@@ -116,6 +144,10 @@ export function Inspection() {
             template_item_id: itemId,
             instanceNumber: instanceNum,
             instance_number: instanceNum,
+            vehicleLocationId: locId || undefined,
+            vehicle_location_id: locId || undefined,
+            vehicleLocationName: r.vehicleLocationName || r.vehicle_location_name || undefined,
+            vehicle_location_name: r.vehicleLocationName || r.vehicle_location_name || undefined,
             rag_status: r.status || r.rag_status,
             status: r.status || r.rag_status
           })
@@ -169,25 +201,28 @@ export function Inspection() {
 
       setResults(resultsMap)
 
-      // Fetch reason counts for all results that have IDs
+      // Fetch reason counts via batch endpoint (single request instead of N)
       const countsMap = new Map<string, number>()
-      const resultsWithIds = apiResults.filter(r => r.id)
-
-      await Promise.all(
-        resultsWithIds.map(async (result) => {
-          try {
-            const { selectedReasons } = await api<{ selectedReasons: Array<{ id: string }> }>(
-              `/api/v1/check-results/${result.id}/reasons`,
-              { token: session.access_token }
-            )
-            if (selectedReasons && selectedReasons.length > 0) {
-              countsMap.set(result.id, selectedReasons.length)
+      const checkResultIds = apiResults.filter(r => r.id).map(r => r.id)
+      if (checkResultIds.length > 0) {
+        try {
+          const { reasonsByCheckResult } = await api<{ reasonsByCheckResult: Record<string, Array<{ id: string }>> }>(
+            `/api/v1/check-results/batch-reasons`,
+            {
+              method: 'POST',
+              token: session.access_token,
+              body: JSON.stringify({ checkResultIds })
             }
-          } catch {
-            // Silently ignore errors
-          }
-        })
-      )
+          )
+          Object.entries(reasonsByCheckResult).forEach(([crId, reasons]) => {
+            if (reasons.length > 0) {
+              countsMap.set(crId, reasons.length)
+            }
+          })
+        } catch {
+          // Silently ignore errors
+        }
+      }
       setReasonCounts(countsMap)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load inspection')
@@ -202,7 +237,7 @@ export function Inspection() {
   const getItemInstances = (templateItemId: string) => {
     const instances: Array<{ instanceNumber: number; result: Partial<CheckResult>; mapKey: string }> = []
     results.forEach((result, key) => {
-      if (key.startsWith(`${templateItemId}-`)) {
+      if (key.startsWith(`${templateItemId}-`) && !key.includes('-loc-')) {
         // Parse instanceNumber from the MAP KEY, not from result object
         // This is more reliable as the result object might have corrupted values
         const lastHyphen = key.lastIndexOf('-')
@@ -221,52 +256,96 @@ export function Inspection() {
     return status !== null && status !== undefined
   }).length
 
-  const sectionCompletedCount = (section: TemplateSection) => {
-    let count = 0
-    ;(section.items || []).forEach((item) => {
-      const instances = getItemInstances(item.id)
-      if (instances.length === 0) {
-        // Check for old key format (just item.id) for backward compatibility
-        const r = results.get(item.id) || results.get(getResultKey(item.id, 1))
-        if (r?.status || r?.rag_status) count++
-      } else {
-        instances.forEach(({ result }) => {
-          if (result?.status || result?.rag_status) count++
-        })
-      }
-    })
-    return count
-  }
+  // Memoised section stats - only recompute when results, sections, or locations change
+  const sectionStats = useMemo(() => {
+    return sections.map((section) => {
+      // Completed count
+      let completed = 0
+      ;(section.items || []).forEach((item) => {
+        if (item.requiresLocation && vehicleLocations.length > 0) {
+          let hasAnyLocResult = false
+          vehicleLocations.forEach(loc => {
+            const key = getResultKey(item.id, 1, loc.id)
+            const r = results.get(key)
+            if (r?.status || r?.rag_status) hasAnyLocResult = true
+          })
+          if (hasAnyLocResult) {
+            completed++
+            return
+          }
+          const stdKey = getResultKey(item.id, 1)
+          const stdResult = results.get(stdKey) || results.get(item.id)
+          if (stdResult?.status || stdResult?.rag_status) completed++
+          return
+        }
 
-  // Count mandatory incomplete items in a section
-  const sectionMandatoryIncomplete = (section: TemplateSection) => {
-    let count = 0
-    ;(section.items || []).forEach((item) => {
-      if (!item.isRequired) return
-      const instances = getItemInstances(item.id)
-      if (instances.length === 0) {
-        // Check for old key format (just item.id) for backward compatibility
-        const r = results.get(item.id) || results.get(getResultKey(item.id, 1))
-        if (!r?.status && !r?.rag_status) count++
-      } else {
-        // For mandatory items with duplicates, first instance must be complete
-        const firstInstance = instances[0]
-        if (!firstInstance?.result?.status && !firstInstance?.result?.rag_status) count++
-      }
-    })
-    return count
-  }
+        const instances = getItemInstances(item.id)
+        if (instances.length === 0) {
+          const r = results.get(item.id) || results.get(getResultKey(item.id, 1))
+          if (r?.status || r?.rag_status) completed++
+        } else {
+          instances.forEach(({ result }) => {
+            if (result?.status || result?.rag_status) completed++
+          })
+        }
+      })
 
-  // Save result (itemKey is the composite key: `${templateItemId}-${instanceNumber}`)
-  const saveResult = async (itemKey: string, data: Partial<CheckResult>) => {
+      // Mandatory incomplete count
+      let mandatoryIncomplete = 0
+      ;(section.items || []).forEach((item) => {
+        if (!item.isRequired) return
+
+        if (item.requiresLocation && vehicleLocations.length > 0) {
+          let hasAnyLocResult = false
+          vehicleLocations.forEach(loc => {
+            const key = getResultKey(item.id, 1, loc.id)
+            const r = results.get(key)
+            if (r?.status || r?.rag_status) hasAnyLocResult = true
+          })
+          if (!hasAnyLocResult) mandatoryIncomplete++
+          return
+        }
+
+        const instances = getItemInstances(item.id)
+        if (instances.length === 0) {
+          const r = results.get(item.id) || results.get(getResultKey(item.id, 1))
+          if (!r?.status && !r?.rag_status) mandatoryIncomplete++
+        } else {
+          const firstInstance = instances[0]
+          if (!firstInstance?.result?.status && !firstInstance?.result?.rag_status) mandatoryIncomplete++
+        }
+      })
+
+      return { completed, mandatoryIncomplete }
+    })
+  }, [sections, results, vehicleLocations])
+
+  // Save result (itemKey is the composite key: `${templateItemId}-${instanceNumber}` or `${templateItemId}-loc-${locationId}`)
+  const saveResult = useCallback(async (itemKey: string, data: Partial<CheckResult>) => {
     const existingResult = results.get(itemKey)
     const newStatus = data.status || data.rag_status || existingResult?.status || existingResult?.rag_status
 
-    // Parse itemKey to get templateItemId and instanceNumber
-    // Must handle UUIDs which contain hyphens - take last part as instance, rest as templateId
-    const parts = itemKey.split('-')
-    const instanceNumber = parts.length > 1 ? parseInt(parts[parts.length - 1], 10) || 1 : 1
-    const templateItemId = parts.length > 1 ? parts.slice(0, -1).join('-') : itemKey
+    // Parse itemKey to get templateItemId, instanceNumber, and optionally vehicleLocationId
+    let templateItemId: string
+    let instanceNumber: number
+    let vehicleLocationId: string | undefined
+    let vehicleLocationName: string | undefined
+
+    if (itemKey.includes('-loc-')) {
+      // Location-based key: templateItemId-loc-locationId
+      const locIndex = itemKey.indexOf('-loc-')
+      templateItemId = itemKey.substring(0, locIndex)
+      vehicleLocationId = itemKey.substring(locIndex + 5) // After '-loc-'
+      instanceNumber = 1
+      // Get location name from existing result or vehicleLocations
+      vehicleLocationName = existingResult?.vehicleLocationName || existingResult?.vehicle_location_name ||
+        vehicleLocations.find(l => l.id === vehicleLocationId)?.name
+    } else {
+      // Standard key: templateItemId-instanceNumber
+      const parts = itemKey.split('-')
+      instanceNumber = parts.length > 1 ? parseInt(parts[parts.length - 1], 10) || 1 : 1
+      templateItemId = parts.length > 1 ? parts.slice(0, -1).join('-') : itemKey
+    }
 
     const result = {
       ...existingResult,
@@ -275,6 +354,10 @@ export function Inspection() {
       template_item_id: templateItemId,
       instanceNumber,
       instance_number: instanceNumber,
+      vehicleLocationId,
+      vehicle_location_id: vehicleLocationId,
+      vehicleLocationName,
+      vehicle_location_name: vehicleLocationName,
       health_check_id: id!,
       status: newStatus,
       rag_status: newStatus,
@@ -297,6 +380,8 @@ export function Inspection() {
         body: JSON.stringify({
           templateItemId,
           instanceNumber,
+          vehicleLocationId,
+          vehicleLocationName,
           status: result.rag_status,
           value: result.value,
           notes: result.notes,
@@ -311,10 +396,10 @@ export function Inspection() {
         data: result
       })
     }
-  }
+  }, [results, session, id, vehicleLocations])
 
   // Create a duplicate of an item
-  const createDuplicate = async (templateItemId: string) => {
+  const createDuplicate = useCallback(async (templateItemId: string) => {
     if (!session || !id || creatingDuplicate) return
 
     setCreatingDuplicate(true)
@@ -354,10 +439,10 @@ export function Inspection() {
     } finally {
       setCreatingDuplicate(false)
     }
-  }
+  }, [session, id, creatingDuplicate])
 
   // Delete a duplicate item (only works for instance_number > 1)
-  const deleteDuplicate = async (itemKey: string, resultId: string) => {
+  const deleteDuplicate = useCallback(async (itemKey: string, resultId: string) => {
     if (!session || !id) return
 
     try {
@@ -376,7 +461,12 @@ export function Inspection() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete duplicate')
     }
-  }
+  }, [session, id])
+
+  // Stable toggle handler for InspectionItem
+  const handleToggle = useCallback((itemKey: string) => {
+    setExpandedItem(prev => prev === itemKey ? null : itemKey)
+  }, [])
 
   // Handle saving selected reasons for a check result
   const handleSaveReasons = async (data: {
@@ -486,6 +576,85 @@ export function Inspection() {
 
     // Update the reasonSelectorItem state with new RAG
     setReasonSelectorItem((prev) => prev ? { ...prev, currentRag: rag } : null)
+  }
+
+  // Handle location picker save - creates one result per selected location
+  const handleLocationPickerSave = async (selectedLocations: { id: string; name: string; shortName: string }[]) => {
+    if (!locationPickerState || !session || !id) return
+
+    const { templateItemId, templateItemName, ragStatus, value, notes } = locationPickerState
+    setLocationPickerState(null)
+
+    try {
+      // Create batch results - one per location
+      const batchResults = selectedLocations.map(loc => ({
+        templateItemId,
+        status: ragStatus,
+        value,
+        notes,
+        instanceNumber: 1,
+        vehicleLocationId: loc.id,
+        vehicleLocationName: loc.name
+      }))
+
+      const response = await api<{ results: Array<{ id: string; templateItemId: string; instanceNumber: number; vehicleLocationId: string; vehicleLocationName: string; status: string }> }>(
+        `/api/v1/health-checks/${id}/results/batch`,
+        {
+          method: 'POST',
+          token: session.access_token,
+          body: JSON.stringify({ results: batchResults })
+        }
+      )
+
+      // Update local results map with each saved result
+      setResults(prev => {
+        const newResults = new Map(prev)
+        for (const r of (response.results || [])) {
+          const key = getResultKey(r.templateItemId, 1, r.vehicleLocationId)
+          newResults.set(key, {
+            id: r.id,
+            templateItemId: r.templateItemId,
+            template_item_id: r.templateItemId,
+            instanceNumber: 1,
+            instance_number: 1,
+            vehicleLocationId: r.vehicleLocationId,
+            vehicle_location_id: r.vehicleLocationId,
+            vehicleLocationName: r.vehicleLocationName,
+            vehicle_location_name: r.vehicleLocationName,
+            status: ragStatus,
+            rag_status: ragStatus
+          })
+        }
+        // Remove the default green entry for this item (if present)
+        const defaultKey = getResultKey(templateItemId, 1)
+        const defaultResult = newResults.get(defaultKey) as (Partial<CheckResult> & { _isDefault?: boolean }) | undefined
+        if (defaultResult?._isDefault) {
+          newResults.delete(defaultKey)
+        }
+        return newResults
+      })
+
+      // Build queue entries for ALL saved location results
+      const savedResults = response.results || []
+      const queue: ReasonSelectorState[] = savedResults.map(r => {
+        const loc = selectedLocations.find(l => l.id === r.vehicleLocationId)
+        return {
+          itemKey: getResultKey(r.templateItemId, 1, r.vehicleLocationId),
+          templateItemId: r.templateItemId,
+          templateItemName: loc ? `[${loc.shortName}] ${templateItemName}` : templateItemName,
+          checkResultId: r.id,
+          currentRag: ragStatus
+        }
+      })
+
+      // Open first, queue the rest
+      if (queue.length > 0) {
+        setReasonSelectorItem(queue[0])
+        setPendingLocationReasons(queue.slice(1))
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save location results')
+    }
   }
 
   const handlePhotoCapture = async (photoData: string) => {
@@ -652,7 +821,8 @@ export function Inspection() {
           {/* Template section tabs (offset by 1 when checkin enabled) */}
           {sections.map((section, idx) => {
             const tabIndex = checkinEnabled ? idx + 1 : idx
-            const completed = sectionCompletedCount(section)
+            const stats = sectionStats[idx]
+            const completed = stats?.completed ?? 0
             const total = section.items?.length || 0
             const getStatus = (itemId: string) => {
               const r = results.get(itemId)
@@ -661,7 +831,7 @@ export function Inspection() {
             const hasRed = section.items?.some((i) => getStatus(i.id) === 'red')
             const hasAmber = section.items?.some((i) => getStatus(i.id) === 'amber')
 
-            const mandatoryIncomplete = sectionMandatoryIncomplete(section)
+            const mandatoryIncomplete = stats?.mandatoryIncomplete ?? 0
 
             return (
               <button
@@ -712,6 +882,110 @@ export function Inspection() {
           const instances = getItemInstances(item.id)
           const hasInstances = instances.length > 0
 
+          // For location-required items, show location-based results
+          if (item.requiresLocation && vehicleLocations.length > 0) {
+            // Get all location-based results for this item
+            const locationResults: Array<{ loc: VehicleLocation; result: Partial<CheckResult>; mapKey: string }> = []
+            vehicleLocations.forEach(loc => {
+              const key = getResultKey(item.id, 1, loc.id)
+              const result = results.get(key)
+              if (result) {
+                locationResults.push({ loc, result, mapKey: key })
+              }
+            })
+
+            // Determine if the item has any location results saved
+            const hasLocationResults = locationResults.length > 0
+
+            // Use the standard key result (which may have the default green) when no location results yet
+            const standardKey = getResultKey(item.id, 1)
+            const standardResult = results.get(standardKey) || results.get(item.id)
+
+            return (
+              <div key={item.id} className="space-y-2">
+                {/* Main item with location picker trigger */}
+                {!hasLocationResults && (
+                  <InspectionItem
+                    item={item}
+                    itemKey={standardKey}
+                    instanceNumber={1}
+                    totalInstances={1}
+                    result={standardResult}
+                    expanded={expandedItem === standardKey}
+                    isMandatory={item.isRequired}
+                    onToggle={() => handleToggle(standardKey)}
+                    onSave={(data) => {
+                      const rag = data.status || data.rag_status
+                      if (rag && (rag === 'red' || rag === 'amber' || rag === 'green')) {
+                        setLocationPickerState({
+                          templateItemId: item.id,
+                          templateItemName: item.name,
+                          ragStatus: rag,
+                          value: data.value,
+                          notes: data.notes
+                        })
+                      }
+                    }}
+                    onAddPhoto={() => {}}
+                    onViewPhoto={() => {}}
+                    onDuplicate={() => {}}
+                    onOpenReasons={() => {}}
+                  />
+                )}
+                {/* Show individual location results */}
+                {locationResults.map(({ loc, result, mapKey }) => (
+                  <InspectionItem
+                    key={mapKey}
+                    item={{ ...item, name: `[${loc.shortName}] ${item.name}` }}
+                    itemKey={mapKey}
+                    instanceNumber={1}
+                    totalInstances={locationResults.length}
+                    result={result}
+                    expanded={expandedItem === mapKey}
+                    isMandatory={false}
+                    onToggle={() => handleToggle(mapKey)}
+                    onSave={(data) => saveResult(mapKey, data)}
+                    onAddPhoto={() => setPhotoItemId(mapKey)}
+                    onViewPhoto={(url, caption) => setViewingPhoto({ url, caption })}
+                    onDuplicate={() => {}}
+                    onOpenReasons={() => setReasonSelectorItem({
+                      itemKey: mapKey,
+                      templateItemId: item.id,
+                      templateItemName: `[${loc.shortName}] ${item.name}`,
+                      checkResultId: result?.id,
+                      currentRag: (result?.status || result?.rag_status) as 'red' | 'amber' | 'green' | null
+                    })}
+                    onOpenLocationPicker={() => {
+                      const existingRag = result?.status || result?.rag_status
+                      setLocationPickerState({
+                        templateItemId: item.id,
+                        templateItemName: item.name,
+                        ragStatus: (existingRag as 'red' | 'amber' | 'green') || 'green',
+                      })
+                    }}
+                    reasonCount={result?.id ? reasonCounts.get(result.id) : undefined}
+                  />
+                ))}
+                {/* Add more locations button when some already exist */}
+                {hasLocationResults && (
+                  <button
+                    onClick={() => {
+                      const existingRag = locationResults[0]?.result?.status || locationResults[0]?.result?.rag_status
+                      setLocationPickerState({
+                        templateItemId: item.id,
+                        templateItemName: item.name,
+                        ragStatus: (existingRag as 'red' | 'amber' | 'green') || 'green',
+                      })
+                    }}
+                    className="w-full py-2 text-sm text-primary font-medium border border-dashed border-primary/30 bg-primary/5 active:bg-primary/10"
+                  >
+                    + Add more locations for {item.name}
+                  </button>
+                )}
+              </div>
+            )
+          }
+
           // If no instances exist yet, show the primary (instance 1)
           if (!hasInstances) {
             const key = getResultKey(item.id, 1)
@@ -726,7 +1000,7 @@ export function Inspection() {
                   result={result}
                   expanded={expandedItem === key || expandedItem === item.id}
                   isMandatory={item.isRequired}
-                  onToggle={() => setExpandedItem(expandedItem === key ? null : key)}
+                  onToggle={() => handleToggle(key)}
                   onSave={(data) => saveResult(key, data)}
                   onAddPhoto={() => setPhotoItemId(key)}
                   onViewPhoto={(url, caption) => setViewingPhoto({ url, caption })}
@@ -764,7 +1038,7 @@ export function Inspection() {
                     result={result}
                     expanded={expandedItem === mapKey}
                     isMandatory={isMandatoryInstance}
-                    onToggle={() => setExpandedItem(expandedItem === mapKey ? null : mapKey)}
+                    onToggle={() => handleToggle(mapKey)}
                     onSave={(data) => saveResult(mapKey, data)}
                     onAddPhoto={() => setPhotoItemId(mapKey)}
                     onViewPhoto={(url, caption) => setViewingPhoto({ url, caption })}
@@ -881,9 +1155,26 @@ export function Inspection() {
           checkResultId={reasonSelectorItem.checkResultId}
           currentRag={reasonSelectorItem.currentRag}
           onRagChange={handleReasonSelectorRagChange}
-          onClose={() => setReasonSelectorItem(null)}
+          onClose={() => {
+            if (pendingLocationReasons.length > 0) {
+              setReasonSelectorItem(pendingLocationReasons[0])
+              setPendingLocationReasons(prev => prev.slice(1))
+            } else {
+              setReasonSelectorItem(null)
+            }
+          }}
           onSave={handleSaveReasons}
           vehicleRegistration={job?.vehicle?.registration}
+        />
+      )}
+
+      {/* Location Picker modal */}
+      {locationPickerState && vehicleLocations.length > 0 && (
+        <LocationPicker
+          locations={vehicleLocations}
+          templateItemName={locationPickerState.templateItemName}
+          onSave={handleLocationPickerSave}
+          onClose={() => setLocationPickerState(null)}
         />
       )}
     </div>
@@ -906,10 +1197,11 @@ interface InspectionItemProps {
   onDuplicate: () => void
   onDeleteDuplicate?: () => void
   onOpenReasons: () => void
+  onOpenLocationPicker?: () => void
   reasonCount?: number
 }
 
-function InspectionItem({
+const InspectionItem = memo(function InspectionItem({
   item,
   itemKey: _itemKey,
   instanceNumber,
@@ -924,6 +1216,7 @@ function InspectionItem({
   onDuplicate,
   onDeleteDuplicate,
   onOpenReasons,
+  onOpenLocationPicker,
   reasonCount
 }: InspectionItemProps) {
   void _itemKey // Suppress unused variable warning
@@ -1252,6 +1545,28 @@ function InspectionItem({
             </Button>
           </div>
 
+          {/* Change Location button - only for location-based items */}
+          {onOpenLocationPicker && (
+            <div className="pt-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onOpenLocationPicker()
+                }}
+                fullWidth
+                className="flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Change Location
+              </Button>
+            </div>
+          )}
+
           {/* Duplicate/Delete actions */}
           <div className="flex gap-2 pt-2 border-t border-gray-100 mt-4">
             <Button
@@ -1291,7 +1606,7 @@ function InspectionItem({
       )}
     </Card>
   )
-}
+})
 
 // Fluid level input
 interface FluidLevelInputProps {

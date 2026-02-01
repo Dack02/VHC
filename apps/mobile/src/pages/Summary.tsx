@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { api, HealthCheck, CheckResult, TemplateSection, TemplateItem } from '../lib/api'
+import { api, HealthCheck, CheckResult, TemplateSection, TemplateItem, VehicleLocation } from '../lib/api'
 import { Card, CardHeader, CardContent } from '../components/Card'
 import { Button } from '../components/Button'
 import { TextArea } from '../components/Input'
@@ -45,6 +45,7 @@ export function Summary() {
   const [error, setError] = useState<string | null>(null)
   const [notes, setNotes] = useState('')
   const [technicianSignature, setTechnicianSignature] = useState<string | null>(null)
+  const [vehicleLocations, setVehicleLocations] = useState<VehicleLocation[]>([])
 
   useEffect(() => {
     fetchData()
@@ -54,7 +55,7 @@ export function Summary() {
     if (!session || !id) return
 
     try {
-      // Fetch health check
+      // Phase 1: Fetch health check (needed for org_id and template_id)
       const { healthCheck } = await api<{ healthCheck: HealthCheck }>(
         `/api/v1/health-checks/${id}`,
         { token: session.access_token }
@@ -62,56 +63,59 @@ export function Summary() {
       setJob(healthCheck)
       setNotes(healthCheck.technician_notes || '')
 
-      // Fetch template
-      if (healthCheck.template_id) {
-        const template = await api<{ sections?: TemplateSection[] }>(
-          `/api/v1/templates/${healthCheck.template_id}`,
+      // Phase 2: Fetch locations, template, results, and validation in parallel
+      const [locationsResp, templateResp, resultsResp, validation] = await Promise.all([
+        api<{ locations: VehicleLocation[] }>(
+          `/api/v1/organizations/${healthCheck.organization_id}/vehicle-locations`,
           { token: session.access_token }
-        )
-        setSections(template.sections || [])
-      }
+        ).catch(() => ({ locations: [] as VehicleLocation[] })),
 
-      // Fetch results
-      const { results: fetchedResults } = await api<{ results: CheckResult[] }>(
-        `/api/v1/health-checks/${id}/results`,
-        { token: session.access_token }
-      )
-      setResults(fetchedResults)
-
-      // Fetch reasons for each result that has a status (red/amber/green)
-      const reasonsMap: Record<string, SelectedReason[]> = {}
-      const resultsWithId = fetchedResults.filter((r) => r.id)
-
-      // Fetch reasons in parallel for all results
-      await Promise.all(
-        resultsWithId.map(async (result) => {
-          try {
-            const { selectedReasons } = await api<{ selectedReasons: SelectedReason[] }>(
-              `/api/v1/check-results/${result.id}/reasons`,
+        healthCheck.template_id
+          ? api<{ sections?: TemplateSection[] }>(
+              `/api/v1/templates/${healthCheck.template_id}`,
               { token: session.access_token }
             )
-            if (selectedReasons && selectedReasons.length > 0) {
-              reasonsMap[result.id] = selectedReasons
-            }
-          } catch {
-            // Silently ignore errors for individual reason fetches
-          }
-        })
-      )
+          : Promise.resolve({ sections: [] as TemplateSection[] }),
 
-      setReasonsByResult(reasonsMap)
+        api<{ results: CheckResult[] }>(
+          `/api/v1/health-checks/${id}/results`,
+          { token: session.access_token }
+        ),
 
-      // Fetch mandatory items validation
-      try {
-        const validation = await api<MandatoryValidation>(
+        api<MandatoryValidation>(
           `/api/v1/health-checks/${id}/validate-mandatory`,
           { token: session.access_token }
-        )
-        setMandatoryValidation(validation)
-      } catch {
-        // If validation fetch fails, assume valid (don't block submission)
-        setMandatoryValidation({ valid: true, incompleteItems: [] })
+        ).catch(() => ({ valid: true, incompleteItems: [] }) as MandatoryValidation)
+      ])
+
+      setVehicleLocations(locationsResp.locations || [])
+      setSections(templateResp.sections || [])
+      setResults(resultsResp.results)
+      setMandatoryValidation(validation)
+
+      // Phase 3: Fetch reasons via batch endpoint (needs result IDs from phase 2)
+      const reasonsMap: Record<string, SelectedReason[]> = {}
+      const checkResultIds = resultsResp.results.filter((r) => r.id).map((r) => r.id)
+      if (checkResultIds.length > 0) {
+        try {
+          const { reasonsByCheckResult } = await api<{ reasonsByCheckResult: Record<string, SelectedReason[]> }>(
+            `/api/v1/check-results/batch-reasons`,
+            {
+              method: 'POST',
+              token: session.access_token,
+              body: JSON.stringify({ checkResultIds })
+            }
+          )
+          Object.entries(reasonsByCheckResult).forEach(([crId, reasons]) => {
+            if (reasons.length > 0) {
+              reasonsMap[crId] = reasons
+            }
+          })
+        } catch {
+          // Silently ignore batch fetch errors
+        }
       }
+      setReasonsByResult(reasonsMap)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load summary')
     } finally {
@@ -138,17 +142,25 @@ export function Summary() {
     return statusResults.map((r) => {
       // Find the item name
       const itemId = getItemId(r)
+      // Build location prefix - prefer shortName from lookup, fall back to vehicleLocationName from result
+      const locId = r.vehicleLocationId || r.vehicle_location_id
+      const loc = locId ? vehicleLocations.find(l => l.id === locId) : null
+      const locName = loc?.shortName || loc?.name
+        || r.vehicleLocationShortName
+        || r.vehicleLocationName || r.vehicle_location_name || ''
+      const locationPrefix = locName ? `[${locName}] ` : ''
       for (const section of sections) {
         const item = section.items?.find((i) => i.id === itemId)
         if (item) {
           return {
             result: r,
             item,
-            section: section.name
+            section: section.name,
+            locationPrefix
           }
         }
       }
-      return { result: r, item: null, section: '' }
+      return { result: r, item: null, section: '', locationPrefix }
     }).filter((x) => x.item)
   }
 
@@ -283,6 +295,21 @@ export function Summary() {
     navigate(`/job/${id}/inspection`)
   }
 
+  const handleClearResult = async (resultId: string) => {
+    if (!session || !id) return
+    try {
+      await api(`/api/v1/health-checks/${id}/results/${resultId}`, {
+        method: 'PATCH',
+        token: session.access_token,
+        body: JSON.stringify({ status: 'green' })
+      })
+      // Refresh all data to update counts and lists
+      await fetchData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to clear result')
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
@@ -361,7 +388,7 @@ export function Summary() {
             />
             <CardContent>
               <div className="space-y-2">
-                {redItems.map(({ item, section, result }) => {
+                {redItems.map(({ item, section, result, locationPrefix }) => {
                   const reasons = reasonsByResult[result.id] || []
                   return (
                     <div
@@ -371,7 +398,7 @@ export function Summary() {
                       <div className="flex items-start gap-3">
                         <RAGIndicator status="red" />
                         <div className="flex-1">
-                          <p className="font-medium text-gray-900">{item?.name}</p>
+                          <p className="font-medium text-gray-900">{locationPrefix}{item?.name}</p>
                           <p className="text-xs text-gray-500">{section}</p>
                           {/* Display selected reasons */}
                           {reasons.length > 0 && (
@@ -392,6 +419,27 @@ export function Summary() {
                         </div>
                       </div>
                       {renderBrakeMeasurement(result, item)}
+                      {/* Action buttons */}
+                      <div className="flex gap-2 mt-2 pt-2 border-t border-red-200">
+                        <button
+                          onClick={() => navigate(`/job/${id}/inspection`)}
+                          className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900 px-2 py-1"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </svg>
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleClearResult(result.id)}
+                          className="flex items-center gap-1 text-xs text-gray-600 hover:text-rag-red px-2 py-1"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                          Clear
+                        </button>
+                      </div>
                     </div>
                   )
                 })}
@@ -409,7 +457,7 @@ export function Summary() {
             />
             <CardContent>
               <div className="space-y-2">
-                {amberItems.map(({ item, section, result }) => {
+                {amberItems.map(({ item, section, result, locationPrefix }) => {
                   const reasons = reasonsByResult[result.id] || []
                   return (
                     <div
@@ -419,7 +467,7 @@ export function Summary() {
                       <div className="flex items-start gap-3">
                         <RAGIndicator status="amber" />
                         <div className="flex-1">
-                          <p className="font-medium text-gray-900">{item?.name}</p>
+                          <p className="font-medium text-gray-900">{locationPrefix}{item?.name}</p>
                           <p className="text-xs text-gray-500">{section}</p>
                           {/* Display selected reasons */}
                           {reasons.length > 0 && (
@@ -440,6 +488,27 @@ export function Summary() {
                         </div>
                       </div>
                       {renderBrakeMeasurement(result, item)}
+                      {/* Action buttons */}
+                      <div className="flex gap-2 mt-2 pt-2 border-t border-amber-200">
+                        <button
+                          onClick={() => navigate(`/job/${id}/inspection`)}
+                          className="flex items-center gap-1 text-xs text-gray-600 hover:text-gray-900 px-2 py-1"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </svg>
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleClearResult(result.id)}
+                          className="flex items-center gap-1 text-xs text-gray-600 hover:text-rag-red px-2 py-1"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                          Clear
+                        </button>
+                      </div>
                     </div>
                   )
                 })}

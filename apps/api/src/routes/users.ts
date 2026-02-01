@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { checkUserLimit } from '../services/limits.js'
+import { sendEmail } from '../services/email.js'
 
 const users = new Hono()
 
@@ -69,7 +70,7 @@ users.post('/', authorize(['super_admin', 'org_admin', 'site_admin']), async (c)
   try {
     const auth = c.get('auth')
     const body = await c.req.json()
-    const { email, password, firstName, lastName, phone, role, siteId } = body
+    const { email, password, firstName, lastName, phone, role, siteId, sendInvite } = body
 
     if (!email || !password || !firstName || !lastName || !role) {
       return c.json({ error: 'Missing required fields' }, 400)
@@ -120,6 +121,81 @@ users.post('/', authorize(['super_admin', 'org_admin', 'site_admin']), async (c)
       return c.json({ error: userError.message }, 500)
     }
 
+    // Send invite email if requested
+    let emailSent = false
+    if (sendInvite) {
+      try {
+        // Fetch org name
+        const { data: org } = await supabaseAdmin
+          .from('organizations')
+          .select('name')
+          .eq('id', auth.orgId)
+          .single()
+
+        const orgName = org?.name || 'Your Organization'
+        const roleLabel = role.replace(/_/g, ' ').replace(/\b\w/g, (ch: string) => ch.toUpperCase())
+        const loginUrl = process.env.WEB_URL || 'https://vhc.ollosoft.co.uk'
+
+        const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:40px 0;">
+    <tr><td align="center">
+      <table width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e4e4e7;">
+        <tr><td style="background:#18181b;padding:24px 32px;">
+          <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:700;">Welcome to ${orgName}</h1>
+        </td></tr>
+        <tr><td style="padding:32px;">
+          <p style="margin:0 0 16px;color:#3f3f46;font-size:15px;line-height:1.6;">
+            You've been added as a <strong>${roleLabel}</strong> on the Vehicle Health Check platform.
+          </p>
+          <p style="margin:0 0 24px;color:#3f3f46;font-size:15px;line-height:1.6;">
+            Use the credentials below to sign in:
+          </p>
+          <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;border:1px solid #e4e4e7;margin-bottom:24px;">
+            <tr><td style="padding:16px 20px;">
+              <p style="margin:0 0 8px;color:#71717a;font-size:13px;">Email</p>
+              <p style="margin:0 0 16px;color:#18181b;font-size:15px;font-weight:600;">${email}</p>
+              <p style="margin:0 0 8px;color:#71717a;font-size:13px;">Password</p>
+              <p style="margin:0;color:#18181b;font-size:15px;font-weight:600;font-family:monospace;">${password}</p>
+            </td></tr>
+          </table>
+          <table cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+            <tr><td style="background:#18181b;padding:12px 24px;">
+              <a href="${loginUrl}" style="color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;">Sign In</a>
+            </td></tr>
+          </table>
+          <p style="margin:0;color:#a1a1aa;font-size:13px;line-height:1.5;">
+            We recommend changing your password after your first login.
+          </p>
+        </td></tr>
+        <tr><td style="padding:20px 32px;border-top:1px solid #e4e4e7;">
+          <p style="margin:0;color:#a1a1aa;font-size:12px;">${orgName} &mdash; Vehicle Health Check</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+
+        const text = `Welcome to ${orgName}\n\nYou've been added as a ${roleLabel} on the Vehicle Health Check platform.\n\nEmail: ${email}\nPassword: ${password}\n\nSign in at: ${loginUrl}\n\nWe recommend changing your password after your first login.`
+
+        const result = await sendEmail({
+          to: email,
+          subject: `Welcome to ${orgName} - Your Login Details`,
+          html,
+          text,
+          organizationId: auth.orgId
+        })
+
+        emailSent = result.success
+      } catch (emailError) {
+        console.error('Failed to send invite email:', emailError)
+      }
+    }
+
     return c.json({
       id: user.id,
       email: user.email,
@@ -128,7 +204,8 @@ users.post('/', authorize(['super_admin', 'org_admin', 'site_admin']), async (c)
       phone: user.phone,
       role: user.role,
       isActive: user.is_active,
-      createdAt: user.created_at
+      createdAt: user.created_at,
+      emailSent: sendInvite ? emailSent : undefined
     }, 201)
   } catch (error) {
     console.error('Create user error:', error)
@@ -184,7 +261,7 @@ users.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin']), async
     const auth = c.get('auth')
     const { id } = c.req.param()
     const body = await c.req.json()
-    const { firstName, lastName, phone, role, siteId, isActive, settings } = body
+    const { firstName, lastName, phone, role, siteId, isActive, settings, password } = body
 
     // First get the user to check permissions
     const { data: existingUser, error: fetchError } = await supabaseAdmin
@@ -201,6 +278,17 @@ users.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin']), async
     // Site admins can only update users from their site
     if (auth.user.role === 'site_admin' && existingUser.site_id !== auth.user.siteId) {
       return c.json({ error: 'Cannot update user from a different site' }, 403)
+    }
+
+    // Update Supabase Auth password if provided
+    if (password) {
+      const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(
+        existingUser.auth_id,
+        { password }
+      )
+      if (authError) {
+        return c.json({ error: authError.message }, 400)
+      }
     }
 
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() }
@@ -236,6 +324,107 @@ users.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin']), async
   } catch (error) {
     console.error('Update user error:', error)
     return c.json({ error: 'Failed to update user' }, 500)
+  }
+})
+
+// POST /api/v1/users/:id/reset-link - Send password reset link
+users.post('/:id/reset-link', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    const { data: existingUser, error: fetchError } = await supabaseAdmin
+      .from('users')
+      .select('*')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    if (fetchError || !existingUser) {
+      return c.json({ error: 'User not found' }, 404)
+    }
+
+    // Site admins can only reset passwords for users from their site
+    if (auth.user.role === 'site_admin' && existingUser.site_id !== auth.user.siteId) {
+      return c.json({ error: 'Cannot reset password for user from a different site' }, 403)
+    }
+
+    const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'recovery',
+      email: existingUser.email
+    })
+
+    if (linkError) {
+      return c.json({ error: linkError.message }, 500)
+    }
+
+    // Try to send recovery email
+    let emailSent = false
+    try {
+      const { data: org } = await supabaseAdmin
+        .from('organizations')
+        .select('name')
+        .eq('id', auth.orgId)
+        .single()
+
+      const orgName = org?.name || 'Your Organization'
+      const resetUrl = linkData.properties?.action_link || ''
+
+      const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:40px 0;">
+    <tr><td align="center">
+      <table width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e4e4e7;">
+        <tr><td style="background:#18181b;padding:24px 32px;">
+          <h1 style="margin:0;color:#ffffff;font-size:20px;font-weight:700;">Password Reset</h1>
+        </td></tr>
+        <tr><td style="padding:32px;">
+          <p style="margin:0 0 16px;color:#3f3f46;font-size:15px;line-height:1.6;">
+            A password reset has been requested for your account on the ${orgName} Vehicle Health Check platform.
+          </p>
+          <p style="margin:0 0 24px;color:#3f3f46;font-size:15px;line-height:1.6;">
+            Click the button below to set a new password:
+          </p>
+          <table cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+            <tr><td style="background:#18181b;padding:12px 24px;">
+              <a href="${resetUrl}" style="color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;">Reset Password</a>
+            </td></tr>
+          </table>
+          <p style="margin:0;color:#a1a1aa;font-size:13px;line-height:1.5;">
+            If you did not request this reset, you can safely ignore this email.
+          </p>
+        </td></tr>
+        <tr><td style="padding:20px 32px;border-top:1px solid #e4e4e7;">
+          <p style="margin:0;color:#a1a1aa;font-size:12px;">${orgName} &mdash; Vehicle Health Check</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+
+      const text = `Password Reset\n\nA password reset has been requested for your account on the ${orgName} Vehicle Health Check platform.\n\nReset your password: ${resetUrl}\n\nIf you did not request this reset, you can safely ignore this email.`
+
+      const result = await sendEmail({
+        to: existingUser.email,
+        subject: `Password Reset - ${orgName}`,
+        html,
+        text,
+        organizationId: auth.orgId
+      })
+
+      emailSent = result.success
+    } catch (emailError) {
+      console.error('Failed to send reset email:', emailError)
+    }
+
+    return c.json({ message: 'Reset link generated', emailSent })
+  } catch (error) {
+    console.error('Reset link error:', error)
+    return c.json({ error: 'Failed to generate reset link' }, 500)
   }
 })
 

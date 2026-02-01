@@ -72,10 +72,10 @@ export default function AdminActivity() {
 
   const actionTypes = [
     { value: '', label: 'All Actions' },
-    { value: 'org.created', label: 'Organization Created' },
-    { value: 'org.updated', label: 'Organization Updated' },
-    { value: 'org.suspended', label: 'Organization Suspended' },
-    { value: 'org.activated', label: 'Organization Activated' },
+    { value: 'org.created', label: 'Organisation Created' },
+    { value: 'org.updated', label: 'Organisation Updated' },
+    { value: 'org.suspended', label: 'Organisation Suspended' },
+    { value: 'org.activated', label: 'Organisation Activated' },
     { value: 'user.created', label: 'User Created' },
     { value: 'user.updated', label: 'User Updated' },
     { value: 'impersonation.started', label: 'Impersonation Started' },
@@ -141,7 +141,7 @@ export default function AdminActivity() {
                     </p>
                     {item.organizationName && (
                       <p className="text-xs text-gray-500 mt-1">
-                        Organization: {item.organizationName}
+                        Organisation: {item.organizationName}
                       </p>
                     )}
                     {item.metadata && Object.keys(item.metadata).length > 0 && (

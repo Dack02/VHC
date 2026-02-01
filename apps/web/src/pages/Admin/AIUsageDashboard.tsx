@@ -240,19 +240,19 @@ export default function AIUsageDashboard() {
       {/* Usage by Organization */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">Usage by Organization</h2>
+          <h2 className="text-lg font-semibold text-gray-900">Usage by Organisation</h2>
           <button
             onClick={() => navigate('/admin/organizations')}
             className="text-sm text-indigo-600 hover:text-indigo-700"
           >
-            View All Organizations
+            View All Organisations
           </button>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Organization</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Organisation</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Gens</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Tokens</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Cost</th>

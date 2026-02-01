@@ -85,7 +85,7 @@ export default function CreateOrganizationModal({ onClose, onCreated }: CreateOr
       })
       onCreated()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create organization')
+      setError(err instanceof Error ? err.message : 'Failed to create organisation')
     } finally {
       setLoading(false)
     }
@@ -101,7 +101,7 @@ export default function CreateOrganizationModal({ onClose, onCreated }: CreateOr
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold text-gray-900">Create Organization</h2>
+            <h2 className="text-xl font-semibold text-gray-900">Create Organisation</h2>
             <button
               onClick={onClose}
               className="text-gray-400 hover:text-gray-600"
@@ -153,10 +153,10 @@ export default function CreateOrganizationModal({ onClose, onCreated }: CreateOr
           {/* Step 1: Organization Details */}
           {step === 1 && (
             <div className="space-y-4">
-              <h3 className="font-medium text-gray-900">Organization Details</h3>
+              <h3 className="font-medium text-gray-900">Organisation Details</h3>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Organization Name
+                  Organisation Name
                 </label>
                 <input
                   type="text"
@@ -227,9 +227,9 @@ export default function CreateOrganizationModal({ onClose, onCreated }: CreateOr
           {/* Step 3: Admin User */}
           {step === 3 && (
             <div className="space-y-4">
-              <h3 className="font-medium text-gray-900">Organization Admin</h3>
+              <h3 className="font-medium text-gray-900">Organisation Admin</h3>
               <p className="text-sm text-gray-500">
-                Create the first admin user for this organization.
+                Create the first admin user for this organisation.
               </p>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -303,7 +303,7 @@ export default function CreateOrganizationModal({ onClose, onCreated }: CreateOr
               disabled={!canProceedStep3 || loading}
               className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? 'Creating...' : 'Create Organization'}
+              {loading ? 'Creating...' : 'Create Organisation'}
             </button>
           )}
         </div>

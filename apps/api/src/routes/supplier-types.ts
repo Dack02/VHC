@@ -15,7 +15,7 @@ supplierTypes.get('/', async (c) => {
 
     // Users can only access their own organization's supplier types
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { data: types, error } = await supabaseAdmin
@@ -58,7 +58,7 @@ supplierTypes.post('/', authorize(['super_admin', 'org_admin', 'site_admin']), a
 
     // Users can only create in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { name, description } = body
@@ -122,7 +122,7 @@ supplierTypes.post('/seed-defaults', authorize(['super_admin', 'org_admin', 'sit
 
     // Users can only seed in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Check if any types already exist
@@ -182,7 +182,7 @@ supplierTypes.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin']
 
     // Users can only update in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { name, description, sort_order } = body
@@ -244,7 +244,7 @@ supplierTypes.delete('/:id', authorize(['super_admin', 'org_admin', 'site_admin'
 
     // Users can only delete in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Check if the type exists and belongs to this org

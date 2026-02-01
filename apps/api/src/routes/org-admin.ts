@@ -494,7 +494,7 @@ orgAdminRoutes.post('/:id/users', requireOrgAdmin(), async (c) => {
     .single()
 
   if (existingUser) {
-    return c.json({ error: 'User with this email already exists in the organization' }, 400)
+    return c.json({ error: 'User with this email already exists in the organisation' }, 400)
   }
 
   try {

@@ -243,13 +243,13 @@ export default function AdminStarterTemplate() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Source Organization Selection */}
         <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Source Organization</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Source Organisation</h2>
           <p className="text-sm text-gray-600 mb-4">
-            Select the organization whose reasons will be used as starter templates for new organizations.
+            Select the organisation whose reasons will be used as starter templates for new organisations.
           </p>
 
           <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Organization</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Organisation</label>
             <select
               value={selectedOrgId}
               onChange={(e) => setSelectedOrgId(e.target.value)}

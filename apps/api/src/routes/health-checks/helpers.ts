@@ -68,7 +68,7 @@ export async function autoGenerateRepairItems(healthCheckId: string) {
     const { data: results } = await supabaseAdmin
       .from('check_results')
       .select(`
-        id, rag_status, notes, is_mot_failure,
+        id, rag_status, notes, is_mot_failure, vehicle_location_name,
         template_item:template_items(name, description)
       `)
       .eq('health_check_id', healthCheckId)
@@ -102,13 +102,19 @@ export async function autoGenerateRepairItems(healthCheckId: string) {
         ? result.template_item[0]
         : result.template_item
 
+      // Build repair item name, prefixing with location if present
+      const baseName = (templateItem as { name?: string })?.name || 'Repair Item'
+      const repairName = result.vehicle_location_name
+        ? `${result.vehicle_location_name} ${baseName}`
+        : baseName
+
       // Create the repair item with new schema columns
       const { data: repairItem, error: insertError } = await supabaseAdmin
         .from('repair_items')
         .insert({
           health_check_id: healthCheckId,
           organization_id: healthCheck.organization_id,
-          name: (templateItem as { name?: string })?.name || 'Repair Item',
+          name: repairName,
           description: result.notes || (templateItem as { description?: string })?.description || null,
           is_group: false,
           labour_total: 0,

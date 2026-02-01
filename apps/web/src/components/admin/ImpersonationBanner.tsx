@@ -83,7 +83,7 @@ export default function ImpersonationBanner() {
   if (!impersonation) return null
 
   const userName = `${impersonation.user.firstName} ${impersonation.user.lastName}`
-  const orgName = impersonation.user.organization?.name || 'Unknown Organization'
+  const orgName = impersonation.user.organization?.name || 'Unknown Organisation'
 
   return (
     <div className="bg-amber-500 text-amber-900">

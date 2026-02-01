@@ -14,9 +14,12 @@
     "clean": "turbo clean",
     "api:dev": "npm run dev --workspace=@vhc/api",
     "web:dev": "npm run dev --workspace=@vhc/web",
-    "mobile:dev": "npm run dev --workspace=@vhc/mobile"
+    "mobile:dev": "npm run dev --workspace=@vhc/mobile",
+    "sync:dev": "git checkout dev && git merge main && git push && git checkout main"
   },
   "devDependencies": {
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5",
     "turbo": "^2.0.0"
   },
   "engines": {

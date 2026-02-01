@@ -36,7 +36,7 @@ onboarding.get('/status', async (c) => {
     .single()
 
   if (error || !org) {
-    return c.json({ error: 'Organization not found' }, 404)
+    return c.json({ error: 'Organisation not found' }, 404)
   }
 
   // Get sites count

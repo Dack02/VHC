@@ -82,7 +82,7 @@ export default function AdminDashboard() {
 
   const statCards = [
     {
-      label: 'Total Organizations',
+      label: 'Total Organisations',
       value: stats?.organizations?.total || 0,
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -92,7 +92,7 @@ export default function AdminDashboard() {
       color: 'bg-blue-500'
     },
     {
-      label: 'Active Organizations',
+      label: 'Active Organisations',
       value: stats?.organizations?.active || 0,
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -153,20 +153,20 @@ export default function AdminDashboard() {
           <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <h2 className="font-semibold text-gray-900">Platform Summary</h2>
             <Link to="/admin/organizations" className="text-sm text-indigo-600 hover:text-indigo-700">
-              View organizations →
+              View organisations →
             </Link>
           </div>
           <div className="p-6 space-y-4">
             <div className="flex justify-between items-center">
-              <span className="text-gray-600">Active Organizations</span>
+              <span className="text-gray-600">Active Organisations</span>
               <span className="font-semibold text-green-600">{stats?.organizations?.active || 0}</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-gray-600">Pending Organizations</span>
+              <span className="text-gray-600">Pending Organisations</span>
               <span className="font-semibold text-yellow-600">{stats?.organizations?.pending || 0}</span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-gray-600">Suspended Organizations</span>
+              <span className="text-gray-600">Suspended Organisations</span>
               <span className="font-semibold text-red-600">{stats?.organizations?.suspended || 0}</span>
             </div>
             <div className="flex justify-between items-center pt-4 border-t">

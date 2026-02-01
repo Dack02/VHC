@@ -39,6 +39,30 @@ export function SuperAdminProvider({ children }: { children: ReactNode }) {
   })
   const [loading, setLoading] = useState(true)
 
+  const refreshSession = async (): Promise<boolean> => {
+    if (!session?.refreshToken) return false
+
+    try {
+      const data = await api<{ session: SuperAdminSession }>('/api/v1/auth/refresh', {
+        method: 'POST',
+        body: { refreshToken: session.refreshToken }
+      })
+
+      const newSession = data.session
+      setSession(newSession)
+      localStorage.setItem(SUPER_ADMIN_SESSION_KEY, JSON.stringify(newSession))
+
+      // Verify the refreshed token still has super admin access
+      await api('/api/v1/admin/stats', {
+        token: newSession.accessToken
+      })
+
+      return true
+    } catch {
+      return false
+    }
+  }
+
   useEffect(() => {
     const checkSession = async () => {
       if (session?.accessToken) {
@@ -49,8 +73,15 @@ export function SuperAdminProvider({ children }: { children: ReactNode }) {
           })
           // If successful, session is valid
         } catch {
-          // Not a super admin or session expired
-          clearSession()
+          // Token may be expired — try refreshing before giving up
+          if (session.refreshToken) {
+            const refreshed = await refreshSession()
+            if (!refreshed) {
+              clearSession()
+            }
+          } else {
+            clearSession()
+          }
         }
       }
       setLoading(false)

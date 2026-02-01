@@ -14,7 +14,7 @@ hcDeletionReasons.get('/', async (c) => {
     const orgId = c.req.param('orgId')
 
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { data: reasons, error } = await supabaseAdmin
@@ -56,7 +56,7 @@ hcDeletionReasons.post('/', authorize(['super_admin', 'org_admin', 'site_admin']
     const body = await c.req.json()
 
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { reason, description } = body
@@ -118,7 +118,7 @@ hcDeletionReasons.post('/seed-defaults', authorize(['super_admin', 'org_admin', 
     const orgId = c.req.param('orgId')
 
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Check if any reasons already exist
@@ -178,7 +178,7 @@ hcDeletionReasons.patch('/:id', authorize(['super_admin', 'org_admin', 'site_adm
     const body = await c.req.json()
 
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { reason, description, sort_order } = body
@@ -237,7 +237,7 @@ hcDeletionReasons.delete('/:id', authorize(['super_admin', 'org_admin', 'site_ad
     const reasonId = c.req.param('id')
 
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { data: existing, error: existError } = await supabaseAdmin

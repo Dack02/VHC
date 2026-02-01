@@ -89,7 +89,7 @@ export async function authMiddleware(c: Context, next: Next) {
         .single()
 
       if (userError || !data) {
-        return c.json({ error: 'User not found for this organization' }, 401)
+        return c.json({ error: 'User not found for this organisation' }, 401)
       }
       user = data
     } else {
@@ -278,7 +278,7 @@ export function requireOrgAdmin() {
     }
 
     if (!auth.user.isOrgAdmin && auth.user.role !== 'org_admin') {
-      return c.json({ error: 'Organization admin access required' }, 403)
+      return c.json({ error: 'Organisation admin access required' }, 403)
     }
 
     await next()

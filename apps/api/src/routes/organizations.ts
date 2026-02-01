@@ -15,7 +15,7 @@ organizations.get('/:id', async (c) => {
 
     // Users can only access their own organization
     if (id !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { data: org, error } = await supabaseAdmin
@@ -25,7 +25,7 @@ organizations.get('/:id', async (c) => {
       .single()
 
     if (error || !org) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     return c.json({
@@ -52,7 +52,7 @@ organizations.patch('/:id', authorize(['super_admin', 'org_admin']), async (c) =
 
     // Users can only update their own organization
     if (id !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() }
@@ -100,7 +100,7 @@ organizations.get('/:id/thresholds', async (c) => {
 
     // Users can only access their own organization's thresholds
     if (id !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Try to get existing thresholds
@@ -158,7 +158,7 @@ organizations.patch('/:id/thresholds', authorize(['super_admin', 'org_admin', 's
 
     // Users can only update their own organization's thresholds
     if (id !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const {
@@ -234,7 +234,7 @@ organizations.get('/:id/pricing-settings', async (c) => {
 
     // Users can only access their own organization's settings
     if (id !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Get settings from organization_settings table
@@ -270,7 +270,7 @@ organizations.patch('/:id/pricing-settings', authorize(['super_admin', 'org_admi
 
     // Users can only update their own organization's settings
     if (id !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { default_margin_percent, vat_rate } = body

@@ -618,6 +618,13 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       columns[column]?.push(card)
     })
 
+    // Sort tech_done by most recently completed first
+    columns.tech_done?.sort((a, b) => {
+      const aTime = a.tech_completed_at ? new Date(a.tech_completed_at).getTime() : 0
+      const bTime = b.tech_completed_at ? new Date(b.tech_completed_at).getTime() : 0
+      return bTime - aTime
+    })
+
     return c.json({
       columns: {
         technician: {

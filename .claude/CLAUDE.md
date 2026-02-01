@@ -161,6 +161,13 @@ npm run build   # Build all apps
 npm run lint    # Type check all apps
 ```
 
+## Deployment Pipeline
+- Push to `dev` → GitHub Actions runs `supabase db push` on dev Supabase → Railway auto-deploys dev services
+- Push to `main` → GitHub Actions runs `supabase db push` on production Supabase → Railway auto-deploys production services
+- PRs trigger a migration dry-run check (`supabase db push --dry-run`) plus type checking
+- GitHub secrets managed via `gh secret set --repo Dack02/VHC` (5 secrets: `SUPABASE_ACCESS_TOKEN`, `DEV_PROJECT_ID`, `DEV_DB_PASSWORD`, `PRODUCTION_PROJECT_ID`, `PRODUCTION_DB_PASSWORD`)
+- Workflow files: `.github/workflows/deploy-dev.yml`, `deploy-production.yml`, `ci.yml`
+
 ## Key Documentation
 - `docs/FEATURE_SPEC.md` - Master feature specification
 - `docs/vhc-multi-tenant-spec.md` - Multi-tenancy design

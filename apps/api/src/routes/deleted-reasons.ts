@@ -15,7 +15,7 @@ deletedReasons.get('/', async (c) => {
 
     // Users can only access their own organization's deleted reasons
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { data: reasons, error } = await supabaseAdmin
@@ -58,7 +58,7 @@ deletedReasons.post('/', authorize(['super_admin', 'org_admin', 'site_admin']), 
 
     // Users can only create in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { reason, description } = body
@@ -122,7 +122,7 @@ deletedReasons.post('/seed-defaults', authorize(['super_admin', 'org_admin', 'si
 
     // Users can only seed in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Check if any reasons already exist
@@ -182,7 +182,7 @@ deletedReasons.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin'
 
     // Users can only update in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     const { reason, description, sort_order } = body
@@ -244,7 +244,7 @@ deletedReasons.delete('/:id', authorize(['super_admin', 'org_admin', 'site_admin
 
     // Users can only delete in their own organization
     if (orgId !== auth.orgId) {
-      return c.json({ error: 'Organization not found' }, 404)
+      return c.json({ error: 'Organisation not found' }, 404)
     }
 
     // Check if the reason exists and belongs to this org

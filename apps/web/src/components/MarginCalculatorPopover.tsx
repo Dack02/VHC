@@ -152,7 +152,7 @@ export function MarginCalculatorPopover({
   return (
     <div
       ref={popoverRef}
-      className="fixed z-50 bg-white border border-gray-300 shadow-lg rounded-none"
+      className="fixed z-50 bg-white border border-gray-300 shadow-lg rounded-lg"
       style={{
         top: position.top,
         left: position.left,
@@ -180,7 +180,7 @@ export function MarginCalculatorPopover({
             <button
               type="button"
               onClick={() => adjustMargin(-5)}
-              className="px-2 py-1 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-none"
+              className="px-2 py-1 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-lg"
             >
               -5
             </button>
@@ -191,13 +191,13 @@ export function MarginCalculatorPopover({
               step="0.1"
               min="0"
               max="99.9"
-              className="flex-1 w-full px-2 py-1 text-sm text-center border border-gray-300 rounded-none focus:outline-none focus:ring-1 focus:ring-primary"
+              className="flex-1 w-full px-2 py-1 text-sm text-center border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary"
             />
             <span className="text-sm text-gray-500">%</span>
             <button
               type="button"
               onClick={() => adjustMargin(5)}
-              className="px-2 py-1 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-none"
+              className="px-2 py-1 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-lg"
             >
               +5
             </button>
@@ -215,7 +215,7 @@ export function MarginCalculatorPopover({
               onChange={(e) => handleSellChange(e.target.value)}
               step="0.01"
               min="0"
-              className="flex-1 w-full px-2 py-1 text-sm text-right border border-gray-300 rounded-none focus:outline-none focus:ring-1 focus:ring-primary"
+              className="flex-1 w-full px-2 py-1 text-sm text-right border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary"
             />
           </div>
         </div>
@@ -234,7 +234,7 @@ export function MarginCalculatorPopover({
         <button
           type="button"
           onClick={onClose}
-          className="px-3 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-300 hover:bg-gray-50 rounded-none"
+          className="px-3 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg"
         >
           Cancel
         </button>
@@ -242,7 +242,7 @@ export function MarginCalculatorPopover({
           type="button"
           onClick={handleApply}
           disabled={sellNum < costPrice}
-          className="px-3 py-1 text-xs font-medium text-white bg-primary hover:bg-primary-dark disabled:bg-gray-300 disabled:cursor-not-allowed rounded-none"
+          className="px-3 py-1 text-xs font-medium text-white bg-primary hover:bg-primary-dark disabled:bg-gray-300 disabled:cursor-not-allowed rounded-lg"
         >
           Apply
         </button>

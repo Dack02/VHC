@@ -209,7 +209,7 @@ export default function ReasonTypes() {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     )
   }
@@ -227,7 +227,7 @@ export default function ReasonTypes() {
         </div>
         <button
           onClick={() => setShowAddModal(true)}
-          className="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
+          className="inline-flex items-center px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary-hover"
         >
           <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -281,7 +281,7 @@ export default function ReasonTypes() {
                 <td className="px-6 py-4 whitespace-nowrap">
                   <button
                     onClick={() => openItemsModal(type.id)}
-                    className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                    className="text-sm text-primary hover:text-primary-hover hover:underline"
                   >
                     {type.itemCount} item{type.itemCount !== 1 ? 's' : ''}
                   </button>
@@ -314,7 +314,7 @@ export default function ReasonTypes() {
                   <div className="flex items-center justify-end gap-3">
                     <Link
                       to={`/settings/reasons/type/${type.id}`}
-                      className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800"
+                      className="inline-flex items-center gap-1 text-primary hover:text-primary-hover"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16m-7 6h7" />
@@ -390,7 +390,7 @@ export default function ReasonTypes() {
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
                     placeholder="e.g., Wheel Bearing"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
                     autoFocus
                     disabled={editingType?.isSystem}
                   />
@@ -411,7 +411,7 @@ export default function ReasonTypes() {
                     onChange={(e) => setFormDescription(e.target.value)}
                     placeholder="Brief description of what items this type covers..."
                     rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
                   />
                 </div>
               </div>
@@ -426,7 +426,7 @@ export default function ReasonTypes() {
                 <button
                   type="submit"
                   disabled={formSubmitting || (editingType?.isSystem && !formDescription)}
-                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary hover:bg-primary-hover rounded-lg disabled:opacity-50"
                 >
                   {formSubmitting ? 'Saving...' : editingType ? 'Update' : 'Create'}
                 </button>
@@ -456,7 +456,7 @@ export default function ReasonTypes() {
             <div className="flex-1 overflow-y-auto p-6">
               {loadingItems ? (
                 <div className="flex items-center justify-center py-8">
-                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
                 </div>
               ) : typeItems.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">

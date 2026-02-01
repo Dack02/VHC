@@ -99,7 +99,7 @@ export default function OverviewTab({ customer, stats, recentHealthChecks, onCus
   return (
     <div className="space-y-6">
       {/* Contact Information Card */}
-      <div className="bg-white border border-gray-200 p-6">
+      <div className="bg-white border border-gray-200 rounded-xl p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-900">Contact Information</h3>
           {!isEditing && (
@@ -227,19 +227,19 @@ export default function OverviewTab({ customer, stats, recentHealthChecks, onCus
       {/* Quick Stats Grid */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-white border border-gray-200 p-4">
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-2xl font-bold text-gray-900">{stats.totalHealthChecks}</div>
             <div className="text-sm text-gray-500">Total Health Checks</div>
           </div>
-          <div className="bg-white border border-gray-200 p-4">
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-2xl font-bold text-gray-900">{formatCurrency(stats.totalAuthorisedValue)}</div>
             <div className="text-sm text-gray-500">Total Value</div>
           </div>
-          <div className="bg-white border border-gray-200 p-4">
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-2xl font-bold text-gray-900">{formatDate(stats.lastVisit)}</div>
             <div className="text-sm text-gray-500">Last Visit</div>
           </div>
-          <div className="bg-white border border-gray-200 p-4">
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-2xl font-bold text-gray-900">{stats.vehicleCount}</div>
             <div className="text-sm text-gray-500">Vehicles</div>
           </div>
@@ -247,7 +247,7 @@ export default function OverviewTab({ customer, stats, recentHealthChecks, onCus
       )}
 
       {/* Recent Health Checks */}
-      <div className="bg-white border border-gray-200 p-6">
+      <div className="bg-white border border-gray-200 rounded-xl p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Recent Health Checks</h3>
         {recentHealthChecks.length === 0 ? (
           <p className="text-sm text-gray-500">No health checks yet</p>

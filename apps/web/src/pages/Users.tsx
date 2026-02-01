@@ -115,7 +115,7 @@ export default function Users() {
         </div>
       )}
 
-      <div className="bg-white border border-gray-200 shadow-sm">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>

@@ -203,7 +203,7 @@ export function TyreDisplay({ position, data, ragStatus }: TyreDisplayProps) {
 
       {/* Tyre Specifications - Always shown prominently */}
       {details && (details.manufacturer || details.size || details.speed_rating || details.load_rating) && (
-        <div className={`mb-3 p-2 rounded ${isUrgent ? 'bg-red-100' : isAdvisory ? 'bg-amber-100' : 'bg-white'} border border-gray-200`}>
+        <div className={`mb-3 p-2 rounded-xl ${isUrgent ? 'bg-red-100' : isAdvisory ? 'bg-amber-100' : 'bg-white'} border border-gray-200`}>
           <div className="text-xs font-medium text-gray-500 mb-1">Specifications</div>
           <div className="space-y-0.5">
             {details.manufacturer && (

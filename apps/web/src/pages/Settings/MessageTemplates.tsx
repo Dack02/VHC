@@ -433,9 +433,9 @@ export default function MessageTemplates() {
     return (
       <div className="p-6">
         <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 rounded-none w-1/3 mb-4"></div>
-          <div className="h-4 bg-gray-200 rounded-none w-2/3 mb-8"></div>
-          <div className="h-64 bg-gray-200 rounded-none"></div>
+          <div className="h-8 bg-gray-200 rounded-lg w-1/3 mb-4"></div>
+          <div className="h-4 bg-gray-200 rounded-lg w-2/3 mb-8"></div>
+          <div className="h-64 bg-gray-200 rounded-lg"></div>
         </div>
       </div>
     )
@@ -450,13 +450,13 @@ export default function MessageTemplates() {
       </p>
 
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-none">
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg">
           {error}
         </div>
       )}
 
       {success && (
-        <div className="mb-4 p-4 bg-green-50 border border-green-200 text-green-700 rounded-none">
+        <div className="mb-4 p-4 bg-green-50 border border-green-200 text-green-700 rounded-lg">
           {success}
         </div>
       )}
@@ -470,7 +470,7 @@ export default function MessageTemplates() {
               onClick={() => setActiveTab(type)}
               className={`py-3 px-4 border-b-2 font-medium text-sm whitespace-nowrap ${
                 activeTab === type
-                  ? 'border-blue-500 text-blue-600'
+                  ? 'border-primary text-primary'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
@@ -484,7 +484,7 @@ export default function MessageTemplates() {
 
       {/* Reminder Toggle - Show on reminder tabs */}
       {(activeTab === 'reminder' || activeTab === 'reminder_urgent') && (
-        <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-none flex items-center justify-between">
+        <div className="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg flex items-center justify-between">
           <div>
             <h3 className="text-sm font-medium text-gray-900">Automatic Reminders</h3>
             <p className="text-sm text-gray-500">
@@ -494,8 +494,8 @@ export default function MessageTemplates() {
           <button
             onClick={handleToggleReminders}
             disabled={savingReminders}
-            className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 ${
-              remindersEnabled ? 'bg-blue-600' : 'bg-gray-200'
+            className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 ${
+              remindersEnabled ? 'bg-primary' : 'bg-gray-200'
             }`}
           >
             <span
@@ -515,7 +515,7 @@ export default function MessageTemplates() {
             <button
               key={p.key}
               onClick={() => insertPlaceholder(p.key, 'sms')}
-              className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-none border border-gray-300"
+              className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg border border-gray-300"
               title={p.description}
             >
               {`{{${p.key}}}`}
@@ -526,21 +526,21 @@ export default function MessageTemplates() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* SMS Template */}
-        <div className="bg-white border border-gray-200 rounded-none p-6">
+        <div className="bg-white border border-gray-200 rounded-lg p-6">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold">SMS Template</h2>
             <div className="flex gap-2">
               <button
                 onClick={handleResetSms}
                 disabled={saving}
-                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-none disabled:opacity-50"
+                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg disabled:opacity-50"
               >
                 Reset
               </button>
               <button
                 onClick={handleSaveSms}
                 disabled={saving}
-                className="px-3 py-1.5 text-sm bg-blue-600 text-white hover:bg-blue-700 rounded-none disabled:opacity-50"
+                className="px-3 py-1.5 text-sm bg-primary text-white hover:bg-primary-hover rounded-lg disabled:opacity-50"
               >
                 {saving ? 'Saving...' : 'Save SMS'}
               </button>
@@ -552,7 +552,7 @@ export default function MessageTemplates() {
             value={smsContent}
             onChange={e => handleSmsChange(e.target.value)}
             rows={4}
-            className="w-full p-3 border border-gray-300 rounded-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary font-mono text-sm"
             placeholder="Enter SMS message..."
           />
 
@@ -573,7 +573,7 @@ export default function MessageTemplates() {
           {/* SMS Preview */}
           <div className="mt-4">
             <h3 className="text-sm font-medium text-gray-700 mb-2">Preview</h3>
-            <div className="p-4 bg-gray-50 border border-gray-200 rounded-none">
+            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
               <div className="bg-green-100 text-green-900 p-3 rounded-lg max-w-xs text-sm">
                 {smsPreview?.preview || 'Loading preview...'}
               </div>
@@ -582,21 +582,21 @@ export default function MessageTemplates() {
         </div>
 
         {/* Email Template */}
-        <div className="bg-white border border-gray-200 rounded-none p-6">
+        <div className="bg-white border border-gray-200 rounded-lg p-6">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold">Email Template</h2>
             <div className="flex gap-2">
               <button
                 onClick={handleResetEmail}
                 disabled={saving}
-                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-none disabled:opacity-50"
+                className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg disabled:opacity-50"
               >
                 Reset
               </button>
               <button
                 onClick={handleSaveEmail}
                 disabled={saving}
-                className="px-3 py-1.5 text-sm bg-blue-600 text-white hover:bg-blue-700 rounded-none disabled:opacity-50"
+                className="px-3 py-1.5 text-sm bg-primary text-white hover:bg-primary-hover rounded-lg disabled:opacity-50"
               >
                 {saving ? 'Saving...' : 'Save Email'}
               </button>
@@ -610,7 +610,7 @@ export default function MessageTemplates() {
                 type="text"
                 value={emailSubject}
                 onChange={e => handleEmailChange('emailSubject', e.target.value)}
-                className="w-full p-2 border border-gray-300 rounded-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary text-sm"
               />
             </div>
 
@@ -620,7 +620,7 @@ export default function MessageTemplates() {
                 type="text"
                 value={emailGreeting}
                 onChange={e => handleEmailChange('emailGreeting', e.target.value)}
-                className="w-full p-2 border border-gray-300 rounded-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary text-sm"
                 placeholder="Hi {{customerName}},"
               />
             </div>
@@ -631,7 +631,7 @@ export default function MessageTemplates() {
                 value={emailBody}
                 onChange={e => handleEmailChange('emailBody', e.target.value)}
                 rows={4}
-                className="w-full p-2 border border-gray-300 rounded-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary text-sm"
                 placeholder="Main message content..."
               />
               <p className="text-xs text-gray-500 mt-1">
@@ -645,7 +645,7 @@ export default function MessageTemplates() {
                 type="text"
                 value={emailClosing}
                 onChange={e => handleEmailChange('emailClosing', e.target.value)}
-                className="w-full p-2 border border-gray-300 rounded-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary text-sm"
                 placeholder="If you have any questions..."
               />
             </div>
@@ -657,7 +657,7 @@ export default function MessageTemplates() {
                   type="text"
                   value={emailSignature}
                   onChange={e => handleEmailChange('emailSignature', e.target.value)}
-                  className="w-full p-2 border border-gray-300 rounded-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary text-sm"
                   placeholder="{{dealershipName}}"
                 />
               </div>
@@ -667,7 +667,7 @@ export default function MessageTemplates() {
                   type="text"
                   value={emailCtaText}
                   onChange={e => handleEmailChange('emailCtaText', e.target.value)}
-                  className="w-full p-2 border border-gray-300 rounded-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary text-sm"
                   placeholder="View Health Check"
                 />
               </div>
@@ -677,7 +677,7 @@ export default function MessageTemplates() {
           {/* Email Preview */}
           <div className="mt-6">
             <h3 className="text-sm font-medium text-gray-700 mb-2">Preview</h3>
-            <div className="border border-gray-200 rounded-none bg-gray-50 overflow-hidden">
+            <div className="border border-gray-200 rounded-lg bg-gray-50 overflow-hidden">
               <div className="p-2 bg-gray-100 border-b border-gray-200 text-sm">
                 <strong>Subject:</strong> {emailPreview?.subject || 'Loading...'}
               </div>

@@ -72,7 +72,7 @@ export default function OrgSwitcher() {
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 top-full mt-1 w-64 bg-white border border-gray-200 shadow-lg z-50 rounded-none">
+        <div className="absolute left-0 top-full mt-1 w-64 bg-white border border-gray-200 shadow-lg z-50 rounded-lg">
           <div className="py-1">
             <div className="px-3 py-1.5 text-xs font-medium text-gray-400 uppercase tracking-wider">
               Switch Organization
@@ -94,7 +94,7 @@ export default function OrgSwitcher() {
                   )}
                   <span className="truncate">{org.name}</span>
                 </div>
-                <span className={`text-xs px-1.5 py-0.5 capitalize flex-shrink-0 rounded-none ${roleBadgeColor(org.role)}`}>
+                <span className={`text-xs px-1.5 py-0.5 capitalize flex-shrink-0 rounded-lg ${roleBadgeColor(org.role)}`}>
                   {roleLabel(org.role)}
                 </span>
               </button>

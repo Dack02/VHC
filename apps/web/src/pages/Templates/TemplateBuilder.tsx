@@ -614,7 +614,7 @@ function SortableSection({
   }
 
   return (
-    <div ref={setNodeRef} style={style} className="bg-white border border-gray-200 shadow-sm">
+    <div ref={setNodeRef} style={style} className="bg-white border border-gray-200 rounded-xl shadow-sm">
       {/* Section Header */}
       <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -1006,7 +1006,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
               {showMenu && (
                 <>
                   <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
-                  <div className={`absolute right-0 w-40 bg-white border border-gray-200 shadow-lg z-20 py-1 ${isLastItem ? 'bottom-full mb-1' : 'mt-1'}`}>
+                  <div className={`absolute right-0 w-40 bg-white border border-gray-200 rounded-xl shadow-lg z-20 py-1 ${isLastItem ? 'bottom-full mb-1' : 'mt-1'}`}>
                     {!hasNoReasons && (
                       <button
                         onClick={() => { handleManageReasons(); setShowMenu(false); }}
@@ -1109,7 +1109,7 @@ function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
         value={name}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={handleKeyDown}
-        className="w-full px-2 py-1.5 border border-gray-300 bg-white text-sm focus:border-primary focus:ring-1 focus:ring-primary"
+        className="w-full px-2 py-1.5 border border-gray-300 bg-white rounded-xl text-sm focus:border-primary focus:ring-1 focus:ring-primary"
         placeholder="Item name..."
         autoFocus
         disabled={saving}
@@ -1120,7 +1120,7 @@ function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
         value={itemType}
         onChange={(e) => setItemType(e.target.value)}
         onKeyDown={handleKeyDown}
-        className="hidden sm:block px-1.5 py-1.5 border border-gray-300 bg-white text-xs"
+        className="hidden sm:block px-1.5 py-1.5 border border-gray-300 bg-white rounded-xl text-xs"
         disabled={saving}
       >
         <option value="rag">RAG</option>
@@ -1139,7 +1139,7 @@ function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
         value={reasonType}
         onChange={(e) => setReasonType(e.target.value)}
         onKeyDown={handleKeyDown}
-        className="hidden sm:block px-1.5 py-1.5 border border-gray-300 bg-white text-xs"
+        className="hidden sm:block px-1.5 py-1.5 border border-gray-300 bg-white rounded-xl text-xs"
         disabled={saving}
       >
         <option value="">None</option>

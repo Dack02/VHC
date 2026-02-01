@@ -7,7 +7,7 @@ interface VehicleCardProps {
 
 export default function VehicleCard({ vehicle, healthCheckCount }: VehicleCardProps) {
   return (
-    <div className="bg-white border border-gray-200 p-4">
+    <div className="bg-white border border-gray-200 rounded-xl p-4">
       <div className="flex items-start justify-between mb-3">
         <div className="bg-yellow-300 text-black px-3 py-1 font-bold text-lg tracking-wider">
           {vehicle.registration}

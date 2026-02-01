@@ -252,7 +252,7 @@ export default function MriItemsSettings() {
           if (categoryItems.length === 0) return null
 
           return (
-            <div key={category} className="bg-white border border-gray-200 shadow-sm">
+            <div key={category} className="bg-white border border-gray-200 rounded-xl shadow-sm">
               <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
                 <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">
                   {category}

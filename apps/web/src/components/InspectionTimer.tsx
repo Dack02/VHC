@@ -122,7 +122,7 @@ export function InspectionTimer({
   return (
     <div className={`flex items-center gap-2 ${className}`}>
       <div
-        className={`flex items-center gap-2 px-3 py-2 rounded-none border ${colors.bg}`}
+        className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${colors.bg}`}
         title={`Active inspection time${isActive ? ' (running)' : ' (paused)'}`}
       >
         {showIcon && (

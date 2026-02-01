@@ -188,7 +188,7 @@ function CardContent({ card }: { card: HealthCheckCard }) {
       className={`block border rounded-lg shadow-sm p-3 mb-2 hover:shadow transition-shadow ${
         isAwaitingCheckin
           ? 'bg-red-50 border-red-300'
-          : 'bg-white border-gray-200'
+          : 'bg-white border-gray-200 rounded-xl'
       }`}
       onClick={(e) => e.stopPropagation()}
     >
@@ -199,7 +199,7 @@ function CardContent({ card }: { card: HealthCheckCard }) {
         </span>
         <div className="flex gap-1 flex-wrap justify-end">
           {isAwaitingCheckin && (
-            <span className="px-2 py-0.5 text-xs font-bold bg-red-600 text-white rounded-none animate-pulse">
+            <span className="px-2 py-0.5 text-xs font-bold bg-red-600 text-white rounded-lg animate-pulse">
               CHECK-IN REQUIRED
             </span>
           )}
@@ -783,7 +783,7 @@ export default function HealthCheckList() {
       {viewMode === 'list' && (
         <>
           {/* Filters */}
-          <div className="bg-white border border-gray-200 shadow-sm p-4 mb-6">
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 mb-6">
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               {/* Search */}
               <div className="md:col-span-2">
@@ -839,7 +839,7 @@ export default function HealthCheckList() {
           </div>
 
           {/* Table */}
-          <div className="bg-white border border-gray-200 shadow-sm overflow-hidden">
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
             {loading ? (
               <div className="p-8 text-center">
                 <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto" />

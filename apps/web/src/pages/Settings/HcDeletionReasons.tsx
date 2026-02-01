@@ -206,7 +206,7 @@ export default function HcDeletionReasons() {
       </div>
 
       {/* HC Deletion Reasons Table */}
-      <div className="bg-white border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>

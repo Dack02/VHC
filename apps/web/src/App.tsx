@@ -50,6 +50,7 @@ const WorkflowSettings = lazy(() => import('./pages/Settings/WorkflowSettings'))
 const MriItemsSettings = lazy(() => import('./pages/Settings/MriItemsSettings'))
 const MessageTemplates = lazy(() => import('./pages/Settings/MessageTemplates'))
 const VehicleLocations = lazy(() => import('./pages/Settings/VehicleLocations'))
+const SiteManagement = lazy(() => import('./pages/Settings/SiteManagement'))
 const SettingsHub = lazy(() => import('./pages/Settings/SettingsHub'))
 const CustomerPortal = lazy(() => import('./pages/CustomerPortal/CustomerPortal'))
 const AdminLogin = lazy(() => import('./pages/Admin/AdminLogin'))
@@ -65,6 +66,7 @@ const AIUsageDashboard = lazy(() => import('./pages/Admin/AIUsageDashboard'))
 const Onboarding = lazy(() => import('./pages/Onboarding'))
 const TechnicianWorkload = lazy(() => import('./pages/Dashboard/TechnicianWorkload'))
 const Reports = lazy(() => import('./pages/Reports'))
+const Today = lazy(() => import('./pages/Today'))
 
 // Page loading fallback
 function PageLoader() {
@@ -117,6 +119,7 @@ function App() {
                       <Route element={<DashboardLayout />}>
                         <Route path="/" element={<Dashboard />} />
                         <Route path="/dashboard/technicians" element={<TechnicianWorkload />} />
+                        <Route path="/today" element={<Today />} />
                         <Route path="/reports" element={<Reports />} />
                         <Route path="/users" element={<Users />} />
                         <Route path="/health-checks" element={<HealthCheckList />} />
@@ -151,6 +154,7 @@ function App() {
                         <Route path="/settings/deleted-reasons" element={<DeletedReasons />} />
                         <Route path="/settings/vhc-deletion-reasons" element={<HcDeletionReasons />} />
                         <Route path="/settings/vehicle-locations" element={<VehicleLocations />} />
+                        <Route path="/settings/sites" element={<SiteManagement />} />
                         <Route path="/settings/workflow" element={<WorkflowSettings />} />
                         <Route path="/settings/mri-items" element={<MriItemsSettings />} />
                       </Route>

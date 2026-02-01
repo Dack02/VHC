@@ -11,7 +11,7 @@ export function ResultsTab({ sections, results }: ResultsTabProps) {
 
   if (sections.length === 0) {
     return (
-      <div className="bg-white border border-gray-200 shadow-sm p-6 text-center text-gray-500">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 text-center text-gray-500">
         No inspection data available
       </div>
     )
@@ -31,7 +31,7 @@ export function ResultsTab({ sections, results }: ResultsTabProps) {
         const redCount = sectionResults.filter(r => r.result?.rag_status === 'red').length
 
         return (
-          <div key={section.id} className="bg-white border border-gray-200 shadow-sm">
+          <div key={section.id} className="bg-white border border-gray-200 rounded-xl shadow-sm">
             {/* Section header */}
             <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
               <h3 className="font-semibold text-gray-900">{section.name}</h3>

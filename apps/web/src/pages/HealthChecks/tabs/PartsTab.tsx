@@ -895,12 +895,12 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                     </button>
                                     <span className="text-indigo-700 font-medium">Option: {option.name}</span>
                                     {option.isRecommended && (
-                                      <span className="px-1.5 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded-none">
+                                      <span className="px-1.5 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded-lg">
                                         RECOMMENDED
                                       </span>
                                     )}
                                     {isSelected && (
-                                      <span className="px-1.5 py-0.5 text-xs font-medium text-primary bg-primary/10 rounded-none">
+                                      <span className="px-1.5 py-0.5 text-xs font-medium text-primary bg-primary/10 rounded-lg">
                                         SELECTED
                                       </span>
                                     )}
@@ -1343,12 +1343,12 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                     </button>
                                     <span className="text-indigo-700 font-medium">Option: {option.name}</span>
                                     {option.isRecommended && (
-                                      <span className="px-1.5 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded-none">
+                                      <span className="px-1.5 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded-lg">
                                         RECOMMENDED
                                       </span>
                                     )}
                                     {isSelected && (
-                                      <span className="px-1.5 py-0.5 text-xs font-medium text-primary bg-primary/10 rounded-none">
+                                      <span className="px-1.5 py-0.5 text-xs font-medium text-primary bg-primary/10 rounded-lg">
                                         SELECTED
                                       </span>
                                     )}
@@ -1936,7 +1936,7 @@ function MultiPartRow({
                         </svg>
                       </button>
                       {showAllocationMenu && (
-                        <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded shadow-lg z-10 min-w-[160px]">
+                        <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-10 min-w-[160px]">
                           {sectionType === 'direct' && parentGroupId && (
                             <button
                               onClick={() => {
@@ -2133,7 +2133,7 @@ function SupplierDropdown({ suppliers, value, onChange, onAddNew, disabled, erro
         <div
           ref={dropdownRef}
           style={dropdownStyle}
-          className="bg-white border border-gray-200 rounded shadow-lg max-h-64 overflow-hidden"
+          className="bg-white border border-gray-200 rounded-xl shadow-lg max-h-64 overflow-hidden"
         >
           {/* Search input */}
           <div className="p-2 border-b border-gray-100">

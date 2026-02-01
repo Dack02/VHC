@@ -91,6 +91,12 @@ auth.post('/login', async (c) => {
       }
     }
 
+    // Update last login for the active user
+    await supabaseAdmin
+      .from('users')
+      .update({ last_login_at: new Date().toISOString() })
+      .eq('id', user.id)
+
     // Transform organization data to include onboarding fields
     const org = user.organization as {
       id: string

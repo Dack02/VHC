@@ -197,6 +197,39 @@ export async function notifyCustomerAction(
 }
 
 /**
+ * Delete activity logs older than 6 months.
+ * Should be called once daily (e.g., via setInterval in server startup).
+ */
+export async function cleanupOldActivityLogs() {
+  try {
+    const cutoff = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString()
+    const { error } = await supabaseAdmin
+      .from('super_admin_activity_log')
+      .delete()
+      .lt('created_at', cutoff)
+
+    if (error) {
+      console.error('Activity log cleanup failed:', error.message)
+    } else {
+      console.log(`Activity log cleanup: deleted records older than 6 months (before ${cutoff})`)
+    }
+  } catch (error) {
+    console.error('Activity log cleanup error:', error)
+  }
+}
+
+/**
+ * Start all daily scheduled cleanup tasks.
+ * Called once at server startup; runs every 24 hours.
+ */
+export function startScheduledCleanupTasks() {
+  // Run immediately on startup, then every 24 hours
+  cleanupOldActivityLogs()
+  setInterval(cleanupOldActivityLogs, 24 * 60 * 60 * 1000)
+  console.log('Scheduled daily activity log cleanup')
+}
+
+/**
  * Notify staff when technician completes inspection
  */
 export async function notifyTechnicianCompleted(

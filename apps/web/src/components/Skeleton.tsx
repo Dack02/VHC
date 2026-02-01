@@ -45,7 +45,7 @@ export function SkeletonAvatar({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
 // Card skeleton
 export function SkeletonCard({ className = '' }: SkeletonProps) {
   return (
-    <div className={`bg-white border border-gray-200 p-4 ${className}`}>
+    <div className={`bg-white border border-gray-200 rounded-xl p-4 ${className}`}>
       <div className="flex items-center gap-3 mb-4">
         <SkeletonAvatar />
         <div className="flex-1">
@@ -82,7 +82,7 @@ export function SkeletonTable({
   showHeader?: boolean
 }) {
   return (
-    <div className="bg-white border border-gray-200 overflow-hidden">
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <table className="w-full">
         {showHeader && (
           <thead className="bg-gray-50 border-b border-gray-200">
@@ -122,7 +122,7 @@ export function SkeletonListItem({ className = '' }: SkeletonProps) {
 // List skeleton
 export function SkeletonList({ items = 5, className = '' }: { items?: number; className?: string }) {
   return (
-    <div className={`bg-white border border-gray-200 divide-y divide-gray-100 ${className}`}>
+    <div className={`bg-white border border-gray-200 rounded-xl divide-y divide-gray-100 ${className}`}>
       {Array.from({ length: items }).map((_, i) => (
         <SkeletonListItem key={i} />
       ))}
@@ -133,7 +133,7 @@ export function SkeletonList({ items = 5, className = '' }: { items?: number; cl
 // Dashboard summary card skeleton
 export function SkeletonSummaryCard({ className = '' }: SkeletonProps) {
   return (
-    <div className={`bg-white border border-gray-200 p-4 ${className}`}>
+    <div className={`bg-white border border-gray-200 rounded-xl p-4 ${className}`}>
       <Skeleton className="h-8 w-16 mb-2" />
       <Skeleton className="h-4 w-24" />
     </div>
@@ -154,7 +154,7 @@ export function SkeletonDashboardSummary({ count = 6 }: { count?: number }) {
 // Health check card skeleton (for Kanban)
 export function SkeletonHealthCheckCard({ className = '' }: SkeletonProps) {
   return (
-    <div className={`bg-white border border-gray-200 p-3 mb-2 ${className}`}>
+    <div className={`bg-white border border-gray-200 rounded-xl p-3 mb-2 ${className}`}>
       <div className="flex justify-between mb-2">
         <Skeleton className="h-5 w-24" />
         <Skeleton className="h-4 w-12" />

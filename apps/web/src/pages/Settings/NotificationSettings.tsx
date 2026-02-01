@@ -288,7 +288,7 @@ export default function NotificationSettings() {
 
       <div className="space-y-6">
         {/* SMS Settings */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">SMS Notifications (Twilio)</h2>
@@ -423,7 +423,7 @@ export default function NotificationSettings() {
         </div>
 
         {/* Email Settings */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Email Notifications (Resend)</h2>
@@ -558,7 +558,7 @@ export default function NotificationSettings() {
         </div>
 
         {/* Default Notification Settings */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="px-6 py-4 border-b border-gray-200">
             <h2 className="text-lg font-semibold text-gray-900">Default Settings</h2>
             <p className="text-sm text-gray-500 mt-1">

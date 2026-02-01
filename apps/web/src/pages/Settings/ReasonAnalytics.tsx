@@ -165,7 +165,7 @@ export default function ReasonAnalytics() {
           <div className="text-sm text-gray-500">Total Reasons</div>
         </div>
         <div className="bg-white shadow rounded-lg p-4">
-          <div className="text-3xl font-bold text-blue-600">
+          <div className="text-3xl font-bold text-primary">
             {stats?.summary.totalUsage || 0}
           </div>
           <div className="text-sm text-gray-500">Total Uses</div>
@@ -302,7 +302,7 @@ export default function ReasonAnalytics() {
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-xs text-gray-500">
                     {reason.reasonType ? (
-                      <span className="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
+                      <span className="px-1.5 py-0.5 bg-blue-50 text-primary rounded">
                         {reason.reasonType}
                       </span>
                     ) : reason.itemName ? (
@@ -357,7 +357,7 @@ export default function ReasonAnalytics() {
                     </div>
                     <div className="mt-1 flex items-center gap-2 text-xs text-gray-500">
                       {reason.reasonType ? (
-                        <span className="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">
+                        <span className="px-1.5 py-0.5 bg-blue-50 text-primary rounded">
                           {reason.reasonType}
                         </span>
                       ) : reason.itemName ? (

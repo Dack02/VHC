@@ -370,7 +370,7 @@ function GroupedView({
         >
           <div className="flex-1">
             <div className="flex items-center gap-2">
-              <span className="w-3 h-3 bg-blue-500 rounded-full" />
+              <span className="w-3 h-3 bg-primary rounded-full" />
               <span className="font-medium text-gray-900">{type.displayName}</span>
               <span className="text-sm text-gray-500">({type.itemCount} items)</span>
             </div>

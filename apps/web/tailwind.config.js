@@ -8,9 +8,9 @@ export default {
     extend: {
       colors: {
         primary: {
-          DEFAULT: 'var(--brand-primary, #3B82F6)',
-          hover: 'var(--brand-primary-hover, #2563EB)',
-          light: 'var(--brand-primary-light, #93C5FD)',
+          DEFAULT: 'var(--brand-primary, #4F46E5)',
+          hover: 'var(--brand-primary-hover, #4338CA)',
+          light: 'var(--brand-primary-light, #A5B4FC)',
         },
         secondary: {
           DEFAULT: 'var(--brand-secondary, #10B981)',
@@ -24,9 +24,6 @@ export default {
           'red-bg': '#fee2e2',
         }
       },
-      borderRadius: {
-        none: '0',
-      }
     },
   },
   plugins: [],

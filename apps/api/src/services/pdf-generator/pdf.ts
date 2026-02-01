@@ -4,14 +4,30 @@
  */
 
 import puppeteer from 'puppeteer'
+import { existsSync } from 'fs'
+
+/**
+ * Resolve the Chromium executable path.
+ * Uses PUPPETEER_EXECUTABLE_PATH if set and the file exists,
+ * otherwise falls back to Puppeteer's bundled browser.
+ */
+function resolveExecutablePath(): string | undefined {
+  const envPath = process.env.PUPPETEER_EXECUTABLE_PATH
+  if (envPath && existsSync(envPath)) {
+    return envPath
+  }
+  return undefined
+}
 
 /**
  * Render HTML content to PDF using Puppeteer
  */
 export async function renderHTMLToPDF(html: string): Promise<Buffer> {
+  const executablePath = resolveExecutablePath()
   const browser = await puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    ...(executablePath && { executablePath })
   })
 
   try {

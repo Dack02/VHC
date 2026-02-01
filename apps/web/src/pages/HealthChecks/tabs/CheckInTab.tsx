@@ -394,7 +394,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
 
   if (error && !data) {
     return (
-      <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-none">
+      <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
         <div className="flex items-center justify-between">
           <span>{error}</span>
           <button
@@ -402,7 +402,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
               setError(null)
               fetchData()
             }}
-            className="ml-4 px-3 py-1 text-sm bg-red-100 hover:bg-red-200 rounded-none"
+            className="ml-4 px-3 py-1 text-sm bg-red-100 hover:bg-red-200 rounded-lg"
           >
             Retry
           </button>
@@ -422,7 +422,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
     <div className="space-y-6">
       {/* Status Banner */}
       {data.checkedInAt && (
-        <div className="bg-green-50 border border-green-200 px-4 py-3 rounded-none">
+        <div className="bg-green-50 border border-green-200 px-4 py-3 rounded-lg">
           <div className="flex items-center gap-2">
             <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -437,25 +437,25 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
       )}
 
       {saving && (
-        <div className="fixed top-4 right-4 bg-blue-500 text-white px-3 py-1 rounded-none text-sm shadow-lg z-50">
+        <div className="fixed top-4 right-4 bg-blue-500 text-white px-3 py-1 rounded-lg text-sm shadow-lg z-50">
           Saving...
         </div>
       )}
 
       {/* Service Advisor Selector */}
-      <div className="bg-white border border-gray-200 rounded-none">
+      <div className="bg-white border border-gray-200 rounded-lg">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
           <h3 className="font-semibold text-gray-900">Service Advisor</h3>
         </div>
         <div className="p-4">
           {loadingAdvisors ? (
-            <div className="h-10 bg-gray-100 animate-pulse rounded-none"></div>
+            <div className="h-10 bg-gray-100 animate-pulse rounded-lg"></div>
           ) : (
             <select
               value={advisor?.id || ''}
               onChange={(e) => handleAdvisorChange(e.target.value)}
               disabled={savingAdvisor || isReadOnly}
-              className="w-full border border-gray-300 rounded-none px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100 disabled:cursor-not-allowed"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100 disabled:cursor-not-allowed"
             >
               <option value="">-- Select Advisor --</option>
               {eligibleAdvisors.map(u => (
@@ -472,7 +472,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
       </div>
 
       {/* Vehicle Details */}
-      <div className="bg-white border border-gray-200 rounded-none">
+      <div className="bg-white border border-gray-200 rounded-lg">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
           <h3 className="font-semibold text-gray-900">Vehicle Details</h3>
         </div>
@@ -501,7 +501,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
       </div>
 
       {/* Customer Details */}
-      <div className="bg-white border border-gray-200 rounded-none">
+      <div className="bg-white border border-gray-200 rounded-lg">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
           <h3 className="font-semibold text-gray-900">Customer Details</h3>
           {customer && canEdit && (
@@ -539,7 +539,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
       </div>
 
       {/* Check-In Form */}
-      <div className="bg-white border border-gray-200 rounded-none">
+      <div className="bg-white border border-gray-200 rounded-lg">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
           <h3 className="font-semibold text-gray-900">Check-In Information</h3>
         </div>
@@ -557,7 +557,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
                   checked={customerWaiting === true}
                   onChange={() => handleCustomerWaitingChange(true)}
                   disabled={isReadOnly}
-                  className="rounded-none border-gray-300"
+                  className="rounded-lg border-gray-300"
                 />
                 <span>Yes</span>
               </label>
@@ -568,7 +568,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
                   checked={customerWaiting === false}
                   onChange={() => handleCustomerWaitingChange(false)}
                   disabled={isReadOnly}
-                  className="rounded-none border-gray-300"
+                  className="rounded-lg border-gray-300"
                 />
                 <span>No</span>
               </label>
@@ -585,7 +585,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
               value={mileageIn}
               onChange={(e) => handleMileageChange(e.target.value)}
               disabled={isReadOnly}
-              className="w-full border border-gray-300 rounded-none px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
               placeholder="Enter current mileage"
             />
           </div>
@@ -600,7 +600,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
               value={timeRequired}
               onChange={(e) => handleTimeRequiredChange(e.target.value)}
               disabled={isReadOnly}
-              className="w-full border border-gray-300 rounded-none px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
             />
           </div>
 
@@ -613,7 +613,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
               value={keyLocation}
               onChange={(e) => handleKeyLocationChange(e.target.value)}
               disabled={isReadOnly}
-              className="w-full border border-gray-300 rounded-none px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
             >
               <option value="">Select location...</option>
               {KEY_LOCATIONS.map(loc => (
@@ -626,7 +626,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
                 value={customKeyLocation}
                 onChange={(e) => handleCustomKeyLocationChange(e.target.value)}
                 disabled={isReadOnly}
-                className="w-full mt-2 border border-gray-300 rounded-none px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
+                className="w-full mt-2 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
                 placeholder="Specify key location"
               />
             )}
@@ -642,7 +642,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
               onChange={(e) => handleNotesChange(e.target.value)}
               disabled={isReadOnly}
               rows={3}
-              className="w-full border border-gray-300 rounded-none px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
               placeholder="Any additional notes for this check-in..."
             />
             <label className="flex items-center gap-2 mt-2 cursor-pointer">
@@ -651,7 +651,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
                 checked={checkinNotesVisibleToTech}
                 onChange={(e) => handleNotesVisibleChange(e.target.checked)}
                 disabled={isReadOnly}
-                className="rounded-none border-gray-300"
+                className="rounded-lg border-gray-300"
               />
               <span className="text-sm text-gray-600">Show notes to technician</span>
             </label>
@@ -661,7 +661,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
 
       {/* Pre-booked Work */}
       {data.bookedRepairs && data.bookedRepairs.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-none">
+        <div className="bg-white border border-gray-200 rounded-lg">
           <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
             <h3 className="font-semibold text-gray-900">Pre-Booked Work (from DMS)</h3>
           </div>
@@ -687,7 +687,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
 
       {/* Loan Car Required */}
       {data.loanCarRequired && (
-        <div className="bg-amber-50 border border-amber-200 px-4 py-3 rounded-none">
+        <div className="bg-amber-50 border border-amber-200 px-4 py-3 rounded-lg">
           <div className="flex items-center gap-2">
             <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -706,7 +706,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
 
       {/* Error Display (inline, when data exists) */}
       {error && data && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-none">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
           <div className="flex items-center justify-between">
             <span>{error}</span>
             <button
@@ -729,7 +729,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
             <button
               onClick={() => setShowSkipModal(true)}
               disabled={skipping}
-              className="px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-none hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {skipping ? 'Skipping...' : 'Skip Check-In'}
             </button>
@@ -740,7 +740,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
           <button
             onClick={handleCompleteClick}
             disabled={completing}
-            className="px-6 py-2 bg-primary text-white font-medium rounded-none hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-6 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {completing ? 'Completing...' : 'Complete Check-In'}
           </button>

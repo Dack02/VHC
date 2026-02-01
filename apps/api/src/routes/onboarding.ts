@@ -213,6 +213,46 @@ onboarding.post('/first-site', async (c) => {
     return c.json({ error: 'Site name is required' }, 400)
   }
 
+  // Idempotency: check if an active site already exists for this org
+  const { data: existingSite } = await supabaseAdmin
+    .from('sites')
+    .select('*')
+    .eq('organization_id', organizationId)
+    .eq('is_active', true)
+    .limit(1)
+    .maybeSingle()
+
+  if (existingSite) {
+    // Site already exists - ensure user is assigned and step is updated
+    await supabaseAdmin
+      .from('users')
+      .update({
+        site_id: existingSite.id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', auth.user.id)
+      .is('site_id', null)
+
+    await supabaseAdmin
+      .from('organizations')
+      .update({
+        onboarding_step: 2,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', organizationId)
+
+    return c.json({
+      success: true,
+      site: {
+        id: existingSite.id,
+        name: existingSite.name,
+        address: existingSite.address,
+        phone: existingSite.phone,
+        email: existingSite.email
+      }
+    })
+  }
+
   let siteAddress = {
     address_line1: addressLine1,
     address_line2: addressLine2,

@@ -480,7 +480,7 @@ export default function DMSIntegration() {
 
       <div className="space-y-6">
         {/* Enable/Disable Toggle */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="px-6 py-4 flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">DMS Integration</h2>
@@ -501,7 +501,7 @@ export default function DMSIntegration() {
         </div>
 
         {/* Credentials Section */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="px-6 py-4 border-b border-gray-200">
             <h2 className="text-lg font-semibold text-gray-900">Connection Settings</h2>
             <p className="text-sm text-gray-500 mt-1">
@@ -593,7 +593,7 @@ export default function DMSIntegration() {
         </div>
 
         {/* Import Settings */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="px-6 py-4 border-b border-gray-200">
             <h2 className="text-lg font-semibold text-gray-900">Import Settings</h2>
             <p className="text-sm text-gray-500 mt-1">
@@ -623,7 +623,7 @@ export default function DMSIntegration() {
         </div>
 
         {/* Auto Import Schedule */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Automatic Import</h2>
@@ -733,7 +733,7 @@ export default function DMSIntegration() {
         </div>
 
         {/* Manual Import */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="px-6 py-4 border-b border-gray-200">
             <h2 className="text-lg font-semibold text-gray-900">Manual Import</h2>
             <p className="text-sm text-gray-500 mt-1">
@@ -772,7 +772,7 @@ export default function DMSIntegration() {
         </div>
 
         {/* Awaiting Arrival */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="px-6 py-4 border-b border-gray-200">
             <div className="flex items-center justify-between">
               <div>
@@ -882,7 +882,7 @@ export default function DMSIntegration() {
 
         {/* Import History */}
         {importHistory.length > 0 && (
-          <div className="bg-white border border-gray-200 shadow-sm">
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-900">Import History</h2>
               <p className="text-sm text-gray-500 mt-1">
@@ -1003,7 +1003,7 @@ export default function DMSIntegration() {
                     <p className="text-xs text-gray-500">Will Skip</p>
                   </div>
                   <div>
-                    <p className="text-2xl font-bold text-blue-600">{previewData.summary.alreadyImportedToday}</p>
+                    <p className="text-2xl font-bold text-primary">{previewData.summary.alreadyImportedToday}</p>
                     <p className="text-xs text-gray-500">Already Imported</p>
                   </div>
                 </div>

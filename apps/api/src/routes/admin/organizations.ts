@@ -402,14 +402,25 @@ adminOrgRoutes.get('/:id', async (c) => {
       hasCustomSmsCredentials: !!(org.organization_notification_settings[0].twilio_account_sid_encrypted),
       hasCustomEmailCredentials: !!(org.organization_notification_settings[0].resend_api_key_encrypted)
     } : null,
-    subscription: org.organization_subscriptions?.[0] ? {
-      id: org.organization_subscriptions[0].id,
-      planId: org.organization_subscriptions[0].plan_id,
-      plan: org.organization_subscriptions[0].plan,
-      status: org.organization_subscriptions[0].status,
-      currentPeriodStart: org.organization_subscriptions[0].current_period_start,
-      currentPeriodEnd: org.organization_subscriptions[0].current_period_end
-    } : null,
+    subscription: org.organization_subscriptions?.[0] ? (() => {
+      const sub = org.organization_subscriptions[0]
+      const planData = sub.plan as Record<string, unknown> | null
+      return {
+        id: sub.id,
+        planId: sub.plan_id,
+        planName: planData?.name || null,
+        plan: sub.plan,
+        status: sub.status,
+        currentPeriodStart: sub.current_period_start,
+        currentPeriodEnd: sub.current_period_end,
+        limits: planData ? {
+          maxSites: planData.max_sites || 0,
+          maxUsersPerSite: planData.max_users || 0,
+          maxHealthChecksPerMonth: planData.max_health_checks_per_month || 0,
+          maxStorageGb: planData.max_storage_gb || 0
+        } : null
+      }
+    })() : null,
     counts: {
       sites: sitesResult.count || 0,
       users: usersResult.count || 0,
@@ -784,47 +795,41 @@ adminOrgRoutes.get('/:id/usage', async (c) => {
   // Get current period
   const periodStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
 
-  const { data: usage, error } = await supabaseAdmin
-    .from('organization_usage')
-    .select('*')
-    .eq('organization_id', orgId)
-    .eq('period_start', periodStart)
-    .single()
+  // Parallel queries for usage, sites count, users count, and health checks this month
+  const [usageResult, sitesResult, usersResult, healthChecksResult] = await Promise.all([
+    supabaseAdmin
+      .from('organization_usage')
+      .select('*')
+      .eq('organization_id', orgId)
+      .eq('period_start', periodStart)
+      .single(),
+    supabaseAdmin
+      .from('sites')
+      .select('id', { count: 'exact' })
+      .eq('organization_id', orgId)
+      .eq('is_active', true),
+    supabaseAdmin
+      .from('users')
+      .select('id', { count: 'exact' })
+      .eq('organization_id', orgId)
+      .eq('is_active', true),
+    supabaseAdmin
+      .from('health_checks')
+      .select('id', { count: 'exact' })
+      .eq('organization_id', orgId)
+      .gte('created_at', periodStart)
+  ])
 
-  if (error && error.code !== 'PGRST116') {
-    return c.json({ error: error.message }, 500)
+  if (usageResult.error && usageResult.error.code !== 'PGRST116') {
+    return c.json({ error: usageResult.error.message }, 500)
   }
 
-  // Get subscription limits for comparison
-  const { data: subscription } = await supabaseAdmin
-    .from('organization_subscriptions')
-    .select('plan:subscription_plans(*)')
-    .eq('organization_id', orgId)
-    .single()
-
-  const planData = subscription?.plan
-  const plan = (Array.isArray(planData) ? planData[0] : planData) as Record<string, unknown> | null
-
+  // Return flat shape the frontend expects
   return c.json({
-    periodStart,
-    periodEnd: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString(),
-    usage: usage ? {
-      healthChecksCreated: usage.health_checks_created,
-      healthChecksCompleted: usage.health_checks_completed,
-      smsSent: usage.sms_sent,
-      emailsSent: usage.emails_sent,
-      storageUsedBytes: usage.storage_used_bytes
-    } : {
-      healthChecksCreated: 0,
-      healthChecksCompleted: 0,
-      smsSent: 0,
-      emailsSent: 0,
-      storageUsedBytes: 0
-    },
-    limits: plan ? {
-      maxHealthChecksPerMonth: plan.max_health_checks_per_month,
-      maxStorageGb: plan.max_storage_gb
-    } : null
+    sitesCount: sitesResult.count || 0,
+    usersCount: usersResult.count || 0,
+    healthChecksThisMonth: healthChecksResult.count || 0,
+    storageUsedBytes: usageResult.data?.storage_used_bytes || 0
   })
 })
 
@@ -860,6 +865,257 @@ adminOrgRoutes.get('/:id/usage/history', async (c) => {
       storageUsedBytes: period.storage_used_bytes
     }))
   })
+})
+
+/**
+ * GET /api/v1/admin/organizations/:id/sites
+ * List sites for an organization
+ */
+adminOrgRoutes.get('/:id/sites', async (c) => {
+  const orgId = c.req.param('id')
+
+  const { data: sites, error } = await supabaseAdmin
+    .from('sites')
+    .select(`
+      id,
+      name,
+      address,
+      is_active,
+      users:users(count)
+    `)
+    .eq('organization_id', orgId)
+    .order('name', { ascending: true })
+
+  if (error) {
+    return c.json({ error: error.message }, 500)
+  }
+
+  return c.json({
+    sites: (sites || []).map(site => ({
+      id: site.id,
+      name: site.name,
+      address: site.address,
+      isActive: site.is_active,
+      usersCount: site.users?.[0]?.count || 0
+    }))
+  })
+})
+
+/**
+ * GET /api/v1/admin/organizations/:id/users
+ * List users for an organization
+ */
+adminOrgRoutes.get('/:id/users', async (c) => {
+  const orgId = c.req.param('id')
+
+  const { data: users, error } = await supabaseAdmin
+    .from('users')
+    .select(`
+      id,
+      email,
+      first_name,
+      last_name,
+      role,
+      is_active,
+      last_login_at,
+      site:sites(name)
+    `)
+    .eq('organization_id', orgId)
+    .order('first_name', { ascending: true })
+
+  if (error) {
+    return c.json({ error: error.message }, 500)
+  }
+
+  return c.json({
+    users: (users || []).map(user => ({
+      id: user.id,
+      email: user.email,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      role: user.role,
+      isActive: user.is_active,
+      lastSignIn: user.last_login_at,
+      siteName: (user.site as unknown as { name: string } | null)?.name || null
+    }))
+  })
+})
+
+/**
+ * POST /api/v1/admin/organizations/:id/users
+ * Create a user in an organization (super admin — no user limit check)
+ */
+adminOrgRoutes.post('/:id/users', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const orgId = c.req.param('id')
+  const body = await c.req.json()
+
+  const {
+    email,
+    firstName,
+    lastName,
+    phone,
+    role = 'technician',
+    siteId
+  } = body
+
+  if (!email || !firstName || !lastName) {
+    return c.json({ error: 'Email, firstName, and lastName are required' }, 400)
+  }
+
+  // Validate role
+  const validRoles = ['org_admin', 'site_admin', 'service_advisor', 'technician']
+  if (!validRoles.includes(role)) {
+    return c.json({ error: 'Invalid role' }, 400)
+  }
+
+  // Verify org exists
+  const { data: org } = await supabaseAdmin
+    .from('organizations')
+    .select('id, name')
+    .eq('id', orgId)
+    .single()
+
+  if (!org) {
+    return c.json({ error: 'Organisation not found' }, 404)
+  }
+
+  // Validate site belongs to org if provided
+  if (siteId) {
+    const { data: site } = await supabaseAdmin
+      .from('sites')
+      .select('id')
+      .eq('id', siteId)
+      .eq('organization_id', orgId)
+      .single()
+
+    if (!site) {
+      return c.json({ error: 'Invalid site ID' }, 400)
+    }
+  }
+
+  // Check if email already exists in this organization
+  const { data: existingUser } = await supabaseAdmin
+    .from('users')
+    .select('id')
+    .eq('email', email)
+    .eq('organization_id', orgId)
+    .single()
+
+  if (existingUser) {
+    return c.json({ error: 'User with this email already exists in the organisation' }, 400)
+  }
+
+  try {
+    const tempPassword = crypto.randomBytes(16).toString('hex')
+
+    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password: tempPassword,
+      email_confirm: true,
+      user_metadata: {
+        first_name: firstName,
+        last_name: lastName
+      }
+    })
+
+    if (authError) {
+      // Handle user already existing in auth (might be in another org)
+      if (authError.message.includes('already been registered')) {
+        const { data: existingAuthUsers } = await supabaseAdmin.auth.admin.listUsers()
+        const existingAuth = existingAuthUsers?.users?.find(u => u.email === email)
+
+        if (existingAuth) {
+          const { data: user, error: userError } = await supabaseAdmin
+            .from('users')
+            .insert({
+              auth_id: existingAuth.id,
+              organization_id: orgId,
+              site_id: siteId || null,
+              email,
+              first_name: firstName,
+              last_name: lastName,
+              phone: phone || null,
+              role,
+              is_org_admin: role === 'org_admin',
+              is_site_admin: role === 'site_admin',
+              is_active: true
+            })
+            .select()
+            .single()
+
+          if (userError) {
+            return c.json({ error: userError.message }, 500)
+          }
+
+          await logSuperAdminActivity(
+            superAdmin.id,
+            'create_user',
+            'users',
+            user.id,
+            { email, organizationId: orgId, organizationName: org.name, role, note: 'Linked to existing auth account' },
+            c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+            c.req.header('User-Agent')
+          )
+
+          return c.json({
+            id: user.id,
+            email: user.email,
+            firstName: user.first_name,
+            lastName: user.last_name,
+            role: user.role,
+            note: 'User linked to existing auth account'
+          }, 201)
+        }
+      }
+      return c.json({ error: `Failed to create auth user: ${authError.message}` }, 500)
+    }
+
+    const { data: user, error: userError } = await supabaseAdmin
+      .from('users')
+      .insert({
+        auth_id: authData.user.id,
+        organization_id: orgId,
+        site_id: siteId || null,
+        email,
+        first_name: firstName,
+        last_name: lastName,
+        phone: phone || null,
+        role,
+        is_org_admin: role === 'org_admin',
+        is_site_admin: role === 'site_admin',
+        is_active: true
+      })
+      .select()
+      .single()
+
+    if (userError) {
+      await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
+      return c.json({ error: userError.message }, 500)
+    }
+
+    await logSuperAdminActivity(
+      superAdmin.id,
+      'create_user',
+      'users',
+      user.id,
+      { email, organizationId: orgId, organizationName: org.name, role },
+      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      c.req.header('User-Agent')
+    )
+
+    return c.json({
+      id: user.id,
+      email: user.email,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      role: user.role,
+      temporaryPassword: tempPassword
+    }, 201)
+  } catch (error) {
+    console.error('Admin user creation error:', error)
+    return c.json({ error: 'Failed to create user' }, 500)
+  }
 })
 
 // =============================================================================
@@ -997,18 +1253,25 @@ adminOrgRoutes.get('/:id/ai-settings', async (c) => {
       c.req.header('User-Agent')
     )
 
+    // Compute period end (last day of current period month)
+    const periodStartDate = new Date(currentPeriod.start)
+    const periodEnd = new Date(periodStartDate.getFullYear(), periodStartDate.getMonth() + 1, 0).toISOString().split('T')[0]
+
     return c.json({
+      id: settings.id,
       organizationId: orgId,
       organizationName: org.name,
-      monthlyGenerationLimit: settings.monthly_generation_limit,
+      aiEnabled: settings.is_ai_enabled,
+      monthlyLimit: settings.monthly_generation_limit,
       effectiveLimit,
-      isAiEnabled: settings.is_ai_enabled,
-      currentPeriod,
-      lifetime: {
-        generations: settings.total_generations || 0,
-        tokens: settings.total_tokens || 0,
-        costUsd: parseFloat(String(settings.total_cost_usd || 0))
-      }
+      currentPeriodGenerations: currentPeriod.generations,
+      currentPeriodTokens: currentPeriod.tokens,
+      currentPeriodCost: currentPeriod.costUsd,
+      periodStart: currentPeriod.start,
+      periodEnd,
+      lifetimeGenerations: settings.total_generations || 0,
+      lifetimeTokens: settings.total_tokens || 0,
+      lifetimeCost: parseFloat(String(settings.total_cost_usd || 0))
     })
   } catch (error) {
     console.error('Get org AI settings error:', error)
@@ -1027,7 +1290,9 @@ adminOrgRoutes.patch('/:id/ai-settings', async (c) => {
 
   try {
     const body = await c.req.json()
-    const { monthly_generation_limit, is_ai_enabled } = body
+    // Accept both camelCase (frontend) and snake_case field names
+    const monthlyLimit = body.monthlyLimit !== undefined ? body.monthlyLimit : body.monthly_generation_limit
+    const aiEnabled = body.aiEnabled !== undefined ? body.aiEnabled : body.is_ai_enabled
 
     // Verify org exists
     const { data: org } = await supabaseAdmin
@@ -1041,10 +1306,10 @@ adminOrgRoutes.patch('/:id/ai-settings', async (c) => {
     }
 
     // Validate limit
-    if (monthly_generation_limit !== undefined && monthly_generation_limit !== null) {
-      const limit = parseInt(monthly_generation_limit)
+    if (monthlyLimit !== undefined && monthlyLimit !== null) {
+      const limit = parseInt(monthlyLimit)
       if (isNaN(limit) || limit < 0) {
-        return c.json({ error: 'monthly_generation_limit must be a non-negative integer or null' }, 400)
+        return c.json({ error: 'monthlyLimit must be a non-negative integer or null' }, 400)
       }
     }
 
@@ -1056,11 +1321,11 @@ adminOrgRoutes.patch('/:id/ai-settings', async (c) => {
       updated_at: new Date().toISOString()
     }
 
-    if (monthly_generation_limit !== undefined) {
-      updateData.monthly_generation_limit = monthly_generation_limit === null ? null : parseInt(monthly_generation_limit)
+    if (monthlyLimit !== undefined) {
+      updateData.monthly_generation_limit = monthlyLimit === null ? null : parseInt(monthlyLimit)
     }
-    if (is_ai_enabled !== undefined) {
-      updateData.is_ai_enabled = is_ai_enabled
+    if (aiEnabled !== undefined) {
+      updateData.is_ai_enabled = aiEnabled
     }
 
     // Update

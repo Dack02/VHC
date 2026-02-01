@@ -202,7 +202,7 @@ function getCategoryColor(eventType: string): string {
 export function TimelineTab({ timeline }: TimelineTabProps) {
   if (timeline.length === 0) {
     return (
-      <div className="bg-white border border-gray-200 shadow-sm p-8 text-center text-gray-500">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-8 text-center text-gray-500">
         <svg className="w-12 h-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
@@ -213,7 +213,7 @@ export function TimelineTab({ timeline }: TimelineTabProps) {
   }
 
   return (
-    <div className="bg-white border border-gray-200 shadow-sm">
+    <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
       <div className="flow-root p-6">
         <ul className="-mb-8">
           {timeline.map((event, index) => {

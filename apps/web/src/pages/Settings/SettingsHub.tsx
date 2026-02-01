@@ -77,6 +77,18 @@ export default function SettingsHub() {
       roles: ['super_admin', 'org_admin']
     },
     {
+      to: '/settings/sites',
+      title: 'Sites',
+      description: 'Manage branches and locations',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin']
+    },
+    {
       to: '/settings/subscription',
       title: 'Subscription',
       description: 'View your current plan and usage',
@@ -348,7 +360,7 @@ export default function SettingsHub() {
               <Link
                 key={card.to}
                 to={card.to}
-                className="relative block bg-white border border-gray-200 rounded-none p-5 hover:border-primary hover:shadow-sm transition-all"
+                className="relative block bg-white border border-gray-200 rounded-xl p-5 hover:border-primary hover:shadow-sm transition-all"
               >
                 <div className="flex items-start space-x-4">
                   <div className="flex-shrink-0 text-gray-400">{card.icon}</div>
@@ -376,7 +388,7 @@ export default function SettingsHub() {
               <Link
                 key={card.to}
                 to={card.to}
-                className="block bg-white border border-gray-200 rounded-none p-5 hover:border-primary hover:shadow-sm transition-all"
+                className="block bg-white border border-gray-200 rounded-xl p-5 hover:border-primary hover:shadow-sm transition-all"
               >
                 <div className="flex items-start space-x-4">
                   <div className="flex-shrink-0 text-gray-400">{card.icon}</div>

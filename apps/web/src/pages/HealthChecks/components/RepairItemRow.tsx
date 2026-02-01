@@ -339,7 +339,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
             <div className="flex items-center gap-2">
               <span className="font-medium text-gray-900 truncate">{item.title}</span>
               {item.source === 'mri_scan' && (
-                <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-none">
+                <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-lg">
                   MRI
                 </span>
               )}
@@ -351,7 +351,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
               {hasOptions && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onManageOptions?.() }}
-                  className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-700 rounded-none hover:bg-indigo-200 cursor-pointer"
+                  className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 cursor-pointer"
                   title="Manage repair options"
                 >
                   {item.options!.length} OPTION{item.options!.length !== 1 ? 'S' : ''}
@@ -558,7 +558,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-medium text-gray-900">{item.title}</span>
                 {item.source === 'mri_scan' && (
-                  <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-none">
+                  <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded-lg">
                     MRI
                   </span>
                 )}
@@ -570,7 +570,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
                 {hasOptions && (
                   <button
                     onClick={(e) => { e.stopPropagation(); onManageOptions?.() }}
-                    className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-700 rounded-none hover:bg-indigo-200 cursor-pointer"
+                    className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 cursor-pointer"
                     title="Manage repair options"
                   >
                     {item.options!.length} OPTION{item.options!.length !== 1 ? 'S' : ''}
@@ -804,7 +804,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
           {result?.notes && (
             <div className="mb-3">
               <div className="text-xs font-medium text-gray-500 uppercase mb-1">Technician Notes</div>
-              <div className="text-sm text-gray-700 bg-white p-2 rounded border border-gray-200">
+              <div className="text-sm text-gray-700 bg-white p-2 rounded-xl border border-gray-200">
                 {result.notes}
               </div>
             </div>
@@ -838,7 +838,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
                 {item.options!.map(option => (
                   <div
                     key={option.id}
-                    className={`text-sm p-2 border rounded-none ${
+                    className={`text-sm p-2 border rounded-lg ${
                       item.selected_option_id === option.id
                         ? 'border-primary bg-primary/5'
                         : 'border-gray-200 bg-white'
@@ -847,10 +847,10 @@ export const RepairItemRow = React.memo(function RepairItemRow({
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{option.name}</span>
                       {item.selected_option_id === option.id && (
-                        <span className="px-1.5 py-0.5 text-xs font-medium text-primary bg-primary/10 rounded-none">SELECTED</span>
+                        <span className="px-1.5 py-0.5 text-xs font-medium text-primary bg-primary/10 rounded-lg">SELECTED</span>
                       )}
                       {option.isRecommended && (
-                        <span className="px-1.5 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded-none">RECOMMENDED</span>
+                        <span className="px-1.5 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded-lg">RECOMMENDED</span>
                       )}
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
@@ -862,7 +862,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
               {onManageOptions && (
                 <button
                   onClick={onManageOptions}
-                  className="mt-2 px-3 py-1.5 text-sm text-primary border border-primary rounded-none hover:bg-primary hover:text-white"
+                  className="mt-2 px-3 py-1.5 text-sm text-primary border border-primary rounded-lg hover:bg-primary hover:text-white"
                 >
                   Manage Options
                 </button>
@@ -872,7 +872,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
             <div className="mb-3">
               <button
                 onClick={onManageOptions}
-                className="px-3 py-1.5 text-sm text-gray-600 border border-dashed border-gray-300 rounded-none hover:border-primary hover:text-primary"
+                className="px-3 py-1.5 text-sm text-gray-600 border border-dashed border-gray-300 rounded-lg hover:border-primary hover:text-primary"
               >
                 + Add Repair Options
               </button>

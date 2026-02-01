@@ -146,7 +146,7 @@ adminStatsRoutes.get('/stats', async (c) => {
  * Get activity log (paginated)
  */
 adminStatsRoutes.get('/activity', async (c) => {
-  const { limit = '50', offset = '0', action, targetType, superAdminId } = c.req.query()
+  const { limit = '50', offset = '0', action, targetType, superAdminId, organizationId } = c.req.query()
 
   let query = supabaseAdmin
     .from('super_admin_activity_log')
@@ -164,6 +164,9 @@ adminStatsRoutes.get('/activity', async (c) => {
   }
   if (superAdminId) {
     query = query.eq('super_admin_id', superAdminId)
+  }
+  if (organizationId) {
+    query = query.or(`target_id.eq.${organizationId},details->>organizationId.eq.${organizationId}`)
   }
 
   // Apply pagination

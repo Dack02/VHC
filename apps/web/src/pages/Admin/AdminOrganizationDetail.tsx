@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useSuperAdmin } from '../../contexts/SuperAdminContext'
 import { api } from '../../lib/api'
+import AddUserToOrgModal from '../../components/admin/AddUserToOrgModal'
 
 interface Organization {
   id: string
@@ -44,6 +45,7 @@ interface User {
   lastName: string
   role: string
   isActive: boolean
+  lastSignIn: string | null
   siteName: string
 }
 
@@ -53,6 +55,7 @@ interface ActivityItem {
   entityType: string
   metadata: Record<string, unknown>
   performedByName: string
+  performedByEmail: string
   createdAt: string
 }
 
@@ -86,9 +89,13 @@ export default function AdminOrganizationDetail() {
   const [aiSettings, setAiSettings] = useState<AISettings | null>(null)
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const [loading, setLoading] = useState(true)
+  const [activityLoading, setActivityLoading] = useState(false)
+  const [activityPage, setActivityPage] = useState(1)
+  const [activityTotal, setActivityTotal] = useState(0)
   const [actionLoading, setActionLoading] = useState(false)
   const [aiSaving, setAiSaving] = useState(false)
   const [aiMessage, setAiMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [showAddUser, setShowAddUser] = useState(false)
 
   useEffect(() => {
     fetchOrganization()
@@ -100,6 +107,10 @@ export default function AdminOrganizationDetail() {
     if (activeTab === 'activity') fetchActivity()
     if (activeTab === 'ai') fetchAiSettings()
   }, [activeTab])
+
+  useEffect(() => {
+    if (activeTab === 'activity') fetchActivity(activityPage)
+  }, [activityPage])
 
   const fetchOrganization = async () => {
     if (!session?.accessToken || !id) return
@@ -138,13 +149,30 @@ export default function AdminOrganizationDetail() {
     }
   }
 
-  const fetchActivity = async () => {
+  const activityLimit = 20
+  const activityOffset = (activityPage - 1) * activityLimit
+
+  const fetchActivity = async (page?: number) => {
     if (!session?.accessToken || !id) return
+    const p = page ?? activityPage
+    const offset = (p - 1) * activityLimit
+    setActivityLoading(true)
     try {
-      const data = await api<{ activities: ActivityItem[] }>(`/api/v1/admin/activity?organizationId=${id}&limit=20`, { token: session.accessToken })
-      setActivity(data.activities || [])
+      const data = await api<{ activity: Array<{ id: string; action: string; targetType: string; details: Record<string, unknown>; createdAt: string; superAdmin: { name: string; email: string } | null }>; pagination: { total: number } }>(`/api/v1/admin/activity?organizationId=${id}&limit=${activityLimit}&offset=${offset}`, { token: session.accessToken })
+      setActivity((data.activity || []).map(a => ({
+        id: a.id,
+        action: a.action,
+        entityType: a.targetType,
+        metadata: a.details || {},
+        performedByName: a.superAdmin?.name || a.superAdmin?.email || 'System',
+        performedByEmail: a.superAdmin?.email || '',
+        createdAt: a.createdAt
+      })))
+      setActivityTotal(data.pagination?.total || 0)
     } catch (error) {
       console.error('Failed to fetch activity:', error)
+    } finally {
+      setActivityLoading(false)
     }
   }
 
@@ -207,13 +235,16 @@ export default function AdminOrganizationDetail() {
   }
 
   const handleSuspend = async () => {
-    if (!session?.accessToken || !id || !confirm('Are you sure you want to suspend this organization?')) return
+    if (!session?.accessToken || !id) return
+    const reason = window.prompt('Reason for suspension (optional):')
+    if (reason === null) return // User cancelled prompt
 
     setActionLoading(true)
     try {
       await api(`/api/v1/admin/organizations/${id}/suspend`, {
         method: 'POST',
-        token: session.accessToken
+        token: session.accessToken,
+        body: { reason: reason || 'No reason provided' }
       })
       fetchOrganization()
     } catch (error) {
@@ -241,17 +272,20 @@ export default function AdminOrganizationDetail() {
   }
 
   const handleImpersonate = async (userId: string) => {
-    if (!session?.accessToken || !confirm('Start impersonating this user?')) return
+    if (!session?.accessToken) return
+    const reason = window.prompt('Reason for impersonation (required):')
+    if (!reason) return // User cancelled or left empty
 
     try {
-      const data = await api<{ token: string; user: { email: string } }>(`/api/v1/admin/impersonate/${userId}`, {
+      const data = await api<{ success: boolean; impersonation: { originalSuperAdminId: string; originalSuperAdminEmail: string; reason: string; startedAt: string }; user: { id: string; email: string; firstName: string; lastName: string; role: string; organization: { id: string; name: string; slug: string } } }>(`/api/v1/admin/impersonate/${userId}`, {
         method: 'POST',
-        token: session.accessToken
+        token: session.accessToken,
+        body: { reason }
       })
       // Store impersonation session and redirect
       localStorage.setItem('vhc_impersonation', JSON.stringify({
-        token: data.token,
-        userEmail: data.user.email,
+        impersonation: data.impersonation,
+        user: data.user,
         returnUrl: window.location.pathname
       }))
       window.location.href = '/'
@@ -447,6 +481,22 @@ export default function AdminOrganizationDetail() {
       )}
 
       {activeTab === 'users' && (
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <button
+              onClick={() => setShowAddUser(true)}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium"
+            >
+              Add User
+            </button>
+          </div>
+          {showAddUser && id && (
+            <AddUserToOrgModal
+              organizationId={id}
+              onClose={() => setShowAddUser(false)}
+              onCreated={() => { setShowAddUser(false); fetchUsers() }}
+            />
+          )}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -454,6 +504,7 @@ export default function AdminOrganizationDetail() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">User</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Role</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Site</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Last Sign In</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>
@@ -461,7 +512,7 @@ export default function AdminOrganizationDetail() {
             <tbody className="divide-y divide-gray-200">
               {users.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">No users found</td>
+                  <td colSpan={6} className="px-6 py-8 text-center text-gray-500">No users found</td>
                 </tr>
               ) : (
                 users.map((user) => (
@@ -472,6 +523,11 @@ export default function AdminOrganizationDetail() {
                     </td>
                     <td className="px-6 py-4 text-gray-500 capitalize">{user.role.replace('_', ' ')}</td>
                     <td className="px-6 py-4 text-gray-500">{user.siteName || '-'}</td>
+                    <td className="px-6 py-4 text-sm text-gray-500">
+                      {user.lastSignIn
+                        ? new Date(user.lastSignIn).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                        : 'Never'}
+                    </td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
                         user.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
@@ -492,6 +548,7 @@ export default function AdminOrganizationDetail() {
               )}
             </tbody>
           </table>
+        </div>
         </div>
       )}
 
@@ -667,32 +724,133 @@ export default function AdminOrganizationDetail() {
       )}
 
       {activeTab === 'activity' && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-          <div className="divide-y divide-gray-100">
-            {activity.length === 0 ? (
-              <div className="px-6 py-8 text-center text-gray-500">No activity found</div>
-            ) : (
-              activity.map((item) => (
-                <div key={item.id} className="px-6 py-4">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          {activityLoading ? (
+            <div className="flex items-center justify-center h-64">
+              <div className="text-gray-500">Loading activity...</div>
+            </div>
+          ) : activity.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-64">
+              <svg className="w-12 h-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <p className="text-gray-500">No activity found</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {activity.map((item) => (
+                <div key={item.id} className="px-6 py-4 hover:bg-gray-50">
                   <div className="flex items-start justify-between">
-                    <div>
-                      <p className="text-sm text-gray-900">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${getActionColor(item.action)}`}>
+                          {formatActionLabel(item.action)}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {item.entityType}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-900 mt-1">
                         <span className="font-medium">{item.performedByName}</span>
-                        {' '}{item.action}
+                        {item.performedByEmail && (
+                          <span className="text-gray-500"> ({item.performedByEmail})</span>
+                        )}
                       </p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {item.entityType} • {new Date(item.createdAt).toLocaleString()}
-                      </p>
+                      {item.metadata && Object.keys(item.metadata).length > 0 && !isViewAction(item.action) && (
+                        <details className="mt-2">
+                          <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600">Details</summary>
+                          <div className="mt-1 text-xs text-gray-500 bg-gray-50 rounded p-2">
+                            <pre className="whitespace-pre-wrap">
+                              {JSON.stringify(item.metadata, null, 2)}
+                            </pre>
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500 ml-4 whitespace-nowrap">
+                      {new Date(item.createdAt).toLocaleString('en-GB')}
                     </div>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
+
+          {/* Pagination */}
+          {activityTotal > activityLimit && (
+            <div className="bg-white px-4 py-3 border-t border-gray-200 sm:px-6">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-gray-700">
+                  Showing <span className="font-medium">{activityOffset + 1}</span> to{' '}
+                  <span className="font-medium">{Math.min(activityOffset + activityLimit, activityTotal)}</span> of{' '}
+                  <span className="font-medium">{activityTotal}</span> results
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setActivityPage(p => p - 1)}
+                    disabled={activityPage === 1}
+                    className="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setActivityPage(p => p + 1)}
+                    disabled={activityPage >= Math.ceil(activityTotal / activityLimit)}
+                    className="px-3 py-1 border border-gray-300 rounded-md text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
   )
+}
+
+function formatActionLabel(action: string): string {
+  const labels: Record<string, string> = {
+    'view_organization': 'Viewed',
+    'list_organizations': 'Listed Orgs',
+    'create_organization': 'Created Org',
+    'update_organization': 'Updated Org',
+    'delete_organization': 'Deleted Org',
+    'suspend_organization': 'Suspended',
+    'activate_organization': 'Activated',
+    'update_subscription': 'Updated Plan',
+    'create_user': 'Created User',
+    'start_impersonation': 'Impersonation',
+    'end_impersonation': 'End Impersonation',
+    'view_platform_stats': 'Viewed Stats',
+    'update_plan': 'Updated Plan',
+    'view_org_ai_settings': 'Viewed AI Settings',
+    'update_org_ai_settings': 'Updated AI Settings',
+    'reset_org_ai_period': 'Reset AI Period',
+    'update_platform_settings': 'Updated Settings',
+    'update_platform_notifications': 'Updated Notifications',
+    'test_platform_sms': 'Tested SMS',
+    'test_platform_email': 'Tested Email',
+    'view_ai_settings': 'Viewed AI Settings',
+    'update_ai_settings': 'Updated AI Settings',
+    'test_ai_connection': 'Tested AI',
+  }
+  return labels[action] || action.replace(/_/g, ' ')
+}
+
+function getActionColor(action: string): string {
+  if (action.includes('create')) return 'bg-green-100 text-green-800'
+  if (action.includes('delete') || action.includes('suspend')) return 'bg-red-100 text-red-800'
+  if (action.includes('activate')) return 'bg-blue-100 text-blue-800'
+  if (action.includes('impersonat')) return 'bg-yellow-100 text-yellow-800'
+  if (action.includes('update') || action.includes('reset')) return 'bg-purple-100 text-purple-800'
+  if (action.includes('view') || action.includes('list')) return 'bg-gray-100 text-gray-800'
+  return 'bg-gray-100 text-gray-800'
+}
+
+function isViewAction(action: string): boolean {
+  return action.startsWith('view_') || action.startsWith('list_')
 }
 
 function UsageBar({ label, current, max, unit = '' }: { label: string; current: number; max: number; unit?: string }) {

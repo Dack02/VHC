@@ -146,7 +146,7 @@ export function RepairOptionsModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-none shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col">
+      <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 flex-shrink-0">
           <div>
@@ -167,7 +167,7 @@ export function RepairOptionsModal({
               <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
             </div>
           ) : error ? (
-            <div className="bg-red-50 text-red-700 p-3 rounded-none text-sm">{error}</div>
+            <div className="bg-red-50 text-red-700 p-3 rounded-lg text-sm">{error}</div>
           ) : (
             <div className="space-y-4">
               {options.length === 0 && !showAddForm ? (
@@ -180,7 +180,7 @@ export function RepairOptionsModal({
                   <p className="text-gray-500 mb-4">No options yet. Add repair options to offer choices like Standard vs Premium parts.</p>
                   <button
                     onClick={() => setShowAddForm(true)}
-                    className="px-4 py-2 bg-primary text-white rounded-none hover:bg-primary-dark"
+                    className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark"
                   >
                     Add First Option
                   </button>
@@ -191,14 +191,14 @@ export function RepairOptionsModal({
                   {options.map(option => (
                     <div
                       key={option.id}
-                      className="border border-gray-200 rounded-none p-4"
+                      className="border border-gray-200 rounded-lg p-4"
                     >
                       <div className="flex items-start justify-between mb-2">
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-gray-900">{option.name}</span>
                             {option.isRecommended && (
-                              <span className="px-2 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded-none">
+                              <span className="px-2 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded-lg">
                                 RECOMMENDED
                               </span>
                             )}
@@ -222,19 +222,19 @@ export function RepairOptionsModal({
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => handleSelectOption(option.id)}
-                          className="px-3 py-1.5 text-sm font-medium text-primary border border-primary rounded-none hover:bg-primary hover:text-white"
+                          className="px-3 py-1.5 text-sm font-medium text-primary border border-primary rounded-lg hover:bg-primary hover:text-white"
                         >
                           Select
                         </button>
                         <button
                           onClick={() => handleToggleRecommended(option)}
-                          className="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-none hover:bg-gray-50"
+                          className="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
                         >
                           {option.isRecommended ? 'Remove Recommended' : 'Mark Recommended'}
                         </button>
                         <button
                           onClick={() => handleDeleteOption(option.id)}
-                          className="px-3 py-1.5 text-sm text-red-600 border border-red-300 rounded-none hover:bg-red-50"
+                          className="px-3 py-1.5 text-sm text-red-600 border border-red-300 rounded-lg hover:bg-red-50"
                         >
                           Delete
                         </button>
@@ -244,7 +244,7 @@ export function RepairOptionsModal({
 
                   {/* Add option form */}
                   {showAddForm ? (
-                    <div className="border border-dashed border-gray-300 rounded-none p-4 space-y-3">
+                    <div className="border border-dashed border-gray-300 rounded-lg p-4 space-y-3">
                       <div className="text-sm font-medium text-gray-700">Add New Option</div>
                       <div>
                         <label className="block text-xs text-gray-500 mb-1">Name *</label>
@@ -252,7 +252,7 @@ export function RepairOptionsModal({
                           type="text"
                           value={newName}
                           onChange={e => setNewName(e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-none focus:outline-none focus:ring-1 focus:ring-primary text-sm"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-sm"
                           placeholder="e.g., Standard, Premium, Budget"
                         />
                       </div>
@@ -262,7 +262,7 @@ export function RepairOptionsModal({
                           type="text"
                           value={newDescription}
                           onChange={e => setNewDescription(e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-none focus:outline-none focus:ring-1 focus:ring-primary text-sm"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-sm"
                           placeholder="e.g., OEM quality parts with 12 month warranty"
                         />
                       </div>
@@ -271,7 +271,7 @@ export function RepairOptionsModal({
                           type="checkbox"
                           checked={newIsRecommended}
                           onChange={e => setNewIsRecommended(e.target.checked)}
-                          className="rounded-none text-primary focus:ring-primary"
+                          className="rounded-lg text-primary focus:ring-primary"
                         />
                         <span className="text-sm text-gray-700">Mark as recommended</span>
                       </label>
@@ -283,14 +283,14 @@ export function RepairOptionsModal({
                             setNewDescription('')
                             setNewIsRecommended(false)
                           }}
-                          className="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-none hover:bg-gray-50"
+                          className="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50"
                         >
                           Cancel
                         </button>
                         <button
                           onClick={handleAddOption}
                           disabled={addingOption || !newName.trim()}
-                          className="px-3 py-1.5 text-sm bg-primary text-white rounded-none hover:bg-primary-dark disabled:opacity-50"
+                          className="px-3 py-1.5 text-sm bg-primary text-white rounded-lg hover:bg-primary-dark disabled:opacity-50"
                         >
                           {addingOption ? 'Adding...' : 'Add Option'}
                         </button>
@@ -299,7 +299,7 @@ export function RepairOptionsModal({
                   ) : (
                     <button
                       onClick={() => setShowAddForm(true)}
-                      className="w-full py-3 border-2 border-dashed border-gray-300 text-sm text-gray-500 hover:border-primary hover:text-primary rounded-none"
+                      className="w-full py-3 border-2 border-dashed border-gray-300 text-sm text-gray-500 hover:border-primary hover:text-primary rounded-lg"
                     >
                       + Add Option
                     </button>
@@ -315,7 +315,7 @@ export function RepairOptionsModal({
           <p className="text-xs text-gray-400">Parts are managed inline in the Parts tab</p>
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-none hover:bg-gray-50"
+            className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
           >
             Close
           </button>

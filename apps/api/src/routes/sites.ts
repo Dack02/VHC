@@ -12,12 +12,18 @@ sites.use('*', authMiddleware)
 sites.get('/', async (c) => {
   try {
     const auth = c.get('auth')
+    const includeInactive = c.req.query('include_inactive') === 'true'
 
     let query = supabaseAdmin
       .from('sites')
-      .select('*')
+      .select('*, users:users(count), health_checks:health_checks(count)')
       .eq('organization_id', auth.orgId)
       .order('name')
+
+    // By default only show active sites
+    if (!includeInactive) {
+      query = query.eq('is_active', true)
+    }
 
     // Site-level users can only see their own site
     if (['site_admin', 'service_advisor', 'technician'].includes(auth.user.role) && auth.user.siteId) {
@@ -38,7 +44,11 @@ sites.get('/', async (c) => {
         phone: site.phone,
         email: site.email,
         settings: site.settings,
-        createdAt: site.created_at
+        isActive: site.is_active,
+        createdAt: site.created_at,
+        updatedAt: site.updated_at,
+        usersCount: site.users?.[0]?.count || 0,
+        healthChecksCount: site.health_checks?.[0]?.count || 0
       }))
     })
   } catch (error) {

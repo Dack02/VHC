@@ -100,12 +100,12 @@ export default function TemplateList() {
 
       <div className="grid gap-4">
         {templates.length === 0 ? (
-          <div className="bg-white border border-gray-200 shadow-sm p-8 text-center text-gray-500">
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-8 text-center text-gray-500">
             No templates found. Create your first template.
           </div>
         ) : (
           templates.map((template) => (
-            <div key={template.id} className="bg-white border border-gray-200 shadow-sm">
+            <div key={template.id} className="bg-white border border-gray-200 rounded-xl shadow-sm">
               <div className="p-4 flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-2">

@@ -176,7 +176,7 @@ export default function NewHealthCheck() {
       )}
 
       <form onSubmit={handleSubmit} className="max-w-2xl">
-        <div className="bg-white border border-gray-200 shadow-sm p-6 space-y-6">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-6">
           {/* Vehicle Selection */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -218,7 +218,7 @@ export default function NewHealthCheck() {
                   </div>
                 )}
                 {searchResults.length > 0 && (
-                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 shadow-lg max-h-60 overflow-auto">
+                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-auto">
                     {searchResults.map(vehicle => (
                       <button
                         key={vehicle.id}

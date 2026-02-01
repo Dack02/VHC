@@ -230,7 +230,7 @@ export function CustomerActivityTab({ healthCheckId }: CustomerActivityTabProps)
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {/* Views Card */}
-        <div className="bg-white border border-gray-200 p-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-blue-100 rounded">
               <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -256,7 +256,7 @@ export function CustomerActivityTab({ healthCheckId }: CustomerActivityTabProps)
         </div>
 
         {/* Response Status Card */}
-        <div className="bg-white border border-gray-200 p-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-3">
             <div className={`p-2 rounded ${
               summary.responseStatus === 'complete' ? 'bg-green-100' :
@@ -288,7 +288,7 @@ export function CustomerActivityTab({ healthCheckId }: CustomerActivityTabProps)
         </div>
 
         {/* Approved Card */}
-        <div className="bg-white border border-gray-200 p-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-green-100 rounded">
               <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -308,7 +308,7 @@ export function CustomerActivityTab({ healthCheckId }: CustomerActivityTabProps)
         </div>
 
         {/* Declined Card */}
-        <div className="bg-white border border-gray-200 p-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-red-100 rounded">
               <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -329,7 +329,7 @@ export function CustomerActivityTab({ healthCheckId }: CustomerActivityTabProps)
       </div>
 
       {/* Communications Section */}
-      <div className="bg-white border border-gray-200 shadow-sm">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
         <div className="px-4 py-3 border-b border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900">Communication History</h3>
         </div>
@@ -398,7 +398,7 @@ export function CustomerActivityTab({ healthCheckId }: CustomerActivityTabProps)
       </div>
 
       {/* Activity Timeline Section */}
-      <div className="bg-white border border-gray-200 shadow-sm">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
         <div className="px-4 py-3 border-b border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900">Customer Activity Timeline</h3>
         </div>
@@ -515,7 +515,7 @@ export function CustomerActivityTab({ healthCheckId }: CustomerActivityTabProps)
 
       {/* Status Changes by Customer */}
       {statusChanges.length > 0 && (
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="px-4 py-3 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900">Customer Decision Timeline</h3>
           </div>

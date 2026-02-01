@@ -92,7 +92,7 @@ export function CustomerEditModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-none shadow-xl max-w-md w-full mx-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200">
           <h2 className="text-xl font-semibold text-gray-900">Edit Customer Details</h2>
@@ -101,7 +101,7 @@ export function CustomerEditModal({
         {/* Content */}
         <div className="px-6 py-4">
           {error && (
-            <div className="mb-4 bg-red-50 border border-red-200 rounded-none p-3 text-red-700 text-sm">
+            <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">
               {error}
             </div>
           )}
@@ -117,7 +117,7 @@ export function CustomerEditModal({
                   type="text"
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
-                  className="w-full border border-gray-300 rounded-none px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
                   placeholder="First name"
                 />
               </div>
@@ -129,7 +129,7 @@ export function CustomerEditModal({
                   type="text"
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
-                  className="w-full border border-gray-300 rounded-none px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
                   placeholder="Last name"
                 />
               </div>
@@ -144,7 +144,7 @@ export function CustomerEditModal({
                 type="tel"
                 value={mobile}
                 onChange={(e) => setMobile(e.target.value)}
-                className="w-full border border-gray-300 rounded-none px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
                 placeholder="Enter mobile number"
               />
             </div>
@@ -158,7 +158,7 @@ export function CustomerEditModal({
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full border border-gray-300 rounded-none px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary"
                 placeholder="Enter email address"
               />
             </div>
@@ -170,14 +170,14 @@ export function CustomerEditModal({
           <button
             onClick={onClose}
             disabled={saving}
-            className="px-4 py-2 text-gray-700 border border-gray-300 rounded-none hover:bg-gray-50 disabled:opacity-50"
+            className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
-            className={`px-4 py-2 rounded-none font-medium ${
+            className={`px-4 py-2 rounded-lg font-medium ${
               saving
                 ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                 : 'bg-primary text-white hover:bg-primary-dark'

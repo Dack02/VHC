@@ -118,7 +118,7 @@ export default function WorkflowSettings() {
 
       <div className="max-w-2xl space-y-6">
         {/* Check-In Procedure Toggle */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="px-6 py-4 border-b border-gray-200">
             <div className="flex items-center justify-between">
               <div>
@@ -170,7 +170,7 @@ export default function WorkflowSettings() {
 
         {/* Check-In Form Options */}
         {settings.checkinEnabled && (
-          <div className="bg-white border border-gray-200 shadow-sm">
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-900">Check-In Form Options</h2>
               <p className="text-sm text-gray-500 mt-1">
@@ -231,7 +231,7 @@ export default function WorkflowSettings() {
 
         {/* Dashboard Alert Timeout */}
         {settings.checkinEnabled && (
-          <div className="bg-white border border-gray-200 shadow-sm">
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
             <div className="px-6 py-4 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-900">Dashboard Alert Timeout</h2>
               <p className="text-sm text-gray-500 mt-1">

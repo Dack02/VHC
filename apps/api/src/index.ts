@@ -37,6 +37,7 @@ import orgNotificationSettings from './routes/organization-notification-settings
 import orgAdmin from './routes/org-admin.js'
 import onboarding from './routes/onboarding.js'
 import dashboard from './routes/dashboard.js'
+import dashboardToday from './routes/dashboard-today.js'
 import reports from './routes/reports.js'
 import reasons from './routes/reasons/index.js'
 import labourCodes from './routes/labour-codes.js'
@@ -53,6 +54,7 @@ import vehicleLocations from './routes/vehicle-locations.js'
 // Services
 import { initializeWebSocket } from './services/websocket.js'
 import { checkRedisConnection, updateRedisStatus } from './services/queue.js'
+import { startScheduledCleanupTasks } from './services/scheduler.js'
 
 const app = new Hono()
 
@@ -149,7 +151,8 @@ app.route('/api/v1/organizations', orgAdmin)
 // Onboarding routes (for new organizations)
 app.route('/api/v1/onboarding', onboarding)
 
-// Dashboard routes
+// Dashboard routes (today must be mounted before general dashboard to avoid path conflicts)
+app.route('/api/v1/dashboard/today', dashboardToday)
 app.route('/api/v1/dashboard', dashboard)
 
 // Reporting routes
@@ -211,6 +214,9 @@ checkRedisConnection().then((connected) => {
     logger.info('Redis not available - processing notifications directly')
   }
 })
+
+// Start daily cleanup tasks (activity log retention, etc.)
+startScheduledCleanupTasks()
 
 logger.info(`Server started`, { port, environment: process.env.NODE_ENV || 'development' })
 

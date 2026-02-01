@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 :root {
-  --color-primary: #1e40af;
-  --color-primary-dark: #1e3a8a;
+  --color-primary: #4F46E5;
+  --color-primary-dark: #4338CA;
   --color-rag-green: #16a34a;
   --color-rag-green-bg: #dcfce7;
   --color-rag-amber: #ca8a04;
@@ -15,13 +15,4 @@
 
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-}
-
-/* Square edges for automotive aesthetic */
-.btn {
-  border-radius: 0;
-}
-
-.card {
-  border-radius: 0;
 }

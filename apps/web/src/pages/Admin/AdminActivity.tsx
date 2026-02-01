@@ -72,14 +72,16 @@ export default function AdminActivity() {
 
   const actionTypes = [
     { value: '', label: 'All Actions' },
-    { value: 'org.created', label: 'Organisation Created' },
-    { value: 'org.updated', label: 'Organisation Updated' },
-    { value: 'org.suspended', label: 'Organisation Suspended' },
-    { value: 'org.activated', label: 'Organisation Activated' },
-    { value: 'user.created', label: 'User Created' },
-    { value: 'user.updated', label: 'User Updated' },
-    { value: 'impersonation.started', label: 'Impersonation Started' },
-    { value: 'impersonation.ended', label: 'Impersonation Ended' }
+    { value: 'create_organization', label: 'Organisation Created' },
+    { value: 'update_organization', label: 'Organisation Updated' },
+    { value: 'suspend_organization', label: 'Organisation Suspended' },
+    { value: 'activate_organization', label: 'Organisation Activated' },
+    { value: 'delete_organization', label: 'Organisation Deleted' },
+    { value: 'create_user', label: 'User Created' },
+    { value: 'start_impersonation', label: 'Impersonation Started' },
+    { value: 'end_impersonation', label: 'Impersonation Ended' },
+    { value: 'view_organization', label: 'Organisation Viewed' },
+    { value: 'update_subscription', label: 'Subscription Updated' },
   ]
 
   return (
@@ -204,23 +206,39 @@ export default function AdminActivity() {
 
 function formatActionLabel(action: string): string {
   const labels: Record<string, string> = {
-    'org.created': 'Created',
-    'org.updated': 'Updated',
-    'org.suspended': 'Suspended',
-    'org.activated': 'Activated',
-    'user.created': 'User Created',
-    'user.updated': 'User Updated',
-    'impersonation.started': 'Impersonation',
-    'impersonation.ended': 'End Impersonation'
+    'view_organization': 'Viewed',
+    'list_organizations': 'Listed Orgs',
+    'create_organization': 'Created Org',
+    'update_organization': 'Updated Org',
+    'delete_organization': 'Deleted Org',
+    'suspend_organization': 'Suspended',
+    'activate_organization': 'Activated',
+    'update_subscription': 'Updated Plan',
+    'create_user': 'Created User',
+    'start_impersonation': 'Impersonation',
+    'end_impersonation': 'End Impersonation',
+    'view_platform_stats': 'Viewed Stats',
+    'update_plan': 'Updated Plan',
+    'view_org_ai_settings': 'Viewed AI Settings',
+    'update_org_ai_settings': 'Updated AI Settings',
+    'reset_org_ai_period': 'Reset AI Period',
+    'update_platform_settings': 'Updated Settings',
+    'update_platform_notifications': 'Updated Notifications',
+    'test_platform_sms': 'Tested SMS',
+    'test_platform_email': 'Tested Email',
+    'view_ai_settings': 'Viewed AI Settings',
+    'update_ai_settings': 'Updated AI Settings',
+    'test_ai_connection': 'Tested AI',
   }
-  return labels[action] || action
+  return labels[action] || action.replace(/_/g, ' ')
 }
 
 function getActionColor(action: string): string {
-  if (action.includes('created')) return 'bg-green-100 text-green-800'
-  if (action.includes('suspended')) return 'bg-red-100 text-red-800'
-  if (action.includes('activated')) return 'bg-blue-100 text-blue-800'
-  if (action.includes('impersonation')) return 'bg-yellow-100 text-yellow-800'
-  if (action.includes('updated')) return 'bg-purple-100 text-purple-800'
+  if (action.includes('create')) return 'bg-green-100 text-green-800'
+  if (action.includes('delete') || action.includes('suspend')) return 'bg-red-100 text-red-800'
+  if (action.includes('activate')) return 'bg-blue-100 text-blue-800'
+  if (action.includes('impersonat')) return 'bg-yellow-100 text-yellow-800'
+  if (action.includes('update') || action.includes('reset')) return 'bg-purple-100 text-purple-800'
+  if (action.includes('view') || action.includes('list')) return 'bg-gray-100 text-gray-800'
   return 'bg-gray-100 text-gray-800'
 }

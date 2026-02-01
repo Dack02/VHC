@@ -38,7 +38,7 @@ const defaultBranding: OrganizationBranding = {
   logoUrl: null,
   logoDarkUrl: null,
   faviconUrl: null,
-  primaryColor: '#3B82F6', // Default blue
+  primaryColor: '#4F46E5', // Default indigo
   secondaryColor: '#10B981', // Default green
   organizationName: 'VHC',
   legalName: null,

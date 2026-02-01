@@ -434,7 +434,7 @@ export default function Dashboard() {
           {dmsEnabled && (
             <button
               onClick={() => setShowDmsModal(true)}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 flex items-center gap-2"
+              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 rounded-lg flex items-center gap-2"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -444,13 +444,19 @@ export default function Dashboard() {
           )}
           <Link
             to="/health-checks"
-            className="px-4 py-2 bg-primary text-white text-sm font-medium hover:bg-primary/90"
+            className="px-4 py-2 bg-primary text-white text-sm font-medium hover:bg-primary/90 rounded-lg"
           >
             Kanban Board
           </Link>
           <Link
+            to="/today"
+            className="px-4 py-2 bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 rounded-lg"
+          >
+            Today
+          </Link>
+          <Link
             to="/reports"
-            className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200"
+            className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200 rounded-lg"
           >
             Reports
           </Link>
@@ -466,27 +472,27 @@ export default function Dashboard() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-3xl font-bold text-gray-900">{data?.metrics.totalToday || 0}</div>
           <div className="text-sm text-gray-500 mt-1">Total</div>
         </div>
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-3xl font-bold text-rag-green">{data?.metrics.completedToday || 0}</div>
           <div className="text-sm text-gray-500 mt-1">Completed</div>
         </div>
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-3xl font-bold text-primary">{data?.metrics.conversionRate || 0}%</div>
           <div className="text-sm text-gray-500 mt-1">Conversion Rate</div>
         </div>
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-3xl font-bold text-gray-900">{data?.metrics.avgResponseTimeMinutes || 0}m</div>
           <div className="text-sm text-gray-500 mt-1">Avg Response</div>
         </div>
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-xl font-bold text-rag-green">{formatCurrency(data?.metrics.totalValueAuthorized || 0)}</div>
           <div className="text-sm text-gray-500 mt-1">Authorized</div>
         </div>
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-xl font-bold text-rag-red">{formatCurrency(data?.metrics.totalValueDeclined || 0)}</div>
           <div className="text-sm text-gray-500 mt-1">Declined</div>
         </div>
@@ -514,7 +520,7 @@ export default function Dashboard() {
 
       {/* Check-In Required Section */}
       {awaitingCheckin.length > 0 && (
-        <div className="bg-white border-2 border-red-400 shadow-sm">
+        <div className="bg-white border-2 border-red-400 rounded-xl shadow-sm overflow-hidden">
           <div className="border-b border-red-200 p-4 flex items-center justify-between bg-red-50">
             <div className="flex items-center gap-3">
               <span className="animate-pulse">
@@ -561,11 +567,11 @@ export default function Dashboard() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
                       <div className="flex flex-col items-center gap-1">
-                        <div className="font-mono font-semibold text-gray-900 bg-red-100 px-2 py-1 border border-red-300">
+                        <div className="font-mono font-semibold text-gray-900 bg-yellow-50 px-2.5 py-1 border border-gray-300 rounded-lg text-sm">
                           {item.registration}
                         </div>
                         {item.customerWaiting && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold text-white bg-red-600 animate-pulse">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold text-white bg-red-600 rounded-full animate-pulse">
                             WAITING
                           </span>
                         )}
@@ -596,7 +602,7 @@ export default function Dashboard() {
                           {isValidDate ? `Arrived ${arrivedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Awaiting arrival'}
                         </div>
                       </div>
-                      <span className="px-3 py-1.5 bg-red-600 text-white text-sm font-bold rounded-none">
+                      <span className="px-3 py-1.5 bg-red-600 text-white text-sm font-bold rounded-lg">
                         CHECK IN
                       </span>
                     </div>
@@ -610,23 +616,23 @@ export default function Dashboard() {
 
       {/* Board Column Summary */}
       <div className="grid grid-cols-5 gap-4">
-        <Link to="/health-checks" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
+        <Link to="/health-checks" className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 hover:border-primary transition-colors">
           <div className="text-2xl font-bold text-gray-900">{data?.columnCounts.technician || 0}</div>
           <div className="text-sm text-gray-500">Technician Queue</div>
         </Link>
-        <Link to="/health-checks" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
+        <Link to="/health-checks" className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 hover:border-primary transition-colors">
           <div className="text-2xl font-bold text-rag-amber">{data?.columnCounts.tech_done || 0}</div>
           <div className="text-sm text-gray-500">Tech Done / Review</div>
         </Link>
-        <Link to="/health-checks" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
+        <Link to="/health-checks" className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 hover:border-primary transition-colors">
           <div className="text-2xl font-bold text-primary">{data?.columnCounts.advisor || 0}</div>
           <div className="text-sm text-gray-500">Ready to Send</div>
         </Link>
-        <Link to="/health-checks" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
+        <Link to="/health-checks" className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 hover:border-primary transition-colors">
           <div className="text-2xl font-bold text-purple-600">{data?.columnCounts.customer || 0}</div>
           <div className="text-sm text-gray-500">With Customer</div>
         </Link>
-        <Link to="/health-checks" className="bg-white border border-gray-200 shadow-sm p-4 hover:border-primary transition-colors">
+        <Link to="/health-checks" className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 hover:border-primary transition-colors">
           <div className="text-2xl font-bold text-rag-green">{data?.columnCounts.actioned || 0}</div>
           <div className="text-sm text-gray-500">Actioned</div>
         </Link>
@@ -635,7 +641,7 @@ export default function Dashboard() {
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Needs Attention Queue */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="border-b border-gray-200 p-4 flex items-center justify-between bg-rag-red-bg">
             <h2 className="font-semibold text-rag-red">Needs Attention</h2>
             <span className="bg-rag-red text-white px-2 py-0.5 text-sm font-medium">
@@ -671,7 +677,7 @@ export default function Dashboard() {
         </div>
 
         {/* Technician Workload */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="border-b border-gray-200 p-4 flex items-center justify-between">
             <h2 className="font-semibold text-gray-900">Technician Workload</h2>
             <Link to="/dashboard/technicians" className="text-sm text-primary hover:underline">
@@ -710,7 +716,7 @@ export default function Dashboard() {
         </div>
 
         {/* Customer Queue */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="border-b border-gray-200 p-4 flex items-center justify-between bg-purple-50">
             <h2 className="font-semibold text-purple-700">With Customer</h2>
             <span className="bg-purple-600 text-white px-2 py-0.5 text-sm font-medium">
@@ -750,7 +756,7 @@ export default function Dashboard() {
       </div>
 
       {/* Quick Stats */}
-      <div className="bg-white border border-gray-200 shadow-sm p-6">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
         <h2 className="text-lg font-semibold mb-4">Status Breakdown</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
           {Object.entries(data?.statusCounts || {}).map(([status, count]) => (
@@ -764,7 +770,7 @@ export default function Dashboard() {
 
       {/* Awaiting Arrival Section (DMS Imports) */}
       {awaitingArrival.length > 0 && (
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="border-b border-gray-200 p-4 flex items-center justify-between bg-blue-50">
             <div>
               <h2 className="font-semibold text-primary">Awaiting Arrival</h2>
@@ -792,12 +798,12 @@ export default function Dashboard() {
                 <Link to={`/health-checks/${item.id}`} className="flex-1 min-w-0">
                   <div className="flex items-center gap-4">
                     <div className="flex flex-col items-center gap-1">
-                      <div className="font-mono font-semibold text-gray-900 bg-yellow-100 px-2 py-1">
+                      <div className="font-mono font-semibold text-gray-900 bg-yellow-50 px-2.5 py-1 border border-gray-300 rounded-lg text-sm">
                         {item.registration}
                       </div>
                       {/* Customer Waiting Badge - Phase 1 Quick Wins */}
                       {item.customerWaiting && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold text-white bg-red-600 animate-pulse">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold text-white bg-red-600 rounded-full animate-pulse">
                           <span className="w-2 h-2 bg-white rounded-full"></span>
                           WAITING
                         </span>
@@ -808,7 +814,7 @@ export default function Dashboard() {
                         {item.make} {item.model}
                         {/* Loan Car Indicator - Phase 1 Quick Wins */}
                         {item.loanCarRequired && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium text-blue-700 bg-blue-100" title="Loan car required">
+                          <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium text-blue-700 bg-blue-100 rounded-full" title="Loan car required">
                             <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z" />
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
@@ -838,14 +844,14 @@ export default function Dashboard() {
                 <div className="flex items-center gap-2 ml-4">
                   <button
                     onClick={() => handleMarkArrived(item.id)}
-                    className="px-3 py-1.5 bg-rag-green text-white text-sm font-medium hover:bg-rag-green/90"
+                    className="px-3 py-1.5 bg-rag-green text-white text-sm font-medium rounded-lg hover:bg-rag-green/90"
                     title="Mark vehicle as arrived"
                   >
                     Arrived
                   </button>
                   <button
                     onClick={() => handleMarkNoShow(item.id)}
-                    className="px-3 py-1.5 bg-gray-500 text-white text-sm font-medium hover:bg-gray-600"
+                    className="px-3 py-1.5 bg-gray-500 text-white text-sm font-medium rounded-lg hover:bg-gray-600"
                     title="Mark as no-show"
                   >
                     No Show

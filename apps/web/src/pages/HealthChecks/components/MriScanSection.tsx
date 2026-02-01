@@ -247,7 +247,7 @@ export function MriScanSection({ healthCheckId, isReadOnly = false, onComplete }
 
   if (loading) {
     return (
-      <div className="bg-white border border-gray-200 rounded-none p-6">
+      <div className="bg-white border border-gray-200 rounded-lg p-6">
         <div className="flex items-center justify-center py-8">
           <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full"></div>
           <span className="ml-2 text-gray-500">Loading MRI items...</span>
@@ -258,7 +258,7 @@ export function MriScanSection({ healthCheckId, isReadOnly = false, onComplete }
 
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-none">
+      <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -268,7 +268,7 @@ export function MriScanSection({ healthCheckId, isReadOnly = false, onComplete }
           </div>
           <button
             onClick={fetchData}
-            className="px-3 py-1 text-sm bg-red-100 hover:bg-red-200 rounded-none font-medium"
+            className="px-3 py-1 text-sm bg-red-100 hover:bg-red-200 rounded-lg font-medium"
           >
             Retry
           </button>
@@ -279,7 +279,7 @@ export function MriScanSection({ healthCheckId, isReadOnly = false, onComplete }
 
   if (!data || Object.keys(data.items).length === 0) {
     return (
-      <div className="bg-white border border-gray-200 rounded-none">
+      <div className="bg-white border border-gray-200 rounded-lg">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
           <h3 className="font-semibold text-gray-900">MRI Scan</h3>
         </div>
@@ -300,7 +300,7 @@ export function MriScanSection({ healthCheckId, isReadOnly = false, onComplete }
   const categories = Object.keys(items)
 
   return (
-    <div className="bg-white border border-gray-200 rounded-none">
+    <div className="bg-white border border-gray-200 rounded-lg">
       {/* Header */}
       <div
         className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between cursor-pointer"
@@ -309,7 +309,7 @@ export function MriScanSection({ healthCheckId, isReadOnly = false, onComplete }
         <div className="flex items-center gap-3">
           <h3 className="font-semibold text-gray-900">MRI Scan</h3>
           {isMriComplete && (
-            <span className="px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded-none">
+            <span className="px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded-lg">
               Complete
             </span>
           )}
@@ -385,7 +385,7 @@ export function MriScanSection({ healthCheckId, isReadOnly = false, onComplete }
               <button
                 onClick={handleComplete}
                 disabled={completing || progress.completed === 0}
-                className="px-6 py-2 bg-primary text-white font-medium rounded-none hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-6 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {completing ? 'Completing...' : 'Complete MRI Scan'}
               </button>
@@ -421,7 +421,7 @@ function MriItemCard({ item, isReadOnly, onUpdate }: MriItemCardProps) {
   const ragColor = ragStatus ? RAG_COLORS[ragStatus] : null
 
   return (
-    <div className={`border rounded-none p-4 ${hasResult ? 'border-gray-300 bg-white' : 'border-gray-200 bg-gray-50'}`}>
+    <div className={`border rounded-lg p-4 ${hasResult ? 'border-gray-300 bg-white' : 'border-gray-200 bg-gray-50'}`}>
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-2">
           {hasResult ? (
@@ -439,11 +439,11 @@ function MriItemCard({ item, isReadOnly, onUpdate }: MriItemCardProps) {
           )}
           <span className="font-medium text-gray-900">{item.name}</span>
           {item.isInformational && (
-            <span className="px-2 py-0.5 text-xs bg-gray-100 text-gray-500 rounded-none">Info only</span>
+            <span className="px-2 py-0.5 text-xs bg-gray-100 text-gray-500 rounded-lg">Info only</span>
           )}
         </div>
         {ragColor && (
-          <span className={`px-2 py-1 text-xs font-medium ${ragColor.bg} ${ragColor.text} rounded-none`}>
+          <span className={`px-2 py-1 text-xs font-medium ${ragColor.bg} ${ragColor.text} rounded-lg`}>
             {ragColor.label}
           </span>
         )}
@@ -538,7 +538,7 @@ function DateMileageFields({ item, isReadOnly, onUpdate }: DateMileageFieldsProp
               value={result?.nextDueDate || ''}
               onChange={(e) => onUpdate({ nextDueDate: e.target.value || null })}
               disabled={isReadOnly || dateNa}
-              className={`flex-1 border border-gray-300 rounded-none px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100 ${dateNa ? 'opacity-50' : ''}`}
+              className={`flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100 ${dateNa ? 'opacity-50' : ''}`}
             />
             <label className="flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap cursor-pointer">
               <input
@@ -546,7 +546,7 @@ function DateMileageFields({ item, isReadOnly, onUpdate }: DateMileageFieldsProp
                 checked={dateNa}
                 onChange={(e) => handleDateNaChange(e.target.checked)}
                 disabled={isReadOnly}
-                className="rounded-none"
+                className="rounded-lg"
               />
               N/A
             </label>
@@ -561,7 +561,7 @@ function DateMileageFields({ item, isReadOnly, onUpdate }: DateMileageFieldsProp
               onChange={(e) => onUpdate({ nextDueMileage: e.target.value ? parseInt(e.target.value, 10) : null })}
               disabled={isReadOnly || mileageNa}
               placeholder="e.g., 120000"
-              className={`flex-1 border border-gray-300 rounded-none px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100 ${mileageNa ? 'opacity-50' : ''}`}
+              className={`flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100 ${mileageNa ? 'opacity-50' : ''}`}
             />
             <label className="flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap cursor-pointer">
               <input
@@ -569,7 +569,7 @@ function DateMileageFields({ item, isReadOnly, onUpdate }: DateMileageFieldsProp
                 checked={mileageNa}
                 onChange={(e) => handleMileageNaChange(e.target.checked)}
                 disabled={isReadOnly}
-                className="rounded-none"
+                className="rounded-lg"
               />
               N/A
             </label>
@@ -606,7 +606,7 @@ function DateMileageFields({ item, isReadOnly, onUpdate }: DateMileageFieldsProp
           />
           <span className="text-sm text-gray-700">Due if not already replaced</span>
           {!item.isInformational && item.severityWhenDue && (
-            <span className={`px-1.5 py-0.5 text-xs ${RAG_COLORS[item.severityWhenDue]?.bg} ${RAG_COLORS[item.severityWhenDue]?.text} rounded-none`}>
+            <span className={`px-1.5 py-0.5 text-xs ${RAG_COLORS[item.severityWhenDue]?.bg} ${RAG_COLORS[item.severityWhenDue]?.text} rounded-lg`}>
               {item.severityWhenDue.toUpperCase()}
             </span>
           )}
@@ -624,7 +624,7 @@ function DateMileageFields({ item, isReadOnly, onUpdate }: DateMileageFieldsProp
           />
           <span className="text-sm text-gray-700">Recommended this visit</span>
           {!item.isInformational && item.severityWhenDue && (
-            <span className={`px-1.5 py-0.5 text-xs ${RAG_COLORS[item.severityWhenDue]?.bg} ${RAG_COLORS[item.severityWhenDue]?.text} rounded-none`}>
+            <span className={`px-1.5 py-0.5 text-xs ${RAG_COLORS[item.severityWhenDue]?.bg} ${RAG_COLORS[item.severityWhenDue]?.text} rounded-lg`}>
               {item.severityWhenDue.toUpperCase()}
             </span>
           )}
@@ -655,7 +655,7 @@ function YesNoFields({ item, isReadOnly, onUpdate }: YesNoFieldsProps) {
             onUpdate({ yesNoValue: value === '' ? null : value === 'yes' })
           }}
           disabled={isReadOnly}
-          className="w-full border border-gray-300 rounded-none px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
         >
           <option value="">Select...</option>
           <option value="yes">Yes</option>
@@ -680,7 +680,7 @@ function YesNoFields({ item, isReadOnly, onUpdate }: YesNoFieldsProps) {
           disabled={isReadOnly}
           rows={2}
           placeholder="Additional notes..."
-          className="w-full border border-gray-300 rounded-none px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
         />
       </div>
     </div>

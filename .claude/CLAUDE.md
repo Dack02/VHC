@@ -109,9 +109,22 @@ type RagStatus = 'red' | 'amber' | 'green' | 'na'
 ```
 
 ## Styling Convention
-Automotive aesthetic - square edges, no rounded corners:
+Modern, clean aesthetic with indigo primary color and rounded corners:
 ```tsx
-className="rounded-none"  // Apply to buttons, cards, inputs
+// Cards/containers: rounded-xl
+className="bg-white border border-gray-200 rounded-xl shadow-sm"
+
+// Buttons: rounded-lg
+className="px-4 py-2 bg-primary text-white rounded-lg"
+
+// Inputs/selects: rounded-lg
+className="border border-gray-300 rounded-lg px-3 py-2"
+
+// Badges/pills: rounded-full
+className="px-2 py-0.5 rounded-full text-xs font-medium"
+
+// Modals: rounded-xl
+className="bg-white rounded-xl shadow-xl"
 ```
 
 ## Error Handling

@@ -102,19 +102,19 @@ export default function TechnicianWorkload() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-4 gap-4">
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-3xl font-bold text-gray-900">{data?.summary.total || 0}</div>
           <div className="text-sm text-gray-500 mt-1">Total Technicians</div>
         </div>
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-3xl font-bold text-rag-green">{data?.summary.working || 0}</div>
           <div className="text-sm text-gray-500 mt-1">Working</div>
         </div>
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-3xl font-bold text-rag-amber">{data?.summary.available || 0}</div>
           <div className="text-sm text-gray-500 mt-1">Available</div>
         </div>
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-3xl font-bold text-gray-400">{data?.summary.idle || 0}</div>
           <div className="text-sm text-gray-500 mt-1">Not Clocked In</div>
         </div>
@@ -200,7 +200,7 @@ export default function TechnicianWorkload() {
       </div>
 
       {data?.technicians.length === 0 && (
-        <div className="bg-white border border-gray-200 p-8 text-center text-gray-500">
+        <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-gray-500">
           No technicians found in your organization
         </div>
       )}

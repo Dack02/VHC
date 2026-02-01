@@ -132,7 +132,7 @@ export function PricingTab({ healthCheckId, repairItems, onUpdate }: PricingTabP
       </div>
 
       {repairItems.length === 0 ? (
-        <div className="bg-white border border-gray-200 shadow-sm p-8 text-center text-gray-500">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-8 text-center text-gray-500">
           No repair items yet. Click "Auto-Generate" to create items from red/amber results.
         </div>
       ) : (
@@ -182,7 +182,7 @@ export function PricingTab({ healthCheckId, repairItems, onUpdate }: PricingTabP
           )}
 
           {/* Totals */}
-          <div className="bg-white border border-gray-200 shadow-sm p-6">
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
             <div className="flex justify-between mb-2">
               <span className="text-gray-500">Parts Total</span>
               <span className="font-medium">£{totalParts.toFixed(2)}</span>
@@ -237,7 +237,7 @@ function ItemList({
   onDelete
 }: ItemListProps) {
   return (
-    <div className="bg-white border border-gray-200 shadow-sm divide-y divide-gray-200">
+    <div className="bg-white border border-gray-200 rounded-xl shadow-sm divide-y divide-gray-200">
       {items.map(item => (
         <div key={item.id} className={`p-4 ${!item.is_visible ? 'opacity-50' : ''}`}>
           {editingId === item.id ? (

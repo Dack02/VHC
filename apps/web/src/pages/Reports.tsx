@@ -222,7 +222,7 @@ export default function Reports() {
     const maxValue = Math.max(...data.chartData.map(d => d.total))
 
     return (
-      <div className="bg-white border border-gray-200 shadow-sm p-6">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
         <h2 className="text-lg font-semibold mb-4">Health Checks Over Time</h2>
         <div className="h-64 flex items-end gap-1">
           {data.chartData.map((point, index) => {
@@ -330,23 +330,23 @@ export default function Reports() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-3xl font-bold text-gray-900">{data?.summary.total || 0}</div>
           <div className="text-sm text-gray-500 mt-1">Total Health Checks</div>
         </div>
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-3xl font-bold text-rag-green">{data?.summary.completed || 0}</div>
           <div className="text-sm text-gray-500 mt-1">Completed</div>
         </div>
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-3xl font-bold text-primary">{data?.summary.conversionRate || 0}%</div>
           <div className="text-sm text-gray-500 mt-1">Conversion Rate</div>
         </div>
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-xl font-bold text-rag-green">{formatCurrency(data?.summary.totalValueAuthorized || 0)}</div>
           <div className="text-sm text-gray-500 mt-1">Value Authorized</div>
         </div>
-        <div className="bg-white border border-gray-200 shadow-sm p-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-xl font-bold text-gray-900">{formatCurrency(data?.summary.totalValueIdentified || 0)}</div>
           <div className="text-sm text-gray-500 mt-1">Value Identified</div>
         </div>
@@ -358,7 +358,7 @@ export default function Reports() {
       {/* Metrics Tables */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Technician Metrics */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="border-b border-gray-200 p-4">
             <h2 className="font-semibold text-gray-900">Technician Performance</h2>
           </div>
@@ -392,7 +392,7 @@ export default function Reports() {
         </div>
 
         {/* Advisor Metrics */}
-        <div className="bg-white border border-gray-200 shadow-sm">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="border-b border-gray-200 p-4">
             <h2 className="font-semibold text-gray-900">Advisor Performance</h2>
           </div>
@@ -431,7 +431,7 @@ export default function Reports() {
       </div>
 
       {/* Brake Disc Measurements */}
-      <div className="bg-white border border-gray-200 shadow-sm">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
         <div className="border-b border-gray-200 p-4">
           <h2 className="font-semibold text-gray-900">Brake Disc Measurements</h2>
           <p className="text-sm text-gray-500 mt-1">
@@ -500,7 +500,7 @@ export default function Reports() {
       </div>
 
       {/* MRI Scan Bypass Report */}
-      <div className="bg-white border border-gray-200 shadow-sm">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
         <div className="border-b border-gray-200 p-4">
           <h2 className="font-semibold text-gray-900">MRI Scan Compliance</h2>
           <p className="text-sm text-gray-500 mt-1">
@@ -609,7 +609,7 @@ export default function Reports() {
       </div>
 
       {/* Detailed Breakdown */}
-      <div className="bg-white border border-gray-200 shadow-sm p-6">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
         <h2 className="text-lg font-semibold mb-4">Status Breakdown</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
           <div>

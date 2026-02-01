@@ -157,14 +157,14 @@ export default function DashboardLayout() {
     if (isCollapsed) {
       return `${base} justify-center px-2 ${
         active
-          ? 'bg-blue-50 text-primary border-l-4 border-primary'
-          : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 border-l-4 border-transparent'
+          ? 'bg-primary text-white'
+          : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
       }`
     }
 
     return `${base} px-3 ${
       active
-        ? 'bg-blue-50 text-primary border-l-4 border-primary -ml-1 pl-4'
+        ? 'bg-primary text-white'
         : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
     }`
   }

@@ -114,11 +114,13 @@ dashboard.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
     if (healthCheckIds.length > 0) {
       const { data: repairData } = await supabaseAdmin
         .from('repair_items')
-        .select('health_check_id, total_price')
+        .select('health_check_id, total_inc_vat, parent_repair_item_id, deleted_at')
         .in('health_check_id', healthCheckIds)
+        .is('deleted_at', null)
+        .is('parent_repair_item_id', null)
 
       repairData?.forEach(item => {
-        repairTotals[item.health_check_id] = (repairTotals[item.health_check_id] || 0) + (item.total_price || 0)
+        repairTotals[item.health_check_id] = (repairTotals[item.health_check_id] || 0) + (parseFloat(String(item.total_inc_vat)) || 0)
       })
     }
 

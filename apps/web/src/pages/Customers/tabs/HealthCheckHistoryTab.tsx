@@ -99,7 +99,7 @@ export default function HealthCheckHistoryTab({ customer }: HealthCheckHistoryTa
         <select
           value={vehicleFilter}
           onChange={(e) => setVehicleFilter(e.target.value)}
-          className="px-3 py-2 border border-gray-300 text-sm bg-white"
+          className="px-3 py-2 border border-gray-300 text-sm bg-white rounded-xl"
         >
           <option value="">All Vehicles</option>
           {customer.vehicles.map((v) => (
@@ -112,7 +112,7 @@ export default function HealthCheckHistoryTab({ customer }: HealthCheckHistoryTa
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="px-3 py-2 border border-gray-300 text-sm bg-white"
+          className="px-3 py-2 border border-gray-300 text-sm bg-white rounded-xl"
         >
           <option value="">All Statuses</option>
           {Object.entries(statusLabels).map(([value, label]) => (
@@ -124,7 +124,7 @@ export default function HealthCheckHistoryTab({ customer }: HealthCheckHistoryTa
       </div>
 
       {/* Health Check Table */}
-      <div className="bg-white border border-gray-200">
+      <div className="bg-white border border-gray-200 rounded-xl">
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>

@@ -78,7 +78,7 @@ export default function NotesTab({ customer, onCustomerUpdate }: NotesTabProps) 
   return (
     <div className="space-y-6">
       {/* Customer Notes */}
-      <div className="bg-white border border-gray-200 p-6">
+      <div className="bg-white border border-gray-200 rounded-xl p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-900">Customer Notes</h3>
           {hasChanges && (
@@ -108,7 +108,7 @@ export default function NotesTab({ customer, onCustomerUpdate }: NotesTabProps) 
       </div>
 
       {/* Communication History */}
-      <div className="bg-white border border-gray-200 p-6">
+      <div className="bg-white border border-gray-200 rounded-xl p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Communication History</h3>
 
         {commsLoading ? (

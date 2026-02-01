@@ -280,14 +280,14 @@ export default function Reports() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
         <div className="flex items-center gap-4">
           <Link to="/" className="text-gray-500 hover:text-gray-700">
             ← Back to Dashboard
           </Link>
           <h1 className="text-2xl font-bold text-gray-900">Reports</h1>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
           {/* Date Range Filter */}
           <select
             value={dateRange}
@@ -440,7 +440,7 @@ export default function Reports() {
         </div>
 
         {/* Summary stats */}
-        <div className="grid grid-cols-3 gap-4 p-4 border-b border-gray-200 bg-gray-50">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 border-b border-gray-200 bg-gray-50">
           <div>
             <div className="text-sm text-gray-500">Total Health Checks</div>
             <div className="text-xl font-bold text-gray-900">{brakeDiscData?.totalHealthChecks || 0}</div>
@@ -509,7 +509,7 @@ export default function Reports() {
         </div>
 
         {/* Summary stats */}
-        <div className="grid grid-cols-4 gap-4 p-4 border-b border-gray-200 bg-gray-50">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 border-b border-gray-200 bg-gray-50">
           <div>
             <div className="text-sm text-gray-500">Total Check-Ins</div>
             <div className="text-xl font-bold text-gray-900">{mriBypassData?.summary.totalCheckins || 0}</div>

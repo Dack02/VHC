@@ -77,7 +77,7 @@ export default function TechnicianWorkload() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
         <div className="flex items-center gap-4">
           <Link to="/" className="text-gray-500 hover:text-gray-700">
             ← Back to Dashboard
@@ -101,7 +101,7 @@ export default function TechnicianWorkload() {
       )}
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="text-3xl font-bold text-gray-900">{data?.summary.total || 0}</div>
           <div className="text-sm text-gray-500 mt-1">Total Technicians</div>

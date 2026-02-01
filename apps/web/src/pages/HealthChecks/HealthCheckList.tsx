@@ -366,7 +366,7 @@ function BoardColumn({ column, cards }: { column: Column; cards: HealthCheckCard
   return (
     <div
       ref={setNodeRef}
-      className={`flex flex-col h-full bg-gray-50 border border-gray-200 rounded-lg overflow-hidden transition-colors ${isOver ? 'ring-2 ring-primary ring-opacity-50' : ''}`}
+      className={`flex flex-col h-full bg-gray-50 border border-gray-200 rounded-lg overflow-hidden transition-colors min-w-[280px] md:min-w-0 snap-center ${isOver ? 'ring-2 ring-primary ring-opacity-50' : ''}`}
     >
       {/* Column Header */}
       <div className={`px-4 py-3 border-b ${headerColors[column.id]}`}>
@@ -409,10 +409,10 @@ function BoardColumn({ column, cards }: { column: Column; cards: HealthCheckCard
 // View Toggle Component
 function ViewToggle({ view, onViewChange }: { view: ViewMode; onViewChange: (v: ViewMode) => void }) {
   return (
-    <div className="flex bg-gray-100 p-1">
+    <div className="flex bg-gray-100 p-1 rounded-lg">
       <button
         onClick={() => onViewChange('kanban')}
-        className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
           view === 'kanban'
             ? 'bg-white text-gray-900 shadow-sm'
             : 'text-gray-600 hover:text-gray-900'
@@ -422,7 +422,7 @@ function ViewToggle({ view, onViewChange }: { view: ViewMode; onViewChange: (v: 
       </button>
       <button
         onClick={() => onViewChange('list')}
-        className={`px-4 py-1.5 text-sm font-medium transition-colors ${
+        className={`px-4 py-1.5 text-sm font-medium rounded-md transition-colors ${
           view === 'list'
             ? 'bg-white text-gray-900 shadow-sm'
             : 'text-gray-600 hover:text-gray-900'
@@ -696,7 +696,7 @@ export default function HealthCheckList() {
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-3 sm:gap-0">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-bold text-gray-900">Health Checks</h1>
           {/* Connection Status */}
@@ -705,11 +705,11 @@ export default function HealthCheckList() {
             {isConnected ? 'Live' : 'Offline'}
           </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           <ViewToggle view={viewMode} onViewChange={handleViewChange} />
           <Link
             to="/health-checks/new"
-            className="px-4 py-2 bg-primary text-white font-medium hover:bg-primary-dark"
+            className="px-3 py-2 sm:px-4 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark text-sm sm:text-base"
           >
             New Health Check
           </Link>
@@ -749,7 +749,7 @@ export default function HealthCheckList() {
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
               >
-                <div className="flex-1 grid grid-cols-5 gap-4 min-h-0 overflow-hidden">
+                <div className="flex-1 flex md:grid md:grid-cols-5 gap-3 md:gap-4 min-h-0 overflow-x-auto md:overflow-hidden snap-x snap-mandatory md:snap-none pb-4 md:pb-0">
                   {Object.values(boardData.columns).map((column) => (
                     <BoardColumn
                       key={column.id}
@@ -766,7 +766,7 @@ export default function HealthCheckList() {
 
               {/* Legend */}
               <div className="mt-4 space-y-2">
-                <div className="flex flex-wrap items-center gap-6 text-xs text-gray-500">
+                <div className="flex flex-wrap items-center gap-3 md:gap-6 text-xs text-gray-500">
                   <div className="flex items-center gap-4">
                     <span className="font-medium text-gray-600">Badges:</span>
                     <span className="px-2 py-0.5 bg-red-500 text-white rounded text-[10px]">Overdue</span>
@@ -780,7 +780,7 @@ export default function HealthCheckList() {
                     <span className="w-2.5 h-2.5 bg-amber-500 rounded-full" />
                     <span className="w-2.5 h-2.5 bg-green-500 rounded-full" />
                   </div>
-                  <span className="italic">Drag cards between columns to change status</span>
+                  <span className="italic hidden md:inline">Drag cards between columns to change status</span>
                   <div className="ml-auto text-sm text-gray-500">
                     {boardData.totalCount} health checks
                   </div>
@@ -852,7 +852,7 @@ export default function HealthCheckList() {
           </div>
 
           {/* Table */}
-          <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-x-auto">
             {loading ? (
               <div className="p-8 text-center">
                 <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto" />
@@ -868,11 +868,11 @@ export default function HealthCheckList() {
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Registration</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Customer</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Status</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Workflow</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 hidden md:table-cell">Workflow</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">RAG</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Technician</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Days on Site</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Created</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 hidden md:table-cell">Days on Site</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 hidden md:table-cell">Created</th>
                     <th className="px-4 py-3 text-left text-sm font-medium text-gray-700"></th>
                   </tr>
                 </thead>
@@ -897,7 +897,7 @@ export default function HealthCheckList() {
                           {statusLabels[hc.status] || hc.status}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 hidden md:table-cell">
                         {(hc as unknown as HealthCheckCard).workflowStatus ? (
                           <WorkflowBadges status={(hc as unknown as HealthCheckCard).workflowStatus!} compact />
                         ) : (
@@ -925,7 +925,7 @@ export default function HealthCheckList() {
                           `${hc.technician.first_name} ${hc.technician.last_name}`
                         ) : '-'}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 hidden md:table-cell">
                         {hc.arrived_at ? (() => {
                           const arrived = new Date(hc.arrived_at)
                           const now = new Date()
@@ -942,7 +942,7 @@ export default function HealthCheckList() {
                           <span className="text-gray-400">-</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-gray-500 text-sm">
+                      <td className="px-4 py-3 text-gray-500 text-sm hidden md:table-cell">
                         {new Date(hc.created_at).toLocaleDateString()}
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -967,7 +967,7 @@ export default function HealthCheckList() {
 
           {/* Pagination */}
           {totalPages > 1 && (
-            <div className="flex items-center justify-between mt-4">
+            <div className="flex flex-col sm:flex-row items-center sm:justify-between mt-4 gap-2 sm:gap-0">
               <div className="text-sm text-gray-500">
                 Showing {((page - 1) * limit) + 1} to {Math.min(page * limit, totalCount)} of {totalCount}
               </div>

@@ -381,13 +381,13 @@ export default function Dashboard() {
 
       {/* Live Update Toast */}
       {liveUpdate && (
-        <div className="fixed top-4 right-4 z-50 bg-primary text-white px-4 py-2 shadow-lg animate-pulse">
+        <div className="fixed top-4 left-4 right-4 md:left-auto md:right-4 md:w-auto z-50 bg-primary text-white px-4 py-2 shadow-lg animate-pulse text-center md:text-left">
           {liveUpdate}
         </div>
       )}
 
       {/* Header with filters */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
           {/* Connection Status */}
@@ -396,9 +396,9 @@ export default function Dashboard() {
             {isConnected ? 'Live' : 'Offline'}
           </span>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
           {/* Date Range Filter */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
             <button
               onClick={() => setDateRange('today')}
               className={`px-3 py-1.5 text-sm font-medium ${
@@ -615,7 +615,7 @@ export default function Dashboard() {
       )}
 
       {/* Board Column Summary */}
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 md:gap-4">
         <Link to="/health-checks" className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 hover:border-primary transition-colors">
           <div className="text-2xl font-bold text-gray-900">{data?.columnCounts.technician || 0}</div>
           <div className="text-sm text-gray-500">Technician Queue</div>

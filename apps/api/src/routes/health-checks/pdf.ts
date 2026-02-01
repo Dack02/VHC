@@ -223,7 +223,7 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
 
     // Fetch new repair items with options, labour, parts, and linked check results for PDF
     // Also includes customer signature fields from new system
-    const { data: newRepairItemsData } = await supabaseAdmin
+    const { data: newRepairItemsData, error: newRepairItemsError } = await supabaseAdmin
       .from('repair_items')
       .select(`
         id,
@@ -292,6 +292,7 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
     console.log('PDF Debug - New repairItems query:', {
       healthCheckId: id,
       count: newRepairItemsData?.length || 0,
+      error: newRepairItemsError?.message || null,
       items: newRepairItemsData?.map(i => ({ id: i.id, name: i.name }))
     })
 

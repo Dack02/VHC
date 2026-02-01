@@ -493,6 +493,22 @@ publicRoutes.get('/vhc/:token', async (c) => {
     // Get children for groups
     const children = item.is_group ? (childrenByParentId.get(item.id) || []) : undefined
 
+    // Derive customer description from linked check result reasons (sales library)
+    // This matches how the PDF gets its descriptions
+    let customerDescription = item.description || null
+    if (!customerDescription && linkedCrIds.length > 0) {
+      for (const crId of linkedCrIds) {
+        const reasons = reasonsByCheckResult[crId]
+        if (reasons && reasons.length > 0) {
+          const desc = reasons[0].customerDescription
+          if (desc) {
+            customerDescription = desc
+            break
+          }
+        }
+      }
+    }
+
     // Derive RAG status
     let derivedRagStatus: 'red' | 'amber' | null = null
 
@@ -529,7 +545,7 @@ publicRoutes.get('/vhc/:token', async (c) => {
     return {
       id: item.id,
       name: item.name,
-      description: item.description,
+      description: customerDescription,
       isGroup: item.is_group,
       ragStatus: derivedRagStatus,
       labourTotal: item.labour_total || 0,

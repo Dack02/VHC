@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
-import { api, setActiveOrgId } from '../lib/api'
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react'
+import { api, setActiveOrgId, setTokenRefreshCallback } from '../lib/api'
 
 interface User {
   id: string
@@ -121,6 +121,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkSession()
   }, [])
 
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isRefreshingRef = useRef(false)
+
   const clearSession = () => {
     setUser(null)
     setSession(null)
@@ -172,32 +175,122 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearSession()
   }
 
-  const refreshSession = async () => {
-    if (!session?.refreshToken) {
+  const refreshSession = useCallback(async () => {
+    // Read current session from localStorage to avoid stale closure
+    const storedSession = localStorage.getItem(SESSION_KEY)
+    const currentSession: Session | null = storedSession ? JSON.parse(storedSession) : null
+
+    if (!currentSession?.refreshToken) {
       throw new Error('No refresh token')
     }
 
-    const data = await api<{ session: Session }>('/api/v1/auth/refresh', {
-      method: 'POST',
-      body: { refreshToken: session.refreshToken }
-    })
+    if (isRefreshingRef.current) return
+    isRefreshingRef.current = true
 
-    setSession(data.session)
-    localStorage.setItem(SESSION_KEY, JSON.stringify(data.session))
+    try {
+      const data = await api<{ session: Session }>('/api/v1/auth/refresh', {
+        method: 'POST',
+        body: { refreshToken: currentSession.refreshToken }
+      })
 
-    // Fetch updated user data
-    const userData = await api<User & { organizations?: OrgMembership[] }>('/api/v1/auth/me', {
-      token: data.session.accessToken
-    })
-    const { organizations: orgs, ...userOnly } = userData
-    setUser(userOnly)
-    localStorage.setItem(USER_KEY, JSON.stringify(userOnly))
+      setSession(data.session)
+      localStorage.setItem(SESSION_KEY, JSON.stringify(data.session))
 
-    if (orgs && orgs.length > 0) {
-      setOrganizations(orgs)
-      localStorage.setItem(ORGS_KEY, JSON.stringify(orgs))
+      // Fetch updated user data
+      const userData = await api<User & { organizations?: OrgMembership[] }>('/api/v1/auth/me', {
+        token: data.session.accessToken
+      })
+      const { organizations: orgs, ...userOnly } = userData
+      setUser(userOnly)
+      localStorage.setItem(USER_KEY, JSON.stringify(userOnly))
+
+      if (orgs && orgs.length > 0) {
+        setOrganizations(orgs)
+        localStorage.setItem(ORGS_KEY, JSON.stringify(orgs))
+      }
+    } finally {
+      isRefreshingRef.current = false
     }
-  }
+  }, [])
+
+  // Background refresh timer: refresh 5 minutes before token expiry
+  useEffect(() => {
+    if (!session?.expiresAt) return
+
+    const REFRESH_BUFFER_MS = 5 * 60 * 1000 // 5 minutes
+    const now = Date.now()
+    const expiresAtMs = session.expiresAt * 1000
+    const timeUntilRefresh = expiresAtMs - now - REFRESH_BUFFER_MS
+
+    // Schedule refresh (immediately if already within buffer, otherwise at the right time)
+    const delay = Math.max(timeUntilRefresh, 0)
+    console.log(`[Auth] Token refresh scheduled in ${Math.round(delay / 1000)}s (expires at ${new Date(expiresAtMs).toLocaleTimeString()})`)
+
+    refreshTimerRef.current = setTimeout(async () => {
+      try {
+        await refreshSession()
+      } catch {
+        console.warn('[Auth] Background token refresh failed, clearing session')
+        clearSession()
+      }
+    }, delay)
+
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current)
+        refreshTimerRef.current = null
+      }
+    }
+  }, [session?.expiresAt, refreshSession])
+
+  // Visibility change listener: refresh when user returns to tab if token is expired or close to expiry
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState !== 'visible') return
+
+      const storedSession = localStorage.getItem(SESSION_KEY)
+      if (!storedSession) return
+      const currentSession: Session = JSON.parse(storedSession)
+      if (!currentSession?.expiresAt) return
+
+      const REFRESH_BUFFER_MS = 5 * 60 * 1000
+      const now = Date.now()
+      const expiresAtMs = currentSession.expiresAt * 1000
+
+      if (now >= expiresAtMs - REFRESH_BUFFER_MS) {
+        console.log('[Auth] Tab became visible, token expired or near expiry — refreshing')
+        try {
+          await refreshSession()
+        } catch {
+          console.warn('[Auth] Visibility refresh failed, clearing session')
+          clearSession()
+        }
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [refreshSession])
+
+  // Register token refresh callback for the API client (401 auto-refresh)
+  useEffect(() => {
+    setTokenRefreshCallback(async () => {
+      try {
+        await refreshSession()
+        // Return the new access token from localStorage
+        const storedSession = localStorage.getItem(SESSION_KEY)
+        if (storedSession) {
+          const newSession: Session = JSON.parse(storedSession)
+          return newSession.accessToken
+        }
+        return null
+      } catch {
+        clearSession()
+        return null
+      }
+    })
+    return () => setTokenRefreshCallback(null)
+  }, [refreshSession])
 
   const switchOrganization = async (orgId: string) => {
     if (!session?.accessToken) return

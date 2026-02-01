@@ -11,6 +11,26 @@ export function getActiveOrgId(): string | null {
   return _activeOrgId
 }
 
+// Token refresh callback — set by AuthContext to avoid circular imports
+let _tokenRefreshCallback: (() => Promise<string | null>) | null = null
+
+export function setTokenRefreshCallback(cb: (() => Promise<string | null>) | null) {
+  _tokenRefreshCallback = cb
+}
+
+// Mutex for concurrent 401 refresh: only one refresh at a time
+let _refreshPromise: Promise<string | null> | null = null
+
+async function attemptTokenRefresh(): Promise<string | null> {
+  if (!_tokenRefreshCallback) return null
+  // If a refresh is already in flight, piggyback on it
+  if (_refreshPromise) return _refreshPromise
+  _refreshPromise = _tokenRefreshCallback().finally(() => {
+    _refreshPromise = null
+  })
+  return _refreshPromise
+}
+
 interface ApiOptions {
   method?: string
   body?: unknown
@@ -125,6 +145,35 @@ export async function api<T>(endpoint: string, options: ApiOptions = {}): Promis
       }
 
       if (!response.ok) {
+        // On 401, attempt a token refresh and retry the request once
+        if (response.status === 401 && token && _tokenRefreshCallback) {
+          const newToken = await attemptTokenRefresh()
+          if (newToken) {
+            // Retry the original request with the fresh token
+            const retryController = new AbortController()
+            const retryTimeoutId = setTimeout(() => retryController.abort(), timeout)
+            const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` }
+            const retryResponse = await fetch(`${API_URL}${endpoint}`, {
+              method,
+              headers: retryHeaders,
+              body: body ? JSON.stringify(body) : undefined,
+              signal: retryController.signal,
+            })
+            clearTimeout(retryTimeoutId)
+
+            let retryData: Record<string, unknown> = {}
+            const retryContentType = retryResponse.headers.get('content-type')
+            if (retryContentType?.includes('application/json')) {
+              retryData = await retryResponse.json()
+            }
+
+            if (retryResponse.ok) {
+              return retryData as T
+            }
+            // If retry also fails, fall through to normal error handling
+          }
+        }
+
         const error = new ApiError(
           (data.error as string) || `Request failed with status ${response.status}`,
           response.status,

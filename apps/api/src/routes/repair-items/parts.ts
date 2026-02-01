@@ -120,6 +120,22 @@ partsRouter.post('/repair-items/:id/parts', authorize(['super_admin', 'org_admin
     // Auto-update workflow status
     await updateRepairItemWorkflowStatus(id, null)
 
+    // Auto-transition health check from tech_completed → awaiting_pricing
+    if (existing.health_check_id) {
+      const { data: hc } = await supabaseAdmin
+        .from('health_checks')
+        .select('id, status')
+        .eq('id', existing.health_check_id)
+        .single()
+
+      if (hc?.status === 'tech_completed') {
+        await supabaseAdmin
+          .from('health_checks')
+          .update({ status: 'awaiting_pricing', updated_at: new Date().toISOString() })
+          .eq('id', hc.id)
+      }
+    }
+
     // Log audit event for timeline
     logAudit({
       action: 'parts.add',

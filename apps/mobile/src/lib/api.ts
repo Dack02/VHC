@@ -189,6 +189,7 @@ export interface MriItem {
   id: string
   name: string
   description: string | null
+  salesDescription: string | null
   itemType: 'date_mileage' | 'yes_no'
   severityWhenDue: string | null
   severityWhenYes: string | null

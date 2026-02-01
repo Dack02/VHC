@@ -17,6 +17,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         )}
         <input
           ref={ref}
+          autoComplete="off"
           className={`
             w-full px-4 py-3 min-h-[56px] text-lg
             border border-gray-300
@@ -52,6 +53,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(
         )}
         <textarea
           ref={ref}
+          autoComplete="off"
           className={`
             w-full px-4 py-3 text-lg
             border border-gray-300

@@ -479,8 +479,7 @@ export default function HealthCheckDetail() {
   ]
 
   // Determine available actions based on status
-  const canStartReview = healthCheck.status === 'tech_completed'
-  const canMarkReady = ['awaiting_review', 'awaiting_pricing'].includes(healthCheck.status)
+  const canMarkReady = ['awaiting_review', 'awaiting_pricing', 'tech_completed'].includes(healthCheck.status)
   const canSend = healthCheck.status === 'ready_to_send'
   const canResend = ['sent', 'expired', 'opened', 'customer_viewed', 'customer_approved', 'customer_partial', 'customer_declined'].includes(healthCheck.status)
   const canDelete = ['created', 'assigned', 'cancelled', 'awaiting_checkin'].includes(healthCheck.status) && !healthCheck.deleted_at
@@ -505,15 +504,6 @@ export default function HealthCheckDetail() {
           </div>
 
           <div className="flex items-center gap-2 md:gap-3 overflow-x-auto">
-            {canStartReview && (
-              <button
-                onClick={() => handleStatusChange('awaiting_pricing')}
-                className="px-3 md:px-4 py-2 bg-orange-500 text-white text-sm font-medium hover:bg-orange-600 rounded whitespace-nowrap"
-              >
-                <span className="hidden sm:inline">Start Review</span>
-                <span className="sm:hidden">Review</span>
-              </button>
-            )}
             {canMarkReady && (
               <button
                 onClick={() => handleStatusChange('ready_to_send')}

@@ -205,11 +205,17 @@ const server = serve({
 // Initialize WebSocket (cast to http.Server for Socket.io compatibility)
 initializeWebSocket(server as unknown as import('http').Server)
 
-// Check Redis connection (optional, for queue support)
-checkRedisConnection().then((connected) => {
+// Check Redis connection and start in-process workers if available
+checkRedisConnection().then(async (connected) => {
   updateRedisStatus(connected)
   if (connected) {
-    logger.info('Redis connected - queue workers available')
+    logger.info('Redis connected - starting in-process queue workers')
+    try {
+      await import('./services/worker.js')
+      logger.info('Queue workers started in-process')
+    } catch (err) {
+      logger.error('Failed to start queue workers', { error: String(err) })
+    }
   } else {
     logger.info('Redis not available - processing notifications directly')
   }

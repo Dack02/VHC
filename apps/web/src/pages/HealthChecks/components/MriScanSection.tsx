@@ -38,6 +38,7 @@ interface MriItem {
   id: string
   name: string
   description: string | null
+  salesDescription: string | null
   itemType: 'date_mileage' | 'yes_no'
   severityWhenDue: string | null
   severityWhenYes: string | null
@@ -449,8 +450,8 @@ function MriItemCard({ item, isReadOnly, onUpdate }: MriItemCardProps) {
         )}
       </div>
 
-      {item.description && (
-        <p className="text-sm text-gray-500 mb-3">{item.description}</p>
+      {(item.salesDescription || item.description) && (
+        <p className="text-sm text-gray-500 mb-3">{item.salesDescription || item.description}</p>
       )}
 
       {item.itemType === 'date_mileage' ? (

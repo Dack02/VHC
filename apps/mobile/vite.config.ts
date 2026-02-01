@@ -12,7 +12,7 @@ export default defineConfig({
         name: 'VHC Technician',
         short_name: 'VHC Tech',
         description: 'Vehicle Health Check - Technician App',
-        theme_color: '#7B2FBE',
+        theme_color: '#1e40af',
         background_color: '#ffffff',
         display: 'standalone',
         icons: [

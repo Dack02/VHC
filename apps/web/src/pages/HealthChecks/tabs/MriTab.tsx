@@ -23,6 +23,7 @@ interface MriItem {
   id: string
   name: string
   description: string | null
+  salesDescription: string | null
   itemType: 'date_mileage' | 'yes_no' | 'unknown'
   severityWhenDue: string | null
   severityWhenYes: string | null
@@ -252,8 +253,8 @@ function MriItemRow({ item }: MriItemRowProps) {
               </span>
             )}
           </div>
-          {item.description && (
-            <p className="text-sm text-gray-500 mt-1 ml-6">{item.description}</p>
+          {(item.salesDescription || item.description) && (
+            <p className="text-sm text-gray-500 mt-1 ml-6">{item.salesDescription || item.description}</p>
           )}
         </div>
 

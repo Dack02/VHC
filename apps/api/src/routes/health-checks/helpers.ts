@@ -165,7 +165,7 @@ export async function autoCreateMriRepairItems(healthCheckId: string, organizati
       .from('mri_scan_results')
       .select(`
         id, rag_status, notes, mri_item_id,
-        mri_item:mri_items(id, name, description, item_type, severity_when_due, severity_when_yes, severity_when_no)
+        mri_item:mri_items(id, name, description, sales_description, item_type, severity_when_due, severity_when_yes, severity_when_no)
       `)
       .eq('health_check_id', healthCheckId)
       .eq('organization_id', organizationId)
@@ -206,14 +206,15 @@ export async function autoCreateMriRepairItems(healthCheckId: string, organizati
         id: string
         name: string
         description: string | null
+        sales_description: string | null
         item_type: string
         severity_when_due: string | null
         severity_when_yes: string | null
         severity_when_no: string | null
       }
 
-      // Build description including MRI notes if available
-      let description = typedMriItem.description || ''
+      // Prefer sales_description (customer-facing) over technical description
+      let description = typedMriItem.sales_description || typedMriItem.description || ''
       if (result.notes) {
         description = description ? `${description}\n\nMRI Notes: ${result.notes}` : `MRI Notes: ${result.notes}`
       }

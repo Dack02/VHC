@@ -740,7 +740,7 @@ export function Inspection() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+      <div className="min-h-full bg-gray-100 flex items-center justify-center">
         <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
       </div>
     )
@@ -748,8 +748,8 @@ export function Inspection() {
 
   if (!job || sections.length === 0) {
     return (
-      <div className="min-h-screen bg-gray-100 flex flex-col">
-        <header className="bg-primary text-white px-4 py-3">
+      <div className="h-full bg-gray-100 flex flex-col">
+        <header className="bg-primary text-white px-4 py-3 sticky top-0 z-10">
           <h1 className="text-lg font-bold">Error</h1>
         </header>
         <main className="flex-1 p-4">
@@ -765,9 +765,9 @@ export function Inspection() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col">
+    <div className="h-full bg-gray-100 flex flex-col">
       {/* Header */}
-      <header className="bg-primary text-white safe-area-inset-top">
+      <header className="bg-primary text-white safe-area-inset-top sticky top-0 z-10">
         <div className="px-4 py-3 flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2">

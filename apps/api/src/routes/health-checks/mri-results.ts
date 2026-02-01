@@ -61,7 +61,7 @@ mriResults.get('/:id/mri-results', authorize(['super_admin', 'org_admin', 'site_
       .from('mri_scan_results')
       .select(`
         *,
-        mri_item:mri_items(id, name, description, item_type, category, severity_when_due, severity_when_yes, severity_when_no, is_informational, enabled, deleted_at)
+        mri_item:mri_items(id, name, description, sales_description, item_type, category, severity_when_due, severity_when_yes, severity_when_no, is_informational, enabled, deleted_at)
       `)
       .eq('health_check_id', id)
 
@@ -84,6 +84,7 @@ mriResults.get('/:id/mri-results', authorize(['super_admin', 'org_admin', 'site_
       id: string
       name: string
       description: string | null
+      salesDescription: string | null
       itemType: string
       severityWhenDue: string | null
       severityWhenYes: string | null
@@ -139,6 +140,7 @@ mriResults.get('/:id/mri-results', authorize(['super_admin', 'org_admin', 'site_
         id: item.id,
         name: item.name,
         description: item.description,
+        salesDescription: item.sales_description || null,
         itemType: item.item_type,
         severityWhenDue: item.severity_when_due,
         severityWhenYes: item.severity_when_yes,
@@ -175,6 +177,7 @@ mriResults.get('/:id/mri-results', authorize(['super_admin', 'org_admin', 'site_
           id?: string
           name?: string
           description?: string | null
+          sales_description?: string | null
           item_type?: string
           category?: string
           severity_when_due?: string | null
@@ -188,6 +191,7 @@ mriResults.get('/:id/mri-results', authorize(['super_admin', 'org_admin', 'site_
           id: result.mri_item_id,
           name: mriItem?.name || 'Deleted Item',
           description: mriItem?.description || null,
+          salesDescription: mriItem?.sales_description || null,
           itemType: mriItem?.item_type || 'unknown',
           severityWhenDue: mriItem?.severity_when_due || null,
           severityWhenYes: mriItem?.severity_when_yes || null,

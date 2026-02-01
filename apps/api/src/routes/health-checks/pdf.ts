@@ -231,6 +231,8 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         description,
         is_group,
         parent_repair_item_id,
+        source,
+        rag_status,
         labour_total,
         parts_total,
         subtotal,
@@ -245,6 +247,8 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         outcome_status,
         outcome_set_at,
         declined_notes,
+        follow_up_date,
+        work_completed_at,
         declined_reason:declined_reasons(reason),
         options:repair_options!repair_options_repair_item_id_fkey(
           id,
@@ -277,6 +281,7 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         linked_check_results:repair_item_check_results(
           check_result:check_results(
             id,
+            rag_status,
             template_item:template_items(name)
           )
         )
@@ -446,6 +451,90 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
           legacyItem.parts_cost = priceSource.partsTotal
           legacyItem.labor_cost = priceSource.labourTotal
         }
+      }
+    }
+
+    // When legacy repairItems is empty but newRepairItems exist, populate legacy
+    // format from new data. This happens when parent_repair_item_id is not SQL NULL
+    // (e.g. empty string), causing the .is(null) filter to miss them.
+    if (repairItems.length === 0 && newRepairItems.length > 0) {
+      console.log('[PDF] Legacy repairItems empty — populating from newRepairItems')
+      for (const item of newRepairItems) {
+        // Derive RAG status from linked check results or direct rag_status
+        let derivedRag: 'red' | 'amber' | null = null
+        const rawItem = (newRepairItemsData || []).find(r => r.id === item.id)
+        const source = (rawItem as Record<string, unknown>)?.source as string | null
+        const directRag = (rawItem as Record<string, unknown>)?.rag_status as string | null
+
+        if (source === 'mri_scan' && directRag) {
+          derivedRag = directRag as 'red' | 'amber'
+        } else {
+          // Derive from linked check results
+          for (const lcr of (rawItem?.linked_check_results || []) as Array<Record<string, unknown>>) {
+            const cr = lcr.check_result as { id?: string; rag_status?: string } | null
+            if (cr?.rag_status === 'red') { derivedRag = 'red'; break }
+            if (cr?.rag_status === 'amber' && !derivedRag) { derivedRag = 'amber' }
+          }
+        }
+
+        // For groups, derive from children
+        if (item.isGroup && item.children.length > 0) {
+          for (const child of item.children) {
+            const childRaw = (newRepairItemsData || []).find(r => r.id === child.id)
+            for (const lcr of (childRaw?.linked_check_results || []) as Array<Record<string, unknown>>) {
+              const cr = lcr.check_result as { id?: string; rag_status?: string } | null
+              if (cr?.rag_status === 'red') { derivedRag = 'red'; break }
+              if (cr?.rag_status === 'amber' && derivedRag !== 'red') { derivedRag = 'amber' }
+            }
+            if (derivedRag === 'red') break
+          }
+        }
+
+        // Use pricing from selected/recommended option if available
+        let totalPrice = item.totalIncVat
+        let partsCost = item.partsTotal
+        let laborCost = item.labourTotal
+        if (item.options.length > 0) {
+          const opt = item.selectedOptionId
+            ? item.options.find(o => o.id === item.selectedOptionId)
+            : null
+          const fallback = !opt
+            ? (item.options.find(o => o.isRecommended) || item.options[0])
+            : null
+          const priceSource = opt || fallback
+          if (priceSource) {
+            totalPrice = priceSource.totalIncVat
+            partsCost = priceSource.partsTotal
+            laborCost = priceSource.labourTotal
+          }
+        }
+
+        const declinedReasonObj = (rawItem as Record<string, unknown>)?.declined_reason as { reason: string } | null
+        const resolvedDeclinedReason = declinedReasonObj?.reason || item.declinedReason || null
+
+        repairItems.push({
+          id: item.id,
+          check_result_id: '',
+          title: item.name,
+          description: item.description,
+          rag_status: derivedRag || 'amber' as const,
+          parts_cost: partsCost,
+          labor_cost: laborCost,
+          total_price: totalPrice,
+          is_mot_failure: false,
+          follow_up_date: (rawItem as Record<string, unknown>)?.follow_up_date as string | null || null,
+          work_completed_at: (rawItem as Record<string, unknown>)?.work_completed_at as string | null || undefined,
+          outcome_status: item.outcomeStatus,
+          outcome_set_at: item.outcomeSetAt,
+          declined_reason: resolvedDeclinedReason,
+          is_group: item.isGroup,
+          children: item.children.length > 0 ? item.children.map(c => ({
+            name: c.name,
+            rag_status: 'amber' as const,
+            description: c.description,
+            check_result_id: undefined
+          })) : undefined
+        })
       }
     }
 

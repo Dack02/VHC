@@ -93,7 +93,7 @@ export function TyreDepthInput({
     return 'green'
   }, [redBelowMm, amberBelowMm])
 
-  const handleDepthChange = (point: 'outer' | 'middle' | 'inner', newValue: number) => {
+  const handleDepthChange = (point: 'outer' | 'middle' | 'inner', newValue: number | null) => {
     const updated = { ...measurement, [point]: newValue }
     const ragStatus = calculateRAG(updated)
     setMeasurement(updated)
@@ -143,7 +143,7 @@ export function TyreDepthInput({
               {unmeasuredCount} measurement{unmeasuredCount > 1 ? 's' : ''} required
             </p>
             <p className="text-xs text-red-600">
-              Tap each slider to record the tread depth
+              Enter each tread depth
             </p>
           </div>
         </div>
@@ -171,53 +171,26 @@ export function TyreDepthInput({
         </span>
       </div>
 
-      {/* Tread depth sliders */}
+      {/* Tread depth inputs */}
       <div className="grid grid-cols-3 gap-4">
-        <div className="relative">
-          <TreadDepthSlider
-            label="OUTER"
-            value={measurement.outer ?? 0}
-            onChange={(v) => handleDepthChange('outer', v)}
-            thresholds={thresholds}
-          />
-          {measurement.outer === null && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded animate-pulse">
-                TAP TO SET
-              </span>
-            </div>
-          )}
-        </div>
-        <div className="relative">
-          <TreadDepthSlider
-            label="MIDDLE"
-            value={measurement.middle ?? 0}
-            onChange={(v) => handleDepthChange('middle', v)}
-            thresholds={thresholds}
-          />
-          {measurement.middle === null && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded animate-pulse">
-                TAP TO SET
-              </span>
-            </div>
-          )}
-        </div>
-        <div className="relative">
-          <TreadDepthSlider
-            label="INNER"
-            value={measurement.inner ?? 0}
-            onChange={(v) => handleDepthChange('inner', v)}
-            thresholds={thresholds}
-          />
-          {measurement.inner === null && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded animate-pulse">
-                TAP TO SET
-              </span>
-            </div>
-          )}
-        </div>
+        <TreadDepthSlider
+          label="OUTER"
+          value={measurement.outer}
+          onChange={(v) => handleDepthChange('outer', v)}
+          thresholds={thresholds}
+        />
+        <TreadDepthSlider
+          label="MIDDLE"
+          value={measurement.middle}
+          onChange={(v) => handleDepthChange('middle', v)}
+          thresholds={thresholds}
+        />
+        <TreadDepthSlider
+          label="INNER"
+          value={measurement.inner}
+          onChange={(v) => handleDepthChange('inner', v)}
+          thresholds={thresholds}
+        />
       </div>
 
       {/* Damage selection */}

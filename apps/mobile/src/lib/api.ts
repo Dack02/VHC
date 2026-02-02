@@ -70,6 +70,8 @@ export interface HealthCheck {
   total_amount: number
   // VHC Reference Number (format: VHC00001)
   vhc_reference?: string | null
+  // DMS jobsheet number
+  jobsheet_number?: string | null
   vehicle?: Vehicle
   customer?: Customer
   template?: Template
@@ -84,6 +86,7 @@ export interface HealthCheck {
     code?: string
     description?: string
     notes?: string
+    labourItems?: Array<{ description: string; price?: number; units?: number; fitter?: string }>
   }> | null
 }
 
@@ -213,6 +216,8 @@ export interface MriResult {
   completedAt: string | null
   dateNa: boolean
   mileageNa: boolean
+  notApplicable: boolean
+  alreadyBookedThisVisit: boolean
 }
 
 export interface MriResultsResponse {

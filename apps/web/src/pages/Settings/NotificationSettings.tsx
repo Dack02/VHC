@@ -2,6 +2,13 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { api } from '../../lib/api'
 import SettingsBackLink from '../../components/SettingsBackLink'
+import {
+  isPushSupported,
+  getPushPermission,
+  subscribeToPush,
+  unsubscribeFromPush,
+  hasActivePushSubscription
+} from '../../lib/push-notifications'
 
 interface NotificationSettingsData {
   id?: string
@@ -54,6 +61,12 @@ export default function NotificationSettings() {
   const [testPhoneNumber, setTestPhoneNumber] = useState('')
   const [testEmailAddress, setTestEmailAddress] = useState('')
 
+  // Browser push state
+  const [pushSupported] = useState(() => isPushSupported())
+  const [pushPermission, setPushPermission] = useState<NotificationPermission | 'unsupported'>(() => getPushPermission())
+  const [pushActive, setPushActive] = useState(false)
+  const [pushToggling, setPushToggling] = useState(false)
+
   const organizationId = user?.organization?.id
 
   useEffect(() => {
@@ -61,6 +74,12 @@ export default function NotificationSettings() {
       fetchSettings()
     }
   }, [organizationId])
+
+  useEffect(() => {
+    if (pushSupported) {
+      hasActivePushSubscription().then(setPushActive)
+    }
+  }, [pushSupported])
 
   const fetchSettings = async () => {
     if (!organizationId) return
@@ -253,6 +272,23 @@ export default function NotificationSettings() {
     }
   }
 
+  const handleTogglePush = async () => {
+    if (!session?.accessToken) return
+    setPushToggling(true)
+    try {
+      if (pushActive) {
+        await unsubscribeFromPush(session.accessToken)
+        setPushActive(false)
+      } else {
+        const ok = await subscribeToPush(session.accessToken)
+        setPushActive(ok)
+        setPushPermission(getPushPermission())
+      }
+    } finally {
+      setPushToggling(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -287,6 +323,35 @@ export default function NotificationSettings() {
       )}
 
       <div className="space-y-6">
+        {/* Browser Push Notifications */}
+        {pushSupported && (
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
+            <div className="px-6 py-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Browser Push Notifications</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  Receive desktop notifications even when this tab isn't active
+                </p>
+                {pushPermission === 'denied' && (
+                  <p className="text-xs text-red-600 mt-2">
+                    Notifications are blocked in your browser. Please update your browser settings to allow notifications for this site.
+                  </p>
+                )}
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={pushActive}
+                  onChange={handleTogglePush}
+                  disabled={pushToggling || pushPermission === 'denied'}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary peer-disabled:opacity-50"></div>
+              </label>
+            </div>
+          </div>
+        )}
+
         {/* SMS Settings */}
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">

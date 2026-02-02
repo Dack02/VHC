@@ -28,6 +28,7 @@ export interface ImportOptions {
   organizationId: string
   siteId?: string
   date: string  // YYYY-MM-DD
+  endDate?: string  // YYYY-MM-DD — fetch bookings up to this date (inclusive)
   importType: 'manual' | 'scheduled' | 'test'
   triggeredBy?: string  // user ID
   bookingIds?: string[]  // selective import - only import these booking IDs
@@ -534,7 +535,9 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
 
     // Fetch bookings from DMS
     // Note: serviceTypes filtering is not yet supported by fetchDiaryBookings
-    const diaryResponse = await fetchDiaryBookings(credentials, date)
+    const diaryResponse = await fetchDiaryBookings(credentials, date, {
+      endDate: options.endDate
+    })
 
     if (!diaryResponse.success) {
       throw new Error(diaryResponse.error || 'Failed to fetch bookings from DMS')

@@ -701,6 +701,7 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
       <MriScanSection
         healthCheckId={healthCheckId}
         isReadOnly={isReadOnly}
+        allowEditWhenComplete={true}
         onComplete={onUpdate}
       />
 

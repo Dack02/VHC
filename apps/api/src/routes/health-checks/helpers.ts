@@ -68,7 +68,7 @@ export async function autoGenerateRepairItems(healthCheckId: string) {
     const { data: results } = await supabaseAdmin
       .from('check_results')
       .select(`
-        id, rag_status, notes, is_mot_failure, vehicle_location_name,
+        id, template_item_id, rag_status, notes, is_mot_failure, vehicle_location_name,
         template_item:template_items(name, description)
       `)
       .eq('health_check_id', healthCheckId)
@@ -93,10 +93,18 @@ export async function autoGenerateRepairItems(healthCheckId: string) {
       return { created: 0 }
     }
 
+    // If a template item has location-specific results, skip any non-location result for it
+    const itemsWithLocations = new Set(
+      resultsToCreate.filter(r => r.vehicle_location_name).map(r => r.template_item_id)
+    )
+    const dedupedResults = resultsToCreate.filter(r =>
+      r.vehicle_location_name || !itemsWithLocations.has(r.template_item_id)
+    )
+
     // Create repair items with new schema and link via junction table
     let createdCount = 0
 
-    for (const result of resultsToCreate) {
+    for (const result of dedupedResults) {
       // Handle template_item which may be object or array from Supabase
       const templateItem = Array.isArray(result.template_item)
         ? result.template_item[0]

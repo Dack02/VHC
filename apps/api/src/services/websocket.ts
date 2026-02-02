@@ -173,7 +173,9 @@ async function handleConnection(socket: Socket) {
             socket.join(getRoomName.site(siteId))
           }
 
-          console.log(`User ${userId} authenticated and joined rooms`)
+          console.log(`User ${userId} authenticated and joined rooms (org: ${organizationId}, site: ${siteId || 'none'})`)
+        } else {
+          console.warn(`WebSocket auth: No user record found for auth_id ${user.id}${handshakeOrgId ? ` in org ${handshakeOrgId}` : ''}`)
         }
       }
     } catch (error) {

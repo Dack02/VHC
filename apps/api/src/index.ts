@@ -38,6 +38,7 @@ import orgAdmin from './routes/org-admin.js'
 import onboarding from './routes/onboarding.js'
 import dashboard from './routes/dashboard.js'
 import dashboardToday from './routes/dashboard-today.js'
+import dashboardUpcoming from './routes/dashboard-upcoming.js'
 import reports from './routes/reports.js'
 import reasons from './routes/reasons/index.js'
 import labourCodes from './routes/labour-codes.js'
@@ -50,6 +51,8 @@ import supplierTypes from './routes/supplier-types.js'
 import checkinSettings from './routes/checkin-settings.js'
 import messageTemplates from './routes/message-templates.js'
 import vehicleLocations from './routes/vehicle-locations.js'
+import pushSubscriptions from './routes/push-subscriptions.js'
+import partsCatalog from './routes/parts-catalog.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
@@ -129,6 +132,7 @@ app.route('/api/v1', tyres)
 app.route('/api/v1/dms', dms)
 app.route('/api/v1/dms-settings', dmsSettings)
 app.route('/api/v1/notifications', notifications)
+app.route('/api/v1/push', pushSubscriptions)
 
 // Admin routes (Super Admin only)
 app.route('/api/v1/admin/platform', platformAdmin)
@@ -151,8 +155,9 @@ app.route('/api/v1/organizations', orgAdmin)
 // Onboarding routes (for new organizations)
 app.route('/api/v1/onboarding', onboarding)
 
-// Dashboard routes (today must be mounted before general dashboard to avoid path conflicts)
+// Dashboard routes (today/upcoming must be mounted before general dashboard to avoid path conflicts)
 app.route('/api/v1/dashboard/today', dashboardToday)
+app.route('/api/v1/dashboard/upcoming', dashboardUpcoming)
 app.route('/api/v1/dashboard', dashboard)
 
 // Reporting routes
@@ -181,6 +186,9 @@ app.route('/api/v1/organizations/:orgId/supplier-types', supplierTypes)
 
 // Vehicle locations routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/vehicle-locations', vehicleLocations)
+
+// Parts catalog routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/parts-catalog', partsCatalog)
 
 // Check-in settings and MRI items routes (nested under organizations)
 app.route('/api/v1/organizations', checkinSettings)

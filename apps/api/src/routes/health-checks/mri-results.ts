@@ -20,6 +20,8 @@ interface MriResultInput {
   notes?: string | null
   dateNa?: boolean
   mileageNa?: boolean
+  notApplicable?: boolean
+  alreadyBookedThisVisit?: boolean
 }
 
 /**
@@ -105,6 +107,8 @@ mriResults.get('/:id/mri-results', authorize(['super_admin', 'org_admin', 'site_
         completedAt: string | null
         dateNa: boolean
         mileageNa: boolean
+        notApplicable: boolean
+        alreadyBookedThisVisit: boolean
       } | null
     }>> = {}
 
@@ -122,6 +126,8 @@ mriResults.get('/:id/mri-results', authorize(['super_admin', 'org_admin', 'site_
       // - For date_mileage: date, mileage, dateNa, mileageNa, or any status flag (notDueYet, due, recommended)
       // - For yes_no: yesNoValue is set
       const hasResult = !!existingResult && (
+        existingResult.not_applicable ||
+        existingResult.already_booked_this_visit ||
         existingResult.next_due_date ||
         existingResult.next_due_mileage ||
         existingResult.date_na ||
@@ -159,7 +165,9 @@ mriResults.get('/:id/mri-results', authorize(['super_admin', 'org_admin', 'site_
           ragStatus: existingResult.rag_status,
           completedAt: existingResult.completed_at,
           dateNa: existingResult.date_na || false,
-          mileageNa: existingResult.mileage_na || false
+          mileageNa: existingResult.mileage_na || false,
+          notApplicable: existingResult.not_applicable || false,
+          alreadyBookedThisVisit: existingResult.already_booked_this_visit || false
         } : null
       })
     }
@@ -211,7 +219,9 @@ mriResults.get('/:id/mri-results', authorize(['super_admin', 'org_admin', 'site_
             ragStatus: result.rag_status,
             completedAt: result.completed_at,
             dateNa: result.date_na || false,
-            mileageNa: result.mileage_na || false
+            mileageNa: result.mileage_na || false,
+            notApplicable: result.not_applicable || false,
+            alreadyBookedThisVisit: result.already_booked_this_visit || false
           }
         })
       }
@@ -279,22 +289,25 @@ mriResults.post('/:id/mri-results', authorize(['super_admin', 'org_admin', 'site
         continue // Skip invalid items
       }
 
+      // If N/A, null all data fields
+      const isNa = result.notApplicable === true
+
       // Calculate RAG status based on item type and input
       let ragStatus: string | null = null
 
-      if (!mriItem.is_informational) {
+      if (!isNa && !mriItem.is_informational) {
         if (mriItem.item_type === 'date_mileage') {
-          // For date/mileage items:
-          // - "Due if not replaced" OR "Recommended this visit" = severity_when_due (red/amber)
-          // - Neither flagged (i.e., "Not due yet") = green if has data, null if no data
-          if (result.dueIfNotReplaced || result.recommendedThisVisit) {
+          if (result.alreadyBookedThisVisit) {
+            ragStatus = 'green'
+          } else if (result.dueIfNotReplaced || result.recommendedThisVisit) {
             ragStatus = mriItem.severity_when_due || 'amber'
           } else if (result.nextDueDate || result.nextDueMileage) {
-            ragStatus = 'green' // Has a future due date/mileage, so OK for now
+            ragStatus = 'green'
           }
         } else if (mriItem.item_type === 'yes_no') {
-          // For yes/no items, RAG is based on the answer
-          if (result.yesNoValue === true) {
+          if (result.alreadyBookedThisVisit) {
+            ragStatus = 'green'
+          } else if (result.yesNoValue === true) {
             ragStatus = mriItem.severity_when_yes || null
           } else if (result.yesNoValue === false) {
             ragStatus = mriItem.severity_when_no || null
@@ -309,16 +322,19 @@ mriResults.post('/:id/mri-results', authorize(['super_admin', 'org_admin', 'site
           health_check_id: id,
           mri_item_id: result.mriItemId,
           organization_id: auth.orgId,
-          next_due_date: result.nextDueDate || null,
-          next_due_mileage: result.nextDueMileage || null,
-          due_if_not_replaced: result.dueIfNotReplaced || false,
-          recommended_this_visit: result.recommendedThisVisit || false,
-          not_due_yet: result.notDueYet || false,
-          yes_no_value: result.yesNoValue ?? null,
-          notes: result.notes || null,
+          next_due_date: isNa ? null : (result.nextDueDate || null),
+          next_due_mileage: isNa ? null : (result.nextDueMileage || null),
+          due_if_not_replaced: isNa ? false : (result.dueIfNotReplaced || false),
+          recommended_this_visit: isNa ? false : (result.recommendedThisVisit || false),
+          not_due_yet: isNa ? false : (result.notDueYet || false),
+          yes_no_value: isNa ? null : (result.yesNoValue ?? null),
+          notes: isNa ? null : (result.notes || null),
           rag_status: ragStatus,
-          date_na: result.dateNa || false,
-          mileage_na: result.mileageNa || false,
+          date_na: isNa ? false : (result.dateNa || false),
+          mileage_na: isNa ? false : (result.mileageNa || false),
+          not_applicable: isNa,
+          already_booked_this_visit: isNa ? false : (result.alreadyBookedThisVisit || false),
+          updated_by: auth.user.id,
           updated_at: new Date().toISOString()
         }, {
           onConflict: 'health_check_id,mri_item_id'
@@ -411,7 +427,7 @@ mriResults.patch('/:id/mri-results/:resultId', authorize(['super_admin', 'org_ad
     // Check if result exists first
     let { data: existingResult } = await supabaseAdmin
       .from('mri_scan_results')
-      .select('id, mri_item_id, next_due_date, next_due_mileage, due_if_not_replaced, recommended_this_visit, not_due_yet, yes_no_value')
+      .select('id, mri_item_id, next_due_date, next_due_mileage, due_if_not_replaced, recommended_this_visit, not_due_yet, yes_no_value, not_applicable, rag_status, already_booked_this_visit')
       .eq('id', resultId)
       .eq('health_check_id', id)
       .eq('organization_id', auth.orgId)
@@ -421,7 +437,7 @@ mriResults.patch('/:id/mri-results/:resultId', authorize(['super_admin', 'org_ad
     if (!existingResult) {
       const { data: resultByItem } = await supabaseAdmin
         .from('mri_scan_results')
-        .select('id, mri_item_id, next_due_date, next_due_mileage, due_if_not_replaced, recommended_this_visit, not_due_yet, yes_no_value')
+        .select('id, mri_item_id, next_due_date, next_due_mileage, due_if_not_replaced, recommended_this_visit, not_due_yet, yes_no_value, not_applicable, rag_status, already_booked_this_visit')
         .eq('mri_item_id', resultId)
         .eq('health_check_id', id)
         .eq('organization_id', auth.orgId)
@@ -442,28 +458,37 @@ mriResults.patch('/:id/mri-results/:resultId', authorize(['super_admin', 'org_ad
       return c.json({ error: 'MRI item not found' }, 404)
     }
 
-    // Calculate RAG status
-    let ragStatus: string | null = null
-    const nextDueDate = body.nextDueDate ?? existingResult?.next_due_date
-    const nextDueMileage = body.nextDueMileage ?? existingResult?.next_due_mileage
-    const dueIfNotReplaced = body.dueIfNotReplaced ?? existingResult?.due_if_not_replaced
-    const recommendedThisVisit = body.recommendedThisVisit ?? existingResult?.recommended_this_visit
-    const yesNoValue = body.yesNoValue ?? existingResult?.yes_no_value
+    // Handle Not Applicable: clears all data fields
+    const isSettingNa = body.notApplicable === true
 
-    if (!mriItem.is_informational) {
-      if (mriItem.item_type === 'date_mileage') {
-        // "Due if not replaced" OR "Recommended this visit" = severity_when_due
-        // Neither flagged (i.e., "Not due yet") = green if has data, null if no data
-        if (dueIfNotReplaced || recommendedThisVisit) {
-          ragStatus = mriItem.severity_when_due || 'amber'
-        } else if (nextDueDate || nextDueMileage) {
-          ragStatus = 'green'
-        }
-      } else if (mriItem.item_type === 'yes_no') {
-        if (yesNoValue === true) {
-          ragStatus = mriItem.severity_when_yes || null
-        } else if (yesNoValue === false) {
-          ragStatus = mriItem.severity_when_no || null
+    // Calculate RAG status (null when N/A)
+    let ragStatus: string | null = null
+
+    if (!isSettingNa) {
+      const nextDueDate = body.nextDueDate ?? existingResult?.next_due_date
+      const nextDueMileage = body.nextDueMileage ?? existingResult?.next_due_mileage
+      const dueIfNotReplaced = body.dueIfNotReplaced ?? existingResult?.due_if_not_replaced
+      const recommendedThisVisit = body.recommendedThisVisit ?? existingResult?.recommended_this_visit
+      const yesNoValue = body.yesNoValue ?? existingResult?.yes_no_value
+      const alreadyBookedThisVisit = body.alreadyBookedThisVisit ?? existingResult?.already_booked_this_visit
+
+      if (!mriItem.is_informational) {
+        if (mriItem.item_type === 'date_mileage') {
+          if (alreadyBookedThisVisit) {
+            ragStatus = 'green'
+          } else if (dueIfNotReplaced || recommendedThisVisit) {
+            ragStatus = mriItem.severity_when_due || 'amber'
+          } else if (nextDueDate || nextDueMileage) {
+            ragStatus = 'green'
+          }
+        } else if (mriItem.item_type === 'yes_no') {
+          if (alreadyBookedThisVisit) {
+            ragStatus = 'green'
+          } else if (yesNoValue === true) {
+            ragStatus = mriItem.severity_when_yes || null
+          } else if (yesNoValue === false) {
+            ragStatus = mriItem.severity_when_no || null
+          }
         }
       }
     }
@@ -471,18 +496,42 @@ mriResults.patch('/:id/mri-results/:resultId', authorize(['super_admin', 'org_ad
     // Build update data
     const updateData: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
-      rag_status: ragStatus
+      rag_status: ragStatus,
+      updated_by: auth.user.id
     }
 
-    if (body.nextDueDate !== undefined) updateData.next_due_date = body.nextDueDate
-    if (body.nextDueMileage !== undefined) updateData.next_due_mileage = body.nextDueMileage
-    if (body.dueIfNotReplaced !== undefined) updateData.due_if_not_replaced = body.dueIfNotReplaced
-    if (body.recommendedThisVisit !== undefined) updateData.recommended_this_visit = body.recommendedThisVisit
-    if (body.notDueYet !== undefined) updateData.not_due_yet = body.notDueYet
-    if (body.yesNoValue !== undefined) updateData.yes_no_value = body.yesNoValue
-    if (body.notes !== undefined) updateData.notes = body.notes
-    if (body.dateNa !== undefined) updateData.date_na = body.dateNa
-    if (body.mileageNa !== undefined) updateData.mileage_na = body.mileageNa
+    // Capture previous RAG status before update (for auto-delete logic)
+    const previousRagStatus = existingResult?.rag_status || null
+
+    if (isSettingNa) {
+      // N/A: clear all data fields
+      updateData.not_applicable = true
+      updateData.next_due_date = null
+      updateData.next_due_mileage = null
+      updateData.due_if_not_replaced = false
+      updateData.recommended_this_visit = false
+      updateData.not_due_yet = false
+      updateData.yes_no_value = null
+      updateData.notes = null
+      updateData.date_na = false
+      updateData.mileage_na = false
+      updateData.already_booked_this_visit = false
+    } else {
+      // Any other field set: clear N/A
+      if (body.notApplicable === false) {
+        updateData.not_applicable = false
+      }
+      if (body.nextDueDate !== undefined) updateData.next_due_date = body.nextDueDate
+      if (body.nextDueMileage !== undefined) updateData.next_due_mileage = body.nextDueMileage
+      if (body.dueIfNotReplaced !== undefined) updateData.due_if_not_replaced = body.dueIfNotReplaced
+      if (body.recommendedThisVisit !== undefined) updateData.recommended_this_visit = body.recommendedThisVisit
+      if (body.notDueYet !== undefined) updateData.not_due_yet = body.notDueYet
+      if (body.yesNoValue !== undefined) updateData.yes_no_value = body.yesNoValue
+      if (body.notes !== undefined) updateData.notes = body.notes
+      if (body.dateNa !== undefined) updateData.date_na = body.dateNa
+      if (body.mileageNa !== undefined) updateData.mileage_na = body.mileageNa
+      if (body.alreadyBookedThisVisit !== undefined) updateData.already_booked_this_visit = body.alreadyBookedThisVisit
+    }
 
     let savedResult
 
@@ -518,6 +567,19 @@ mriResults.patch('/:id/mri-results/:resultId', authorize(['super_admin', 'org_ad
       savedResult = data
     }
 
+    // Auto-delete MRI repair item when switching from red/amber to non-red/amber
+    const newRagStatus = savedResult.rag_status
+    const wasRedAmber = previousRagStatus === 'red' || previousRagStatus === 'amber'
+    const isNowRedAmber = newRagStatus === 'red' || newRagStatus === 'amber'
+
+    if (wasRedAmber && !isNowRedAmber && savedResult.id) {
+      await supabaseAdmin
+        .from('repair_items')
+        .delete()
+        .eq('mri_result_id', savedResult.id)
+        .eq('source', 'mri_scan')
+    }
+
     return c.json({
       success: true,
       result: {
@@ -532,7 +594,9 @@ mriResults.patch('/:id/mri-results/:resultId', authorize(['super_admin', 'org_ad
         notes: savedResult.notes,
         ragStatus: savedResult.rag_status,
         dateNa: savedResult.date_na,
-        mileageNa: savedResult.mileage_na
+        mileageNa: savedResult.mileage_na,
+        notApplicable: savedResult.not_applicable || false,
+        alreadyBookedThisVisit: savedResult.already_booked_this_visit || false
       }
     })
   } catch (error) {

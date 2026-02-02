@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useSocket, WS_EVENTS } from '../contexts/SocketContext'
 import { api } from '../lib/api'
+import { isPushSupported, getPushPermission, subscribeToPush } from '../lib/push-notifications'
 
 interface Notification {
   id: string
@@ -55,6 +56,7 @@ export default function NotificationBell() {
   const [isOpen, setIsOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [toast, setToast] = useState<WebSocketNotification | null>(null)
+  const [showPushPrompt, setShowPushPrompt] = useState(false)
 
   const dropdownRef = useRef<HTMLDivElement>(null)
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -167,6 +169,32 @@ export default function NotificationBell() {
     fetchNotifications()
   }, [fetchNotifications])
 
+  // Poll unread count every 30s as fallback
+  useEffect(() => {
+    if (!session?.accessToken) return
+    const poll = async () => {
+      try {
+        const data = await api<{ count: number }>('/api/v1/notifications/unread-count', {
+          token: session.accessToken,
+          retry: false
+        })
+        setUnreadCount(data.count)
+      } catch { /* next interval */ }
+    }
+    const id = setInterval(poll, 30_000)
+    return () => clearInterval(id)
+  }, [session?.accessToken])
+
+  // Refetch when tab becomes visible
+  useEffect(() => {
+    if (!session?.accessToken) return
+    const handler = () => {
+      if (document.visibilityState === 'visible') setTimeout(fetchNotifications, 500)
+    }
+    document.addEventListener('visibilitychange', handler)
+    return () => document.removeEventListener('visibilitychange', handler)
+  }, [session?.accessToken, fetchNotifications])
+
   // WebSocket listener
   useEffect(() => {
     if (!isConnected) return
@@ -198,6 +226,40 @@ export default function NotificationBell() {
       }
     }
   }, [])
+
+  // Show push notification prompt after 5s if permission is 'default'
+  useEffect(() => {
+    if (!isPushSupported()) return
+    if (getPushPermission() !== 'default') return
+
+    const dismissed = sessionStorage.getItem('vhc_push_prompt_dismissed')
+    if (dismissed) return
+
+    const timer = setTimeout(() => setShowPushPrompt(true), 5000)
+    return () => clearTimeout(timer)
+  }, [])
+
+  // Listen for SW notification click messages to navigate
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === 'NOTIFICATION_CLICK' && event.data.url) {
+        navigate(event.data.url)
+      }
+    }
+    navigator.serviceWorker?.addEventListener('message', handler)
+    return () => navigator.serviceWorker?.removeEventListener('message', handler)
+  }, [navigate])
+
+  const handleEnablePush = async () => {
+    if (!session?.accessToken) return
+    setShowPushPrompt(false)
+    await subscribeToPush(session.accessToken)
+  }
+
+  const handleDismissPush = () => {
+    setShowPushPrompt(false)
+    sessionStorage.setItem('vhc_push_prompt_dismissed', '1')
+  }
 
   // Format time ago
   const formatTimeAgo = (dateString: string) => {
@@ -306,6 +368,30 @@ export default function NotificationBell() {
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Push notification prompt */}
+      {showPushPrompt && (
+        <div className="fixed top-4 right-4 z-50 animate-slide-in">
+          <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-4 max-w-xs">
+            <p className="text-sm font-medium text-gray-900 mb-1">Enable desktop notifications?</p>
+            <p className="text-xs text-gray-500 mb-3">Get notified about VHC updates even when this tab isn't active.</p>
+            <div className="flex gap-2">
+              <button
+                onClick={handleEnablePush}
+                className="flex-1 px-3 py-1.5 bg-primary text-white text-xs font-medium rounded-lg hover:bg-primary-dark"
+              >
+                Enable
+              </button>
+              <button
+                onClick={handleDismissPush}
+                className="flex-1 px-3 py-1.5 text-gray-600 text-xs font-medium rounded-lg border border-gray-200 hover:bg-gray-50"
+              >
+                Not now
               </button>
             </div>
           </div>

@@ -213,8 +213,8 @@ export function Summary() {
                   </div>
                 ) : ns.disc !== null && (
                   <div className={getDiscStatus(ns.disc, ns.disc_min) === 'below' ? 'text-rag-red font-bold' : 'text-gray-600'}>
-                    Disc: {ns.disc}mm
-                    {ns.disc_min !== null && ` (min: ${ns.disc_min}mm)`}
+                    Disc: {ns.disc?.toFixed(1)}mm
+                    {ns.disc_min !== null && ` (min: ${ns.disc_min.toFixed(1)}mm)`}
                   </div>
                 )
               )}
@@ -236,8 +236,8 @@ export function Summary() {
                   </div>
                 ) : os.disc !== null && (
                   <div className={getDiscStatus(os.disc, os.disc_min) === 'below' ? 'text-rag-red font-bold' : 'text-gray-600'}>
-                    Disc: {os.disc}mm
-                    {os.disc_min !== null && ` (min: ${os.disc_min}mm)`}
+                    Disc: {os.disc?.toFixed(1)}mm
+                    {os.disc_min !== null && ` (min: ${os.disc_min.toFixed(1)}mm)`}
                   </div>
                 )
               )}

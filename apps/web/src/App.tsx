@@ -68,6 +68,7 @@ const Onboarding = lazy(() => import('./pages/Onboarding'))
 const TechnicianWorkload = lazy(() => import('./pages/Dashboard/TechnicianWorkload'))
 const Reports = lazy(() => import('./pages/Reports'))
 const Today = lazy(() => import('./pages/Today'))
+const Upcoming = lazy(() => import('./pages/Upcoming'))
 
 // Page loading fallback
 function PageLoader() {
@@ -122,6 +123,7 @@ function App() {
                         <Route path="/" element={<Dashboard />} />
                         <Route path="/dashboard/technicians" element={<TechnicianWorkload />} />
                         <Route path="/today" element={<Today />} />
+                        <Route path="/upcoming" element={<Upcoming />} />
                         <Route path="/reports" element={<Reports />} />
                         <Route path="/users" element={<Users />} />
                         <Route path="/health-checks" element={<HealthCheckList />} />

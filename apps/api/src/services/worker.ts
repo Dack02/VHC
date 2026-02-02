@@ -24,6 +24,9 @@ import { sendEmail, sendHealthCheckReadyEmail, sendReminderEmail, sendCustomerRe
 import { sendSms, sendHealthCheckReadySms, sendReminderSms, sendCustomerResponseNotificationSms } from './sms.js'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { WS_EVENTS } from './websocket.js'
+import { sendPushNotification } from './web-push.js'
+
+const PUSH_NOTIFICATION_TYPES = ['tech_completed', 'customer_authorized', 'customer_declined']
 
 // Worker-side WebSocket helpers that publish via Redis pub/sub
 // These allow the worker to emit events that the API server will receive and broadcast
@@ -308,6 +311,7 @@ const dmsImportWorker = new Worker(
       organizationId: string
       siteId?: string
       date: string
+      endDate?: string
       importType: 'manual' | 'scheduled'
       triggeredBy?: string
       bookingIds?: string[]
@@ -325,12 +329,18 @@ const dmsImportWorker = new Worker(
         bookingIds: importJob.bookingIds
       }
     } else {
-      // Scheduled import - use today's date
+      // Scheduled import - use today's date and fetch next 2 working days ahead
       const scheduledJob = job.data as DmsScheduledImportJob
+      const { getNextWorkingDays } = await import('../lib/date-utils.js')
+      const today = new Date().toISOString().split('T')[0]
+      const futureDays = getNextWorkingDays(new Date(), 2)
+      const endDate = futureDays[futureDays.length - 1]
+
       importOptions = {
         organizationId: scheduledJob.organizationId,
         siteId: scheduledJob.siteId,
-        date: new Date().toISOString().split('T')[0],
+        date: today,
+        endDate,
         importType: 'scheduled',
         triggeredBy: undefined
       }
@@ -634,23 +644,57 @@ async function processStaffNotification(data: StaffNotificationJob) {
       priority,
       actionUrl: `/health-checks/${data.healthCheckId}`
     })
+
+    // Fire-and-forget push notification for key event types
+    if (PUSH_NOTIFICATION_TYPES.includes(data.notificationType)) {
+      sendPushNotification(data.userId, {
+        title,
+        body: message,
+        icon: '/favicon.ico',
+        tag: `vhc-${data.notificationType}-${data.healthCheckId}`,
+        data: {
+          type: data.notificationType,
+          actionUrl: `/health-checks/${data.healthCheckId}`,
+          healthCheckId: data.healthCheckId
+        }
+      }).catch(() => {})
+    }
   } else {
-    // Broadcast to all site staff (service advisors and admins)
+    // Broadcast to all site staff (service advisors and admins) + org_admins org-wide
     console.log(`[Staff Notification] Querying users for site ${data.siteId}`)
-    const { data: users, error: usersError } = await supabaseAdmin
+
+    // Site staff (advisors + site admins at this specific site)
+    const { data: siteStaff, error: siteError } = await supabaseAdmin
       .from('users')
       .select('id')
       .eq('site_id', data.siteId)
       .eq('is_active', true)
-      .in('role', ['org_admin', 'site_admin', 'service_advisor'])
+      .in('role', ['site_admin', 'service_advisor'])
 
-    if (usersError) {
-      console.error(`[Staff Notification] Error querying users:`, usersError)
+    // Org admins (should see notifications for all sites in their org)
+    const { data: orgAdmins, error: orgError } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .eq('organization_id', healthCheck.organization_id)
+      .eq('is_active', true)
+      .eq('role', 'org_admin')
+
+    if (siteError) console.error(`[Staff Notification] Error querying site staff:`, siteError)
+    if (orgError) console.error(`[Staff Notification] Error querying org admins:`, orgError)
+
+    // Merge and deduplicate
+    const seen = new Set<string>()
+    const users: { id: string }[] = []
+    for (const u of [...(siteStaff || []), ...(orgAdmins || [])]) {
+      if (!seen.has(u.id)) {
+        seen.add(u.id)
+        users.push(u)
+      }
     }
 
-    console.log(`[Staff Notification] Found ${users?.length || 0} users to notify`)
+    console.log(`[Staff Notification] Found ${users.length} users to notify (${siteStaff?.length || 0} site staff + ${orgAdmins?.length || 0} org admins)`)
 
-    if (users && users.length > 0) {
+    if (users.length > 0) {
       for (const user of users) {
         console.log(`[Staff Notification] Creating notification for user ${user.id}`)
         const { error: insertError } = await supabaseAdmin.from('notifications').insert({
@@ -678,6 +722,21 @@ async function processStaffNotification(data: StaffNotificationJob) {
           priority,
           actionUrl: `/health-checks/${data.healthCheckId}`
         })
+
+        // Fire-and-forget push notification for key event types
+        if (PUSH_NOTIFICATION_TYPES.includes(data.notificationType)) {
+          sendPushNotification(user.id, {
+            title,
+            body: message,
+            icon: '/favicon.ico',
+            tag: `vhc-${data.notificationType}-${data.healthCheckId}`,
+            data: {
+              type: data.notificationType,
+              actionUrl: `/health-checks/${data.healthCheckId}`,
+              healthCheckId: data.healthCheckId
+            }
+          }).catch(() => {})
+        }
       }
     } else {
       console.log(`[Staff Notification] No users found to notify at site ${data.siteId}`)

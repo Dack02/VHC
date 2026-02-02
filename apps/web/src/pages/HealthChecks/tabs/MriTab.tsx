@@ -17,6 +17,8 @@ interface MriResult {
   notes: string | null
   ragStatus: string | null
   completedAt: string | null
+  notApplicable: boolean
+  alreadyBookedThisVisit: boolean
 }
 
 interface MriItem {
@@ -209,6 +211,8 @@ interface MriItemRowProps {
 function MriItemRow({ item }: MriItemRowProps) {
   const result = item.result
   const hasResult = result && (
+    result.notApplicable ||
+    result.alreadyBookedThisVisit ||
     result.nextDueDate ||
     result.nextDueMileage ||
     result.dueIfNotReplaced ||
@@ -266,9 +270,18 @@ function MriItemRow({ item }: MriItemRowProps) {
       </div>
 
       {/* Result Details */}
-      {hasResult && (
+      {result?.notApplicable && (
+        <div className="mt-2 ml-6">
+          <span className="text-sm text-gray-400 italic">Not applicable to this vehicle</span>
+        </div>
+      )}
+      {hasResult && !result?.notApplicable && (
         <div className="mt-2 ml-6 text-sm text-gray-600 space-y-1">
-          {item.itemType === 'date_mileage' ? (
+          {result?.alreadyBookedThisVisit ? (
+            <div className="text-green-600 font-medium">
+              Already booked for this visit
+            </div>
+          ) : item.itemType === 'date_mileage' ? (
             <>
               {result?.nextDueDate && (
                 <div>

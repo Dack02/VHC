@@ -298,6 +298,9 @@ publicRoutes.get('/vhc/:token', async (c) => {
       selected_option_id,
       rag_status,
       source,
+      outcome_status,
+      deferred_until,
+      deferred_notes,
       created_at
     `)
     .eq('health_check_id', healthCheck.id)
@@ -562,6 +565,9 @@ publicRoutes.get('/vhc/:token', async (c) => {
       customerApprovedAt: item.customer_approved_at,
       customerDeclinedReason: item.customer_declined_reason,
       selectedOptionId: item.selected_option_id,
+      outcomeStatus: item.outcome_status || null,
+      deferredUntil: item.deferred_until || null,
+      deferredNotes: item.deferred_notes || null,
       options: options.map(opt => ({
         id: opt.id,
         name: opt.name,
@@ -1371,12 +1377,8 @@ async function updateHealthCheckStatusForNewRepairItems(healthCheckId: string, s
         updateData.fully_responded_at = new Date().toISOString()
         // Cancel pending reminders when customer fully responds
         await cancelHealthCheckReminders(healthCheckId)
-        // Send authorization confirmation to customer
-        if (newStatus === 'authorized') {
-          sendCustomerAuthorizationConfirmation(healthCheckId).catch(err =>
-            console.error('Failed to send authorization confirmation:', err)
-          )
-        }
+        // Note: authorization confirmation email/SMS is sent from the /sign endpoint
+        // after the customer signs, not here when they finish selecting items
       } else if (newStatus === 'partial_response') {
         // Set first_response_at if not already set
         if (!healthCheck.first_response_at) {

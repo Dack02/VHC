@@ -133,6 +133,9 @@ export interface NewRepairItem {
   customerApprovedAt: string | null
   customerDeclinedReason: string | null
   selectedOptionId: string | null
+  outcomeStatus: string | null
+  deferredUntil: string | null
+  deferredNotes: string | null
   options: RepairOption[]
   linkedCheckResults: string[]
   children?: Array<{

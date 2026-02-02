@@ -71,6 +71,7 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         labour_completed_at,
         parts_completed_at,
         follow_up_date,
+        deferred_until,
         source,
         rag_status,
         outcome_status,
@@ -192,7 +193,7 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         labor_cost: parseFloat(String(item.labour_total)) || 0,
         total_price: parseFloat(String(item.total_inc_vat)) || 0,
         is_mot_failure: false, // is_mot_failure is on check_results, not repair_items
-        follow_up_date: item.follow_up_date || null,
+        follow_up_date: item.deferred_until || item.follow_up_date || null,
         work_completed_at: undefined,
         outcome_status: (item as Record<string, unknown>).outcome_status as string | null || null,
         outcome_set_at: (item as Record<string, unknown>).outcome_set_at as string | null || null,
@@ -247,6 +248,7 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         outcome_set_at,
         declined_notes,
         follow_up_date,
+        deferred_until,
         declined_reason:declined_reasons(reason),
         options:repair_options!repair_options_repair_item_id_fkey(
           id,
@@ -521,7 +523,7 @@ pdf.get('/:id/pdf', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
           labor_cost: laborCost,
           total_price: totalPrice,
           is_mot_failure: false,
-          follow_up_date: (rawItem as Record<string, unknown>)?.follow_up_date as string | null || null,
+          follow_up_date: (rawItem as Record<string, unknown>)?.deferred_until as string | null || (rawItem as Record<string, unknown>)?.follow_up_date as string | null || null,
           work_completed_at: undefined,
           outcome_status: item.outcomeStatus,
           outcome_set_at: item.outcomeSetAt,

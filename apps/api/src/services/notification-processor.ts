@@ -152,7 +152,8 @@ async function processStaffNotificationDirect(data: StaffNotificationJob): Promi
   await createRoleNotifications(data.siteId, roles, data.notificationType, title, message, {
     healthCheckId: data.healthCheckId,
     priority,
-    actionUrl: `/health-checks/${data.healthCheckId}`
+    actionUrl: `/health-checks/${data.healthCheckId}`,
+    organizationId: healthCheck.organization_id
   })
 
   console.log(`[Notification Direct] Completed ${data.notificationType} for ${vehicleReg}`)

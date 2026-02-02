@@ -20,6 +20,8 @@ interface MriResult {
   completedAt: string | null
   dateNa: boolean
   mileageNa: boolean
+  notApplicable: boolean
+  alreadyBookedThisVisit: boolean
 }
 
 interface MriResultUpdate {
@@ -32,6 +34,8 @@ interface MriResultUpdate {
   notes?: string | null
   dateNa?: boolean
   mileageNa?: boolean
+  notApplicable?: boolean
+  alreadyBookedThisVisit?: boolean
 }
 
 interface MriItem {
@@ -61,6 +65,7 @@ interface MriResultsResponse {
 interface MriScanSectionProps {
   healthCheckId: string
   isReadOnly?: boolean
+  allowEditWhenComplete?: boolean
   onComplete?: () => void
 }
 
@@ -70,7 +75,7 @@ const RAG_COLORS: Record<string, { bg: string; text: string; label: string }> = 
   green: { bg: 'bg-rag-green', text: 'text-white', label: 'OK' }
 }
 
-export function MriScanSection({ healthCheckId, isReadOnly = false, onComplete }: MriScanSectionProps) {
+export function MriScanSection({ healthCheckId, isReadOnly = false, allowEditWhenComplete = false, onComplete }: MriScanSectionProps) {
   const { session } = useAuth()
   const [data, setData] = useState<MriResultsResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -121,6 +126,8 @@ export function MriScanSection({ healthCheckId, isReadOnly = false, onComplete }
       for (const item of items[category]) {
         total++
         if (item.result && (
+          item.result.notApplicable ||
+          item.result.alreadyBookedThisVisit ||
           item.result.nextDueDate ||
           item.result.nextDueMileage ||
           item.result.dateNa ||
@@ -238,6 +245,8 @@ export function MriScanSection({ healthCheckId, isReadOnly = false, onComplete }
             completedAt: item.result?.completedAt || null,
             dateNa: item.result?.dateNa || false,
             mileageNa: item.result?.mileageNa || false,
+            notApplicable: item.result?.notApplicable || false,
+            alreadyBookedThisVisit: item.result?.alreadyBookedThisVisit || false,
             ...updates
           }
         }
@@ -356,7 +365,7 @@ export function MriScanSection({ healthCheckId, isReadOnly = false, onComplete }
                   <MriItemCard
                     key={item.id}
                     item={item}
-                    isReadOnly={isReadOnly || isMriComplete}
+                    isReadOnly={isReadOnly || (isMriComplete && !allowEditWhenComplete)}
                     onUpdate={(updates) => {
                       // Optimistic update
                       setData(prev => {
@@ -408,6 +417,8 @@ interface MriItemCardProps {
 function MriItemCard({ item, isReadOnly, onUpdate }: MriItemCardProps) {
   // Item is considered "complete" if it has any meaningful data
   const hasResult = item.result && (
+    item.result.notApplicable ||
+    item.result.alreadyBookedThisVisit ||
     item.result.nextDueDate ||
     item.result.nextDueMileage ||
     item.result.dateNa ||
@@ -454,7 +465,19 @@ function MriItemCard({ item, isReadOnly, onUpdate }: MriItemCardProps) {
         <p className="text-sm text-gray-500 mb-3">{item.salesDescription || item.description}</p>
       )}
 
-      {item.itemType === 'date_mileage' ? (
+      {item.result?.notApplicable ? (
+        <div className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded-lg border border-gray-200">
+          <span className="text-sm text-gray-500 italic">Not applicable to this vehicle</span>
+          {!isReadOnly && (
+            <button
+              onClick={() => onUpdate({ notApplicable: false })}
+              className="text-xs text-primary hover:text-primary-dark font-medium"
+            >
+              Undo
+            </button>
+          )}
+        </div>
+      ) : item.itemType === 'date_mileage' ? (
         <DateMileageFields
           item={item}
           isReadOnly={isReadOnly}
@@ -478,14 +501,16 @@ interface DateMileageFieldsProps {
   onUpdate: (updates: MriResultUpdate) => void
 }
 
-// Status type for the 3-way radio (null = no selection)
-type MriStatus = 'not_due' | 'due' | 'recommended' | null
+// Status type for the radio group (null = no selection)
+type MriStatus = 'not_due' | 'due' | 'recommended' | 'already_booked' | 'na' | null
 
 function DateMileageFields({ item, isReadOnly, onUpdate }: DateMileageFieldsProps) {
   const result = item.result
 
   // Derive current status from result (null if no status flag is set)
   const getCurrentStatus = (): MriStatus => {
+    if (result?.notApplicable) return 'na'
+    if (result?.alreadyBookedThisVisit) return 'already_booked'
     if (result?.dueIfNotReplaced) return 'due'
     if (result?.recommendedThisVisit) return 'recommended'
     if (result?.notDueYet) return 'not_due'
@@ -500,11 +525,25 @@ function DateMileageFields({ item, isReadOnly, onUpdate }: DateMileageFieldsProp
 
   // Handle status change
   const handleStatusChange = (status: MriStatus) => {
-    onUpdate({
-      dueIfNotReplaced: status === 'due',
-      recommendedThisVisit: status === 'recommended',
-      notDueYet: status === 'not_due'
-    })
+    if (status === 'na') {
+      onUpdate({ notApplicable: true, alreadyBookedThisVisit: false })
+    } else if (status === 'already_booked') {
+      onUpdate({
+        alreadyBookedThisVisit: true,
+        dueIfNotReplaced: false,
+        recommendedThisVisit: false,
+        notDueYet: false,
+        notApplicable: false
+      })
+    } else {
+      onUpdate({
+        dueIfNotReplaced: status === 'due',
+        recommendedThisVisit: status === 'recommended',
+        notDueYet: status === 'not_due',
+        notApplicable: false,
+        alreadyBookedThisVisit: false
+      })
+    }
   }
 
   // Handle N/A checkbox change
@@ -529,56 +568,58 @@ function DateMileageFields({ item, isReadOnly, onUpdate }: DateMileageFieldsProp
 
   return (
     <div className="space-y-3">
-      {/* Date/Mileage inputs with N/A checkboxes */}
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Next Due Date</label>
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={result?.nextDueDate || ''}
-              onChange={(e) => onUpdate({ nextDueDate: e.target.value || null })}
-              disabled={isReadOnly || dateNa}
-              className={`flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100 ${dateNa ? 'opacity-50' : ''}`}
-            />
-            <label className="flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap cursor-pointer">
+      {/* Date/Mileage inputs with N/A checkboxes - hidden when status is N/A or Already Booked */}
+      {currentStatus !== 'na' && currentStatus !== 'already_booked' && (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Next Due Date</label>
+            <div className="flex items-center gap-2">
               <input
-                type="checkbox"
-                checked={dateNa}
-                onChange={(e) => handleDateNaChange(e.target.checked)}
-                disabled={isReadOnly}
-                className="rounded-lg"
+                type="date"
+                value={result?.nextDueDate || ''}
+                onChange={(e) => onUpdate({ nextDueDate: e.target.value || null })}
+                disabled={isReadOnly || dateNa}
+                className={`flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100 ${dateNa ? 'opacity-50' : ''}`}
               />
-              N/A
-            </label>
+              <label className="flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={dateNa}
+                  onChange={(e) => handleDateNaChange(e.target.checked)}
+                  disabled={isReadOnly}
+                  className="rounded-lg"
+                />
+                N/A
+              </label>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Next Due Mileage</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                value={result?.nextDueMileage || ''}
+                onChange={(e) => onUpdate({ nextDueMileage: e.target.value ? parseInt(e.target.value, 10) : null })}
+                disabled={isReadOnly || mileageNa}
+                placeholder="e.g., 120000"
+                className={`flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100 ${mileageNa ? 'opacity-50' : ''}`}
+              />
+              <label className="flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={mileageNa}
+                  onChange={(e) => handleMileageNaChange(e.target.checked)}
+                  disabled={isReadOnly}
+                  className="rounded-lg"
+                />
+                N/A
+              </label>
+            </div>
           </div>
         </div>
-        <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Next Due Mileage</label>
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              value={result?.nextDueMileage || ''}
-              onChange={(e) => onUpdate({ nextDueMileage: e.target.value ? parseInt(e.target.value, 10) : null })}
-              disabled={isReadOnly || mileageNa}
-              placeholder="e.g., 120000"
-              className={`flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100 ${mileageNa ? 'opacity-50' : ''}`}
-            />
-            <label className="flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap cursor-pointer">
-              <input
-                type="checkbox"
-                checked={mileageNa}
-                onChange={(e) => handleMileageNaChange(e.target.checked)}
-                disabled={isReadOnly}
-                className="rounded-lg"
-              />
-              N/A
-            </label>
-          </div>
-        </div>
-      </div>
+      )}
 
-      {/* Status radio group - always one selected */}
+      {/* Status radio group */}
       <div className="flex flex-col gap-2">
         <span className="text-xs font-medium text-gray-500">Status</span>
 
@@ -613,7 +654,7 @@ function DateMileageFields({ item, isReadOnly, onUpdate }: DateMileageFieldsProp
           )}
         </label>
 
-        {/* Recommended this visit - same severity badge as "Due" */}
+        {/* Recommended this visit */}
         <label className="flex items-center gap-2 cursor-pointer">
           <input
             type="radio"
@@ -630,6 +671,33 @@ function DateMileageFields({ item, isReadOnly, onUpdate }: DateMileageFieldsProp
             </span>
           )}
         </label>
+
+        {/* Already booked for this visit */}
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name={`mri-status-${item.id}`}
+            checked={currentStatus === 'already_booked'}
+            onChange={() => handleStatusChange('already_booked')}
+            disabled={isReadOnly}
+            className="border-gray-300"
+          />
+          <span className="text-sm text-gray-700">Already booked for this visit</span>
+          <span className="px-1.5 py-0.5 text-xs bg-rag-green text-white rounded-lg">GREEN</span>
+        </label>
+
+        {/* Not Applicable */}
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="radio"
+            name={`mri-status-${item.id}`}
+            checked={currentStatus === 'na'}
+            onChange={() => handleStatusChange('na')}
+            disabled={isReadOnly}
+            className="border-gray-300"
+          />
+          <span className="text-sm text-gray-500">Not Applicable</span>
+        </label>
       </div>
     </div>
   )
@@ -644,16 +712,36 @@ interface YesNoFieldsProps {
 
 function YesNoFields({ item, isReadOnly, onUpdate }: YesNoFieldsProps) {
   const result = item.result
+  const isNa = result?.notApplicable || false
+
+  const isAlreadyBooked = result?.alreadyBookedThisVisit || false
+
+  // Derive select value
+  const selectValue = isNa ? 'na' : isAlreadyBooked ? 'already_booked' : (result?.yesNoValue === null ? '' : result?.yesNoValue ? 'yes' : 'no')
 
   return (
     <div className="space-y-3">
       <div>
         <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
         <select
-          value={result?.yesNoValue === null ? '' : result?.yesNoValue ? 'yes' : 'no'}
+          value={selectValue}
           onChange={(e) => {
             const value = e.target.value
-            onUpdate({ yesNoValue: value === '' ? null : value === 'yes' })
+            if (value === 'na') {
+              onUpdate({ notApplicable: true, alreadyBookedThisVisit: false })
+            } else if (value === 'already_booked') {
+              onUpdate({
+                alreadyBookedThisVisit: true,
+                yesNoValue: null,
+                notApplicable: false
+              })
+            } else {
+              onUpdate({
+                yesNoValue: value === '' ? null : value === 'yes',
+                notApplicable: false,
+                alreadyBookedThisVisit: false
+              })
+            }
           }}
           disabled={isReadOnly}
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
@@ -661,6 +749,8 @@ function YesNoFields({ item, isReadOnly, onUpdate }: YesNoFieldsProps) {
           <option value="">Select...</option>
           <option value="yes">Yes</option>
           <option value="no">No</option>
+          <option value="already_booked">Already booked for this visit</option>
+          <option value="na">Not Applicable</option>
         </select>
         {!item.isInformational && (
           <div className="flex gap-2 mt-1 text-xs text-gray-500">
@@ -673,17 +763,19 @@ function YesNoFields({ item, isReadOnly, onUpdate }: YesNoFieldsProps) {
           </div>
         )}
       </div>
-      <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">Notes</label>
-        <textarea
-          value={result?.notes || ''}
-          onChange={(e) => onUpdate({ notes: e.target.value || null })}
-          disabled={isReadOnly}
-          rows={2}
-          placeholder="Additional notes..."
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
-        />
-      </div>
+      {!isNa && !isAlreadyBooked && (
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Notes</label>
+          <textarea
+            value={result?.notes || ''}
+            onChange={(e) => onUpdate({ notes: e.target.value || null })}
+            disabled={isReadOnly}
+            rows={2}
+            placeholder="Additional notes..."
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-gray-100"
+          />
+        </div>
+      )}
     </div>
   )
 }

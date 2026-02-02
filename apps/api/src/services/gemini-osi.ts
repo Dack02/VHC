@@ -83,6 +83,7 @@ export interface GeminiBooking {
     code?: string
     description?: string
     notes?: string
+    labourItems?: Array<{ description: string; price?: number; units?: number; fitter?: string }>
   }>
 
   // Status (derived from ArrivalStatus)
@@ -472,6 +473,7 @@ export async function fetchDiaryBookings(
               Code?: string
               Description?: string
               Notes?: string
+              Labour?: Array<{ Description?: string; Price?: number; Units?: number; Fitter?: string }>
             }>
           }
         }>
@@ -563,7 +565,15 @@ export async function fetchDiaryBookings(
       bookedRepairs: (b.Jobsheet?.Repairs || []).map(r => ({
         code: r.Code || undefined,
         description: r.Description || undefined,
-        notes: r.Notes || undefined
+        notes: r.Notes || undefined,
+        labourItems: (r.Labour || [])
+          .filter(l => l.Description)
+          .map(l => ({
+            description: l.Description!,
+            price: l.Price || undefined,
+            units: l.Units || undefined,
+            fitter: l.Fitter || undefined
+          }))
       })),
 
       status: b.ArrivalStatus || 'PENDING'

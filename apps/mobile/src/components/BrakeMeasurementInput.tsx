@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useThresholds } from '../context/ThresholdsContext'
 import { NumericPicker } from './NumericPicker'
+import { DecimalPicker } from './DecimalPicker'
 
 type BrakeType = 'disc' | 'drum'
 
@@ -172,6 +173,11 @@ export function BrakeMeasurementInput({
     })
   }, [onChange, onRAGChange, calculateRAG])
 
+  const getDiscColor = (disc: number | null, discMin: number | null): 'default' | 'red' | 'green' => {
+    if (disc === null || discMin === null) return 'default'
+    return disc < discMin ? 'red' : 'green'
+  }
+
   return (
     <div className="space-y-4">
       {/* Brake Type Toggle */}
@@ -241,22 +247,21 @@ export function BrakeMeasurementInput({
                 </div>
               ) : (
                 <>
-                  <NumericPicker
+                  <DecimalPicker
                     label="Actual"
                     value={measurement.nearside.disc}
                     onChange={(v) => handleDiscChange('nearside', v)}
-                    min={15}
-                    max={35}
-                    step={1}
+                    wholeMin={15}
+                    wholeMax={35}
                     unit="mm"
+                    color={getDiscColor(measurement.nearside.disc, measurement.nearside.disc_min)}
                   />
-                  <NumericPicker
+                  <DecimalPicker
                     label="Min Spec"
                     value={measurement.nearside.disc_min}
                     onChange={(v) => handleDiscMinChange('nearside', v)}
-                    min={15}
-                    max={35}
-                    step={1}
+                    wholeMin={15}
+                    wholeMax={35}
                     unit="mm"
                   />
                   {/* Status indicator */}
@@ -311,22 +316,21 @@ export function BrakeMeasurementInput({
                 </div>
               ) : (
                 <>
-                  <NumericPicker
+                  <DecimalPicker
                     label="Actual"
                     value={measurement.offside.disc}
                     onChange={(v) => handleDiscChange('offside', v)}
-                    min={15}
-                    max={35}
-                    step={1}
+                    wholeMin={15}
+                    wholeMax={35}
                     unit="mm"
+                    color={getDiscColor(measurement.offside.disc, measurement.offside.disc_min)}
                   />
-                  <NumericPicker
+                  <DecimalPicker
                     label="Min Spec"
                     value={measurement.offside.disc_min}
                     onChange={(v) => handleDiscMinChange('offside', v)}
-                    min={15}
-                    max={35}
-                    step={1}
+                    wholeMin={15}
+                    wholeMax={35}
                     unit="mm"
                   />
                   {/* Status indicator */}

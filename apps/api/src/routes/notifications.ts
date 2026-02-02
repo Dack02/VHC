@@ -7,6 +7,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware } from '../middleware/auth.js'
 import { emitToUser, WS_EVENTS } from '../services/websocket.js'
+import { sendPushNotification } from '../services/web-push.js'
 
 const notificationRoutes = new Hono()
 
@@ -258,6 +259,23 @@ export async function createNotification(
     timestamp: notification.created_at
   })
 
+  // Fire-and-forget push notification only for key event types
+  const PUSH_TYPES = ['tech_completed', 'customer_authorized', 'customer_declined']
+  if (PUSH_TYPES.includes(type)) {
+    sendPushNotification(userId, {
+      title,
+      body: message,
+      icon: '/favicon.ico',
+      tag: `vhc-${type}-${notification.id}`,
+      data: {
+        notificationId: notification.id,
+        type,
+        actionUrl: options?.actionUrl,
+        healthCheckId: options?.healthCheckId
+      }
+    }).catch(() => {})
+  }
+
   return notification
 }
 
@@ -313,20 +331,44 @@ export async function createRoleNotifications(
     priority?: 'low' | 'normal' | 'high' | 'urgent'
     actionUrl?: string
     metadata?: Record<string, unknown>
+    organizationId?: string
   }
 ) {
-  // Get users with specified roles at this site
-  const { data: users } = await supabaseAdmin
+  // Site-level staff (exclude org_admin from site query since they may have null site_id)
+  const siteRoles = roles.filter(r => r !== 'org_admin')
+  const { data: siteUsers } = await supabaseAdmin
     .from('users')
     .select('id')
     .eq('site_id', siteId)
     .eq('is_active', true)
-    .in('role', roles)
+    .in('role', siteRoles.length > 0 ? siteRoles : ['__none__'])
 
-  if (!users || users.length === 0) return []
+  // Org admins (org-wide, not site-scoped)
+  let orgAdmins: { id: string }[] = []
+  if (options?.organizationId && roles.includes('org_admin')) {
+    const { data } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .eq('organization_id', options.organizationId)
+      .eq('is_active', true)
+      .eq('role', 'org_admin')
+    orgAdmins = data || []
+  }
+
+  // Merge and deduplicate
+  const seen = new Set<string>()
+  const allUsers: { id: string }[] = []
+  for (const u of [...(siteUsers || []), ...orgAdmins]) {
+    if (!seen.has(u.id)) {
+      seen.add(u.id)
+      allUsers.push(u)
+    }
+  }
+
+  if (allUsers.length === 0) return []
 
   const notifications = []
-  for (const user of users) {
+  for (const user of allUsers) {
     const notification = await createNotification(user.id, type, title, message, options)
     if (notification) {
       notifications.push(notification)

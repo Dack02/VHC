@@ -203,6 +203,10 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     let amberAuthorizedValue = 0
     let amberItemCount = 0
     let amberAuthorizedCount = 0
+    let greenIdentifiedValue = 0
+    let greenAuthorizedValue = 0
+    let greenItemCount = 0
+    let greenAuthorizedCount = 0
 
     // Technician and advisor lookup maps
     const techMap = new Map<string, {
@@ -284,6 +288,9 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         } else if (derivedRagStatus === 'amber') {
           amberIdentifiedValue += totalIncVat
           amberItemCount++
+        } else if (derivedRagStatus === 'green') {
+          greenIdentifiedValue += totalIncVat
+          greenItemCount++
         }
       }
 
@@ -297,6 +304,9 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         } else if (derivedRagStatus === 'amber') {
           amberAuthorizedValue += totalIncVat
           amberAuthorizedCount++
+        } else if (derivedRagStatus === 'green') {
+          greenAuthorizedValue += totalIncVat
+          greenAuthorizedCount++
         }
       } else if (!isDeleted && item.outcome_status === 'declined') {
         totalDeclined += totalIncVat
@@ -509,6 +519,12 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
           authorizedValue: Math.round(amberAuthorizedValue * 100) / 100,
           itemCount: amberItemCount,
           authorizedCount: amberAuthorizedCount
+        },
+        green: {
+          identifiedValue: Math.round(greenIdentifiedValue * 100) / 100,
+          authorizedValue: Math.round(greenAuthorizedValue * 100) / 100,
+          itemCount: greenItemCount,
+          authorizedCount: greenAuthorizedCount
         }
       },
       technicians,

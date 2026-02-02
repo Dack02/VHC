@@ -784,6 +784,11 @@ export function Inspection() {
                   {job.vhc_reference}
                 </span>
               )}
+              {job.jobsheet_number && (
+                <span className="text-xs font-medium text-blue-200 bg-blue-800 px-2 py-0.5 rounded">
+                  Job #{job.jobsheet_number}
+                </span>
+              )}
               <p className="text-lg font-bold">{job.vehicle?.registration}</p>
             </div>
             <p className="text-sm text-blue-200">
@@ -885,6 +890,8 @@ export function Inspection() {
             vehicle={job?.vehicle}
             advisor={job?.advisor}
             bookedRepairs={job?.booked_repairs}
+            bookingNotes={job?.notes}
+            jobsheetNumber={job?.jobsheet_number}
           />
         ) : (checkinEnabled ? sections[currentSectionIndex - 1] : currentSection)?.items?.map((item) => {
           const instances = getItemInstances(item.id)

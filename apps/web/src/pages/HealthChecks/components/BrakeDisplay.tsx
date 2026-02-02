@@ -304,6 +304,11 @@ function AxleCard({ title, axle, ragStatus }: AxleCardProps) {
     return `${value}mm`
   }
 
+  const formatDiscReading = (value: number | null): string => {
+    if (value === null) return '-'
+    return `${value.toFixed(1)}mm`
+  }
+
   // Labels for brake type
   const frictionLabel = isDisc ? 'Pad' : 'Shoe'
 
@@ -330,7 +335,7 @@ function AxleCard({ title, axle, ragStatus }: AxleCardProps) {
               <div className="text-xs text-gray-500 italic">N/A</div>
             ) : (
               <div className={`font-mono font-medium ${getDiscColor(axle.ns_disc, axle.ns_disc_min)}`}>
-                {formatReading(axle.ns_disc)}
+                {formatDiscReading(axle.ns_disc)}
               </div>
             )}
           </div>
@@ -346,7 +351,7 @@ function AxleCard({ title, axle, ragStatus }: AxleCardProps) {
               <div className="text-xs text-gray-500 italic">N/A</div>
             ) : (
               <div className={`font-mono font-medium ${getDiscColor(axle.os_disc, axle.os_disc_min)}`}>
-                {formatReading(axle.os_disc)}
+                {formatDiscReading(axle.os_disc)}
               </div>
             )}
           </div>
@@ -380,11 +385,11 @@ function AxleCard({ title, axle, ragStatus }: AxleCardProps) {
         }`}>
           {summary.diff !== null && summary.diff < 0 ? (
             <span>
-              {isUrgent ? '⚠️ ' : ''}Min: {summary.minSpec}mm • Lowest: {summary.lowest}mm • {Math.abs(summary.diff).toFixed(1)}mm under
+              {isUrgent ? '⚠️ ' : ''}Min: {summary.type === 'disc' ? summary.minSpec?.toFixed(1) : summary.minSpec}mm • Lowest: {summary.type === 'disc' ? summary.lowest?.toFixed(1) : summary.lowest}mm • {Math.abs(summary.diff).toFixed(1)}mm under
             </span>
           ) : (
             <span>
-              Min: {summary.minSpec}mm • Lowest: {summary.lowest}mm • {summary.diff?.toFixed(1)}mm above
+              Min: {summary.type === 'disc' ? summary.minSpec?.toFixed(1) : summary.minSpec}mm • Lowest: {summary.type === 'disc' ? summary.lowest?.toFixed(1) : summary.lowest}mm • {summary.diff?.toFixed(1)}mm above
             </span>
           )}
         </div>

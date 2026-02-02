@@ -20,10 +20,13 @@ interface MriScanTabProps {
     code?: string
     description?: string
     notes?: string
+    labourItems?: Array<{ description: string; price?: number; units?: number; fitter?: string }>
   }> | null
+  bookingNotes?: string | null
+  jobsheetNumber?: string | null
 }
 
-export function MriScanTab({ healthCheckId, vehicle, advisor, bookedRepairs }: MriScanTabProps) {
+export function MriScanTab({ healthCheckId, vehicle, advisor, bookedRepairs, bookingNotes, jobsheetNumber }: MriScanTabProps) {
   const { session } = useAuth()
   const [mriData, setMriData] = useState<MriResultsResponse | null>(null)
   const [checkinData, setCheckinData] = useState<CheckinData | null>(null)
@@ -221,28 +224,66 @@ export function MriScanTab({ healthCheckId, vehicle, advisor, bookedRepairs }: M
       )}
 
       {/* Pre-Booked Work from DMS */}
-      {bookedRepairs && bookedRepairs.length > 0 && (
-        <Card padding="md">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
-            PRE-BOOKED WORK
-          </h3>
-          <div className="space-y-2">
-            {bookedRepairs.map((repair, idx) => (
-              <div key={idx} className="flex items-start gap-2 p-2 bg-gray-50">
-                <span className="text-primary font-bold">•</span>
-                <div>
-                  <p className="text-sm font-medium text-gray-900">
-                    {repair.description || repair.code || 'Booked item'}
-                  </p>
-                  {repair.notes && (
-                    <p className="text-xs text-gray-500 mt-1">{repair.notes}</p>
-                  )}
-                </div>
+      {(bookedRepairs && bookedRepairs.length > 0 || bookingNotes) && (() => {
+        const hasLabourItems = bookedRepairs?.some(r => r.labourItems && r.labourItems.length > 0) ?? false
+        const allLabourItems = hasLabourItems
+          ? bookedRepairs!.flatMap(r => r.labourItems || [])
+          : []
+
+        return (
+          <Card padding="md">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                PRE-BOOKED WORK
+              </h3>
+              {jobsheetNumber && (
+                <span className="text-xs text-gray-400">Job #{jobsheetNumber}</span>
+              )}
+            </div>
+
+            {/* Booking-level notes header */}
+            {bookingNotes && (
+              <div className="p-2 bg-blue-50 rounded mb-3">
+                <p className="text-sm font-medium text-gray-900">{bookingNotes}</p>
               </div>
-            ))}
-          </div>
-        </Card>
-      )}
+            )}
+
+            {hasLabourItems ? (
+              /* New format: labour line items */
+              <div className="space-y-2">
+                {allLabourItems.map((item, idx) => (
+                  <div key={idx} className="flex items-center justify-between p-2 bg-gray-50">
+                    <div className="flex items-center gap-2">
+                      <span className="text-primary font-bold">•</span>
+                      <p className="text-sm font-medium text-gray-900">{item.description}</p>
+                    </div>
+                    {item.price != null && item.price > 0 && (
+                      <span className="text-xs text-gray-500">£{item.price.toFixed(2)}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : bookedRepairs && bookedRepairs.length > 0 ? (
+              /* Fallback: old format */
+              <div className="space-y-2">
+                {bookedRepairs.map((repair, idx) => (
+                  <div key={idx} className="flex items-start gap-2 p-2 bg-gray-50">
+                    <span className="text-primary font-bold">•</span>
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">
+                        {repair.description || repair.code || 'Booked item'}
+                      </p>
+                      {repair.notes && (
+                        <p className="text-xs text-gray-500 mt-1">{repair.notes}</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </Card>
+        )
+      })()}
 
       {/* Check-In Information */}
       {hasCheckinInfo && (
@@ -345,6 +386,14 @@ function MriItemCard({ item, formatDate, formatMileage, getRagEmoji }: MriItemCa
   const renderValue = () => {
     if (!result) {
       return <span className="text-gray-400">Not reviewed</span>
+    }
+
+    if (result.notApplicable) {
+      return <span className="text-sm text-gray-400 italic">Not Applicable</span>
+    }
+
+    if (result.alreadyBookedThisVisit) {
+      return <span className="text-sm text-green-600 font-medium">Already booked for this visit</span>
     }
 
     if (item.itemType === 'date_mileage') {

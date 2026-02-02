@@ -91,7 +91,7 @@ export function SocketProvider({ children }: SocketProviderProps) {
     return () => {
       newSocket.disconnect()
     }
-  }, [token])
+  }, [token, activeOrgId])
 
   const joinHealthCheck = useCallback((healthCheckId: string) => {
     if (socket) {

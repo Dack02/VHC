@@ -14,7 +14,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useAuth } from '../../../contexts/AuthContext'
-import { api, NewRepairItem, RepairPart, RepairOption, Supplier, PricingSettings, RepairItemChild } from '../../../lib/api'
+import { api, NewRepairItem, RepairPart, RepairOption, Supplier, PricingSettings, RepairItemChild, PartsCatalogEntry } from '../../../lib/api'
 import { Tooltip } from '../../../components/ui/Tooltip'
 import { MarginCalculatorPopover } from '../../../components/MarginCalculatorPopover'
 import { RepairOptionsModal } from '../components/RepairOptionsModal'
@@ -53,6 +53,11 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
   const [showOtherPartModal, setShowOtherPartModal] = useState(false)
   const [optionsModalItemId, setOptionsModalItemId] = useState<string | null>(null)
   const [optionsModalItemTitle, setOptionsModalItemTitle] = useState('')
+
+  // Parts catalog state
+  const [catalogPartNumbers, setCatalogPartNumbers] = useState<Set<string>>(new Set())
+  const [savingToCatalog, setSavingToCatalog] = useState<Set<string>>(new Set())
+  const [catalogEntries, setCatalogEntries] = useState<PartsCatalogEntry[]>([])
 
   // Expand/collapse state for groups
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
@@ -144,7 +149,7 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
       setError(null)
 
       try {
-        const [itemsRes, suppliersRes, pricingRes] = await Promise.all([
+        const [itemsRes, suppliersRes, pricingRes, catalogRes] = await Promise.all([
           api<{ repairItems: NewRepairItem[] }>(
             `/api/v1/health-checks/${healthCheckId}/repair-items`,
             { token: session.accessToken }
@@ -156,12 +161,19 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
           api<{ settings: PricingSettings }>(
             `/api/v1/organizations/${user.organization.id}/pricing-settings`,
             { token: session.accessToken }
+          ),
+          api<{ parts: PartsCatalogEntry[] }>(
+            `/api/v1/organizations/${user.organization.id}/parts-catalog/search`,
+            { token: session.accessToken }
           )
         ])
 
         setRepairItems(itemsRes.repairItems || [])
         setSuppliers(suppliersRes.suppliers || [])
         setPricingSettings(pricingRes.settings || null)
+        const entries = catalogRes.parts || []
+        setCatalogEntries(entries)
+        setCatalogPartNumbers(new Set(entries.map(e => e.partNumber)))
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load data')
       } finally {
@@ -565,6 +577,38 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
     setSuppliers(prev => [...prev, newSupplier])
   }
 
+  // Save a part to the parts catalog (upsert)
+  const saveToPartsCatalog = useCallback(async (partNumber: string, description: string, costPrice: string) => {
+    if (!session?.accessToken || !user?.organization?.id) return
+    const pn = partNumber.trim()
+    if (!pn) return
+
+    setSavingToCatalog(prev => new Set(prev).add(pn))
+    try {
+      const res = await api<PartsCatalogEntry>(
+        `/api/v1/organizations/${user.organization.id}/parts-catalog`,
+        {
+          token: session.accessToken,
+          method: 'POST',
+          body: { part_number: pn, description: description.trim(), cost_price: costPrice }
+        }
+      )
+      setCatalogPartNumbers(prev => new Set(prev).add(pn))
+      setCatalogEntries(prev => {
+        const filtered = prev.filter(e => e.partNumber !== pn)
+        return [...filtered, res]
+      })
+    } catch (err) {
+      console.error('Failed to save part to catalog:', err)
+    } finally {
+      setSavingToCatalog(prev => {
+        const next = new Set(prev)
+        next.delete(pn)
+        return next
+      })
+    }
+  }, [session?.accessToken, user?.organization?.id])
+
   // Register input ref for focus management
   const registerRef = useCallback((key: string, element: HTMLElement | null) => {
     if (element) {
@@ -828,6 +872,10 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                   focusPrev={focusPrev}
                                   children={item.children}
                                   onChangeAllocation={handleChangeAllocation}
+                                  catalogPartNumbers={catalogPartNumbers}
+                                  savingToCatalog={savingToCatalog}
+                                  catalogEntries={catalogEntries}
+                                  onSaveToCatalog={saveToPartsCatalog}
                                   indent={2}
                                 />
                               )
@@ -859,6 +907,10 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                   registerRef={registerRef}
                                   focusNext={focusNext}
                                   focusPrev={focusPrev}
+                                  catalogPartNumbers={catalogPartNumbers}
+                                  savingToCatalog={savingToCatalog}
+                                  catalogEntries={catalogEntries}
+                                  onSaveToCatalog={saveToPartsCatalog}
                                   indent={2}
                                 />
                               )
@@ -948,6 +1000,10 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         registerRef={registerRef}
                                         focusNext={focusNext}
                                         focusPrev={focusPrev}
+                                        catalogPartNumbers={catalogPartNumbers}
+                                        savingToCatalog={savingToCatalog}
+                                        catalogEntries={catalogEntries}
+                                        onSaveToCatalog={saveToPartsCatalog}
                                         indent={2}
                                       />
                                     )
@@ -979,6 +1035,10 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         registerRef={registerRef}
                                         focusNext={focusNext}
                                         focusPrev={focusPrev}
+                                        catalogPartNumbers={catalogPartNumbers}
+                                        savingToCatalog={savingToCatalog}
+                                        catalogEntries={catalogEntries}
+                                        onSaveToCatalog={saveToPartsCatalog}
                                         indent={2}
                                       />
                                     )
@@ -1119,6 +1179,10 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         focusPrev={focusPrev}
                                         parentGroupId={item.id}
                                         onChangeAllocation={handleChangeAllocation}
+                                        catalogPartNumbers={catalogPartNumbers}
+                                        savingToCatalog={savingToCatalog}
+                                        catalogEntries={catalogEntries}
+                                        onSaveToCatalog={saveToPartsCatalog}
                                         indent={3}
                                       />
                                     )
@@ -1150,6 +1214,10 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         registerRef={registerRef}
                                         focusNext={focusNext}
                                         focusPrev={focusPrev}
+                                        catalogPartNumbers={catalogPartNumbers}
+                                        savingToCatalog={savingToCatalog}
+                                        catalogEntries={catalogEntries}
+                                        onSaveToCatalog={saveToPartsCatalog}
                                         indent={3}
                                       />
                                     )
@@ -1278,6 +1346,10 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                               registerRef={registerRef}
                               focusNext={focusNext}
                               focusPrev={focusPrev}
+                              catalogPartNumbers={catalogPartNumbers}
+                              savingToCatalog={savingToCatalog}
+                              catalogEntries={catalogEntries}
+                              onSaveToCatalog={saveToPartsCatalog}
                               indent={1}
                             />
                           )
@@ -1309,6 +1381,10 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                               registerRef={registerRef}
                               focusNext={focusNext}
                               focusPrev={focusPrev}
+                              catalogPartNumbers={catalogPartNumbers}
+                              savingToCatalog={savingToCatalog}
+                              catalogEntries={catalogEntries}
+                              onSaveToCatalog={saveToPartsCatalog}
                               indent={1}
                             />
                           )
@@ -1396,6 +1472,10 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         registerRef={registerRef}
                                         focusNext={focusNext}
                                         focusPrev={focusPrev}
+                                        catalogPartNumbers={catalogPartNumbers}
+                                        savingToCatalog={savingToCatalog}
+                                        catalogEntries={catalogEntries}
+                                        onSaveToCatalog={saveToPartsCatalog}
                                         indent={1}
                                       />
                                     )
@@ -1427,6 +1507,10 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         registerRef={registerRef}
                                         focusNext={focusNext}
                                         focusPrev={focusPrev}
+                                        catalogPartNumbers={catalogPartNumbers}
+                                        savingToCatalog={savingToCatalog}
+                                        catalogEntries={catalogEntries}
+                                        onSaveToCatalog={saveToPartsCatalog}
                                         indent={1}
                                       />
                                     )
@@ -1575,6 +1659,10 @@ interface MultiPartRowProps {
   parentGroupId?: string // Parent group ID (for moving to shared)
   onChangeAllocation?: (partId: string, newType: 'shared' | 'direct', targetRepairItemId?: string) => void
   onSupplierAdded?: (supplier: Supplier) => void
+  catalogPartNumbers: Set<string>
+  savingToCatalog: Set<string>
+  catalogEntries: PartsCatalogEntry[]
+  onSaveToCatalog: (partNumber: string, description: string, costPrice: string) => void
 }
 
 function MultiPartRow({
@@ -1599,7 +1687,11 @@ function MultiPartRow({
   children,
   parentGroupId,
   onChangeAllocation,
-  onSupplierAdded
+  onSupplierAdded,
+  catalogPartNumbers,
+  savingToCatalog,
+  catalogEntries,
+  onSaveToCatalog
 }: MultiPartRowProps) {
   const [localPartNumber, setLocalPartNumber] = useState(part?.partNumber || editState.partNumber || '')
   const [localDescription, setLocalDescription] = useState(part?.description || editState.description || '')
@@ -1611,7 +1703,48 @@ function MultiPartRow({
   const [showAllocationMenu, setShowAllocationMenu] = useState(false)
   const [showQuickAddSupplierModal, setShowQuickAddSupplierModal] = useState(false)
   const [showMarginCalc, setShowMarginCalc] = useState(false)
+  const [showCatalogDropdown, setShowCatalogDropdown] = useState(false)
+  const [catalogHighlightIndex, setCatalogHighlightIndex] = useState(-1)
+  const catalogDropdownRef = useRef<HTMLDivElement>(null)
+  const partNumberInputRef = useRef<HTMLInputElement>(null)
   const marginCellRef = useRef<HTMLTableCellElement>(null)
+
+  // Filter catalog entries for autocomplete dropdown
+  const filteredCatalog = useMemo(() => {
+    if (!localPartNumber.trim()) return []
+    const q = localPartNumber.trim().toLowerCase()
+    return catalogEntries.filter(e =>
+      e.partNumber.toLowerCase().includes(q) || e.description.toLowerCase().includes(q)
+    ).slice(0, 8)
+  }, [localPartNumber, catalogEntries])
+
+  // Handle selecting a catalog entry from dropdown
+  const handleSelectCatalogEntry = useCallback((entry: PartsCatalogEntry) => {
+    setLocalPartNumber(entry.partNumber)
+    setLocalDescription(entry.description)
+    setLocalCostPrice(entry.costPrice.toString())
+    const sell = entry.costPrice / (1 - defaultMargin / 100)
+    setLocalSellPrice(sell.toFixed(2))
+    setShowCatalogDropdown(false)
+    setCatalogHighlightIndex(-1)
+    onUpdateEditState({ isDirty: true })
+  }, [defaultMargin, onUpdateEditState])
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        catalogDropdownRef.current &&
+        !catalogDropdownRef.current.contains(e.target as Node) &&
+        partNumberInputRef.current &&
+        !partNumberInputRef.current.contains(e.target as Node)
+      ) {
+        setShowCatalogDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Auto-calculate sell price when cost changes (if new part)
   useEffect(() => {
@@ -1778,18 +1911,93 @@ function MultiPartRow({
       {/* Indent spacer */}
       <td className="px-2 py-2"></td>
 
-      {/* Part # with indentation */}
+      {/* Part # with indentation + bookmark + autocomplete */}
       <td className={`px-2 py-2 text-sm ${indentClass}`}>
-        <input
-          type="text"
-          value={localPartNumber}
-          onChange={(e) => handleChange('partNumber', e.target.value)}
-          disabled={editState.isSaving}
-          placeholder="Part #"
-          className={`w-full px-2 py-1 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-primary ${
-            editState.error ? 'border-red-300' : 'border-gray-300'
-          } ${editState.isSaving ? 'bg-gray-100' : ''}`}
-        />
+        <div className="flex items-center gap-1">
+          {/* Bookmark button */}
+          {localPartNumber.trim() && (
+            <button
+              type="button"
+              onClick={() => onSaveToCatalog(localPartNumber, localDescription, localCostPrice)}
+              disabled={savingToCatalog.has(localPartNumber.trim()) || editState.isSaving}
+              className="flex-shrink-0 p-0.5 rounded hover:bg-gray-100 transition-colors"
+              title={catalogPartNumbers.has(localPartNumber.trim()) ? 'Saved to catalog' : 'Save to catalog'}
+            >
+              {savingToCatalog.has(localPartNumber.trim()) ? (
+                <div className="animate-spin h-3.5 w-3.5 border-2 border-primary border-t-transparent rounded-full" />
+              ) : (
+                <svg className={`w-3.5 h-3.5 ${catalogPartNumbers.has(localPartNumber.trim()) ? 'text-primary' : 'text-gray-300 hover:text-primary'}`} viewBox="0 0 24 24" fill={catalogPartNumbers.has(localPartNumber.trim()) ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                </svg>
+              )}
+            </button>
+          )}
+          {/* Part number input with autocomplete */}
+          <div className="relative flex-1">
+            <input
+              ref={partNumberInputRef}
+              type="text"
+              value={localPartNumber}
+              onChange={(e) => {
+                handleChange('partNumber', e.target.value)
+                setShowCatalogDropdown(e.target.value.trim().length > 0)
+                setCatalogHighlightIndex(-1)
+              }}
+              onFocus={() => {
+                if (localPartNumber.trim().length > 0) setShowCatalogDropdown(true)
+              }}
+              onKeyDown={(e) => {
+                if (showCatalogDropdown && filteredCatalog.length > 0) {
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault()
+                    setCatalogHighlightIndex(prev => Math.min(prev + 1, filteredCatalog.length - 1))
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault()
+                    setCatalogHighlightIndex(prev => Math.max(prev - 1, 0))
+                  } else if (e.key === 'Enter' && catalogHighlightIndex >= 0) {
+                    e.preventDefault()
+                    handleSelectCatalogEntry(filteredCatalog[catalogHighlightIndex])
+                    return
+                  } else if (e.key === 'Escape') {
+                    setShowCatalogDropdown(false)
+                    return
+                  }
+                }
+              }}
+              disabled={editState.isSaving}
+              placeholder="Part #"
+              className={`w-full px-2 py-1 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-primary ${
+                editState.error ? 'border-red-300' : 'border-gray-300'
+              } ${editState.isSaving ? 'bg-gray-100' : ''}`}
+            />
+            {/* Autocomplete dropdown */}
+            {showCatalogDropdown && filteredCatalog.length > 0 && (
+              <div
+                ref={catalogDropdownRef}
+                className="absolute z-50 bg-white border border-gray-200 rounded-lg shadow-lg mt-1 w-64 max-h-64 overflow-y-auto"
+              >
+                {filteredCatalog.map((entry, idx) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 ${
+                      idx === catalogHighlightIndex ? 'bg-primary/10' : 'hover:bg-gray-50'
+                    } ${idx > 0 ? 'border-t border-gray-100' : ''}`}
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      handleSelectCatalogEntry(entry)
+                    }}
+                    onMouseEnter={() => setCatalogHighlightIndex(idx)}
+                  >
+                    <span className="font-medium text-gray-900 truncate">{entry.partNumber}</span>
+                    <span className="text-gray-500 truncate flex-1">{entry.description}</span>
+                    <span className="text-gray-400 flex-shrink-0">&pound;{entry.costPrice.toFixed(2)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </td>
 
       {/* Description */}
@@ -2116,6 +2324,13 @@ function SupplierDropdown({ suppliers, value, onChange, onAddNew, disabled, erro
         ref={buttonRef}
         type="button"
         onClick={() => !disabled && setIsOpen(!isOpen)}
+        onKeyDown={(e) => {
+          if (disabled) return
+          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault()
+            if (!isOpen) setIsOpen(true)
+          }
+        }}
         disabled={disabled}
         className={`${baseClasses} text-left flex items-center justify-between focus:outline-none focus:ring-2 focus:ring-primary ${
           error ? 'border-red-300' : 'border-gray-300'

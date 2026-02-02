@@ -31,6 +31,7 @@ interface TodayData {
   ragBreakdown: {
     red: { identifiedValue: number; authorizedValue: number; itemCount: number; authorizedCount: number }
     amber: { identifiedValue: number; authorizedValue: number; itemCount: number; authorizedCount: number }
+    green: { identifiedValue: number; authorizedValue: number; itemCount: number; authorizedCount: number }
   }
   technicians: Array<{
     name: string
@@ -368,11 +369,43 @@ export default function Today() {
             </div>
           </div>
 
+          {/* Green row */}
+          {(rag?.green.itemCount || 0) > 0 && (
+          <div className="flex items-center gap-4">
+            <div className="w-16 text-sm font-medium text-rag-green">Green</div>
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm text-gray-600">{rag?.green.itemCount || 0} items</span>
+                <span className="text-sm font-medium text-gray-900">{formatCurrency(rag?.green.identifiedValue || 0)}</span>
+              </div>
+              <div className="w-full h-4 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className="bg-rag-green h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: (rag?.green.identifiedValue || 0) > 0
+                      ? `${Math.max(((rag?.green.authorizedValue || 0) / (rag?.green.identifiedValue || 1)) * 100, 2)}%`
+                      : '0%'
+                  }}
+                />
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-xs text-gray-400">{rag?.green.authorizedCount || 0} authorized</span>
+                <span className="text-xs font-medium text-rag-green">{formatCurrency(rag?.green.authorizedValue || 0)}</span>
+              </div>
+            </div>
+            <div className="w-16 text-right text-sm font-medium text-gray-600">
+              {(rag?.green.identifiedValue || 0) > 0
+                ? `${Math.round(((rag?.green.authorizedValue || 0) / (rag?.green.identifiedValue || 1)) * 100)}%`
+                : '-'}
+            </div>
+          </div>
+          )}
+
           {/* Combined total */}
           <div className="border-t border-gray-200 pt-3 flex items-center justify-between">
             <span className="text-sm font-medium text-gray-700">Total Authorized</span>
             <span className="text-lg font-bold text-rag-green">
-              {formatCurrency((rag?.red.authorizedValue || 0) + (rag?.amber.authorizedValue || 0))}
+              {formatCurrency((rag?.red.authorizedValue || 0) + (rag?.amber.authorizedValue || 0) + (rag?.green.authorizedValue || 0))}
             </span>
           </div>
         </div>

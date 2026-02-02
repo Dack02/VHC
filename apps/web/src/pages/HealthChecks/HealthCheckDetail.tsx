@@ -10,6 +10,7 @@ import { PartsTab } from './tabs/PartsTab'
 import { SummaryTab } from './tabs/SummaryTab'
 import { CheckInTab } from './tabs/CheckInTab'
 import { MriTab } from './tabs/MriTab'
+import { MriScanSection } from './components/MriScanSection'
 import { CustomerActivityTab } from './tabs/CustomerActivityTab'
 import { PublishModal } from './PublishModal'
 import { CustomerPreviewModal } from './CustomerPreviewModal'
@@ -648,6 +649,7 @@ export default function HealthCheckDetail() {
             healthCheckId={id!}
             sentAt={healthCheck.sent_at ?? null}
             bookedRepairs={healthCheck.booked_repairs}
+            bookingNotes={healthCheck.notes}
             onUpdate={silentRefresh}
           />
         )}
@@ -668,7 +670,9 @@ export default function HealthCheckDetail() {
           />
         )}
         {activeTab === 'mri' && (
-          <MriTab healthCheckId={id!} />
+          ['awaiting_arrival', 'awaiting_checkin'].includes(healthCheck.status)
+            ? <MriScanSection healthCheckId={id!} onComplete={silentRefresh} />
+            : <MriTab healthCheckId={id!} />
         )}
         {activeTab === 'health-check' && (
           <HealthCheckTabContent
@@ -856,9 +860,12 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
         {/* Top row: VHC Ref + Registration + Status */}
         <div className="flex items-start justify-between gap-4">
           <div className="flex-shrink-0 space-y-1">
-            {healthCheck.vhc_reference && (
-              <div className="text-xs font-medium text-gray-500 uppercase tracking-wider">
-                {healthCheck.vhc_reference}
+            {(healthCheck.vhc_reference || healthCheck.jobsheet_number) && (
+              <div className="flex items-center gap-2 text-xs font-medium text-gray-500 uppercase tracking-wider">
+                {healthCheck.vhc_reference && <span>{healthCheck.vhc_reference}</span>}
+                {healthCheck.jobsheet_number && (
+                  <span className="text-gray-400">Job #{healthCheck.jobsheet_number}</span>
+                )}
               </div>
             )}
             <div className="text-2xl font-bold text-gray-900 bg-yellow-100 px-3 py-1 rounded border-2 border-yellow-400">
@@ -963,6 +970,16 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
             <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">VHC Ref</div>
             <div className="text-sm font-bold text-primary bg-blue-50 px-3 py-2 rounded border border-blue-200">
               {healthCheck.vhc_reference}
+            </div>
+          </div>
+        )}
+
+        {/* Jobsheet Number */}
+        {healthCheck.jobsheet_number && (
+          <div className="flex-shrink-0">
+            <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Job No.</div>
+            <div className="text-sm font-medium text-gray-700 bg-gray-50 px-3 py-2 rounded border border-gray-200">
+              {healthCheck.jobsheet_number}
             </div>
           </div>
         )}

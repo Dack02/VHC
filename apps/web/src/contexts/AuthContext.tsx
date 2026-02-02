@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react'
 import { api, setActiveOrgId, setTokenRefreshCallback } from '../lib/api'
+import { isPushSupported, registerServiceWorker, subscribeToPush } from '../lib/push-notifications'
 
 interface User {
   id: string
@@ -70,7 +71,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return stored ? JSON.parse(stored) : []
   })
   const [activeOrgId, setActiveOrgIdState] = useState<string | null>(() => {
-    return localStorage.getItem(ACTIVE_ORG_KEY) || null
+    const stored = localStorage.getItem(ACTIVE_ORG_KEY) || null
+    if (stored) setActiveOrgId(stored)
+    return stored
   })
   const [loading, setLoading] = useState(true)
 
@@ -291,6 +294,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
     return () => setTokenRefreshCallback(null)
   }, [refreshSession])
+
+  // Auto-subscribe to push notifications if permission was previously granted
+  useEffect(() => {
+    if (!session?.accessToken || loading) return
+    if (!isPushSupported()) return
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      registerServiceWorker().then(() => {
+        subscribeToPush(session.accessToken).catch(() => {})
+      })
+    }
+  }, [session?.accessToken, loading])
 
   const switchOrganization = async (orgId: string) => {
     if (!session?.accessToken) return

@@ -202,7 +202,7 @@ export function TyreDisplay({ position, data, ragStatus }: TyreDisplayProps) {
       </div>
 
       {/* Tyre Specifications - Always shown prominently */}
-      {details && (details.manufacturer || details.size || details.speed_rating || details.load_rating) && (
+      {details && (details.manufacturer || details.size || details.speed_rating || details.load_rating || details.run_flat !== undefined) && (
         <div className={`mb-3 p-2 rounded-xl ${isUrgent ? 'bg-red-100' : isAdvisory ? 'bg-amber-100' : 'bg-white'} border border-gray-200`}>
           <div className="text-xs font-medium text-gray-500 mb-1">Specifications</div>
           <div className="space-y-0.5">
@@ -217,6 +217,15 @@ export function TyreDisplay({ position, data, ragStatus }: TyreDisplayProps) {
                 {details.load_rating && <span>Load: {details.load_rating}</span>}
                 {details.load_rating && details.speed_rating && <span> • </span>}
                 {details.speed_rating && <span>Speed: {details.speed_rating}</span>}
+              </div>
+            )}
+            {details.run_flat !== undefined && (
+              <div className="text-xs text-gray-600">
+                Run Flat: {details.run_flat ? (
+                  <span className="font-semibold text-amber-700">Yes</span>
+                ) : (
+                  <span className="font-medium text-gray-700">No</span>
+                )}
               </div>
             )}
           </div>

@@ -358,6 +358,19 @@ results.post('/health-checks/:id/results/batch', authorize(['super_admin', 'org_
       }
     }
 
+    // Clean up orphaned non-location results now that location-specific results exist
+    const templateItemsWithLocations = [...new Set(
+      resultsToSave.filter((r: any) => r.vehicleLocationId).map((r: any) => r.templateItemId)
+    )]
+    for (const tid of templateItemsWithLocations) {
+      await supabaseAdmin
+        .from('check_results')
+        .delete()
+        .eq('health_check_id', id)
+        .eq('template_item_id', tid)
+        .is('vehicle_location_id', null)
+    }
+
     return c.json({
       saved: savedResults.length,
       results: savedResults

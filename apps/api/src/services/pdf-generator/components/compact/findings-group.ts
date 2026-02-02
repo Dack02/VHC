@@ -258,7 +258,7 @@ export function renderFindingsGroup(options: FindingsGroupOptions): string {
       name: item.title,
       descriptions: getDescriptions(item, results, reasonsByCheckResult),
       price: item.total_price ?? null,
-      isDeferred: !!item.follow_up_date,
+      isDeferred: outcomeStatus === 'deferred' || !!item.follow_up_date,
       deferredUntil: item.follow_up_date ?? null,
       isAuthorised: outcomeStatus === 'authorised',
       isDeclined: outcomeStatus === 'declined',

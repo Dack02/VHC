@@ -17,11 +17,12 @@ import {
 interface SummaryTabProps {
   healthCheckId: string
   sentAt: string | null
-  bookedRepairs?: Array<{ code?: string; description?: string; notes?: string }>
+  bookedRepairs?: Array<{ code?: string; description?: string; notes?: string; labourItems?: Array<{ description: string; price?: number; units?: number; fitter?: string }> }>
+  bookingNotes?: string | null
   onUpdate: () => void
 }
 
-export function SummaryTab({ healthCheckId, sentAt, bookedRepairs, onUpdate }: SummaryTabProps) {
+export function SummaryTab({ healthCheckId, sentAt, bookedRepairs, bookingNotes, onUpdate }: SummaryTabProps) {
   const { session, user } = useAuth()
   const [repairItems, setRepairItems] = useState<NewRepairItem[]>([])
   const [checkResults, setCheckResults] = useState<CheckResult[]>([])
@@ -196,37 +197,72 @@ export function SummaryTab({ healthCheckId, sentAt, bookedRepairs, onUpdate }: S
       </div>
 
       {/* Pre-Booked Work Section */}
-      {bookedRepairs && bookedRepairs.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-lg">
-          <div className="px-4 py-3 border-b border-gray-200 bg-blue-50">
-            <h3 className="font-semibold text-gray-900">PRE-BOOKED WORK</h3>
-            <p className="text-xs text-gray-500 mt-1">
-              Work booked in the DMS before vehicle arrival
-            </p>
-          </div>
-          <div className="divide-y divide-gray-200">
-            {bookedRepairs.map((repair, index) => (
-              <div key={index} className="px-4 py-3">
-                <div className="flex items-start gap-3">
-                  {repair.code && (
-                    <span className="px-2 py-0.5 text-xs font-mono bg-gray-100 text-gray-700 rounded">
-                      {repair.code}
-                    </span>
-                  )}
-                  <div className="flex-1">
-                    <div className="font-medium text-gray-900">
-                      {repair.description || 'No description'}
+      {(bookedRepairs && bookedRepairs.length > 0 || bookingNotes) && (() => {
+        // Check if any repair has labour items (new format)
+        const hasLabourItems = bookedRepairs?.some(r => r.labourItems && r.labourItems.length > 0) ?? false
+        // Flatten all labour items across all repairs
+        const allLabourItems = hasLabourItems
+          ? bookedRepairs!.flatMap(r => r.labourItems || [])
+          : []
+
+        return (
+          <div className="bg-white border border-gray-200 rounded-lg">
+            <div className="px-4 py-3 border-b border-gray-200 bg-blue-50">
+              <h3 className="font-semibold text-gray-900">PRE-BOOKED WORK</h3>
+              <p className="text-xs text-gray-500 mt-1">
+                Work booked in the DMS before vehicle arrival
+              </p>
+            </div>
+
+            {/* Booking-level notes header */}
+            {bookingNotes && (
+              <div className="px-4 py-3 bg-blue-50/50 border-b border-gray-200">
+                <div className="text-sm font-medium text-gray-900">{bookingNotes}</div>
+              </div>
+            )}
+
+            {hasLabourItems ? (
+              /* New format: labour line items */
+              <div className="divide-y divide-gray-200">
+                {allLabourItems.map((item, index) => (
+                  <div key={index} className="px-4 py-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-primary">•</span>
+                      <span className="text-sm font-medium text-gray-900">{item.description}</span>
                     </div>
-                    {repair.notes && (
-                      <div className="text-sm text-gray-500 mt-1">{repair.notes}</div>
+                    {item.price != null && item.price > 0 && (
+                      <span className="text-sm text-gray-500">£{item.price.toFixed(2)}</span>
                     )}
                   </div>
-                </div>
+                ))}
               </div>
-            ))}
+            ) : bookedRepairs && bookedRepairs.length > 0 ? (
+              /* Fallback: old format (code + description + notes) */
+              <div className="divide-y divide-gray-200">
+                {bookedRepairs.map((repair, index) => (
+                  <div key={index} className="px-4 py-3">
+                    <div className="flex items-start gap-3">
+                      {repair.code && (
+                        <span className="px-2 py-0.5 text-xs font-mono bg-gray-100 text-gray-700 rounded">
+                          {repair.code}
+                        </span>
+                      )}
+                      <div className="flex-1">
+                        <div className="font-medium text-gray-900">
+                          {repair.description || 'No description'}
+                        </div>
+                        {repair.notes && (
+                          <div className="text-sm text-gray-500 mt-1">{repair.notes}</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* Repair Groups & Items Section */}
       <div className="bg-white border border-gray-200 rounded-lg">

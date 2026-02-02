@@ -83,7 +83,7 @@ users.post('/', authorize(['super_admin', 'org_admin', 'site_admin']), async (c)
     }
 
     // Site admins can only create users for their site
-    if (auth.user.role === 'site_admin' && siteId !== auth.user.siteId) {
+    if (auth.user.role === 'site_admin' && siteId && siteId !== auth.user.siteId) {
       return c.json({ error: 'Cannot create user for a different site' }, 403)
     }
 

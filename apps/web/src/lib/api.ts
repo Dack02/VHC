@@ -299,7 +299,7 @@ export interface HealthCheck {
   customer_waiting?: boolean
   loan_car_required?: boolean
   is_internal?: boolean
-  booked_repairs?: Array<{ code?: string; description?: string; notes?: string }>
+  booked_repairs?: Array<{ code?: string; description?: string; notes?: string; labourItems?: Array<{ description: string; price?: number; units?: number; fitter?: string }> }>
   jobsheet_number?: string | null
   jobsheet_status?: string | null
   external_id?: string | null
@@ -544,6 +544,14 @@ export interface SupplierType {
   sortOrder: number
   createdAt: string
   updatedAt: string
+}
+
+export interface PartsCatalogEntry {
+  id: string
+  partNumber: string
+  description: string
+  costPrice: number
+  isActive: boolean
 }
 
 export interface RepairLabour {

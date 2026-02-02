@@ -221,20 +221,39 @@ interface AddUserModalProps {
 }
 
 function AddUserModal({ onClose, onSuccess }: AddUserModalProps) {
-  const { session } = useAuth()
+  const { session, user: authUser } = useAuth()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [successNote, setSuccessNote] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [sendInvite, setSendInvite] = useState(true)
+  const [sites, setSites] = useState<Site[]>([])
   const [formData, setFormData] = useState({
     email: '',
     password: '',
     firstName: '',
     lastName: '',
     phone: '',
-    role: 'technician'
+    role: 'technician',
+    siteId: ''
   })
+
+  const canSelectSite = authUser?.role === 'org_admin' || authUser?.role === 'super_admin'
+
+  useEffect(() => {
+    if (!canSelectSite) return
+    const fetchSites = async () => {
+      try {
+        const data = await api<{ sites: Site[] }>('/api/v1/sites', {
+          token: session?.accessToken
+        })
+        setSites(data.sites)
+      } catch {
+        // Sites dropdown will just be empty
+      }
+    }
+    fetchSites()
+  }, [session?.accessToken, canSelectSite])
 
   const generatePassword = () => {
     const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
@@ -270,7 +289,7 @@ function AddUserModal({ onClose, onSuccess }: AddUserModalProps) {
     try {
       const result = await api<{ emailSent?: boolean }>('/api/v1/users', {
         method: 'POST',
-        body: { ...formData, sendInvite },
+        body: { ...formData, siteId: formData.siteId || undefined, sendInvite },
         token: session?.accessToken
       })
       if (!sendInvite) {
@@ -405,6 +424,22 @@ function AddUserModal({ onClose, onSuccess }: AddUserModalProps) {
               <option value="org_admin">Org Admin</option>
             </select>
           </div>
+
+          {canSelectSite && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Site</label>
+              <select
+                value={formData.siteId}
+                onChange={(e) => setFormData({ ...formData, siteId: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">No site</option>
+                {sites.map((site) => (
+                  <option key={site.id} value={site.id}>{site.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <label className="flex items-center gap-2 cursor-pointer">
             <input

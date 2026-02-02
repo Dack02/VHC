@@ -746,4 +746,931 @@ reports.get('/mri-bypass', authorize(['super_admin', 'org_admin', 'site_admin', 
   }
 })
 
+// ============================================================================
+// FINANCIAL REPORTS
+// ============================================================================
+
+reports.get('/financial', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id, group_by = 'day' } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    // Get repair items with health check context
+    let query = supabaseAdmin
+      .from('repair_items')
+      .select(`
+        id,
+        name,
+        labour_total,
+        parts_total,
+        subtotal,
+        vat_amount,
+        total_inc_vat,
+        price_override,
+        price_override_reason,
+        outcome_status,
+        created_at,
+        health_check:health_checks!inner(
+          id,
+          status,
+          created_at,
+          organization_id,
+          site_id,
+          advisor_id,
+          advisor:users!health_checks_advisor_id_fkey(first_name, last_name)
+        )
+      `)
+      .eq('health_check.organization_id', auth.orgId)
+      .gte('created_at', startDate)
+      .lte('created_at', endDate)
+      .is('deleted_at', null)
+
+    if (site_id) query = query.eq('health_check.site_id', site_id)
+
+    const { data: items, error } = await query
+
+    if (error) {
+      console.error('Financial report error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+
+    // Revenue overview
+    let totalIdentified = 0
+    let totalAuthorized = 0
+    let totalDeclined = 0
+    let totalDeferred = 0
+    let totalLabour = 0
+    let totalParts = 0
+
+    // Top items tracking
+    const itemAggregates: Record<string, { name: string; count: number; totalValue: number; authorizedCount: number }> = {}
+
+    // Price overrides
+    const priceOverrides: Array<{
+      name: string
+      originalTotal: number
+      overrideAmount: number
+      reason: string | null
+      advisorName: string
+    }> = []
+
+    // Revenue over time
+    const revenueByPeriod: Record<string, { period: string; identified: number; authorized: number; declined: number }> = {}
+
+    for (const item of items || []) {
+      const value = Number(item.total_inc_vat) || 0
+      const labour = Number(item.labour_total) || 0
+      const parts = Number(item.parts_total) || 0
+
+      totalIdentified += value
+      totalLabour += labour
+      totalParts += parts
+
+      if (item.outcome_status === 'authorised') {
+        totalAuthorized += value
+      } else if (item.outcome_status === 'declined') {
+        totalDeclined += value
+      } else if (item.outcome_status === 'deferred') {
+        totalDeferred += value
+      }
+
+      // Aggregate by item name
+      const name = item.name || 'Unknown'
+      if (!itemAggregates[name]) {
+        itemAggregates[name] = { name, count: 0, totalValue: 0, authorizedCount: 0 }
+      }
+      itemAggregates[name].count++
+      itemAggregates[name].totalValue += value
+      if (item.outcome_status === 'authorised') {
+        itemAggregates[name].authorizedCount++
+      }
+
+      // Price overrides
+      if (item.price_override != null) {
+        const hc = item.health_check as any
+        const advisor = hc?.advisor
+        priceOverrides.push({
+          name,
+          originalTotal: value,
+          overrideAmount: Number(item.price_override),
+          reason: item.price_override_reason as string | null,
+          advisorName: advisor ? `${advisor.first_name} ${advisor.last_name}` : 'Unknown',
+        })
+      }
+
+      // Revenue by period
+      const date = new Date(item.created_at as string)
+      let periodKey: string
+      if (group_by === 'week') {
+        const weekStart = new Date(date)
+        const day = weekStart.getDay()
+        const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1)
+        weekStart.setDate(diff)
+        periodKey = weekStart.toISOString().split('T')[0]
+      } else if (group_by === 'month') {
+        periodKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+      } else {
+        periodKey = date.toISOString().split('T')[0]
+      }
+
+      if (!revenueByPeriod[periodKey]) {
+        revenueByPeriod[periodKey] = { period: periodKey, identified: 0, authorized: 0, declined: 0 }
+      }
+      revenueByPeriod[periodKey].identified += value
+      if (item.outcome_status === 'authorised') revenueByPeriod[periodKey].authorized += value
+      if (item.outcome_status === 'declined') revenueByPeriod[periodKey].declined += value
+    }
+
+    const topItems = Object.values(itemAggregates)
+      .map(i => ({
+        ...i,
+        avgValue: i.count > 0 ? Math.round(i.totalValue / i.count * 100) / 100 : 0,
+        authRate: i.count > 0 ? Math.round((i.authorizedCount / i.count) * 100 * 10) / 10 : 0,
+      }))
+      .sort((a, b) => b.totalValue - a.totalValue)
+      .slice(0, 20)
+
+    const captureRate = totalIdentified > 0
+      ? Math.round((totalAuthorized / totalIdentified) * 100 * 10) / 10
+      : 0
+
+    const revenueTimeline = Object.values(revenueByPeriod).sort((a, b) => a.period.localeCompare(b.period))
+
+    return c.json({
+      period: { from: startDate, to: endDate },
+      overview: {
+        totalIdentified: Math.round(totalIdentified * 100) / 100,
+        totalAuthorized: Math.round(totalAuthorized * 100) / 100,
+        totalDeclined: Math.round(totalDeclined * 100) / 100,
+        totalDeferred: Math.round(totalDeferred * 100) / 100,
+        captureRate,
+        labourTotal: Math.round(totalLabour * 100) / 100,
+        partsTotal: Math.round(totalParts * 100) / 100,
+        labourPercent: (totalLabour + totalParts) > 0
+          ? Math.round((totalLabour / (totalLabour + totalParts)) * 100 * 10) / 10
+          : 0,
+      },
+      revenueTimeline,
+      topItems,
+      priceOverrides: priceOverrides.slice(0, 50),
+    })
+  } catch (error) {
+    console.error('Financial report error:', error)
+    return c.json({ error: 'Failed to fetch financial report' }, 500)
+  }
+})
+
+// ============================================================================
+// TECHNICIAN PERFORMANCE
+// ============================================================================
+
+reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id, technician_id } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    let query = supabaseAdmin
+      .from('health_checks')
+      .select(`
+        id,
+        status,
+        created_at,
+        tech_started_at,
+        tech_completed_at,
+        technician_id,
+        green_count,
+        amber_count,
+        red_count,
+        technician:users!health_checks_technician_id_fkey(id, first_name, last_name),
+        repair_items(total_inc_vat, outcome_status)
+      `)
+      .eq('organization_id', auth.orgId)
+      .gte('created_at', startDate)
+      .lte('created_at', endDate)
+      .not('technician_id', 'is', null)
+
+    if (site_id) query = query.eq('site_id', site_id)
+    if (technician_id) query = query.eq('technician_id', technician_id)
+
+    const { data: healthChecks, error } = await query
+
+    if (error) {
+      console.error('Technician report error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+
+    // Aggregate per technician
+    const techData: Record<string, {
+      id: string
+      name: string
+      assigned: number
+      completed: number
+      inspectionTimes: number[]
+      redCount: number
+      amberCount: number
+      greenCount: number
+      revenueIdentified: number
+    }> = {}
+
+    // Time distribution buckets (minutes)
+    const timeBuckets = { '0-15': 0, '15-30': 0, '30-45': 0, '45-60': 0, '60+': 0 }
+
+    for (const hc of healthChecks || []) {
+      if (!hc.technician_id || !hc.technician) continue
+      const tech = hc.technician as unknown as { id: string; first_name: string; last_name: string }
+      const key = hc.technician_id
+
+      if (!techData[key]) {
+        techData[key] = {
+          id: key,
+          name: `${tech.first_name} ${tech.last_name}`,
+          assigned: 0,
+          completed: 0,
+          inspectionTimes: [],
+          redCount: 0,
+          amberCount: 0,
+          greenCount: 0,
+          revenueIdentified: 0,
+        }
+      }
+
+      techData[key].assigned++
+      techData[key].redCount += hc.red_count || 0
+      techData[key].amberCount += hc.amber_count || 0
+      techData[key].greenCount += hc.green_count || 0
+
+      // Revenue identified
+      const items = hc.repair_items as Array<{ total_inc_vat?: number; outcome_status?: string }> | null
+      techData[key].revenueIdentified += items?.reduce((s, i) => s + (Number(i.total_inc_vat) || 0), 0) || 0
+
+      // Inspection time calculation
+      if (hc.tech_started_at && hc.tech_completed_at) {
+        techData[key].completed++
+        const startTime = new Date(hc.tech_started_at).getTime()
+        const endTime = new Date(hc.tech_completed_at).getTime()
+        const minutes = (endTime - startTime) / 60000
+        if (minutes > 0 && minutes < 480) { // Ignore unreasonable values (> 8 hours)
+          techData[key].inspectionTimes.push(minutes)
+          if (minutes <= 15) timeBuckets['0-15']++
+          else if (minutes <= 30) timeBuckets['15-30']++
+          else if (minutes <= 45) timeBuckets['30-45']++
+          else if (minutes <= 60) timeBuckets['45-60']++
+          else timeBuckets['60+']++
+        }
+      } else if (['tech_completed', 'awaiting_review', 'awaiting_pricing', 'awaiting_parts', 'ready_to_send', 'sent', 'completed', 'authorized', 'declined'].includes(hc.status)) {
+        techData[key].completed++
+      }
+    }
+
+    // Build leaderboard
+    const leaderboard = Object.values(techData)
+      .map(t => ({
+        id: t.id,
+        name: t.name,
+        assigned: t.assigned,
+        completed: t.completed,
+        completionRate: t.assigned > 0 ? Math.round((t.completed / t.assigned) * 100 * 10) / 10 : 0,
+        avgInspectionTime: t.inspectionTimes.length > 0
+          ? Math.round(t.inspectionTimes.reduce((a, b) => a + b, 0) / t.inspectionTimes.length * 10) / 10
+          : 0,
+        avgRedAmber: t.assigned > 0
+          ? Math.round(((t.redCount + t.amberCount) / t.assigned) * 10) / 10
+          : 0,
+        revenueIdentified: Math.round(t.revenueIdentified * 100) / 100,
+      }))
+      .sort((a, b) => b.assigned - a.assigned)
+
+    // Time by tech chart data
+    const timeByTech = leaderboard
+      .filter(t => t.avgInspectionTime > 0)
+      .map(t => ({ name: t.name, avgTime: t.avgInspectionTime }))
+      .sort((a, b) => b.avgTime - a.avgTime)
+
+    // Time distribution
+    const timeDistribution = Object.entries(timeBuckets).map(([bucket, count]) => ({
+      bucket,
+      count,
+    }))
+
+    return c.json({
+      period: { from: startDate, to: endDate },
+      leaderboard,
+      timeByTech,
+      timeDistribution,
+    })
+  } catch (error) {
+    console.error('Technician report error:', error)
+    return c.json({ error: 'Failed to fetch technician report' }, 500)
+  }
+})
+
+// ============================================================================
+// ADVISOR PERFORMANCE
+// ============================================================================
+
+reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id, advisor_id } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    let query = supabaseAdmin
+      .from('health_checks')
+      .select(`
+        id,
+        status,
+        created_at,
+        sent_at,
+        first_opened_at,
+        tech_completed_at,
+        advisor_id,
+        advisor:users!health_checks_advisor_id_fkey(id, first_name, last_name),
+        repair_items(total_inc_vat, outcome_status)
+      `)
+      .eq('organization_id', auth.orgId)
+      .gte('created_at', startDate)
+      .lte('created_at', endDate)
+      .not('advisor_id', 'is', null)
+
+    if (site_id) query = query.eq('site_id', site_id)
+    if (advisor_id) query = query.eq('advisor_id', advisor_id)
+
+    const { data: healthChecks, error } = await query
+
+    if (error) {
+      console.error('Advisor report error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+
+    const advisorData: Record<string, {
+      id: string
+      name: string
+      managed: number
+      sent: number
+      authorized: number
+      pricingTimes: number[]
+      valueIdentified: number
+      valueAuthorized: number
+      valueDeclined: number
+      responseTimes: number[]
+    }> = {}
+
+    // Aging checks (sent but not responded)
+    const agingChecks: Array<{
+      healthCheckId: string
+      advisorName: string
+      sentAt: string
+      daysWaiting: number
+    }> = []
+
+    for (const hc of healthChecks || []) {
+      if (!hc.advisor_id || !hc.advisor) continue
+      const advisor = hc.advisor as unknown as { id: string; first_name: string; last_name: string }
+      const key = hc.advisor_id
+
+      if (!advisorData[key]) {
+        advisorData[key] = {
+          id: key,
+          name: `${advisor.first_name} ${advisor.last_name}`,
+          managed: 0,
+          sent: 0,
+          authorized: 0,
+          pricingTimes: [],
+          valueIdentified: 0,
+          valueAuthorized: 0,
+          valueDeclined: 0,
+          responseTimes: [],
+        }
+      }
+
+      advisorData[key].managed++
+      const items = hc.repair_items as Array<{ total_inc_vat?: number; outcome_status?: string }> | null
+      const hcValue = items?.reduce((s, i) => s + (Number(i.total_inc_vat) || 0), 0) || 0
+      advisorData[key].valueIdentified += hcValue
+
+      if (hc.sent_at) {
+        advisorData[key].sent++
+
+        // Response time
+        if (hc.first_opened_at) {
+          const sentTime = new Date(hc.sent_at).getTime()
+          const openedTime = new Date(hc.first_opened_at).getTime()
+          const hours = (openedTime - sentTime) / 3600000
+          if (hours >= 0) advisorData[key].responseTimes.push(hours)
+        }
+
+        // Aging checks
+        const isResponded = ['authorized', 'completed', 'declined', 'customer_approved', 'customer_partial', 'customer_declined'].includes(hc.status)
+        if (!isResponded && hc.sent_at) {
+          const daysWaiting = (Date.now() - new Date(hc.sent_at).getTime()) / 86400000
+          if (daysWaiting >= 1) {
+            agingChecks.push({
+              healthCheckId: hc.id,
+              advisorName: `${advisor.first_name} ${advisor.last_name}`,
+              sentAt: hc.sent_at,
+              daysWaiting: Math.round(daysWaiting * 10) / 10,
+            })
+          }
+        }
+      }
+
+      if (hc.status === 'authorized' || hc.status === 'completed') {
+        advisorData[key].authorized++
+        advisorData[key].valueAuthorized += hcValue
+      } else if (hc.status === 'declined') {
+        advisorData[key].valueDeclined += hcValue
+      }
+
+      // Pricing time
+      if (hc.tech_completed_at && hc.sent_at) {
+        const techDone = new Date(hc.tech_completed_at).getTime()
+        const sentTime = new Date(hc.sent_at).getTime()
+        const hours = (sentTime - techDone) / 3600000
+        if (hours >= 0 && hours < 168) { // Max 1 week
+          advisorData[key].pricingTimes.push(hours)
+        }
+      }
+    }
+
+    const leaderboard = Object.values(advisorData)
+      .map(a => ({
+        id: a.id,
+        name: a.name,
+        managed: a.managed,
+        sent: a.sent,
+        sendRate: a.managed > 0 ? Math.round((a.sent / a.managed) * 100 * 10) / 10 : 0,
+        authorized: a.authorized,
+        conversionRate: a.sent > 0 ? Math.round((a.authorized / a.sent) * 100 * 10) / 10 : 0,
+        valueIdentified: Math.round(a.valueIdentified * 100) / 100,
+        valueAuthorized: Math.round(a.valueAuthorized * 100) / 100,
+        valueDeclined: Math.round(a.valueDeclined * 100) / 100,
+        avgPricingHours: a.pricingTimes.length > 0
+          ? Math.round(a.pricingTimes.reduce((x, y) => x + y, 0) / a.pricingTimes.length * 10) / 10
+          : 0,
+        avgResponseHours: a.responseTimes.length > 0
+          ? Math.round(a.responseTimes.reduce((x, y) => x + y, 0) / a.responseTimes.length * 10) / 10
+          : 0,
+      }))
+      .sort((a, b) => b.valueAuthorized - a.valueAuthorized)
+
+    // Funnel comparison data
+    const funnelComparison = leaderboard.map(a => ({
+      name: a.name,
+      managed: a.managed,
+      sent: a.sent,
+      authorized: a.authorized,
+    }))
+
+    return c.json({
+      period: { from: startDate, to: endDate },
+      leaderboard,
+      funnelComparison,
+      agingChecks: agingChecks.sort((a, b) => b.daysWaiting - a.daysWaiting).slice(0, 20),
+    })
+  } catch (error) {
+    console.error('Advisor report error:', error)
+    return c.json({ error: 'Failed to fetch advisor report' }, 500)
+  }
+})
+
+// ============================================================================
+// CUSTOMER INSIGHTS
+// ============================================================================
+
+reports.get('/customers', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    let query = supabaseAdmin
+      .from('health_checks')
+      .select(`
+        id,
+        status,
+        sent_at,
+        first_opened_at,
+        customer_id,
+        customer:customers(id, first_name, last_name),
+        repair_items(total_inc_vat, outcome_status, declined_reason:declined_reasons(reason))
+      `)
+      .eq('organization_id', auth.orgId)
+      .gte('created_at', startDate)
+      .lte('created_at', endDate)
+
+    if (site_id) query = query.eq('site_id', site_id)
+
+    const { data: healthChecks, error } = await query
+
+    if (error) {
+      console.error('Customer report error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+
+    let reportsSent = 0
+    let reportsOpened = 0
+    const openTimes: number[] = []
+    const declinedReasons: Record<string, { reason: string; count: number; value: number }> = {}
+    const customerCounts: Record<string, number> = {}
+
+    // Response by day of week
+    const byDayOfWeek = [0, 0, 0, 0, 0, 0, 0] // Sun-Sat
+
+    for (const hc of healthChecks || []) {
+      if (hc.customer_id) {
+        customerCounts[hc.customer_id] = (customerCounts[hc.customer_id] || 0) + 1
+      }
+
+      if (hc.sent_at) {
+        reportsSent++
+        if (hc.first_opened_at) {
+          reportsOpened++
+          const sentTime = new Date(hc.sent_at).getTime()
+          const openTime = new Date(hc.first_opened_at).getTime()
+          const hours = (openTime - sentTime) / 3600000
+          if (hours >= 0) openTimes.push(hours)
+        }
+      }
+
+      // Response time (sent to any status change beyond sent)
+      if (hc.sent_at && ['authorized', 'completed', 'declined', 'customer_approved', 'customer_partial', 'customer_declined'].includes(hc.status)) {
+        const day = new Date(hc.sent_at).getDay()
+        byDayOfWeek[day]++
+      }
+
+      // Declined reasons from repair items
+      const items = hc.repair_items as unknown as Array<{
+        total_inc_vat?: number
+        outcome_status?: string
+        declined_reason?: { reason: string } | null
+      }> | null
+
+      for (const item of items || []) {
+        if (item.outcome_status === 'declined' && item.declined_reason) {
+          const reason = (item.declined_reason as any)?.reason || 'No reason given'
+          if (!declinedReasons[reason]) {
+            declinedReasons[reason] = { reason, count: 0, value: 0 }
+          }
+          declinedReasons[reason].count++
+          declinedReasons[reason].value += Number(item.total_inc_vat) || 0
+        }
+      }
+    }
+
+    const openRate = reportsSent > 0 ? Math.round((reportsOpened / reportsSent) * 100 * 10) / 10 : 0
+    const avgTimeToOpen = openTimes.length > 0
+      ? Math.round(openTimes.reduce((a, b) => a + b, 0) / openTimes.length * 10) / 10
+      : 0
+
+    // Response time distribution
+    const responseDistribution = [
+      { bucket: '<1hr', count: openTimes.filter(t => t < 1).length },
+      { bucket: '1-4hr', count: openTimes.filter(t => t >= 1 && t < 4).length },
+      { bucket: '4-24hr', count: openTimes.filter(t => t >= 4 && t < 24).length },
+      { bucket: '1-3d', count: openTimes.filter(t => t >= 24 && t < 72).length },
+      { bucket: '3-7d', count: openTimes.filter(t => t >= 72 && t < 168).length },
+      { bucket: '>7d', count: openTimes.filter(t => t >= 168).length },
+    ]
+
+    // Approval by day of week
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+    const approvalByDay = dayNames.map((name, i) => ({ day: name, count: byDayOfWeek[i] }))
+
+    // Repeat customer stats
+    const repeatCustomers = Object.values(customerCounts).filter(c => c > 1).length
+    const totalCustomers = Object.keys(customerCounts).length
+
+    const topDeclinedReasons = Object.values(declinedReasons)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 15)
+      .map(r => ({
+        ...r,
+        value: Math.round(r.value * 100) / 100,
+      }))
+
+    return c.json({
+      period: { from: startDate, to: endDate },
+      engagement: {
+        reportsSent,
+        reportsOpened,
+        openRate,
+        avgTimeToOpenHours: avgTimeToOpen,
+      },
+      responseDistribution,
+      approvalByDay,
+      topDeclinedReasons,
+      repeatCustomers: {
+        total: totalCustomers,
+        repeat: repeatCustomers,
+        repeatRate: totalCustomers > 0 ? Math.round((repeatCustomers / totalCustomers) * 100 * 10) / 10 : 0,
+      },
+    })
+  } catch (error) {
+    console.error('Customer report error:', error)
+    return c.json({ error: 'Failed to fetch customer report' }, 500)
+  }
+})
+
+// ============================================================================
+// OPERATIONAL EFFICIENCY
+// ============================================================================
+
+reports.get('/operations', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id, group_by = 'day' } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    let query = supabaseAdmin
+      .from('health_checks')
+      .select(`
+        id,
+        status,
+        created_at,
+        tech_started_at,
+        tech_completed_at,
+        sent_at,
+        first_opened_at,
+        closed_at,
+        site_id,
+        site:sites(name)
+      `)
+      .eq('organization_id', auth.orgId)
+      .gte('created_at', startDate)
+      .lte('created_at', endDate)
+
+    if (site_id) query = query.eq('site_id', site_id)
+
+    const { data: healthChecks, error } = await query
+
+    if (error) {
+      console.error('Operations report error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+
+    // Workflow timing aggregates
+    const turnaroundTimes: number[] = []
+    const inspectionTimes: number[] = []
+    const pricingTimes: number[] = []
+    const sendTimes: number[] = []
+    const responseTimes: number[] = []
+
+    // Status distribution
+    const statusCounts: Record<string, number> = {}
+
+    // Throughput by period
+    const createdByPeriod: Record<string, number> = {}
+    const completedByPeriod: Record<string, number> = {}
+
+    // Stuck checks
+    const stuckChecks: Array<{
+      healthCheckId: string
+      status: string
+      daysInStatus: number
+      siteName: string
+    }> = []
+
+    // Site comparison
+    const siteData: Record<string, {
+      name: string
+      created: number
+      turnaroundTimes: number[]
+      authorizedCount: number
+      sentCount: number
+    }> = {}
+
+    for (const hc of healthChecks || []) {
+      // Status distribution
+      statusCounts[hc.status] = (statusCounts[hc.status] || 0) + 1
+
+      const site = hc.site as unknown as { name: string } | null
+      const siteName = site?.name || 'Unknown'
+
+      // Site comparison
+      if (hc.site_id) {
+        if (!siteData[hc.site_id]) {
+          siteData[hc.site_id] = { name: siteName, created: 0, turnaroundTimes: [], authorizedCount: 0, sentCount: 0 }
+        }
+        siteData[hc.site_id].created++
+        if (hc.sent_at) siteData[hc.site_id].sentCount++
+        if (hc.status === 'authorized' || hc.status === 'completed') siteData[hc.site_id].authorizedCount++
+      }
+
+      // Total turnaround
+      if (hc.created_at && hc.closed_at) {
+        const hours = (new Date(hc.closed_at).getTime() - new Date(hc.created_at).getTime()) / 3600000
+        if (hours >= 0 && hours < 720) {
+          turnaroundTimes.push(hours)
+          if (hc.site_id && siteData[hc.site_id]) siteData[hc.site_id].turnaroundTimes.push(hours)
+        }
+      }
+
+      // Inspection time
+      if (hc.tech_started_at && hc.tech_completed_at) {
+        const minutes = (new Date(hc.tech_completed_at).getTime() - new Date(hc.tech_started_at).getTime()) / 60000
+        if (minutes > 0 && minutes < 480) inspectionTimes.push(minutes)
+      }
+
+      // Pricing time (tech completed to sent)
+      if (hc.tech_completed_at && hc.sent_at) {
+        const hours = (new Date(hc.sent_at).getTime() - new Date(hc.tech_completed_at).getTime()) / 3600000
+        if (hours >= 0 && hours < 168) pricingTimes.push(hours)
+      }
+
+      // Time to send (created to sent if no tech timestamps)
+      if (hc.created_at && hc.sent_at) {
+        const hours = (new Date(hc.sent_at).getTime() - new Date(hc.created_at).getTime()) / 3600000
+        if (hours >= 0 && hours < 720) sendTimes.push(hours)
+      }
+
+      // Customer response time
+      if (hc.sent_at && hc.first_opened_at) {
+        const hours = (new Date(hc.first_opened_at).getTime() - new Date(hc.sent_at).getTime()) / 3600000
+        if (hours >= 0) responseTimes.push(hours)
+      }
+
+      // Period tracking
+      const date = new Date(hc.created_at)
+      let periodKey: string
+      if (group_by === 'week') {
+        const weekStart = new Date(date)
+        const day = weekStart.getDay()
+        const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1)
+        weekStart.setDate(diff)
+        periodKey = weekStart.toISOString().split('T')[0]
+      } else if (group_by === 'month') {
+        periodKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+      } else {
+        periodKey = date.toISOString().split('T')[0]
+      }
+      createdByPeriod[periodKey] = (createdByPeriod[periodKey] || 0) + 1
+      if (hc.closed_at) {
+        const closedDate = new Date(hc.closed_at)
+        let closedPeriod: string
+        if (group_by === 'week') {
+          const ws = new Date(closedDate)
+          const d = ws.getDay()
+          ws.setDate(ws.getDate() - d + (d === 0 ? -6 : 1))
+          closedPeriod = ws.toISOString().split('T')[0]
+        } else if (group_by === 'month') {
+          closedPeriod = `${closedDate.getFullYear()}-${String(closedDate.getMonth() + 1).padStart(2, '0')}`
+        } else {
+          closedPeriod = closedDate.toISOString().split('T')[0]
+        }
+        completedByPeriod[closedPeriod] = (completedByPeriod[closedPeriod] || 0) + 1
+      }
+
+      // Stuck check detection (in active status for > 3 days)
+      const activeStatuses = ['inspection_pending', 'inspection_in_progress', 'pricing_pending', 'pricing_in_progress', 'advisor_review', 'customer_pending']
+      if (activeStatuses.includes(hc.status)) {
+        const daysInStatus = (Date.now() - new Date(hc.created_at).getTime()) / 86400000
+        if (daysInStatus >= 3) {
+          stuckChecks.push({
+            healthCheckId: hc.id,
+            status: hc.status,
+            daysInStatus: Math.round(daysInStatus * 10) / 10,
+            siteName,
+          })
+        }
+      }
+    }
+
+    const avg = (arr: number[]) => arr.length > 0 ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length * 10) / 10 : 0
+
+    // Throughput data
+    const allPeriods = [...new Set([...Object.keys(createdByPeriod), ...Object.keys(completedByPeriod)])].sort()
+    const throughput = allPeriods.map(p => ({
+      period: p,
+      created: createdByPeriod[p] || 0,
+      completed: completedByPeriod[p] || 0,
+    }))
+
+    // Status distribution for pie chart
+    const statusDistribution = Object.entries(statusCounts)
+      .map(([status, count]) => ({ status, count }))
+      .sort((a, b) => b.count - a.count)
+
+    // Site comparison
+    const siteComparison = Object.values(siteData)
+      .map(s => ({
+        name: s.name,
+        created: s.created,
+        avgTurnaround: avg(s.turnaroundTimes),
+        conversionRate: s.sentCount > 0 ? Math.round((s.authorizedCount / s.sentCount) * 100 * 10) / 10 : 0,
+      }))
+      .sort((a, b) => b.created - a.created)
+
+    return c.json({
+      period: { from: startDate, to: endDate },
+      timing: {
+        avgTurnaroundHours: avg(turnaroundTimes),
+        avgInspectionMinutes: avg(inspectionTimes),
+        avgPricingHours: avg(pricingTimes),
+        avgTimeToSendHours: avg(sendTimes),
+        avgResponseHours: avg(responseTimes),
+      },
+      throughput,
+      statusDistribution,
+      stuckChecks: stuckChecks.sort((a, b) => b.daysInStatus - a.daysInStatus).slice(0, 20),
+      siteComparison,
+    })
+  } catch (error) {
+    console.error('Operations report error:', error)
+    return c.json({ error: 'Failed to fetch operations report' }, 500)
+  }
+})
+
+// ============================================================================
+// COMPLIANCE / AUDIT TRAIL
+// ============================================================================
+
+reports.get('/compliance/audit-trail', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id } = c.req.query()
+
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    sevenDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || sevenDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    // Get recent status changes
+    let query = supabaseAdmin
+      .from('health_check_status_history')
+      .select(`
+        id,
+        from_status,
+        to_status,
+        notes,
+        created_at,
+        user:users(first_name, last_name),
+        health_check:health_checks!inner(
+          id,
+          organization_id,
+          site_id,
+          vehicle:vehicles(registration)
+        )
+      `)
+      .eq('health_check.organization_id', auth.orgId)
+      .gte('created_at', startDate)
+      .lte('created_at', endDate)
+      .order('created_at', { ascending: false })
+      .limit(100)
+
+    if (site_id) query = query.eq('health_check.site_id', site_id)
+
+    const { data: statusChanges, error } = await query
+
+    if (error) {
+      console.error('Audit trail error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+
+    const auditEntries = (statusChanges || []).map(sc => {
+      const user = sc.user as unknown as { first_name: string; last_name: string } | null
+      const hc = sc.health_check as unknown as { id: string; vehicle?: { registration: string } | null }
+      return {
+        id: sc.id,
+        healthCheckId: hc?.id,
+        vehicleReg: (hc?.vehicle as any)?.registration || 'Unknown',
+        fromStatus: sc.from_status,
+        toStatus: sc.to_status,
+        notes: sc.notes,
+        userName: user ? `${user.first_name} ${user.last_name}` : 'System',
+        timestamp: sc.created_at,
+      }
+    })
+
+    return c.json({
+      period: { from: startDate, to: endDate },
+      entries: auditEntries,
+    })
+  } catch (error) {
+    console.error('Audit trail error:', error)
+    return c.json({ error: 'Failed to fetch audit trail' }, 500)
+  }
+})
+
 export default reports

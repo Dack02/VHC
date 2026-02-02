@@ -66,7 +66,13 @@ const AIConfiguration = lazy(() => import('./pages/Admin/AIConfiguration'))
 const AIUsageDashboard = lazy(() => import('./pages/Admin/AIUsageDashboard'))
 const Onboarding = lazy(() => import('./pages/Onboarding'))
 const TechnicianWorkload = lazy(() => import('./pages/Dashboard/TechnicianWorkload'))
-const Reports = lazy(() => import('./pages/Reports'))
+const ReportsHub = lazy(() => import('./pages/Reports/ReportsHub'))
+const FinancialReports = lazy(() => import('./pages/Reports/FinancialReports'))
+const TechnicianPerformance = lazy(() => import('./pages/Reports/TechnicianPerformance'))
+const AdvisorPerformance = lazy(() => import('./pages/Reports/AdvisorPerformance'))
+const CustomerInsights = lazy(() => import('./pages/Reports/CustomerInsights'))
+const OperationalEfficiency = lazy(() => import('./pages/Reports/OperationalEfficiency'))
+const QualityCompliance = lazy(() => import('./pages/Reports/QualityCompliance'))
 const Today = lazy(() => import('./pages/Today'))
 const Upcoming = lazy(() => import('./pages/Upcoming'))
 const PartsCatalog = lazy(() => import('./pages/Parts/PartsCatalog'))
@@ -126,7 +132,13 @@ function App() {
                         <Route path="/dashboard/technicians" element={<TechnicianWorkload />} />
                         <Route path="/today" element={<Today />} />
                         <Route path="/upcoming" element={<Upcoming />} />
-                        <Route path="/reports" element={<Reports />} />
+                        <Route path="/reports" element={<ReportsHub />} />
+                        <Route path="/reports/financial" element={<FinancialReports />} />
+                        <Route path="/reports/technicians" element={<TechnicianPerformance />} />
+                        <Route path="/reports/advisors" element={<AdvisorPerformance />} />
+                        <Route path="/reports/customers" element={<CustomerInsights />} />
+                        <Route path="/reports/operations" element={<OperationalEfficiency />} />
+                        <Route path="/reports/compliance" element={<QualityCompliance />} />
                         <Route path="/users" element={<Users />} />
                         <Route path="/health-checks" element={<HealthCheckList />} />
                         <Route path="/health-checks/new" element={<NewHealthCheck />} />

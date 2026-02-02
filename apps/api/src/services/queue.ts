@@ -205,6 +205,7 @@ export interface DmsImportJob {
   organizationId: string
   siteId?: string
   date: string  // YYYY-MM-DD
+  endDate?: string  // YYYY-MM-DD — fetch bookings up to this date (inclusive)
   importType: 'manual' | 'scheduled'
   triggeredBy?: string  // user ID for manual imports
   bookingIds?: string[]  // selective import - only import these booking IDs

@@ -272,6 +272,9 @@ async function fetchAuthorizedRepairItems(
       customer_approved,
       labour_total,
       parts_total,
+      subtotal,
+      vat_amount,
+      total_inc_vat,
       selected_option_id,
       labour:repair_labour(
         id,
@@ -440,12 +443,37 @@ function transformRepairItemToWorkSection(
   // Calculate subtotals for service advisor
   let subtotals: { labourTotal: number; partsTotal: number; sectionTotal: number } | undefined
   if (variant === 'service_advisor') {
-    const labourTotal = labourLines.reduce((sum, l) => sum + (l.total || 0), 0)
-    const partsTotal = partsLines.reduce((sum, p) => sum + (p.total || 0), 0)
-    subtotals = {
-      labourTotal,
-      partsTotal,
-      sectionTotal: labourTotal + partsTotal
+    let labourTotal = labourLines.reduce((sum, l) => sum + (l.total || 0), 0)
+    let partsTotal = partsLines.reduce((sum, p) => sum + (p.total || 0), 0)
+
+    // Fall back to item-level totals when no detailed labour/parts lines exist
+    // This handles the case where a user manually enters a total price without
+    // adding individual labour/parts line items
+    if (labourTotal === 0 && partsTotal === 0) {
+      const itemLabourTotal = parseFloat(item.labour_total as string) || 0
+      const itemPartsTotal = parseFloat(item.parts_total as string) || 0
+      const itemTotalIncVat = parseFloat(item.total_inc_vat as string) || 0
+
+      if (itemLabourTotal > 0 || itemPartsTotal > 0) {
+        labourTotal = itemLabourTotal
+        partsTotal = itemPartsTotal
+      } else if (itemTotalIncVat > 0) {
+        // Manual total entered with no parts/labour breakdown - treat as a lump sum
+        // Use the total_inc_vat as the section total directly
+        subtotals = {
+          labourTotal: 0,
+          partsTotal: 0,
+          sectionTotal: itemTotalIncVat
+        }
+      }
+    }
+
+    if (!subtotals) {
+      subtotals = {
+        labourTotal,
+        partsTotal,
+        sectionTotal: labourTotal + partsTotal
+      }
     }
   }
 
@@ -524,6 +552,10 @@ function calculateTotals(
   const preBookedParts = preBookedWork.reduce((sum, section) => {
     return sum + (section.subtotals?.partsTotal || 0)
   }, 0)
+  // Use sectionTotal to capture lump-sum manual prices that don't break down into labour/parts
+  const preBookedSubtotal = preBookedWork.reduce((sum, section) => {
+    return sum + (section.subtotals?.sectionTotal || 0)
+  }, 0)
 
   // Calculate VHC work totals
   const vhcLabour = authorizedVhcWork.reduce((sum, section) => {
@@ -531,6 +563,9 @@ function calculateTotals(
   }, 0)
   const vhcParts = authorizedVhcWork.reduce((sum, section) => {
     return sum + (section.subtotals?.partsTotal || 0)
+  }, 0)
+  const vhcSubtotal = authorizedVhcWork.reduce((sum, section) => {
+    return sum + (section.subtotals?.sectionTotal || 0)
   }, 0)
 
   // Calculate total labour hours
@@ -545,7 +580,7 @@ function calculateTotals(
 
   const totalLabourValue = preBookedLabour + vhcLabour
   const totalPartsValue = preBookedParts + vhcParts
-  const subtotalExVat = totalLabourValue + totalPartsValue
+  const subtotalExVat = preBookedSubtotal + vhcSubtotal
   const vatRate = 0.20
   const vatAmount = subtotalExVat * vatRate
 
@@ -553,12 +588,12 @@ function calculateTotals(
     preBooked: {
       labour: preBookedLabour,
       parts: preBookedParts,
-      subtotal: preBookedLabour + preBookedParts
+      subtotal: preBookedSubtotal
     },
     vhcWork: {
       labour: vhcLabour,
       parts: vhcParts,
-      subtotal: vhcLabour + vhcParts
+      subtotal: vhcSubtotal
     },
     totalLabourHours,
     totalLabourValue,

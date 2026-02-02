@@ -552,6 +552,8 @@ export interface PartsCatalogEntry {
   description: string
   costPrice: number
   isActive: boolean
+  createdAt: string
+  updatedAt: string
 }
 
 export interface RepairLabour {

@@ -80,6 +80,29 @@ interface UnactionedHealthCheck {
   importedAt: string
 }
 
+/**
+ * Get the next N working days from a given date.
+ * Working days = Mon-Sat (skips Sunday).
+ */
+function getNextWorkingDays(fromDate: Date, count: number): string[] {
+  const days: string[] = []
+  const d = new Date(fromDate)
+  d.setHours(12, 0, 0, 0)
+
+  while (days.length < count) {
+    d.setDate(d.getDate() + 1)
+    if (d.getDay() !== 0) {
+      days.push(d.toISOString().split('T')[0])
+    }
+  }
+  return days
+}
+
+function getImportEndDate(): string {
+  const futureDays = getNextWorkingDays(new Date(), 2)
+  return futureDays[futureDays.length - 1]
+}
+
 const DAYS_OF_WEEK = [
   { value: 0, label: 'Sun' },
   { value: 1, label: 'Mon' },
@@ -237,7 +260,8 @@ export default function DMSIntegration() {
       setPreviewConfirmed(false)
 
       const today = new Date().toISOString().split('T')[0]
-      const data = await api<PreviewResponse>(`/api/v1/dms-settings/preview?date=${today}`, {
+      const endDate = getImportEndDate()
+      const data = await api<PreviewResponse>(`/api/v1/dms-settings/preview?date=${today}&endDate=${endDate}`, {
         token: session?.accessToken
       })
 
@@ -260,11 +284,12 @@ export default function DMSIntegration() {
       setSuccess('')
 
       const today = new Date().toISOString().split('T')[0]
+      const endDate = getImportEndDate()
       const result = await api<{ success: boolean; message?: string; importId?: string }>(
         '/api/v1/dms-settings/import',
         {
           method: 'POST',
-          body: { date: today },
+          body: { date: today, endDate },
           token: session?.accessToken
         }
       )
@@ -292,11 +317,12 @@ export default function DMSIntegration() {
       setError('')
 
       const today = new Date().toISOString().split('T')[0]
+      const endDate = getImportEndDate()
       const result = await api<{ success: boolean; message?: string }>(
         '/api/v1/dms-settings/import',
         {
           method: 'POST',
-          body: { date: today },
+          body: { date: today, endDate },
           token: session?.accessToken
         }
       )

@@ -407,6 +407,7 @@ dmsSettings.get('/preview', async (c) => {
 
   try {
     const date = c.req.query('date') || new Date().toISOString().split('T')[0]
+    const endDate = c.req.query('endDate') || undefined
 
     // Get DMS credentials
     const credResult = await getDmsCredentials(organizationId)
@@ -437,9 +438,9 @@ dmsSettings.get('/preview', async (c) => {
     const remainingCapacity = Math.max(0, dailyLimit - importsToday)
 
     // Fetch bookings from Gemini API
-    logger.info('Fetching preview bookings', { organizationId, date })
+    logger.info('Fetching preview bookings', { organizationId, date, endDate })
 
-    const response = await fetchDiaryBookings(credResult.credentials, date)
+    const response = await fetchDiaryBookings(credResult.credentials, date, { endDate })
 
     if (!response.success) {
       return c.json({
@@ -465,6 +466,7 @@ dmsSettings.get('/preview', async (c) => {
       customerName: string
       scheduledTime: string
       serviceType: string
+      bookingDate: string
     }> = []
 
     const willSkip: Array<{
@@ -472,6 +474,7 @@ dmsSettings.get('/preview', async (c) => {
       vehicleReg: string
       customerName: string
       reason: string
+      bookingDate: string
     }> = []
 
     for (const booking of response.bookings) {
@@ -483,7 +486,8 @@ dmsSettings.get('/preview', async (c) => {
           bookingId: booking.bookingId,
           vehicleReg: booking.vehicleReg,
           customerName,
-          reason: 'Already imported'
+          reason: 'Already imported',
+          bookingDate: booking.bookingDate || date
         })
         continue
       }
@@ -494,7 +498,8 @@ dmsSettings.get('/preview', async (c) => {
           bookingId: booking.bookingId,
           vehicleReg: 'N/A',
           customerName,
-          reason: 'No vehicle registration'
+          reason: 'No vehicle registration',
+          bookingDate: booking.bookingDate || date
         })
         continue
       }
@@ -505,7 +510,8 @@ dmsSettings.get('/preview', async (c) => {
           bookingId: booking.bookingId,
           vehicleReg: booking.vehicleReg,
           customerName,
-          reason: `Status: ${booking.arrivalStatus}`
+          reason: `Status: ${booking.arrivalStatus}`,
+          bookingDate: booking.bookingDate || date
         })
         continue
       }
@@ -516,7 +522,8 @@ dmsSettings.get('/preview', async (c) => {
         vehicleReg: booking.vehicleReg,
         customerName,
         scheduledTime: booking.bookingTime || 'Not set',
-        serviceType: booking.serviceType || 'Service'
+        serviceType: booking.serviceType || 'Service',
+        bookingDate: booking.bookingDate || date
       })
     }
 
@@ -531,7 +538,8 @@ dmsSettings.get('/preview', async (c) => {
         bookingId: booking.bookingId,
         vehicleReg: booking.vehicleReg,
         customerName: booking.customerName,
-        reason: 'Would exceed daily import limit'
+        reason: 'Would exceed daily import limit',
+        bookingDate: booking.bookingDate
       })
     }
 
@@ -616,6 +624,7 @@ dmsSettings.post('/import', async (c) => {
   try {
     const body = await c.req.json()
     const date = body.date || new Date().toISOString().split('T')[0]
+    const endDate: string | undefined = body.endDate || undefined
     const siteId = body.site_id
     const skipLimitCheck = body.skipLimitCheck === true  // Allow override with confirmation
     const bookingIds: string[] | undefined = Array.isArray(body.bookingIds) ? body.bookingIds : undefined
@@ -665,6 +674,7 @@ dmsSettings.post('/import', async (c) => {
         organizationId,
         siteId,
         date,
+        endDate,
         importType: 'manual',
         triggeredBy: auth.user.id,
         bookingIds
@@ -683,6 +693,7 @@ dmsSettings.post('/import', async (c) => {
         organizationId,
         siteId,
         date,
+        endDate,
         importType: 'manual',
         triggeredBy: auth.user.id,
         bookingIds

@@ -324,6 +324,7 @@ const dmsImportWorker = new Worker(
         organizationId: importJob.organizationId,
         siteId: importJob.siteId,
         date: importJob.date,
+        endDate: importJob.endDate,
         importType: importJob.importType,
         triggeredBy: importJob.triggeredBy,
         bookingIds: importJob.bookingIds

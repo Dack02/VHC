@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { api } from '../lib/api'
 
 interface PreviewBooking {
@@ -7,6 +7,7 @@ interface PreviewBooking {
   customerName: string
   scheduledTime: string
   serviceType: string
+  bookingDate: string
 }
 
 interface SkippedBooking {
@@ -14,6 +15,7 @@ interface SkippedBooking {
   vehicleReg: string
   customerName: string
   reason: string
+  bookingDate: string
 }
 
 interface PreviewData {
@@ -53,6 +55,44 @@ interface Props {
   token: string
 }
 
+/**
+ * Get the next N working days from a given date.
+ * Working days = Mon-Sat (skips Sunday).
+ */
+function getNextWorkingDays(fromDate: Date, count: number): string[] {
+  const days: string[] = []
+  const d = new Date(fromDate)
+  d.setHours(12, 0, 0, 0) // avoid DST edge cases
+
+  while (days.length < count) {
+    d.setDate(d.getDate() + 1)
+    if (d.getDay() !== 0) { // skip Sunday
+      days.push(d.toISOString().split('T')[0])
+    }
+  }
+  return days
+}
+
+/**
+ * Format a date string (YYYY-MM-DD) as a human-friendly label.
+ * e.g. "Today - Mon 3 Feb", "Tomorrow - Tue 4 Feb", "Wed 5 Feb"
+ */
+function formatDateLabel(dateStr: string): string {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const date = new Date(dateStr + 'T12:00:00')
+  date.setHours(0, 0, 0, 0)
+
+  const diffDays = Math.round((date.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+  const dayName = date.toLocaleDateString('en-GB', { weekday: 'short' })
+  const dayNum = date.getDate()
+  const month = date.toLocaleDateString('en-GB', { month: 'short' })
+
+  if (diffDays === 0) return `Today - ${dayName} ${dayNum} ${month}`
+  if (diffDays === 1) return `Tomorrow - ${dayName} ${dayNum} ${month}`
+  return `${dayName} ${dayNum} ${month}`
+}
+
 export default function DmsImportModal({ open, onClose, onImportComplete, token }: Props) {
   const [state, setState] = useState<ModalState>('loading')
   const [preview, setPreview] = useState<PreviewData | null>(null)
@@ -61,12 +101,18 @@ export default function DmsImportModal({ open, onClose, onImportComplete, token 
   const [result, setResult] = useState<ImportResult | null>(null)
   const [showSkipped, setShowSkipped] = useState(false)
 
+  // Calculate endDate: 2 working days from today
+  const { today, endDate } = useMemo(() => {
+    const t = new Date().toISOString().split('T')[0]
+    const futureDays = getNextWorkingDays(new Date(), 2)
+    return { today: t, endDate: futureDays[futureDays.length - 1] }
+  }, [])
+
   const fetchPreview = useCallback(async () => {
     setState('loading')
     setError(null)
     try {
-      const today = new Date().toISOString().split('T')[0]
-      const data = await api<PreviewData>(`/api/v1/dms-settings/preview?date=${today}`, { token })
+      const data = await api<PreviewData>(`/api/v1/dms-settings/preview?date=${today}&endDate=${endDate}`, { token })
 
       if (!data.success) {
         setError((data as unknown as { error?: string }).error || 'Failed to fetch preview')
@@ -87,7 +133,7 @@ export default function DmsImportModal({ open, onClose, onImportComplete, token 
       setError(err instanceof Error ? err.message : 'Failed to fetch bookings')
       setState('error')
     }
-  }, [token])
+  }, [token, today, endDate])
 
   useEffect(() => {
     if (open) {
@@ -124,11 +170,10 @@ export default function DmsImportModal({ open, onClose, onImportComplete, token 
     setError(null)
 
     try {
-      const today = new Date().toISOString().split('T')[0]
       const data = await api<ImportResult>('/api/v1/dms-settings/import', {
         method: 'POST',
         token,
-        body: { date: today, bookingIds: Array.from(selected) }
+        body: { date: today, endDate, bookingIds: Array.from(selected) }
       })
 
       if (data.error) {
@@ -151,6 +196,19 @@ export default function DmsImportModal({ open, onClose, onImportComplete, token 
     }
     onClose()
   }
+
+  // Group bookings by date
+  const groupedBookings = useMemo(() => {
+    if (!preview) return []
+    const groups = new Map<string, PreviewBooking[]>()
+    for (const booking of preview.willImport) {
+      const date = booking.bookingDate || today
+      if (!groups.has(date)) groups.set(date, [])
+      groups.get(date)!.push(booking)
+    }
+    // Sort by date
+    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b))
+  }, [preview, today])
 
   if (!open) return null
 
@@ -244,30 +302,45 @@ export default function DmsImportModal({ open, onClose, onImportComplete, token 
                 </span>
               </div>
 
-              {/* Booking Rows */}
-              <div className="divide-y divide-gray-100">
-                {preview.willImport.map(booking => (
-                  <label
-                    key={booking.bookingId}
-                    className="flex items-center gap-3 py-2.5 cursor-pointer hover:bg-gray-50 -mx-1 px-1"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected.has(booking.bookingId)}
-                      onChange={() => handleToggle(booking.bookingId)}
-                      className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
-                    />
-                    <div className="font-mono font-semibold text-gray-900 bg-yellow-100 px-2 py-0.5 text-sm">
-                      {booking.vehicleReg}
+              {/* Booking Rows - Grouped by Date */}
+              <div className="space-y-3">
+                {groupedBookings.map(([dateStr, bookings]) => (
+                  <div key={dateStr}>
+                    {/* Date header */}
+                    <div className="flex items-center gap-2 py-1.5 mb-1">
+                      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                      <span className="text-sm font-semibold text-gray-700">{formatDateLabel(dateStr)}</span>
+                      <span className="text-xs text-gray-400">({bookings.length})</span>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-gray-900 truncate">{booking.customerName}</div>
+                    {/* Bookings for this date */}
+                    <div className="divide-y divide-gray-100">
+                      {bookings.map(booking => (
+                        <label
+                          key={booking.bookingId}
+                          className="flex items-center gap-3 py-2.5 cursor-pointer hover:bg-gray-50 -mx-1 px-1"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected.has(booking.bookingId)}
+                            onChange={() => handleToggle(booking.bookingId)}
+                            className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                          />
+                          <div className="font-mono font-semibold text-gray-900 bg-yellow-100 px-2 py-0.5 text-sm">
+                            {booking.vehicleReg}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm text-gray-900 truncate">{booking.customerName}</div>
+                          </div>
+                          <div className="text-xs text-gray-500">{booking.scheduledTime}</div>
+                          <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600">
+                            {booking.serviceType}
+                          </span>
+                        </label>
+                      ))}
                     </div>
-                    <div className="text-xs text-gray-500">{booking.scheduledTime}</div>
-                    <span className="px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600">
-                      {booking.serviceType}
-                    </span>
-                  </label>
+                  </div>
                 ))}
               </div>
 

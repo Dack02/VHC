@@ -126,7 +126,7 @@ partsCatalog.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'ser
 })
 
 // PATCH /api/v1/organizations/:orgId/parts-catalog/:id/toggle-active - Toggle active status
-partsCatalog.patch('/:id/toggle-active', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
+partsCatalog.patch('/:id/toggle-active', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {
     const auth = c.get('auth')
     const orgId = c.req.param('orgId')

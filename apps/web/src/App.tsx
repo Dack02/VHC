@@ -70,6 +70,7 @@ const Reports = lazy(() => import('./pages/Reports'))
 const Today = lazy(() => import('./pages/Today'))
 const Upcoming = lazy(() => import('./pages/Upcoming'))
 const PartsCatalog = lazy(() => import('./pages/Parts/PartsCatalog'))
+const Messages = lazy(() => import('./pages/Messages/Messages'))
 
 // Page loading fallback
 function PageLoader() {
@@ -132,6 +133,7 @@ function App() {
                         <Route path="/health-checks/:id" element={<HealthCheckDetail />} />
                         <Route path="/customers" element={<CustomerList />} />
                         <Route path="/customers/:id" element={<CustomerDetail />} />
+                        <Route path="/messages" element={<Messages />} />
                         <Route path="/parts" element={<PartsCatalog />} />
                         <Route path="/templates" element={<TemplateList />} />
                         <Route path="/templates/:id" element={<TemplateBuilder />} />

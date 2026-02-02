@@ -55,6 +55,7 @@ import pushSubscriptions from './routes/push-subscriptions.js'
 import partsCatalog from './routes/parts-catalog.js'
 import twilioWebhookRoutes from './routes/webhooks/twilio.js'
 import smsConversations from './routes/sms-conversations.js'
+import messages from './routes/messages.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
@@ -128,6 +129,7 @@ app.route('/api/v1/templates', templates)
 app.route('/api/v1', items)
 app.route('/api/v1/health-checks', healthChecks)
 app.route('/api/v1', smsConversations)
+app.route('/api/v1/messages', messages)
 app.route('/api/v1', results)
 app.route('/api/v1', repairItems)
 app.route('/api/v1', media)

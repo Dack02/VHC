@@ -61,15 +61,15 @@ export const RepairItemRow = React.memo(function RepairItemRow({
   // Sync with props when item changes from parent
   useEffect(() => {
     setItem(initialItem)
-    setPartsPrice(initialItem.parts_cost?.toString() || '0')
-    setLaborPrice(initialItem.labor_cost?.toString() || '0')
-    setTotalPrice(initialItem.total_price?.toString() || '0')
+    setPartsPrice(initialItem.parts_cost?.toString() || '')
+    setLaborPrice(initialItem.labor_cost?.toString() || '')
+    setTotalPrice(initialItem.total_price?.toString() || '')
   }, [initialItem])
 
   // Editable values
-  const [partsPrice, setPartsPrice] = useState(initialItem.parts_cost?.toString() || '0')
-  const [laborPrice, setLaborPrice] = useState(initialItem.labor_cost?.toString() || '0')
-  const [totalPrice, setTotalPrice] = useState(initialItem.total_price?.toString() || '0')
+  const [partsPrice, setPartsPrice] = useState(initialItem.parts_cost?.toString() || '')
+  const [laborPrice, setLaborPrice] = useState(initialItem.labor_cost?.toString() || '')
+  const [totalPrice, setTotalPrice] = useState(initialItem.total_price?.toString() || '')
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Focus input when editing starts
@@ -163,11 +163,11 @@ export const RepairItemRow = React.memo(function RepairItemRow({
     } else if (e.key === 'Escape') {
       // Reset to original value
       if (field === 'parts_cost') {
-        setPartsPrice(item.parts_cost?.toString() || '0')
+        setPartsPrice(item.parts_cost?.toString() || '')
       } else if (field === 'labor_cost') {
-        setLaborPrice(item.labor_cost?.toString() || '0')
+        setLaborPrice(item.labor_cost?.toString() || '')
       } else {
-        setTotalPrice(item.total_price?.toString() || '0')
+        setTotalPrice(item.total_price?.toString() || '')
       }
       setEditingField(null)
     }

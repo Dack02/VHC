@@ -7,7 +7,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorizeMinRole } from '../middleware/auth.js'
 import { sendSms } from '../services/sms.js'
-import { emitToHealthCheck, WS_EVENTS } from '../services/websocket.js'
+import { emitToHealthCheck, emitToOrganization, WS_EVENTS } from '../services/websocket.js'
 import { logger } from '../lib/logger.js'
 
 const smsConversations = new Hono()
@@ -150,8 +150,29 @@ smsConversations.post('/health-checks/:id/sms-reply', authorizeMinRole('service_
     external_id: smsResult.messageId
   })
 
-  // Emit real-time event
+  // Emit real-time event to HC room
   emitToHealthCheck(healthCheckId, WS_EVENTS.SMS_SENT, {
+    message: {
+      id: storedMessage?.id,
+      direction: 'outbound',
+      from_number: fromNumber,
+      to_number: customer.mobile,
+      body: message.trim(),
+      twilio_sid: smsResult.messageId,
+      twilio_status: 'sent',
+      is_read: true,
+      sent_by: auth.user.id,
+      sender: {
+        id: auth.user.id,
+        first_name: auth.user.firstName,
+        last_name: auth.user.lastName
+      },
+      created_at: storedMessage?.created_at || new Date().toISOString()
+    }
+  })
+
+  // Emit to org room for Messages page
+  emitToOrganization(auth.orgId, WS_EVENTS.SMS_SENT, {
     message: {
       id: storedMessage?.id,
       direction: 'outbound',

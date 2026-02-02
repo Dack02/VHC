@@ -8,7 +8,7 @@ import { supabaseAdmin } from '../lib/supabase.js'
 import { logger } from '../lib/logger.js'
 import { formatPhoneNumber } from './sms.js'
 import { createNotification, createRoleNotifications } from '../routes/notifications.js'
-import { emitToHealthCheck, WS_EVENTS } from './websocket.js'
+import { emitToHealthCheck, emitToOrganization, WS_EVENTS } from './websocket.js'
 
 interface InboundSmsData {
   from: string
@@ -305,6 +305,25 @@ export async function processInboundSms(data: InboundSmsData): Promise<void> {
         twilio_status: 'received',
         is_read: false,
         created_at: message.created_at
+      }
+    })
+  }
+
+  // 5b. Emit to organization room for Messages page (all inbound SMS, including orphans)
+  if (organizationId) {
+    emitToOrganization(organizationId, WS_EVENTS.SMS_RECEIVED, {
+      message: {
+        id: message.id,
+        direction: 'inbound',
+        from_number: from,
+        to_number: to,
+        body,
+        twilio_sid: messageSid,
+        twilio_status: 'received',
+        is_read: false,
+        created_at: message.created_at,
+        health_check_id: healthCheck?.id || null,
+        customer_id: customerMatch?.customerId || null
       }
     })
   }

@@ -260,7 +260,7 @@ export async function createNotification(
   })
 
   // Fire-and-forget push notification only for key event types
-  const PUSH_TYPES = ['tech_completed', 'customer_authorized', 'customer_declined']
+  const PUSH_TYPES = ['tech_completed', 'customer_authorized', 'customer_declined', 'sms_received']
   if (PUSH_TYPES.includes(type)) {
     sendPushNotification(userId, {
       title,

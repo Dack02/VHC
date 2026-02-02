@@ -930,7 +930,13 @@ dmsSettings.get('/unactioned', async (c) => {
     const offset = (page - 1) * limit
 
     // Build query - look for awaiting_arrival status (DMS imports)
+    // Only show bookings due today or earlier (not future-day imports)
     // Include Phase 1 Quick Wins fields: customer_waiting, loan_car_required, due_date, booked_repairs
+    const tomorrow = new Date()
+    tomorrow.setHours(0, 0, 0, 0)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const tomorrowISO = tomorrow.toISOString()
+
     let query = supabaseAdmin
       .from('health_checks')
       .select(`
@@ -953,6 +959,8 @@ dmsSettings.get('/unactioned', async (c) => {
       .eq('status', 'awaiting_arrival')
       .is('deleted_at', null)
       .not('external_id', 'is', null)
+      // Only show today or earlier: promise_time is null (safety) or before tomorrow
+      .or(`promise_time.is.null,promise_time.lt.${tomorrowISO}`)
 
     if (siteId) {
       query = query.eq('site_id', siteId)

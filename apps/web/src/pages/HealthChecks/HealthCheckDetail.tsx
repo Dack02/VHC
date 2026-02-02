@@ -12,6 +12,7 @@ import { CheckInTab } from './tabs/CheckInTab'
 import { MriTab } from './tabs/MriTab'
 import { MriScanSection } from './components/MriScanSection'
 import { CustomerActivityTab } from './tabs/CustomerActivityTab'
+import { SmsTab } from './tabs/SmsTab'
 import { PublishModal } from './PublishModal'
 import { CustomerPreviewModal } from './CustomerPreviewModal'
 import { HealthCheckTabContent } from './components/HealthCheckTabContent'
@@ -86,7 +87,7 @@ const statusColors: Record<string, string> = {
   no_show: 'bg-red-100 text-red-700'
 }
 
-type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'labour' | 'parts' | 'photos' | 'timeline' | 'activity'
+type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'labour' | 'parts' | 'photos' | 'timeline' | 'activity' | 'sms'
 
 export default function HealthCheckDetail() {
   const { id } = useParams<{ id: string }>()
@@ -96,7 +97,7 @@ export default function HealthCheckDetail() {
   const isOnline = useOnlineStatus()
 
   // Get initial tab from URL query parameter
-  const validTabs: Tab[] = ['summary', 'checkin', 'mri', 'health-check', 'labour', 'parts', 'photos', 'timeline', 'activity']
+  const validTabs: Tab[] = ['summary', 'checkin', 'mri', 'health-check', 'labour', 'parts', 'photos', 'timeline', 'activity', 'sms']
   const urlTab = searchParams.get('tab') as Tab | null
   const initialTab: Tab = urlTab && validTabs.includes(urlTab) ? urlTab : 'health-check'
 
@@ -126,6 +127,7 @@ export default function HealthCheckDetail() {
   const [showCustomerEditModal, setShowCustomerEditModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [generatingPDF, setGeneratingPDF] = useState(false)
+  const [unreadSmsCount, setUnreadSmsCount] = useState(0)
   const [checkinEnabled, setCheckinEnabled] = useState(false)
   const [timerData, setTimerData] = useState<{
     total_closed_minutes: number
@@ -161,7 +163,7 @@ export default function HealthCheckDetail() {
       setSummary(hcData.summary || null)
 
       // Run remaining calls in parallel - they only depend on hcData
-      const [templateResult, timelineResult, timeEntriesResult, checkinResult, repairItemsResult] =
+      const [templateResult, timelineResult, timeEntriesResult, checkinResult, repairItemsResult, smsUnreadResult] =
         await Promise.allSettled([
           // Template sections
           hcData.healthCheck.template_id
@@ -199,6 +201,11 @@ export default function HealthCheckDetail() {
           // Repair items for workflow status
           api<{ repairItems: NewRepairItem[] }>(
             `/api/v1/health-checks/${id}/repair-items`,
+            { token: session.accessToken }
+          ),
+          // Unread SMS count
+          api<{ count: number }>(
+            `/api/v1/health-checks/${id}/sms-messages/unread-count`,
             { token: session.accessToken }
           )
         ])
@@ -297,6 +304,11 @@ export default function HealthCheckDetail() {
         setLabourCompletion(undefined)
         setPartsCompletion(undefined)
         setAuthorisationInfo(undefined)
+      }
+
+      // Process SMS unread count result
+      if (smsUnreadResult.status === 'fulfilled') {
+        setUnreadSmsCount(smsUnreadResult.value?.count || 0)
       }
 
       // Reset retry count on success
@@ -476,7 +488,11 @@ export default function HealthCheckDetail() {
     { id: 'parts', label: 'Parts' },
     { id: 'photos', label: 'Photos', badge: summary?.media_count },
     { id: 'timeline', label: 'Timeline' },
-    { id: 'activity', label: 'Customer Activity' }
+    { id: 'activity', label: 'Customer Activity' },
+    // Show SMS tab when HC has been sent to customer (or has SMS messages)
+    ...(['ready_to_send', 'sent', 'opened', 'partial_response', 'authorized', 'declined', 'expired', 'completed', 'closed'].includes(healthCheck.status) || unreadSmsCount > 0
+      ? [{ id: 'sms' as Tab, label: 'SMS', badge: unreadSmsCount > 0 ? unreadSmsCount : undefined }]
+      : [])
   ]
 
   // Determine available actions based on status
@@ -707,6 +723,12 @@ export default function HealthCheckDetail() {
         )}
         {activeTab === 'activity' && (
           <CustomerActivityTab healthCheckId={id!} />
+        )}
+        {activeTab === 'sms' && (
+          <SmsTab
+            healthCheckId={id!}
+            onUnreadCountChange={(count) => setUnreadSmsCount(count)}
+          />
         )}
       </div>
 

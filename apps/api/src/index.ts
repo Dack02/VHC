@@ -53,6 +53,8 @@ import messageTemplates from './routes/message-templates.js'
 import vehicleLocations from './routes/vehicle-locations.js'
 import pushSubscriptions from './routes/push-subscriptions.js'
 import partsCatalog from './routes/parts-catalog.js'
+import twilioWebhookRoutes from './routes/webhooks/twilio.js'
+import smsConversations from './routes/sms-conversations.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
@@ -125,6 +127,7 @@ app.route('/api/v1/vehicles', vehicles)
 app.route('/api/v1/templates', templates)
 app.route('/api/v1', items)
 app.route('/api/v1/health-checks', healthChecks)
+app.route('/api/v1', smsConversations)
 app.route('/api/v1', results)
 app.route('/api/v1', repairItems)
 app.route('/api/v1', media)
@@ -198,6 +201,10 @@ app.route('/api/v1/pricing', pricing)
 
 // Public routes (no auth required)
 app.route('/api/public', publicRoutes)
+
+// Webhook routes (unauthenticated, validated by provider signature)
+app.use('/api/webhooks/*', RateLimiters.webhook())
+app.route('/api/webhooks/twilio', twilioWebhookRoutes)
 
 // 404 handler for unmatched routes
 app.notFound(notFoundHandler)

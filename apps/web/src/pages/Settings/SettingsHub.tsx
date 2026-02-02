@@ -48,7 +48,7 @@ export default function SettingsHub() {
 
   useEffect(() => {
     const fetchAiStatus = async () => {
-      if (!orgId || !session?.accessToken || !isOrgAdmin) return
+      if (!orgId || !session?.accessToken || (!isOrgAdmin && !isSiteAdmin)) return
 
       try {
         const data = await api<{ aiEnabled: boolean }>(
@@ -62,7 +62,7 @@ export default function SettingsHub() {
     }
 
     fetchAiStatus()
-  }, [orgId, session?.accessToken, isOrgAdmin])
+  }, [orgId, session?.accessToken, isOrgAdmin, isSiteAdmin])
 
   const generalCards: SettingsCard[] = [
     {
@@ -74,7 +74,7 @@ export default function SettingsHub() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
         </svg>
       ),
-      roles: ['super_admin', 'org_admin']
+      roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
       to: '/settings/sites',
@@ -86,7 +86,7 @@ export default function SettingsHub() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
       ),
-      roles: ['super_admin', 'org_admin']
+      roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
       to: '/settings/subscription',
@@ -97,7 +97,7 @@ export default function SettingsHub() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
         </svg>
       ),
-      roles: ['super_admin', 'org_admin']
+      roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
       to: '/settings/workflow',
@@ -108,7 +108,7 @@ export default function SettingsHub() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
         </svg>
       ),
-      roles: ['super_admin', 'org_admin']
+      roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
       to: '/settings/labour-codes',
@@ -208,7 +208,7 @@ export default function SettingsHub() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
         </svg>
       ),
-      roles: ['super_admin', 'org_admin']
+      roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
       to: '/settings/reasons',
@@ -300,7 +300,7 @@ export default function SettingsHub() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
       ),
-      roles: ['super_admin', 'org_admin']
+      roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
       to: '/settings/notifications',
@@ -311,7 +311,7 @@ export default function SettingsHub() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
         </svg>
       ),
-      roles: ['super_admin', 'org_admin']
+      roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
       to: '/settings/message-templates',
@@ -322,7 +322,7 @@ export default function SettingsHub() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
         </svg>
       ),
-      roles: ['super_admin', 'org_admin']
+      roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
       to: '/settings/ai-usage',
@@ -333,7 +333,7 @@ export default function SettingsHub() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
         </svg>
       ),
-      roles: ['super_admin', 'org_admin'],
+      roles: ['super_admin', 'org_admin', 'site_admin'],
       condition: isAiEnabled
     }
   ]

@@ -293,7 +293,7 @@ export async function testSmsWithCredentials(
 /**
  * Format phone number to E.164 format
  */
-function formatPhoneNumber(phone: string): string {
+export function formatPhoneNumber(phone: string): string {
   // Remove all non-digit characters except +
   let cleaned = phone.replace(/[^\d+]/g, '')
 

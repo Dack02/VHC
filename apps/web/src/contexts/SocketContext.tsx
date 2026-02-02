@@ -22,6 +22,8 @@ export const WS_EVENTS = {
   ALERT: 'alert:sla_warning',
   LINK_EXPIRING: 'alert:link_expiring',
   LINK_EXPIRED: 'alert:link_expired',
+  SMS_RECEIVED: 'sms:received',
+  SMS_SENT: 'sms:sent',
 
   // Client -> Server
   JOIN_SITE: 'join_site',

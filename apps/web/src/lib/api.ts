@@ -858,6 +858,25 @@ export interface CustomerHealthCheckSummary {
   advisor: { id: string; first_name: string; last_name: string } | null
 }
 
+export interface SmsMessage {
+  id: string
+  direction: 'inbound' | 'outbound'
+  from_number: string
+  to_number: string
+  body: string
+  twilio_sid: string | null
+  twilio_status: string
+  is_read: boolean
+  read_at: string | null
+  sent_by: string | null
+  sender?: {
+    id: string
+    first_name: string
+    last_name: string
+  } | null
+  created_at: string
+}
+
 export interface CustomerCommRecord {
   id: string
   healthCheckId: string

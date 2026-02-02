@@ -63,6 +63,11 @@ export function BrakeMeasurementInput({
 
   // Calculate RAG status for a given measurement
   const calculateRAG = useCallback((m: BrakeMeasurementValue): 'green' | 'amber' | 'red' | null => {
+    // Drum brakes are visual-only — always green (pass)
+    if (m.brake_type === 'drum') {
+      return 'green'
+    }
+
     const padValues: number[] = []
     let hasDiscBelowMinSpec = false
 
@@ -71,16 +76,14 @@ export function BrakeMeasurementInput({
     if (m.offside.pad !== null) padValues.push(m.offside.pad)
 
     // Check disc measurements against min specs (skip if unable to access)
-    if (m.brake_type === 'disc') {
-      if (!m.nearside.disc_unable_to_access && m.nearside.disc !== null && m.nearside.disc_min !== null) {
-        if (m.nearside.disc < m.nearside.disc_min) {
-          hasDiscBelowMinSpec = true
-        }
+    if (!m.nearside.disc_unable_to_access && m.nearside.disc !== null && m.nearside.disc_min !== null) {
+      if (m.nearside.disc < m.nearside.disc_min) {
+        hasDiscBelowMinSpec = true
       }
-      if (!m.offside.disc_unable_to_access && m.offside.disc !== null && m.offside.disc_min !== null) {
-        if (m.offside.disc < m.offside.disc_min) {
-          hasDiscBelowMinSpec = true
-        }
+    }
+    if (!m.offside.disc_unable_to_access && m.offside.disc !== null && m.offside.disc_min !== null) {
+      if (m.offside.disc < m.offside.disc_min) {
+        hasDiscBelowMinSpec = true
       }
     }
 

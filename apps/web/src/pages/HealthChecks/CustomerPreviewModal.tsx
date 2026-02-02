@@ -235,6 +235,9 @@ export function CustomerPreviewModal({ healthCheck, newRepairItems, checkResults
         customerApprovedAt: item.customerApprovedAt,
         customerDeclinedReason: item.customerDeclinedReason,
         selectedOptionId: item.selectedOptionId,
+        outcomeStatus: item.outcomeStatus || null,
+        deferredUntil: null,
+        deferredNotes: null,
         options,
         linkedCheckResults,
         children: children.length > 0 ? children : undefined

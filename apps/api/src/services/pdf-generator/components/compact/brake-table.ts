@@ -122,6 +122,21 @@ function renderAxleColumn(data: BrakeAxleData | null, label: string): string {
 
   const { type, nearside, offside } = data
 
+  // Drum with no pad measurements = visual inspection only
+  if (type === 'drum' && nearside.pad === null && offside.pad === null) {
+    return `
+      <div class="brake-axle">
+        <div class="brake-axle-header">
+          <span>${label}</span>
+          <span style="font-weight: normal; font-size: 7px; color: #6b7280;">Drum</span>
+        </div>
+        <div style="text-align: center; padding: 8px 0; font-size: 9px; font-weight: 600; color: #16a34a;">
+          Visual inspection only
+        </div>
+      </div>
+    `
+  }
+
   // Check for any below-spec conditions (skip if unable to access)
   const nsDiscBelowSpec = isBelowMinSpec(nearside.disc, nearside.disc_min, nearside.disc_unable_to_access)
   const osDiscBelowSpec = isBelowMinSpec(offside.disc, offside.disc_min, offside.disc_unable_to_access)

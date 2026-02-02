@@ -142,12 +142,14 @@ async function findActiveHealthCheck(
 ): Promise<{ id: string; advisorId: string | null; siteId: string | null } | null> {
   const terminalStatuses = ['completed', 'closed', 'archived', 'cancelled']
 
-  const { data: hc } = await supabaseAdmin
+  // Path 1: find via vehicle -> customer relationship
+  const { data: hcViaVehicle, error: vehicleError } = await supabaseAdmin
     .from('health_checks')
     .select(`
       id,
       advisor_id,
       site_id,
+      status,
       vehicle:vehicles!inner(customer_id)
     `)
     .eq('organization_id', organizationId)
@@ -157,14 +159,76 @@ async function findActiveHealthCheck(
     .limit(1)
     .maybeSingle()
 
-  if (hc) {
+  if (vehicleError) {
+    logger.error('Error finding HC via vehicle path', { error: vehicleError.message, customerId })
+  }
+
+  if (hcViaVehicle) {
+    logger.info('Found active HC via vehicle path', { healthCheckId: hcViaVehicle.id, status: hcViaVehicle.status })
     return {
-      id: hc.id,
-      advisorId: hc.advisor_id,
-      siteId: hc.site_id
+      id: hcViaVehicle.id,
+      advisorId: hcViaVehicle.advisor_id,
+      siteId: hcViaVehicle.site_id
     }
   }
 
+  // Path 2: find via direct customer_id on health_checks
+  const { data: hcDirect, error: directError } = await supabaseAdmin
+    .from('health_checks')
+    .select('id, advisor_id, site_id, status')
+    .eq('organization_id', organizationId)
+    .eq('customer_id', customerId)
+    .not('status', 'in', `(${terminalStatuses.join(',')})`)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (directError) {
+    logger.error('Error finding HC via direct customer_id', { error: directError.message, customerId })
+  }
+
+  if (hcDirect) {
+    logger.info('Found active HC via direct customer_id', { healthCheckId: hcDirect.id, status: hcDirect.status })
+    return {
+      id: hcDirect.id,
+      advisorId: hcDirect.advisor_id,
+      siteId: hcDirect.site_id
+    }
+  }
+
+  // Path 3: match via existing outbound SMS — if we previously sent an SMS for a health check
+  // to this customer, the reply should go back to that health check
+  const { data: existingSms } = await supabaseAdmin
+    .from('sms_messages')
+    .select('health_check_id')
+    .eq('customer_id', customerId)
+    .eq('organization_id', organizationId)
+    .eq('direction', 'outbound')
+    .not('health_check_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (existingSms?.health_check_id) {
+    // Verify the health check is still active
+    const { data: hcFromSms } = await supabaseAdmin
+      .from('health_checks')
+      .select('id, advisor_id, site_id, status')
+      .eq('id', existingSms.health_check_id)
+      .not('status', 'in', `(${terminalStatuses.join(',')})`)
+      .single()
+
+    if (hcFromSms) {
+      logger.info('Found active HC via previous outbound SMS', { healthCheckId: hcFromSms.id, status: hcFromSms.status })
+      return {
+        id: hcFromSms.id,
+        advisorId: hcFromSms.advisor_id,
+        siteId: hcFromSms.site_id
+      }
+    }
+  }
+
+  logger.warn('No active health check found for customer', { customerId, organizationId })
   return null
 }
 

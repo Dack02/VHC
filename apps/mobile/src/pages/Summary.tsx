@@ -176,6 +176,17 @@ export function Summary() {
 
     if (!data.nearside && !data.offside) return null
 
+    // Drum brakes with no pad measurements = visual inspection only
+    if (data.brake_type === 'drum' &&
+        data.nearside?.pad === null && data.nearside?.disc === null &&
+        data.offside?.pad === null && data.offside?.disc === null) {
+      return (
+        <div className="mt-2 p-2 bg-white rounded border border-gray-200 text-xs text-center">
+          <span className="font-medium text-green-700">Drum - Visual inspection only</span>
+        </div>
+      )
+    }
+
     const minPad = thresholds.brakePadRedBelowMm
     const warnPad = thresholds.brakePadAmberBelowMm
 

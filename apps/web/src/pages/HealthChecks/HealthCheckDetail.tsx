@@ -477,7 +477,7 @@ export default function HealthCheckDetail() {
   const customer = healthCheck.vehicle?.customer
 
   // Build tabs array - conditionally include Check-In and MRI tabs if enabled
-  const tabs: { id: Tab; label: string; badge?: number }[] = [
+  const tabs: { id: Tab; label: string; badge?: number; badgeColor?: 'red' | 'gray' }[] = [
     { id: 'summary', label: 'Summary' },
     // Show Check-In tab when check-in is enabled for the org
     ...(checkinEnabled ? [{ id: 'checkin' as Tab, label: 'Check-In' }] : []),
@@ -489,10 +489,7 @@ export default function HealthCheckDetail() {
     { id: 'photos', label: 'Photos', badge: summary?.media_count },
     { id: 'timeline', label: 'Timeline' },
     { id: 'activity', label: 'Customer Activity' },
-    // Show SMS tab when HC has been sent to customer (or has SMS messages)
-    ...(['ready_to_send', 'sent', 'opened', 'partial_response', 'authorized', 'declined', 'expired', 'completed', 'closed'].includes(healthCheck.status) || unreadSmsCount > 0
-      ? [{ id: 'sms' as Tab, label: 'SMS', badge: unreadSmsCount > 0 ? unreadSmsCount : undefined }]
-      : [])
+    { id: 'sms' as Tab, label: 'SMS', badge: unreadSmsCount > 0 ? unreadSmsCount : undefined, badgeColor: 'red' }
   ]
 
   // Determine available actions based on status
@@ -648,7 +645,11 @@ export default function HealthCheckDetail() {
               >
                 {tab.label}
                 {tab.badge !== undefined && tab.badge > 0 && (
-                  <span className="ml-2 px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full">
+                  <span className={`ml-2 px-2 py-0.5 text-xs rounded-full ${
+                    tab.badgeColor === 'red'
+                      ? 'bg-red-500 text-white'
+                      : 'bg-gray-100 text-gray-600'
+                  }`}>
                     {tab.badge}
                   </span>
                 )}

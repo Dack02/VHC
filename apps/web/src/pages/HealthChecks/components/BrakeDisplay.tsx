@@ -210,7 +210,8 @@ export function BrakeDisplay({ data, ragStatus }: BrakeDisplayProps) {
       return <div className="text-sm text-gray-500">No brake measurements recorded</div>
     }
 
-    const hasData = axle.ns_pad !== null || axle.os_pad !== null ||
+    const hasData = axle.brake_type === 'drum' ||
+                    axle.ns_pad !== null || axle.os_pad !== null ||
                     axle.ns_disc !== null || axle.os_disc !== null
 
     if (!hasData) {
@@ -229,11 +230,13 @@ export function BrakeDisplay({ data, ragStatus }: BrakeDisplayProps) {
   const rearAxle = data.rear ? normalizeAxleData(data.rear) : null
 
   const hasFront = frontAxle && (
+    frontAxle.brake_type === 'drum' ||
     frontAxle.ns_pad !== null || frontAxle.os_pad !== null ||
     frontAxle.ns_disc !== null || frontAxle.os_disc !== null
   )
 
   const hasRear = rearAxle && (
+    rearAxle.brake_type === 'drum' ||
     rearAxle.ns_pad !== null || rearAxle.os_pad !== null ||
     rearAxle.ns_disc !== null || rearAxle.os_disc !== null
   )
@@ -356,8 +359,15 @@ function AxleCard({ title, axle, ragStatus }: AxleCardProps) {
             )}
           </div>
         </div>
+      ) : axle.ns_pad === null && axle.os_pad === null ? (
+        // Drum brakes with no measurements: visual inspection only
+        <div className="text-center py-2 mb-2">
+          <span className="text-xs font-medium text-green-700 bg-green-100 px-3 py-1 rounded-full">
+            Visual inspection only
+          </span>
+        </div>
       ) : (
-        // Drum brakes: 2-column grid (N/S Shoe, O/S Shoe)
+        // Drum brakes with legacy pad data: show shoe measurements
         <div className="grid grid-cols-2 gap-2 mb-2">
           <div className="text-center">
             <div className="text-xs text-gray-500">N/S {frictionLabel}</div>

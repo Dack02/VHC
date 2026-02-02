@@ -113,6 +113,20 @@ function renderSideBox(
   brakeType: 'disc' | 'drum',
   thresholds: { red: number; amber: number }
 ): string {
+  // Drum with no pad measurement = visual inspection only
+  if (brakeType === 'drum' && data.pad === null) {
+    return `
+      <div style="flex: 1; border: 1px solid #e5e7eb; padding: 12px; background: #fafafa;">
+        <div style="font-weight: 600; font-size: 10px; text-transform: uppercase; color: #374151; margin-bottom: 10px; text-align: center; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px;">
+          ${label}
+        </div>
+        <div style="text-align: center; padding: 8px 0;">
+          <span style="color: #16a34a; font-size: 10px; font-weight: 600;">VISUAL ONLY</span>
+        </div>
+      </div>
+    `
+  }
+
   const padColor = getPadColor(data.pad, thresholds)
   const needsDiscReplacement = brakeType === 'disc' && discNeedsReplacement(data.disc, data.disc_min)
   const discColor = needsDiscReplacement ? '#dc2626' : '#16a34a'
@@ -166,8 +180,8 @@ export function renderBrakeMeasurementCard(options: BrakeCardOptions): string {
 
   const { brakeType, nearside, offside } = normalizeBrakeData(value)
 
-  // Check if we have any measurements
-  if (nearside.pad === null && offside.pad === null) return ''
+  // Check if we have any measurements (drum with null pads is valid — visual inspection)
+  if (brakeType !== 'drum' && nearside.pad === null && offside.pad === null) return ''
 
   // Determine position from item name
   let positionLabel = 'BRAKES'

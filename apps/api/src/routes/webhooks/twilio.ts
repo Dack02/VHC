@@ -63,6 +63,12 @@ async function resolveAuthToken(toNumber: string): Promise<{ authToken: string; 
  * Unauthenticated — validated via X-Twilio-Signature
  */
 twilioWebhookRoutes.post('/sms', async (c) => {
+  logger.info('Twilio webhook hit: POST /sms', {
+    contentType: c.req.header('content-type'),
+    userAgent: c.req.header('user-agent'),
+    hasTwilioSignature: !!c.req.header('X-Twilio-Signature')
+  })
+
   try {
     // Parse form body (Twilio sends application/x-www-form-urlencoded)
     const body = await c.req.parseBody()
@@ -71,6 +77,8 @@ twilioWebhookRoutes.post('/sms', async (c) => {
     const to = body.To as string
     const messageBody = body.Body as string
     const messageSid = body.MessageSid as string
+
+    logger.info('Twilio webhook parsed body', { from, to, messageSid, hasBody: !!messageBody })
 
     if (!from || !to || !messageSid) {
       logger.warn('Twilio webhook: Missing required fields', { from, to, messageSid })

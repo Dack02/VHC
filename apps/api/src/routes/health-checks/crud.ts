@@ -530,6 +530,28 @@ crud.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
         // Get first check_result_id for backward compatibility
         const checkResultId = firstCheckResult?.id || null
 
+        // For group items without a selected option, aggregate children's totals
+        // The DB trigger only updates child rows when parts are added — it doesn't cascade up to the parent group
+        let effectivePartsTotal = parseFloat(item.parts_total) || 0
+        let effectiveLabourTotal = parseFloat(item.labour_total) || 0
+        let effectiveTotalIncVat = parseFloat(item.total_inc_vat) || 0
+
+        if (item.selected_option_id && item.options?.length) {
+          const selectedOpt = item.options.find((o: any) => o.id === item.selected_option_id)
+          if (selectedOpt) {
+            effectivePartsTotal = parseFloat(selectedOpt.parts_total) || 0
+            effectiveLabourTotal = parseFloat(selectedOpt.labour_total) || 0
+            effectiveTotalIncVat = parseFloat(selectedOpt.total_inc_vat) || 0
+          }
+        } else if (item.is_group) {
+          const children = childrenByParent.get(item.id) || []
+          for (const child of children) {
+            effectivePartsTotal += parseFloat(child.parts_total) || 0
+            effectiveLabourTotal += parseFloat(child.labour_total) || 0
+            effectiveTotalIncVat += parseFloat(child.total_inc_vat) || 0
+          }
+        }
+
         return {
           id: item.id,
           health_check_id: item.health_check_id,
@@ -537,15 +559,9 @@ crud.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
           title: item.name, // NEW schema uses 'name', map to 'title' for backward compat
           description: item.description,
           rag_status: derivedRagStatus,
-          parts_cost: parseFloat(item.selected_option_id && item.options?.length
-            ? (item.options.find((o: any) => o.id === item.selected_option_id)?.parts_total ?? item.parts_total)
-            : item.parts_total) || 0,
-          labor_cost: parseFloat(item.selected_option_id && item.options?.length
-            ? (item.options.find((o: any) => o.id === item.selected_option_id)?.labour_total ?? item.labour_total)
-            : item.labour_total) || 0,
-          total_price: parseFloat(item.selected_option_id && item.options?.length
-            ? (item.options.find((o: any) => o.id === item.selected_option_id)?.total_inc_vat ?? item.total_inc_vat)
-            : item.total_inc_vat) || 0,
+          parts_cost: effectivePartsTotal,
+          labor_cost: effectiveLabourTotal,
+          total_price: effectiveTotalIncVat,
           is_approved: item.customer_approved,
           is_visible: true, // NEW schema doesn't have is_visible, default to true
           is_mot_failure: false, // NEW schema doesn't have this on repair_items

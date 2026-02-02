@@ -273,6 +273,9 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     let mriCountByHc: Record<string, number> = {}
     let mriTotalByHc: Record<string, number> = {}
 
+    // Unread inbound SMS count per health check
+    let unreadSmsByHc: Record<string, number> = {}
+
     if (healthCheckIds.length > 0) {
       // Query ALL repair items - use stored totals directly (labour_total, parts_total, total_inc_vat)
       // When a selected_option_id exists, use the option's totals instead (price options feature)
@@ -331,6 +334,19 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
 
       mriData?.forEach(r => {
         mriCountByHc[r.health_check_id] = (mriCountByHc[r.health_check_id] || 0) + 1
+      })
+
+      // Unread inbound SMS messages
+      const { data: unreadSmsData } = await supabaseAdmin
+        .from('sms_messages')
+        .select('health_check_id')
+        .eq('organization_id', auth.orgId)
+        .in('health_check_id', healthCheckIds)
+        .eq('direction', 'inbound')
+        .eq('is_read', false)
+
+      unreadSmsData?.forEach(row => {
+        unreadSmsByHc[row.health_check_id] = (unreadSmsByHc[row.health_check_id] || 0) + 1
       })
 
       // Default VAT rate for calculating total when total_inc_vat is 0 but labour/parts exist
@@ -638,7 +654,9 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         mri_count: mriCountByHc[hc.id] || 0,
         mri_total: mriTotalByHc[hc.id] || 0,
         // Timer data for in_progress inspections
-        timer_data: timerDataByHc[hc.id] || null
+        timer_data: timerDataByHc[hc.id] || null,
+        // Unread inbound SMS count
+        unread_sms_count: unreadSmsByHc[hc.id] || 0
       }
 
       columns[column]?.push(card)

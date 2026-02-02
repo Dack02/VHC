@@ -140,7 +140,7 @@ async function findActiveHealthCheck(
   customerId: string,
   organizationId: string
 ): Promise<{ id: string; advisorId: string | null; siteId: string | null } | null> {
-  const terminalStatuses = ['completed', 'closed', 'archived', 'cancelled']
+  const terminalStatuses = ['completed', 'cancelled', 'no_show']
 
   // Path 1: find via vehicle -> customer relationship
   const { data: hcViaVehicle, error: vehicleError } = await supabaseAdmin

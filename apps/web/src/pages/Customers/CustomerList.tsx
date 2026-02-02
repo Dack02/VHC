@@ -77,8 +77,8 @@ export default function CustomerList() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Customers</h1>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Customers</h1>
         <div className="flex gap-2">
           <button
             onClick={() => setShowVehicleLookup(true)}
@@ -133,112 +133,151 @@ export default function CustomerList() {
         </div>
       </form>
 
-      {/* Customer List */}
-      <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
-        <table className="w-full">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>
-              <th className="text-left px-4 py-3 text-sm font-semibold text-gray-600">Name</th>
-              <th className="text-left px-4 py-3 text-sm font-semibold text-gray-600">Contact</th>
-              <th className="text-left px-4 py-3 text-sm font-semibold text-gray-600">Vehicles</th>
-              <th className="text-right px-4 py-3 text-sm font-semibold text-gray-600"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200">
-            {loading ? (
-              <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
-                  Loading...
-                </td>
-              </tr>
-            ) : customers.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="px-4 py-12 text-center">
-                  <div className="text-gray-400 mb-2">
-                    <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                    </svg>
-                  </div>
-                  <p className="text-gray-500 font-medium mb-1">
-                    {search ? 'No customers match your search' : 'No customers yet'}
-                  </p>
-                  <p className="text-sm text-gray-400 mb-3">
-                    {search ? 'Try adjusting your search terms' : 'Add your first customer to get started'}
-                  </p>
-                  {!search && (
-                    <button
-                      onClick={() => setShowModal(true)}
-                      className="text-sm text-primary hover:text-primary-dark font-medium"
-                    >
-                      Add Customer
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ) : (
-              customers.map((customer) => (
-                <tr
-                  key={customer.id}
-                  className="hover:bg-gray-50 cursor-pointer"
-                  onClick={() => navigate(`/customers/${customer.id}`)}
-                >
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-gray-900">
-                      {customer.firstName} {customer.lastName}
-                    </div>
-                    {customer.externalId && (
-                      <div className="text-xs text-gray-400">ID: {customer.externalId}</div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {customer.email && <div className="text-sm text-gray-600">{customer.email}</div>}
-                    {customer.mobile && <div className="text-sm text-gray-600">{customer.mobile}</div>}
-                  </td>
-                  <td className="px-4 py-3">
-                    {customer.vehicles.length > 0 ? (
-                      <div className="space-y-1">
-                        {customer.vehicles.slice(0, 2).map((v) => (
-                          <div key={v.id} className="text-sm">
-                            <span className="font-medium">{v.registration}</span>
-                            {v.make && v.model && (
-                              <span className="text-gray-500 ml-1">
-                                {v.make} {v.model}
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                        {customer.vehicles.length > 2 && (
-                          <div className="text-xs text-gray-400">
-                            +{customer.vehicles.length - 2} more
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-sm text-gray-400">No vehicles</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        navigate(`/customers/${customer.id}`)
-                      }}
-                      className="text-sm text-primary hover:text-primary-dark"
-                    >
-                      View
-                    </button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-        {total > 0 && (
-          <div className="px-4 py-3 border-t border-gray-200 text-sm text-gray-500">
-            Showing {customers.length} of {total} customers
+      {/* Loading / Empty states (shared) */}
+      {loading && (
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm px-4 py-8 text-center text-gray-500">
+          Loading...
+        </div>
+      )}
+
+      {!loading && customers.length === 0 && (
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm px-4 py-12 text-center">
+          <div className="text-gray-400 mb-2">
+            <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
           </div>
-        )}
-      </div>
+          <p className="text-gray-500 font-medium mb-1">
+            {search ? 'No customers match your search' : 'No customers yet'}
+          </p>
+          <p className="text-sm text-gray-400 mb-3">
+            {search ? 'Try adjusting your search terms' : 'Add your first customer to get started'}
+          </p>
+          {!search && (
+            <button
+              onClick={() => setShowModal(true)}
+              className="text-sm text-primary hover:text-primary-dark font-medium"
+            >
+              Add Customer
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Customer List */}
+      {!loading && customers.length > 0 && (
+        <>
+          {/* Mobile: Card view */}
+          <div className="md:hidden space-y-3">
+            {customers.map((customer) => (
+              <div
+                key={customer.id}
+                className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 active:bg-gray-50 cursor-pointer"
+                onClick={() => navigate(`/customers/${customer.id}`)}
+              >
+                <div className="font-medium text-gray-900">
+                  {customer.firstName} {customer.lastName}
+                </div>
+                {customer.externalId && (
+                  <div className="text-xs text-gray-400 mt-0.5">ID: {customer.externalId}</div>
+                )}
+                <div className="mt-2 space-y-0.5">
+                  {customer.email && <div className="text-sm text-gray-600">{customer.email}</div>}
+                  {customer.mobile && <div className="text-sm text-gray-600">{customer.mobile}</div>}
+                </div>
+                {customer.vehicles.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {customer.vehicles.slice(0, 3).map((v) => (
+                      <span key={v.id} className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-medium">
+                        {v.registration}
+                      </span>
+                    ))}
+                    {customer.vehicles.length > 3 && (
+                      <span className="text-xs text-gray-400">+{customer.vehicles.length - 3}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop: Table view */}
+          <div className="hidden md:block bg-white border border-gray-200 rounded-xl shadow-sm">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="text-left px-4 py-3 text-sm font-semibold text-gray-600">Name</th>
+                  <th className="text-left px-4 py-3 text-sm font-semibold text-gray-600">Contact</th>
+                  <th className="text-left px-4 py-3 text-sm font-semibold text-gray-600">Vehicles</th>
+                  <th className="text-right px-4 py-3 text-sm font-semibold text-gray-600"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {customers.map((customer) => (
+                  <tr
+                    key={customer.id}
+                    className="hover:bg-gray-50 cursor-pointer"
+                    onClick={() => navigate(`/customers/${customer.id}`)}
+                  >
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-gray-900">
+                        {customer.firstName} {customer.lastName}
+                      </div>
+                      {customer.externalId && (
+                        <div className="text-xs text-gray-400">ID: {customer.externalId}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {customer.email && <div className="text-sm text-gray-600">{customer.email}</div>}
+                      {customer.mobile && <div className="text-sm text-gray-600">{customer.mobile}</div>}
+                    </td>
+                    <td className="px-4 py-3">
+                      {customer.vehicles.length > 0 ? (
+                        <div className="space-y-1">
+                          {customer.vehicles.slice(0, 2).map((v) => (
+                            <div key={v.id} className="text-sm">
+                              <span className="font-medium">{v.registration}</span>
+                              {v.make && v.model && (
+                                <span className="text-gray-500 ml-1">
+                                  {v.make} {v.model}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                          {customer.vehicles.length > 2 && (
+                            <div className="text-xs text-gray-400">
+                              +{customer.vehicles.length - 2} more
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-gray-400">No vehicles</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          navigate(`/customers/${customer.id}`)
+                        }}
+                        className="text-sm text-primary hover:text-primary-dark"
+                      >
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {total > 0 && (
+            <div className="px-4 py-3 text-sm text-gray-500">
+              Showing {customers.length} of {total} customers
+            </div>
+          )}
+        </>
+      )}
 
       {/* Add Customer Modal */}
       {showModal && (

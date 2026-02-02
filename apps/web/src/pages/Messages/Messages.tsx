@@ -6,6 +6,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useSocket, WS_EVENTS } from '../../contexts/SocketContext'
 import { useUnreadSmsCount } from '../../hooks/useUnreadSmsCount'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { SmsMessage } from '../../lib/api'
 import ConversationList from './ConversationList'
 import ChatThread from './ChatThread'
@@ -17,6 +18,14 @@ export default function Messages() {
   const [search, setSearch] = useState('')
   const { on, off } = useSocket()
   const { decrement } = useUnreadSmsCount()
+  const isMobile = useIsMobile()
+
+  const showList = !isMobile || !selectedPhone
+  const showThread = !isMobile || !!selectedPhone
+
+  const handleBackToList = useCallback(() => {
+    setSelectedPhone(null)
+  }, [])
 
   const {
     conversations,
@@ -93,39 +102,44 @@ export default function Messages() {
   return (
     <div className="h-[calc(100vh-130px)] flex bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
       {/* Left panel: conversation list */}
-      <div className="w-96 border-r border-gray-200 flex-shrink-0">
-        <ConversationList
-          conversations={conversations}
-          loading={loading}
-          error={error}
-          selectedPhone={selectedPhone}
-          onSelect={setSelectedPhone}
-          onFilterChange={setFilter}
-          onSearchChange={setSearch}
-          filter={filter}
-          search={search}
-        />
-      </div>
+      {showList && (
+        <div className={`${isMobile ? 'w-full' : 'w-96'} border-r border-gray-200 flex-shrink-0`}>
+          <ConversationList
+            conversations={conversations}
+            loading={loading}
+            error={error}
+            selectedPhone={selectedPhone}
+            onSelect={setSelectedPhone}
+            onFilterChange={setFilter}
+            onSearchChange={setSearch}
+            filter={filter}
+            search={search}
+          />
+        </div>
+      )}
 
       {/* Right panel: chat thread */}
-      <div className="flex-1 min-w-0">
-        {selectedPhone ? (
-          <ChatThread
-            phoneNumber={selectedPhone}
-            customerName={customerName}
-            onMarkRead={handleMarkRead}
-            onMessageSent={handleMessageSent}
-          />
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-gray-400">
-            <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-            </svg>
-            <p className="text-lg font-medium">Select a conversation</p>
-            <p className="text-sm mt-1">Choose a conversation from the list to view messages</p>
-          </div>
-        )}
-      </div>
+      {showThread && (
+        <div className="flex-1 min-w-0">
+          {selectedPhone ? (
+            <ChatThread
+              phoneNumber={selectedPhone}
+              customerName={customerName}
+              onMarkRead={handleMarkRead}
+              onMessageSent={handleMessageSent}
+              onBack={isMobile ? handleBackToList : undefined}
+            />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-gray-400">
+              <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              <p className="text-lg font-medium">Select a conversation</p>
+              <p className="text-sm mt-1">Choose a conversation from the list to view messages</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

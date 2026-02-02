@@ -120,7 +120,7 @@ export default function OverviewTab({ customer, stats, recentHealthChecks, onCus
 
         {isEditing ? (
           <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">First Name</label>
                 <input
@@ -228,19 +228,19 @@ export default function OverviewTab({ customer, stats, recentHealthChecks, onCus
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="bg-white border border-gray-200 rounded-xl p-4">
-            <div className="text-2xl font-bold text-gray-900">{stats.totalHealthChecks}</div>
+            <div className="text-xl md:text-2xl font-bold text-gray-900">{stats.totalHealthChecks}</div>
             <div className="text-sm text-gray-500">Total Health Checks</div>
           </div>
           <div className="bg-white border border-gray-200 rounded-xl p-4">
-            <div className="text-2xl font-bold text-gray-900">{formatCurrency(stats.totalAuthorisedValue)}</div>
+            <div className="text-xl md:text-2xl font-bold text-gray-900">{formatCurrency(stats.totalAuthorisedValue)}</div>
             <div className="text-sm text-gray-500">Total Value</div>
           </div>
           <div className="bg-white border border-gray-200 rounded-xl p-4">
-            <div className="text-2xl font-bold text-gray-900">{formatDate(stats.lastVisit)}</div>
+            <div className="text-xl md:text-2xl font-bold text-gray-900">{formatDate(stats.lastVisit)}</div>
             <div className="text-sm text-gray-500">Last Visit</div>
           </div>
           <div className="bg-white border border-gray-200 rounded-xl p-4">
-            <div className="text-2xl font-bold text-gray-900">{stats.vehicleCount}</div>
+            <div className="text-xl md:text-2xl font-bold text-gray-900">{stats.vehicleCount}</div>
             <div className="text-sm text-gray-500">Vehicles</div>
           </div>
         </div>
@@ -259,7 +259,7 @@ export default function OverviewTab({ customer, stats, recentHealthChecks, onCus
                 to={`/health-checks/${hc.id}`}
                 className="block border border-gray-200 p-3 hover:bg-gray-50 transition-colors"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-mono font-medium text-gray-700">{hc.vhcReference || '-'}</span>
                     <span className={`text-xs px-2 py-0.5 font-medium ${statusColors[hc.status] || 'bg-gray-100 text-gray-700'}`}>
@@ -268,11 +268,11 @@ export default function OverviewTab({ customer, stats, recentHealthChecks, onCus
                   </div>
                   <span className="text-sm text-gray-500">{formatDate(hc.createdAt)}</span>
                 </div>
-                <div className="flex items-center gap-4 mt-2 text-sm">
+                <div className="flex flex-wrap items-center gap-2 md:gap-4 mt-2 text-sm">
                   {hc.vehicle && (
                     <span className="text-gray-600">{hc.vehicle.registration} - {hc.vehicle.make} {hc.vehicle.model}</span>
                   )}
-                  <div className="flex items-center gap-1.5 ml-auto">
+                  <div className="flex items-center gap-1.5 md:ml-auto">
                     {hc.greenCount > 0 && <span className="w-2.5 h-2.5 bg-rag-green rounded-full" title={`${hc.greenCount} green`} />}
                     {hc.amberCount > 0 && <span className="w-2.5 h-2.5 bg-rag-amber rounded-full" title={`${hc.amberCount} amber`} />}
                     {hc.redCount > 0 && <span className="w-2.5 h-2.5 bg-rag-red rounded-full" title={`${hc.redCount} red`} />}

@@ -13,6 +13,7 @@ interface ChatThreadProps {
   customerName: string | null
   onMarkRead: () => void
   onMessageSent: (msg: SmsMessage) => void
+  onBack?: () => void
 }
 
 function formatTime(dateStr: string): string {
@@ -33,7 +34,7 @@ function formatPhoneDisplay(phone: string): string {
   return phone
 }
 
-export default function ChatThread({ phoneNumber, customerName, onMarkRead, onMessageSent }: ChatThreadProps) {
+export default function ChatThread({ phoneNumber, customerName, onMarkRead, onMessageSent, onBack }: ChatThreadProps) {
   const { session } = useAuth()
   const { thread, loading, error, appendMessage, markRead } = useConversationMessages(phoneNumber)
   const [replyText, setReplyText] = useState('')
@@ -113,23 +114,35 @@ export default function ChatThread({ phoneNumber, customerName, onMarkRead, onMe
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-5 py-3 border-b border-gray-200 bg-white">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-gray-900">
-              {customerName || formatPhoneDisplay(phoneNumber)}
-            </h2>
-            {customerName && (
-              <p className="text-xs text-gray-500">{formatPhoneDisplay(phoneNumber)}</p>
+      <div className="px-3 md:px-5 py-3 border-b border-gray-200 bg-white">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            {onBack && (
+              <button
+                onClick={onBack}
+                className="flex-shrink-0 p-1 -ml-1 text-gray-600 hover:text-gray-900"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
             )}
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold text-gray-900 truncate">
+                {customerName || formatPhoneDisplay(phoneNumber)}
+              </h2>
+              {customerName && (
+                <p className="text-xs text-gray-500">{formatPhoneDisplay(phoneNumber)}</p>
+              )}
+            </div>
           </div>
           {thread?.healthChecks && thread.healthChecks.length > 0 && (
-            <div className="flex gap-1.5">
+            <div className="flex gap-1.5 flex-shrink-0">
               {thread.healthChecks.slice(0, 3).map(hc => (
                 <Link
                   key={hc.id}
                   to={`/health-checks/${hc.id}`}
-                  className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded hover:bg-primary/20 transition-colors"
+                  className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded hover:bg-primary/20 transition-colors whitespace-nowrap"
                 >
                   {hc.vhcReference || 'HC'}
                 </Link>
@@ -140,7 +153,7 @@ export default function ChatThread({ phoneNumber, customerName, onMarkRead, onMe
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+      <div className="flex-1 overflow-y-auto px-3 md:px-5 py-4 space-y-3">
         {error && (
           <div className="text-center text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
             {error}
@@ -159,7 +172,7 @@ export default function ChatThread({ phoneNumber, customerName, onMarkRead, onMe
             className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[75%] rounded-xl px-4 py-2 ${
+              className={`max-w-[85%] md:max-w-[75%] rounded-xl px-3 md:px-4 py-2 ${
                 msg.direction === 'outbound'
                   ? 'bg-primary text-white rounded-br-sm'
                   : 'bg-gray-100 text-gray-900 rounded-bl-sm'
@@ -184,7 +197,7 @@ export default function ChatThread({ phoneNumber, customerName, onMarkRead, onMe
       </div>
 
       {/* Reply input */}
-      <div className="border-t border-gray-200 px-5 py-3 bg-white">
+      <div className="border-t border-gray-200 px-3 md:px-5 py-3 bg-white">
         {sendError && (
           <div className="mb-2 text-xs text-red-600">{sendError}</div>
         )}

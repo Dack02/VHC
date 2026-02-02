@@ -127,12 +127,15 @@ deletion.post('/:id/delete', authorize(['super_admin', 'org_admin', 'site_admin'
       return c.json({ error: 'Health check is already deleted' }, 400)
     }
 
-    // Only allow deletion of certain statuses
-    const deletableStatuses = ['created', 'assigned', 'cancelled', 'awaiting_checkin']
-    if (!deletableStatuses.includes(healthCheck.status)) {
-      return c.json({
-        error: `Cannot delete health check in "${healthCheck.status}" status. Only "${deletableStatuses.join('", "')}" can be deleted.`
-      }, 400)
+    // Only allow deletion of certain statuses (org_admin+ can delete any status)
+    const isOrgAdminOrAbove = ['super_admin', 'org_admin'].includes(auth.user.role)
+    if (!isOrgAdminOrAbove) {
+      const deletableStatuses = ['created', 'assigned', 'cancelled', 'awaiting_checkin']
+      if (!deletableStatuses.includes(healthCheck.status)) {
+        return c.json({
+          error: `Cannot delete health check in "${healthCheck.status}" status. Only "${deletableStatuses.join('", "')}" can be deleted.`
+        }, 400)
+      }
     }
 
     // Soft delete
@@ -252,13 +255,14 @@ deletion.post('/bulk-delete', authorize(['super_admin', 'org_admin', 'site_admin
       return c.json({ error: 'No health checks found' }, 404)
     }
 
-    // Filter to only deletable ones
+    // Filter to only deletable ones (org_admin+ can delete any status)
+    const isOrgAdminOrAbove = ['super_admin', 'org_admin'].includes(auth.user.role)
     const deletableStatuses = ['created', 'assigned', 'cancelled', 'awaiting_checkin']
     const deletable = healthChecks.filter(hc =>
-      !hc.deleted_at && deletableStatuses.includes(hc.status)
+      !hc.deleted_at && (isOrgAdminOrAbove || deletableStatuses.includes(hc.status))
     )
     const skipped = healthChecks.filter(hc =>
-      hc.deleted_at || !deletableStatuses.includes(hc.status)
+      hc.deleted_at || (!isOrgAdminOrAbove && !deletableStatuses.includes(hc.status))
     )
 
     if (deletable.length === 0) {

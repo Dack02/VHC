@@ -119,7 +119,7 @@ export default function NotesTab({ customer, onCustomerUpdate }: NotesTabProps) 
           <div className="space-y-3">
             {communications.map((comm) => (
               <div key={comm.id} className="border border-gray-200 p-3">
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
                   <div className="flex items-center gap-2">
                     {comm.channel === 'email' ? (
                       <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -145,7 +145,7 @@ export default function NotesTab({ customer, onCustomerUpdate }: NotesTabProps) 
                   <div className="text-xs text-gray-500 truncate">{comm.messagePreview}</div>
                 )}
 
-                <div className="flex items-center justify-between mt-2 text-xs text-gray-400">
+                <div className="flex flex-wrap items-center justify-between gap-1 mt-2 text-xs text-gray-400">
                   <span>To: {comm.recipient}</span>
                   {comm.healthCheckId && (
                     <Link

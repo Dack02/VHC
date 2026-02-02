@@ -131,7 +131,7 @@ export default function CustomerDetail() {
   return (
     <div className="-m-6">
       {/* Action Bar */}
-      <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
+      <div className="bg-white border-b border-gray-200 px-4 md:px-6 py-3 flex items-center justify-between">
         <Link
           to="/customers"
           className="flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900"
@@ -139,26 +139,29 @@ export default function CustomerDetail() {
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
-          Back to Customers
+          <span className="hidden sm:inline">Back to Customers</span>
+          <span className="sm:hidden">Back</span>
         </Link>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setActiveTab('overview')}
             className="px-3 py-1.5 text-sm text-gray-700 border border-gray-300 hover:bg-gray-50"
           >
-            Edit Customer
+            <span className="hidden sm:inline">Edit Customer</span>
+            <span className="sm:hidden">Edit</span>
           </button>
           <Link
             to="/health-checks/new"
             className="px-3 py-1.5 text-sm bg-primary text-white font-semibold hover:bg-primary-dark"
           >
-            Create Health Check
+            <span className="hidden sm:inline">Create Health Check</span>
+            <span className="sm:hidden">New HC</span>
           </Link>
         </div>
       </div>
 
       {/* Customer Info Bar */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4">
+      <div className="bg-white border-b border-gray-200 px-4 md:px-6 py-4">
         <div className="flex items-center gap-4">
           {/* Initials Avatar */}
           <div className="w-12 h-12 bg-primary text-white flex items-center justify-center text-lg font-bold flex-shrink-0 rounded-full">
@@ -167,11 +170,11 @@ export default function CustomerDetail() {
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-gray-900">
+              <h1 className="text-xl md:text-2xl font-bold text-gray-900">
                 {customer.firstName} {customer.lastName}
               </h1>
               {customer.externalId && (
-                <span className="text-sm text-gray-400">DMS: {customer.externalId}</span>
+                <span className="text-sm text-gray-400 hidden sm:inline">DMS: {customer.externalId}</span>
               )}
             </div>
 
@@ -203,7 +206,7 @@ export default function CustomerDetail() {
               )}
               {/* Quick stats */}
               {stats && (
-                <div className="flex items-center gap-3 ml-auto text-xs text-gray-500">
+                <div className="flex items-center gap-3 w-full md:w-auto md:ml-auto text-xs text-gray-500">
                   <span>{stats.totalHealthChecks} Health Check{stats.totalHealthChecks !== 1 ? 's' : ''}</span>
                   <span className="text-gray-300">|</span>
                   <span>{stats.vehicleCount} Vehicle{stats.vehicleCount !== 1 ? 's' : ''}</span>
@@ -217,13 +220,13 @@ export default function CustomerDetail() {
       </div>
 
       {/* Tab Navigation */}
-      <div className="bg-white border-b border-gray-200 px-6">
-        <nav className="flex gap-6">
+      <div className="bg-white border-b border-gray-200 px-4 md:px-6">
+        <nav className="flex gap-4 md:gap-6 overflow-x-auto">
           {tabs.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`py-3 text-sm font-medium border-b-2 transition-colors ${
+              className={`py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 activeTab === tab.key
                   ? 'border-primary text-primary'
                   : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -236,7 +239,7 @@ export default function CustomerDetail() {
       </div>
 
       {/* Tab Content */}
-      <div className="bg-gray-50 p-6 min-h-[400px]">
+      <div className="bg-gray-50 p-4 md:p-6 min-h-[400px]">
         {activeTab === 'overview' && (
           <OverviewTab
             customer={customer}

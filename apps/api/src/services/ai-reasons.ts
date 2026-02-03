@@ -1161,6 +1161,68 @@ export async function regenerateDescriptions(
 }
 
 /**
+ * Generate descriptions from reason text without requiring a saved reason.
+ * Used when manually adding a new reason in the library.
+ */
+export async function generateDescriptionsFromText(
+  reasonText: string,
+  defaultRag: string,
+  organizationId: string,
+  userId?: string,
+  context?: { reasonType?: string; itemName?: string; category?: string }
+): Promise<{
+  technical_description: string
+  customer_description: string
+}> {
+  // Build item name from context
+  let itemName = context?.itemName || 'General Inspection Item'
+  if (!context?.itemName && context?.reasonType) {
+    const typeNameMap: Record<string, string> = {
+      'tyre': 'Tyres',
+      'brake_assembly': 'Brakes',
+      'wiper': 'Wipers',
+      'fluid_level': 'Fluid Levels',
+      'shock_absorber': 'Shock Absorbers',
+      'light_cluster': 'Lights',
+      'exhaust': 'Exhaust',
+      'suspension': 'Suspension',
+      'steering': 'Steering',
+      'wheel': 'Wheels'
+    }
+    itemName = typeNameMap[context.reasonType] || context.reasonType.replace(/_/g, ' ')
+  }
+
+  const tone = await getOrganizationTone(organizationId)
+  const category = context?.category || 'advisory'
+
+  const prompt = regenerateDescriptionsPrompt(reasonText, itemName, defaultRag, category, tone)
+
+  const parsed = await generateWithTracking(
+    organizationId,
+    userId,
+    'generate_descriptions',
+    { reasonType: context?.reasonType },
+    async () => {
+      const { result: responseText, inputTokens, outputTokens } = await callClaudeAPIWithUsage(prompt)
+
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/)
+      if (!jsonMatch) {
+        throw new Error('Failed to parse AI response')
+      }
+
+      const parsedResult = JSON.parse(jsonMatch[0]) as {
+        technical_description: string
+        customer_description: string
+      }
+
+      return { result: parsedResult, inputTokens, outputTokens }
+    }
+  )
+
+  return parsed
+}
+
+/**
  * Get AI usage summary for an organization
  */
 export async function getAIUsageSummary(organizationId: string): Promise<{

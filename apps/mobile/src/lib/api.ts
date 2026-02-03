@@ -1,5 +1,12 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5180'
 
+// Active organization ID for multi-org header injection
+let _activeOrgId: string | null = null
+
+export function setActiveOrgId(orgId: string | null) {
+  _activeOrgId = orgId
+}
+
 interface FetchOptions extends RequestInit {
   token?: string
 }
@@ -17,6 +24,10 @@ export async function api<T>(
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
+  }
+
+  if (_activeOrgId) {
+    headers['X-Organization-Id'] = _activeOrgId
   }
 
   const response = await fetch(`${API_URL}${endpoint}`, {

@@ -332,7 +332,6 @@ async function healthCheckExists(
     .eq('organization_id', organizationId)
     .eq('external_source', externalSource)
     .eq('external_id', externalId)
-    .is('deleted_at', null)
     .single()
 
   return !!data
@@ -522,6 +521,7 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
         .from('sites')
         .select('id')
         .eq('organization_id', organizationId)
+        .eq('is_active', true)
         .order('created_at', { ascending: true })
         .limit(1)
         .single()

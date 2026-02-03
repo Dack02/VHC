@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
-import { api, User } from '../lib/api'
+import { api, User, setActiveOrgId } from '../lib/api'
 
 interface AuthContextType {
   session: Session | null
@@ -48,8 +48,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchUser = async (token: string) => {
     console.log('fetchUser called with token:', !!token)
     try {
-      const data = await api<User>('/api/v1/auth/me', { token })
+      const data = await api<any>('/api/v1/auth/me', { token })
       console.log('fetchUser success:', data)
+      // Set org ID for X-Organization-Id header on subsequent API calls
+      const orgId = data.organization?.id || data.organizationId
+      if (orgId) {
+        setActiveOrgId(orgId)
+      }
       setUser(data)
     } catch (error) {
       console.error('Failed to fetch user:', error)
@@ -85,6 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut()
     setSession(null)
     setUser(null)
+    setActiveOrgId(null)
   }
 
   return (

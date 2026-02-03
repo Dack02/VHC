@@ -55,8 +55,9 @@ crud.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advi
     }
 
     // For technicians, filter by site if they have one (so they only see jobs at their location)
+    // Also include health checks with no site assigned (NULL site_id) so they aren't hidden
     if (auth.user.role === 'technician' && auth.user.siteId && !site_id) {
-      query = query.eq('site_id', auth.user.siteId)
+      query = query.or(`site_id.eq.${auth.user.siteId},site_id.is.null`)
     }
 
     const { data, error, count } = await query

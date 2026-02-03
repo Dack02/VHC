@@ -299,6 +299,9 @@ export default function EditReasons() {
           reason={modal.reason}
           categories={categories}
           isTypeView={isTypeView}
+          reasonType={type}
+          itemId={itemId}
+          itemName={headerInfo.title}
           onSave={handleSaveReason}
           onClose={() => setModal({ isOpen: false, mode: 'add', reason: null })}
         />
@@ -435,6 +438,8 @@ function ReasonModal({
   reason,
   categories,
   isTypeView,
+  reasonType,
+  itemName,
   onSave,
   onClose
 }: {
@@ -442,6 +447,9 @@ function ReasonModal({
   reason: Reason | null
   categories: Category[]
   isTypeView: boolean
+  reasonType?: string
+  itemId?: string
+  itemName?: string
   onSave: (data: Partial<Reason>) => void
   onClose: () => void
 }) {
@@ -456,29 +464,53 @@ function ReasonModal({
     suggestedFollowUpDays: reason?.suggestedFollowUpDays?.toString() || '',
     suggestedFollowUpText: reason?.suggestedFollowUpText || ''
   })
-  const [regenerating, setRegenerating] = useState(false)
+  const [generatingAI, setGeneratingAI] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  const handleRegenerateDescription = async () => {
-    if (!reason?.id || regenerating) return
-    setRegenerating(true)
+  const handleGenerateDescriptions = async () => {
+    if (generatingAI || !formData.reasonText.trim()) return
+    setGeneratingAI(true)
     try {
-      const result = await api<{
-        technicalDescription: string
-        customerDescription: string
-      }>(`/api/v1/item-reasons/${reason.id}/regenerate-descriptions`, {
-        method: 'POST',
-        token: session?.accessToken
-      })
-      setFormData(prev => ({
-        ...prev,
-        technicalDescription: result.technicalDescription,
-        customerDescription: result.customerDescription
-      }))
+      if (mode === 'edit' && reason?.id) {
+        // Use existing regenerate endpoint for saved reasons
+        const result = await api<{
+          technicalDescription: string
+          customerDescription: string
+        }>(`/api/v1/item-reasons/${reason.id}/regenerate-descriptions`, {
+          method: 'POST',
+          token: session?.accessToken
+        })
+        setFormData(prev => ({
+          ...prev,
+          technicalDescription: result.technicalDescription,
+          customerDescription: result.customerDescription
+        }))
+      } else {
+        // Use new text-based endpoint for unsaved reasons
+        const result = await api<{
+          technicalDescription: string
+          customerDescription: string
+        }>('/api/v1/reasons/generate-descriptions', {
+          method: 'POST',
+          body: {
+            reasonText: formData.reasonText.trim(),
+            defaultRag: formData.defaultRag,
+            reasonType: reasonType,
+            itemName: itemName,
+            category: categories.find(c => c.id === formData.categoryId)?.name
+          },
+          token: session?.accessToken
+        })
+        setFormData(prev => ({
+          ...prev,
+          technicalDescription: result.technicalDescription,
+          customerDescription: result.customerDescription
+        }))
+      }
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to regenerate')
+      alert(err instanceof Error ? err.message : 'Failed to generate descriptions')
     } finally {
-      setRegenerating(false)
+      setGeneratingAI(false)
     }
   }
 
@@ -574,6 +606,33 @@ function ReasonModal({
             </div>
           </div>
 
+          {/* AI Generate Button */}
+          <div>
+            <button
+              type="button"
+              onClick={handleGenerateDescriptions}
+              disabled={generatingAI || !formData.reasonText.trim()}
+              className="flex items-center gap-2 px-3 py-1.5 bg-purple-600 text-white text-sm rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {generatingAI ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  Generate descriptions with AI
+                </>
+              )}
+            </button>
+            {!formData.reasonText.trim() && (
+              <p className="text-xs text-gray-400 mt-1">Enter reason text first</p>
+            )}
+          </div>
+
           {/* Technical Description */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -598,28 +657,6 @@ function ReasonModal({
               rows={3}
               className="w-full border border-gray-300 rounded-md px-3 py-2"
             />
-            {mode === 'edit' && reason?.id && (
-              <button
-                type="button"
-                onClick={handleRegenerateDescription}
-                disabled={regenerating}
-                className="mt-2 text-sm text-purple-600 hover:text-purple-700 flex items-center gap-1"
-              >
-                {regenerating ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
-                    Regenerating...
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    Regenerate with AI
-                  </>
-                )}
-              </button>
-            )}
           </div>
 
           {/* Follow-up */}

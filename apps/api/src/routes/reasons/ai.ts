@@ -12,6 +12,7 @@ import {
   generateAndSaveReasonsForType,
   generateAllReasonsForTemplate,
   regenerateDescriptions,
+  generateDescriptionsFromText,
   getAIUsageSummary
 } from '../../services/ai-reasons.js'
 import { extractRelation, verifyReasonAccess } from './helpers.js'
@@ -172,6 +173,37 @@ ai.post('/templates/:id/generate-all-reasons', authorize(['super_admin', 'org_ad
     console.error('Generate all reasons error:', error)
     const message = error instanceof Error ? error.message : 'Unknown error'
     return c.json({ error: 'Failed to generate reasons: ' + message }, 500)
+  }
+})
+
+// POST /api/v1/reasons/generate-descriptions - Generate descriptions from text (no saved reason needed)
+ai.post('/reasons/generate-descriptions', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const body = await c.req.json()
+    const { reasonText, defaultRag, reasonType, itemName, category } = body
+
+    if (!reasonText || typeof reasonText !== 'string' || !reasonText.trim()) {
+      return c.json({ error: 'reasonText is required' }, 400)
+    }
+
+    const result = await generateDescriptionsFromText(
+      reasonText.trim(),
+      defaultRag || 'amber',
+      auth.orgId,
+      auth.user.id,
+      { reasonType, itemName, category }
+    )
+
+    return c.json({
+      success: true,
+      technicalDescription: result.technical_description,
+      customerDescription: result.customer_description
+    })
+  } catch (error) {
+    console.error('Generate descriptions from text error:', error)
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    return c.json({ error: 'Failed to generate descriptions: ' + message }, 500)
   }
 })
 

@@ -52,6 +52,7 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       .select(baseSelect)
       .eq('organization_id', auth.orgId)
       .is('deleted_at', null)
+      .is('due_date', null)
       .gte('created_at', todayISO)
       .lt('created_at', tomorrowISO)
 

@@ -75,6 +75,14 @@ interface MonthlyKpiData {
   }
 }
 
+interface TodayRagBreakdown {
+  ragBreakdown: {
+    red: { itemCount: number; authorizedCount: number }
+    amber: { itemCount: number; authorizedCount: number }
+    green: { itemCount: number; authorizedCount: number }
+  }
+}
+
 interface QueuesData {
   needsAttention: { items: QueueItem[]; total: number }
   technicianQueue: { items: QueueItem[]; total: number }
@@ -136,6 +144,7 @@ export default function Dashboard() {
   const [dmsEnabled, setDmsEnabled] = useState(false)
   const [showDmsModal, setShowDmsModal] = useState(false)
   const [monthlyKpis, setMonthlyKpis] = useState<MonthlyKpiData | null>(null)
+  const [todayKpis, setTodayKpis] = useState<TodayRagBreakdown | null>(null)
 
   const token = session?.accessToken
 
@@ -248,6 +257,17 @@ export default function Dashboard() {
     }
   }, [token])
 
+  // Fetch today's KPIs (for red/amber sold %)
+  const fetchTodayKpis = useCallback(async () => {
+    if (!token) return
+    try {
+      const data = await api<TodayRagBreakdown>('/api/v1/dashboard/today', { token })
+      setTodayKpis(data)
+    } catch (err) {
+      console.error('Failed to fetch today KPIs:', err)
+    }
+  }, [token])
+
   // Debounced refresh for WebSocket events (500ms, leading + trailing)
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
   const lastCallRef = useRef<number>(0)
@@ -259,6 +279,7 @@ export default function Dashboard() {
       if (now - lastCallRef.current > 500) {
         lastCallRef.current = now
         fetchDashboard()
+        fetchTodayKpis()
         return
       }
       // Trailing edge: debounce subsequent calls
@@ -266,9 +287,10 @@ export default function Dashboard() {
       debounceTimerRef.current = setTimeout(() => {
         lastCallRef.current = Date.now()
         fetchDashboard()
+        fetchTodayKpis()
       }, 500)
     }
-  }, [fetchDashboard])
+  }, [fetchDashboard, fetchTodayKpis])
 
   // Cleanup debounce timer on unmount
   useEffect(() => {
@@ -292,7 +314,8 @@ export default function Dashboard() {
     fetchAwaitingCheckin()
     checkDmsEnabled()
     fetchMonthlyKpis()
-  }, [fetchAwaitingArrival, fetchAwaitingCheckin, checkDmsEnabled, fetchMonthlyKpis])
+    fetchTodayKpis()
+  }, [fetchAwaitingArrival, fetchAwaitingCheckin, checkDmsEnabled, fetchMonthlyKpis, fetchTodayKpis])
 
   // Subscribe to real-time WebSocket events (debounced to prevent request storms)
   useEffect(() => {
@@ -338,6 +361,20 @@ export default function Dashboard() {
   const showOnboardingReminder =
     user?.isOrgAdmin &&
     user?.organization?.onboardingCompleted === false
+
+  // Compute today's red/amber sold percentages
+  const todaySoldPcts = useMemo(() => {
+    const red = todayKpis?.ragBreakdown?.red
+    const amber = todayKpis?.ragBreakdown?.amber
+    return {
+      redSoldPct: red && red.itemCount > 0 ? Math.round((red.authorizedCount / red.itemCount) * 100) : null,
+      redAuthorized: red?.authorizedCount ?? 0,
+      redTotal: red?.itemCount ?? 0,
+      amberSoldPct: amber && amber.itemCount > 0 ? Math.round((amber.authorizedCount / amber.itemCount) * 100) : null,
+      amberAuthorized: amber?.authorizedCount ?? 0,
+      amberTotal: amber?.itemCount ?? 0,
+    }
+  }, [todayKpis])
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(value)
@@ -539,22 +576,32 @@ export default function Dashboard() {
           <h2 className="text-lg font-semibold text-gray-900 mb-3">
             Monthly Performance — {monthlyKpis.currentMonth.label}
           </h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-            {/* Red Work Sold % */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            {/* Red Work Sold % (Today) */}
             <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
               <div className="flex items-start justify-between">
-                <div className="text-sm text-gray-500">Red Work Sold %</div>
-                {monthlyKpis.deltas.redSoldPct !== null && (
-                  <span className={`flex items-center text-xs font-medium ${monthlyKpis.deltas.redSoldPct >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                    <svg className={`w-3 h-3 mr-0.5 ${monthlyKpis.deltas.redSoldPct < 0 ? 'rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                    </svg>
-                    {monthlyKpis.deltas.redSoldPct > 0 ? '+' : ''}{monthlyKpis.deltas.redSoldPct}%
-                  </span>
-                )}
+                <div className="text-sm text-gray-500">Red Sold %</div>
+                <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-red-100 text-red-700 rounded-full">Today</span>
               </div>
               <div className="text-3xl font-bold text-gray-900 mt-2">
-                {monthlyKpis.currentMonth.redSoldPct !== null ? `${monthlyKpis.currentMonth.redSoldPct}%` : '--'}
+                {todaySoldPcts.redSoldPct !== null ? `${todaySoldPcts.redSoldPct}%` : '--'}
+              </div>
+              <div className="text-xs text-gray-400 mt-1">
+                {todaySoldPcts.redAuthorized}/{todaySoldPcts.redTotal} items
+              </div>
+            </div>
+
+            {/* Amber Work Sold % (Today) */}
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+              <div className="flex items-start justify-between">
+                <div className="text-sm text-gray-500">Amber Sold %</div>
+                <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-amber-100 text-amber-700 rounded-full">Today</span>
+              </div>
+              <div className="text-3xl font-bold text-gray-900 mt-2">
+                {todaySoldPcts.amberSoldPct !== null ? `${todaySoldPcts.amberSoldPct}%` : '--'}
+              </div>
+              <div className="text-xs text-gray-400 mt-1">
+                {todaySoldPcts.amberAuthorized}/{todaySoldPcts.amberTotal} items
               </div>
             </div>
 

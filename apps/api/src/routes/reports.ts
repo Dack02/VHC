@@ -2480,4 +2480,250 @@ reports.get('/mri-performance', authorize(['super_admin', 'org_admin', 'site_adm
   }
 })
 
+// ============================================================================
+// DAILY OVERVIEW
+// ============================================================================
+
+reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    // Get health checks with repair items for the date range
+    let query = supabaseAdmin
+      .from('health_checks')
+      .select(`
+        id,
+        status,
+        created_at,
+        tech_completed_at,
+        repair_items(total_inc_vat, outcome_status, source, deleted_at)
+      `)
+      .eq('organization_id', auth.orgId)
+      .gte('created_at', startDate)
+      .lte('created_at', endDate)
+      .order('created_at', { ascending: true })
+
+    if (site_id) query = query.eq('site_id', site_id)
+
+    const { data: healthChecks, error } = await query
+
+    if (error) {
+      console.error('Daily overview error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+
+    // Group by day
+    const dayMap: Record<string, {
+      jobsQty: number
+      noShows: number
+      hcQty: number
+      totalIdentified: number
+      totalSold: number
+      mriIdentified: number
+      mriSold: number
+    }> = {}
+
+    for (const hc of healthChecks || []) {
+      const dateKey = new Date(hc.created_at).toISOString().split('T')[0]
+
+      if (!dayMap[dateKey]) {
+        dayMap[dateKey] = {
+          jobsQty: 0,
+          noShows: 0,
+          hcQty: 0,
+          totalIdentified: 0,
+          totalSold: 0,
+          mriIdentified: 0,
+          mriSold: 0,
+        }
+      }
+
+      const day = dayMap[dateKey]
+      day.jobsQty++
+
+      if (hc.status === 'no_show') {
+        day.noShows++
+      } else if (hc.tech_completed_at) {
+        day.hcQty++
+      }
+
+      // Aggregate repair items
+      const items = hc.repair_items as Array<{
+        total_inc_vat?: number
+        outcome_status?: string
+        source?: string
+        deleted_at?: string | null
+      }> | null
+
+      for (const item of items || []) {
+        if (item.deleted_at) continue
+        const value = Number(item.total_inc_vat) || 0
+
+        day.totalIdentified += value
+        if (item.outcome_status === 'authorised') {
+          day.totalSold += value
+        }
+        if (item.source === 'mri_scan') {
+          day.mriIdentified += value
+          if (item.outcome_status === 'authorised') {
+            day.mriSold += value
+          }
+        }
+      }
+    }
+
+    // Build sorted days array
+    const days = Object.entries(dayMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, d]) => {
+        const eligible = d.jobsQty - d.noShows
+        const conversionRate = eligible > 0
+          ? Math.round((d.hcQty / eligible) * 100 * 10) / 10
+          : 0
+        return {
+          date,
+          jobsQty: d.jobsQty,
+          noShows: d.noShows,
+          hcQty: d.hcQty,
+          conversionRate,
+          totalIdentified: Math.round(d.totalIdentified * 100) / 100,
+          totalSold: Math.round(d.totalSold * 100) / 100,
+          mriIdentified: Math.round(d.mriIdentified * 100) / 100,
+          mriSold: Math.round(d.mriSold * 100) / 100,
+        }
+      })
+
+    // Calculate totals
+    const totalsRaw = days.reduce(
+      (acc, d) => ({
+        jobsQty: acc.jobsQty + d.jobsQty,
+        noShows: acc.noShows + d.noShows,
+        hcQty: acc.hcQty + d.hcQty,
+        totalIdentified: acc.totalIdentified + d.totalIdentified,
+        totalSold: acc.totalSold + d.totalSold,
+        mriIdentified: acc.mriIdentified + d.mriIdentified,
+        mriSold: acc.mriSold + d.mriSold,
+      }),
+      { jobsQty: 0, noShows: 0, hcQty: 0, totalIdentified: 0, totalSold: 0, mriIdentified: 0, mriSold: 0 }
+    )
+
+    const totalEligible = totalsRaw.jobsQty - totalsRaw.noShows
+    const totals = {
+      ...totalsRaw,
+      conversionRate: totalEligible > 0
+        ? Math.round((totalsRaw.hcQty / totalEligible) * 100 * 10) / 10
+        : 0,
+      totalIdentified: Math.round(totalsRaw.totalIdentified * 100) / 100,
+      totalSold: Math.round(totalsRaw.totalSold * 100) / 100,
+      mriIdentified: Math.round(totalsRaw.mriIdentified * 100) / 100,
+      mriSold: Math.round(totalsRaw.mriSold * 100) / 100,
+    }
+
+    return c.json({
+      period: { from: startDate, to: endDate },
+      days,
+      totals,
+    })
+  } catch (error) {
+    console.error('Daily overview error:', error)
+    return c.json({ error: 'Failed to fetch daily overview report' }, 500)
+  }
+})
+
+// GET /api/v1/reports/daily-overview/export - Export daily overview as CSV
+reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    let query = supabaseAdmin
+      .from('health_checks')
+      .select(`
+        id,
+        status,
+        created_at,
+        tech_completed_at,
+        repair_items(total_inc_vat, outcome_status, source, deleted_at)
+      `)
+      .eq('organization_id', auth.orgId)
+      .gte('created_at', startDate)
+      .lte('created_at', endDate)
+      .order('created_at', { ascending: true })
+
+    if (site_id) query = query.eq('site_id', site_id)
+
+    const { data: healthChecks, error } = await query
+
+    if (error) {
+      return c.json({ error: error.message }, 500)
+    }
+
+    // Group by day (same logic as main endpoint)
+    const dayMap: Record<string, {
+      jobsQty: number; noShows: number; hcQty: number
+      totalIdentified: number; totalSold: number; mriIdentified: number; mriSold: number
+    }> = {}
+
+    for (const hc of healthChecks || []) {
+      const dateKey = new Date(hc.created_at).toISOString().split('T')[0]
+      if (!dayMap[dateKey]) {
+        dayMap[dateKey] = { jobsQty: 0, noShows: 0, hcQty: 0, totalIdentified: 0, totalSold: 0, mriIdentified: 0, mriSold: 0 }
+      }
+      const day = dayMap[dateKey]
+      day.jobsQty++
+      if (hc.status === 'no_show') {
+        day.noShows++
+      } else if (hc.tech_completed_at) {
+        day.hcQty++
+      }
+      const items = hc.repair_items as Array<{ total_inc_vat?: number; outcome_status?: string; source?: string; deleted_at?: string | null }> | null
+      for (const item of items || []) {
+        if (item.deleted_at) continue
+        const value = Number(item.total_inc_vat) || 0
+        day.totalIdentified += value
+        if (item.outcome_status === 'authorised') day.totalSold += value
+        if (item.source === 'mri_scan') {
+          day.mriIdentified += value
+          if (item.outcome_status === 'authorised') day.mriSold += value
+        }
+      }
+    }
+
+    const csvHeaders = ['Date', 'Jobs', 'No Shows', 'HCs', 'Conversion %', 'Identified', 'Sold', 'MRI Identified', 'MRI Sold']
+    const csvRows = Object.entries(dayMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, d]) => {
+        const eligible = d.jobsQty - d.noShows
+        const conv = eligible > 0 ? ((d.hcQty / eligible) * 100).toFixed(1) : '0.0'
+        return [date, d.jobsQty, d.noShows, d.hcQty, `${conv}%`, d.totalIdentified.toFixed(2), d.totalSold.toFixed(2), d.mriIdentified.toFixed(2), d.mriSold.toFixed(2)]
+      })
+
+    const csvContent = [
+      csvHeaders.join(','),
+      ...csvRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    ].join('\n')
+
+    return new Response(csvContent, {
+      headers: {
+        'Content-Type': 'text/csv',
+        'Content-Disposition': `attachment; filename="daily-overview-${new Date().toISOString().split('T')[0]}.csv"`
+      }
+    })
+  } catch (error) {
+    console.error('Daily overview export error:', error)
+    return c.json({ error: 'Failed to export daily overview' }, 500)
+  }
+})
+
 export default reports

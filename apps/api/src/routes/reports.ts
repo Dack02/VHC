@@ -18,69 +18,130 @@ reports.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
     const startDate = date_from || thirtyDaysAgo.toISOString()
     const endDate = date_to || new Date().toISOString()
 
-    // Get all health checks in the period with repair items for totals
-    let query = supabaseAdmin
+    // Get all health checks using dual-date approach (due_date + created_at fallback)
+    const mainSelect = `
+      id,
+      status,
+      created_at,
+      due_date,
+      sent_at,
+      first_opened_at,
+      closed_at,
+      green_count,
+      amber_count,
+      red_count,
+      technician_id,
+      advisor_id,
+      technician:users!health_checks_technician_id_fkey(first_name, last_name),
+      advisor:users!health_checks_advisor_id_fkey(first_name, last_name),
+      repair_items(id, total_inc_vat, labour_total, parts_total, customer_approved, outcome_status, is_group, parent_repair_item_id, deleted_at)
+    `
+
+    let dueDateQ = supabaseAdmin
       .from('health_checks')
-      .select(`
-        id,
-        status,
-        created_at,
-        sent_at,
-        first_opened_at,
-        closed_at,
-        green_count,
-        amber_count,
-        red_count,
-        technician_id,
-        advisor_id,
-        technician:users!health_checks_technician_id_fkey(first_name, last_name),
-        advisor:users!health_checks_advisor_id_fkey(first_name, last_name),
-        repair_items(total_inc_vat, labour_total, parts_total)
-      `)
+      .select(mainSelect)
       .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .gte('due_date', startDate)
+      .lte('due_date', endDate)
+      .order('created_at', { ascending: true })
+
+    let createdAtQ = supabaseAdmin
+      .from('health_checks')
+      .select(mainSelect)
+      .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .is('due_date', null)
       .gte('created_at', startDate)
       .lte('created_at', endDate)
       .order('created_at', { ascending: true })
 
-    if (site_id) query = query.eq('site_id', site_id)
-    if (technician_id) query = query.eq('technician_id', technician_id)
-    if (advisor_id) query = query.eq('advisor_id', advisor_id)
+    if (site_id) { dueDateQ = dueDateQ.eq('site_id', site_id); createdAtQ = createdAtQ.eq('site_id', site_id) }
+    if (technician_id) { dueDateQ = dueDateQ.eq('technician_id', technician_id); createdAtQ = createdAtQ.eq('technician_id', technician_id) }
+    if (advisor_id) { dueDateQ = dueDateQ.eq('advisor_id', advisor_id); createdAtQ = createdAtQ.eq('advisor_id', advisor_id) }
 
-    const { data: healthChecks, error } = await query
+    const [ddRes, caRes] = await Promise.all([dueDateQ, createdAtQ])
+    if (ddRes.error) return c.json({ error: ddRes.error.message }, 500)
+    if (caRes.error) return c.json({ error: caRes.error.message }, 500)
 
-    if (error) {
-      return c.json({ error: error.message }, 500)
+    const hcMap = new Map<string, (typeof ddRes.data)[0]>()
+    for (const hc of [...(ddRes.data || []), ...(caRes.data || [])]) {
+      if (!hcMap.has(hc.id)) hcMap.set(hc.id, hc)
+    }
+    const healthChecks = Array.from(hcMap.values())
+
+    // Item-level auth helper
+    const isItemAuth = (item: any) => item.customer_approved === true || item.outcome_status === 'authorised'
+
+    // Calculate item-level value for a HC (identified, authorized, declined)
+    const getHcValues = (hc: any) => {
+      const items = hc.repair_items as any[] | null
+      let identified = 0, authorized = 0, declined = 0
+
+      // Build children map for group handling
+      const childrenByParent = new Map<string, any[]>()
+      for (const item of items || []) {
+        if (item.parent_repair_item_id) {
+          const children = childrenByParent.get(item.parent_repair_item_id) || []
+          children.push(item)
+          childrenByParent.set(item.parent_repair_item_id, children)
+        }
+      }
+
+      for (const item of items || []) {
+        if (item.deleted_at) continue
+        if (item.parent_repair_item_id) continue // skip children
+        const value = Number(item.total_inc_vat) || 0
+        identified += value
+
+        let itemAuthorised = isItemAuth(item)
+        let authValue = value
+        if (item.is_group && !itemAuthorised) {
+          const children = childrenByParent.get(item.id) || []
+          const authChildren = children.filter((c: any) => !c.deleted_at && isItemAuth(c))
+          if (authChildren.length > 0) {
+            itemAuthorised = true
+            authValue = authChildren.reduce((s: number, c: any) => s + (Number(c.total_inc_vat) || 0), 0)
+          }
+        }
+
+        if (itemAuthorised) authorized += authValue
+        else if (item.outcome_status === 'declined') declined += value
+      }
+      return { identified, authorized, declined }
     }
 
     // Calculate summary metrics
-    const total = healthChecks?.length || 0
-    const completed = healthChecks?.filter(hc => ['completed', 'authorized', 'declined'].includes(hc.status)).length || 0
-    const sent = healthChecks?.filter(hc => hc.sent_at).length || 0
-    const authorized = healthChecks?.filter(hc => hc.status === 'authorized' || hc.status === 'completed').length || 0
-    const declined = healthChecks?.filter(hc => hc.status === 'declined').length || 0
+    const total = healthChecks.length
+    const completed = healthChecks.filter(hc => ['completed', 'authorized', 'declined'].includes(hc.status)).length
+    const sent = healthChecks.filter(hc => hc.sent_at).length
+    const declined = healthChecks.filter(hc => hc.status === 'declined').length
 
-    // Helper to calculate total from repair_items
-    const getHealthCheckTotal = (hc: any) => {
-      const repairItems = hc.repair_items as Array<{ total_inc_vat?: number }> | null
-      return repairItems?.reduce((sum, item) => sum + (Number(item.total_inc_vat) || 0), 0) || 0
+    let totalValueIdentified = 0
+    let totalValueAuthorized = 0
+    let totalValueDeclined = 0
+    const hcValuesMap: Record<string, { identified: number; authorized: number; declined: number }> = {}
+
+    for (const hc of healthChecks) {
+      const vals = getHcValues(hc)
+      hcValuesMap[hc.id] = vals
+      totalValueIdentified += vals.identified
+      totalValueAuthorized += vals.authorized
+      totalValueDeclined += vals.declined
     }
 
-    const totalValueIdentified = healthChecks?.reduce((sum, hc) => sum + getHealthCheckTotal(hc), 0) || 0
-    const totalValueAuthorized = healthChecks?.filter(hc => hc.status === 'authorized' || hc.status === 'completed')
-      .reduce((sum, hc) => sum + getHealthCheckTotal(hc), 0) || 0
-    const totalValueDeclined = healthChecks?.filter(hc => hc.status === 'declined')
-      .reduce((sum, hc) => sum + getHealthCheckTotal(hc), 0) || 0
-
-    const conversionRate = sent > 0 ? (authorized / sent) * 100 : 0
+    // Count HCs that have at least one authorized item
+    const authorizedCount = healthChecks.filter(hc => hcValuesMap[hc.id].authorized > 0).length
+    const conversionRate = sent > 0 ? (authorizedCount / sent) * 100 : 0
 
     // Group data for chart
-    const groupedData = groupByPeriod(healthChecks || [], group_by as 'day' | 'week' | 'month')
+    const groupedData = groupByPeriod(healthChecks, group_by as 'day' | 'week' | 'month', hcValuesMap)
 
     // Calculate per-technician metrics
-    const technicianMetrics = calculateTechnicianMetrics(healthChecks || [])
+    const technicianMetrics = calculateTechnicianMetrics(healthChecks)
 
     // Calculate per-advisor metrics
-    const advisorMetrics = calculateAdvisorMetrics(healthChecks || [])
+    const advisorMetrics = calculateAdvisorMetrics(healthChecks, hcValuesMap)
 
     return c.json({
       period: {
@@ -91,7 +152,7 @@ reports.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
         total,
         completed,
         sent,
-        authorized,
+        authorized: authorizedCount,
         declined,
         pending: total - completed,
         conversionRate: Math.round(conversionRate * 10) / 10,
@@ -121,41 +182,59 @@ reports.get('/export', authorize(['super_admin', 'org_admin', 'site_admin', 'ser
     const startDate = date_from || thirtyDaysAgo.toISOString()
     const endDate = date_to || new Date().toISOString()
 
-    // Get all health checks in the period with full details
-    let query = supabaseAdmin
+    // Get all health checks using dual-date approach
+    const exportSelect = `
+      id,
+      status,
+      created_at,
+      due_date,
+      sent_at,
+      first_opened_at,
+      closed_at,
+      green_count,
+      amber_count,
+      red_count,
+      mileage_in,
+      vehicle:vehicles(registration, make, model, vin),
+      customer:customers(first_name, last_name, email, phone),
+      technician:users!health_checks_technician_id_fkey(first_name, last_name, email),
+      advisor:users!health_checks_advisor_id_fkey(first_name, last_name, email),
+      site:sites(name),
+      repair_items(total_inc_vat, labour_total, parts_total, deleted_at, parent_repair_item_id)
+    `
+
+    let expDueDateQ = supabaseAdmin
       .from('health_checks')
-      .select(`
-        id,
-        status,
-        created_at,
-        sent_at,
-        first_opened_at,
-        closed_at,
-        green_count,
-        amber_count,
-        red_count,
-        mileage_in,
-        vehicle:vehicles(registration, make, model, vin),
-        customer:customers(first_name, last_name, email, phone),
-        technician:users!health_checks_technician_id_fkey(first_name, last_name, email),
-        advisor:users!health_checks_advisor_id_fkey(first_name, last_name, email),
-        site:sites(name),
-        repair_items(total_inc_vat, labour_total, parts_total)
-      `)
+      .select(exportSelect)
       .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .gte('due_date', startDate)
+      .lte('due_date', endDate)
+      .order('created_at', { ascending: false })
+
+    let expCreatedAtQ = supabaseAdmin
+      .from('health_checks')
+      .select(exportSelect)
+      .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .is('due_date', null)
       .gte('created_at', startDate)
       .lte('created_at', endDate)
       .order('created_at', { ascending: false })
 
-    if (site_id) query = query.eq('site_id', site_id)
-    if (technician_id) query = query.eq('technician_id', technician_id)
-    if (advisor_id) query = query.eq('advisor_id', advisor_id)
+    if (site_id) { expDueDateQ = expDueDateQ.eq('site_id', site_id); expCreatedAtQ = expCreatedAtQ.eq('site_id', site_id) }
+    if (technician_id) { expDueDateQ = expDueDateQ.eq('technician_id', technician_id); expCreatedAtQ = expCreatedAtQ.eq('technician_id', technician_id) }
+    if (advisor_id) { expDueDateQ = expDueDateQ.eq('advisor_id', advisor_id); expCreatedAtQ = expCreatedAtQ.eq('advisor_id', advisor_id) }
 
-    const { data: healthChecks, error } = await query
+    const [expDdRes, expCaRes] = await Promise.all([expDueDateQ, expCreatedAtQ])
+    if (expDdRes.error) return c.json({ error: expDdRes.error.message }, 500)
+    if (expCaRes.error) return c.json({ error: expCaRes.error.message }, 500)
 
-    if (error) {
-      return c.json({ error: error.message }, 500)
+    const expHcMap = new Map<string, (typeof expDdRes.data)[0]>()
+    for (const hc of [...(expDdRes.data || []), ...(expCaRes.data || [])]) {
+      if (!expHcMap.has(hc.id)) expHcMap.set(hc.id, hc)
     }
+    const healthChecks = Array.from(expHcMap.values())
 
     if (format === 'csv') {
       // Generate CSV
@@ -192,12 +271,13 @@ reports.get('/export', authorize(['super_admin', 'org_admin', 'site_admin', 'ser
         const technician = hc.technician as { first_name?: string; last_name?: string; email?: string } | null
         const advisor = hc.advisor as { first_name?: string; last_name?: string; email?: string } | null
         const site = hc.site as { name?: string } | null
-        const repairItems = hc.repair_items as Array<{ total_inc_vat?: number; labour_total?: number; parts_total?: number }> | null
+        const repairItems = hc.repair_items as Array<{ total_inc_vat?: number; labour_total?: number; parts_total?: number; deleted_at?: string | null; parent_repair_item_id?: string | null }> | null
 
-        // Calculate totals from repair items
-        const totalLabour = repairItems?.reduce((sum, item) => sum + (Number(item.labour_total) || 0), 0) || 0
-        const totalParts = repairItems?.reduce((sum, item) => sum + (Number(item.parts_total) || 0), 0) || 0
-        const totalAmount = repairItems?.reduce((sum, item) => sum + (Number(item.total_inc_vat) || 0), 0) || 0
+        // Calculate totals from top-level non-deleted repair items only
+        const topLevelItems = repairItems?.filter(item => !item.deleted_at && !item.parent_repair_item_id) || []
+        const totalLabour = topLevelItems.reduce((sum, item) => sum + (Number(item.labour_total) || 0), 0)
+        const totalParts = topLevelItems.reduce((sum, item) => sum + (Number(item.parts_total) || 0), 0)
+        const totalAmount = topLevelItems.reduce((sum, item) => sum + (Number(item.total_inc_vat) || 0), 0)
 
         return [
           hc.id,
@@ -252,8 +332,8 @@ reports.get('/export', authorize(['super_admin', 'org_admin', 'site_admin', 'ser
   }
 })
 
-// Helper: Group data by period
-function groupByPeriod(healthChecks: any[], groupBy: 'day' | 'week' | 'month') {
+// Helper: Group data by period (uses item-level values from hcValuesMap)
+function groupByPeriod(healthChecks: any[], groupBy: 'day' | 'week' | 'month', hcValuesMap?: Record<string, { identified: number; authorized: number; declined: number }>) {
   const grouped: Record<string, {
     period: string,
     total: number,
@@ -264,11 +344,12 @@ function groupByPeriod(healthChecks: any[], groupBy: 'day' | 'week' | 'month') {
   }> = {}
 
   healthChecks.forEach(hc => {
-    const date = new Date(hc.created_at)
+    // Use due_date if set, otherwise fall back to created_at
+    const date = hc.due_date ? new Date(hc.due_date) : new Date(hc.created_at)
     let periodKey: string
 
     if (groupBy === 'day') {
-      periodKey = date.toISOString().split('T')[0]
+      periodKey = hc.due_date ? hc.due_date.split('T')[0] : date.toISOString().split('T')[0]
     } else if (groupBy === 'week') {
       // Get start of week (Monday)
       const weekStart = new Date(date)
@@ -297,10 +378,12 @@ function groupByPeriod(healthChecks: any[], groupBy: 'day' | 'week' | 'month') {
     if (['completed', 'authorized', 'declined'].includes(hc.status)) {
       grouped[periodKey].completed++
     }
-    if (hc.status === 'authorized' || hc.status === 'completed') {
+
+    // Use item-level values when available
+    const vals = hcValuesMap?.[hc.id]
+    if (vals && vals.authorized > 0) {
       grouped[periodKey].authorized++
-      const repairItems = hc.repair_items as Array<{ total_inc_vat?: number }> | null
-      grouped[periodKey].value += repairItems?.reduce((sum: number, item: any) => sum + (Number(item.total_inc_vat) || 0), 0) || 0
+      grouped[periodKey].value += vals.authorized
     }
     if (hc.status === 'declined') {
       grouped[periodKey].declined++
@@ -344,8 +427,8 @@ function calculateTechnicianMetrics(healthChecks: any[]) {
   return Object.values(techMetrics).sort((a, b) => b.total - a.total)
 }
 
-// Helper: Calculate per-advisor metrics
-function calculateAdvisorMetrics(healthChecks: any[]) {
+// Helper: Calculate per-advisor metrics (uses item-level values from hcValuesMap)
+function calculateAdvisorMetrics(healthChecks: any[], hcValuesMap?: Record<string, { identified: number; authorized: number; declined: number }>) {
   const advisorMetrics: Record<string, {
     id: string,
     name: string,
@@ -374,10 +457,11 @@ function calculateAdvisorMetrics(healthChecks: any[]) {
 
     advisorMetrics[key].total++
     if (hc.sent_at) advisorMetrics[key].sent++
-    if (hc.status === 'authorized' || hc.status === 'completed') {
+
+    const vals = hcValuesMap?.[hc.id]
+    if (vals && vals.authorized > 0) {
       advisorMetrics[key].authorized++
-      const repairItems = hc.repair_items as Array<{ total_inc_vat?: number }> | null
-      advisorMetrics[key].totalValue += repairItems?.reduce((sum: number, item: any) => sum + (Number(item.total_inc_vat) || 0), 0) || 0
+      advisorMetrics[key].totalValue += vals.authorized
     }
   })
 
@@ -774,11 +858,16 @@ reports.get('/financial', authorize(['super_admin', 'org_admin', 'site_admin', '
         price_override,
         price_override_reason,
         outcome_status,
+        customer_approved,
+        is_group,
+        parent_repair_item_id,
         created_at,
         health_check:health_checks!inner(
           id,
           status,
           created_at,
+          due_date,
+          deleted_at,
           organization_id,
           site_id,
           advisor_id,
@@ -786,6 +875,7 @@ reports.get('/financial', authorize(['super_admin', 'org_admin', 'site_admin', '
         )
       `)
       .eq('health_check.organization_id', auth.orgId)
+      .is('health_check.deleted_at', null)
       .gte('created_at', startDate)
       .lte('created_at', endDate)
       .is('deleted_at', null)
@@ -797,6 +887,20 @@ reports.get('/financial', authorize(['super_admin', 'org_admin', 'site_admin', '
     if (error) {
       console.error('Financial report error:', error)
       return c.json({ error: error.message }, 500)
+    }
+
+    // Helper to check authorization (matches Today page logic)
+    const isFinItemAuth = (item: any) =>
+      item.customer_approved === true || item.outcome_status === 'authorised'
+
+    // Build children-by-parent map for group authorization
+    const finChildrenByParent = new Map<string, any[]>()
+    for (const item of items || []) {
+      if (item.parent_repair_item_id) {
+        const children = finChildrenByParent.get(item.parent_repair_item_id) || []
+        children.push(item)
+        finChildrenByParent.set(item.parent_repair_item_id, children)
+      }
     }
 
     // Revenue overview
@@ -823,6 +927,9 @@ reports.get('/financial', authorize(['super_admin', 'org_admin', 'site_admin', '
     const revenueByPeriod: Record<string, { period: string; identified: number; authorized: number; declined: number }> = {}
 
     for (const item of items || []) {
+      // Skip child items — their values roll up to the parent
+      if (item.parent_repair_item_id) continue
+
       const value = Number(item.total_inc_vat) || 0
       const labour = Number(item.labour_total) || 0
       const parts = Number(item.parts_total) || 0
@@ -831,8 +938,21 @@ reports.get('/financial', authorize(['super_admin', 'org_admin', 'site_admin', '
       totalLabour += labour
       totalParts += parts
 
-      if (item.outcome_status === 'authorised') {
-        totalAuthorized += value
+      // Check authorization with group handling
+      let authorised = isFinItemAuth(item)
+      let authValue = value
+
+      if (item.is_group && !authorised) {
+        const children = finChildrenByParent.get(item.id) || []
+        const authChildren = children.filter((c: any) => isFinItemAuth(c))
+        if (authChildren.length > 0) {
+          authorised = true
+          authValue = authChildren.reduce((s: number, c: any) => s + (Number(c.total_inc_vat) || 0), 0)
+        }
+      }
+
+      if (authorised) {
+        totalAuthorized += authValue
       } else if (item.outcome_status === 'declined') {
         totalDeclined += value
       } else if (item.outcome_status === 'deferred') {
@@ -846,7 +966,7 @@ reports.get('/financial', authorize(['super_admin', 'org_admin', 'site_admin', '
       }
       itemAggregates[name].count++
       itemAggregates[name].totalValue += value
-      if (item.outcome_status === 'authorised') {
+      if (authorised) {
         itemAggregates[name].authorizedCount++
       }
 
@@ -882,8 +1002,8 @@ reports.get('/financial', authorize(['super_admin', 'org_admin', 'site_admin', '
         revenueByPeriod[periodKey] = { period: periodKey, identified: 0, authorized: 0, declined: 0 }
       }
       revenueByPeriod[periodKey].identified += value
-      if (item.outcome_status === 'authorised') revenueByPeriod[periodKey].authorized += value
-      if (item.outcome_status === 'declined') revenueByPeriod[periodKey].declined += value
+      if (authorised) revenueByPeriod[periodKey].authorized += authValue
+      if (!authorised && item.outcome_status === 'declined') revenueByPeriod[periodKey].declined += value
     }
 
     const topItems = Object.values(itemAggregates)
@@ -939,35 +1059,53 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
     const startDate = date_from || thirtyDaysAgo.toISOString()
     const endDate = date_to || new Date().toISOString()
 
-    let query = supabaseAdmin
+    // Dual-date approach
+    const techSelect = `
+      id,
+      status,
+      created_at,
+      due_date,
+      tech_started_at,
+      tech_completed_at,
+      technician_id,
+      green_count,
+      amber_count,
+      red_count,
+      technician:users!health_checks_technician_id_fkey(id, first_name, last_name),
+      repair_items(total_inc_vat, outcome_status, deleted_at, parent_repair_item_id)
+    `
+
+    let techDdQ = supabaseAdmin
       .from('health_checks')
-      .select(`
-        id,
-        status,
-        created_at,
-        tech_started_at,
-        tech_completed_at,
-        technician_id,
-        green_count,
-        amber_count,
-        red_count,
-        technician:users!health_checks_technician_id_fkey(id, first_name, last_name),
-        repair_items(total_inc_vat, outcome_status)
-      `)
+      .select(techSelect)
       .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .gte('due_date', startDate)
+      .lte('due_date', endDate)
+      .not('technician_id', 'is', null)
+
+    let techCaQ = supabaseAdmin
+      .from('health_checks')
+      .select(techSelect)
+      .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .is('due_date', null)
       .gte('created_at', startDate)
       .lte('created_at', endDate)
       .not('technician_id', 'is', null)
 
-    if (site_id) query = query.eq('site_id', site_id)
-    if (technician_id) query = query.eq('technician_id', technician_id)
+    if (site_id) { techDdQ = techDdQ.eq('site_id', site_id); techCaQ = techCaQ.eq('site_id', site_id) }
+    if (technician_id) { techDdQ = techDdQ.eq('technician_id', technician_id); techCaQ = techCaQ.eq('technician_id', technician_id) }
 
-    const { data: healthChecks, error } = await query
+    const [techDdRes, techCaRes] = await Promise.all([techDdQ, techCaQ])
+    if (techDdRes.error) { console.error('Technician report error:', techDdRes.error); return c.json({ error: techDdRes.error.message }, 500) }
+    if (techCaRes.error) { console.error('Technician report error:', techCaRes.error); return c.json({ error: techCaRes.error.message }, 500) }
 
-    if (error) {
-      console.error('Technician report error:', error)
-      return c.json({ error: error.message }, 500)
+    const techHcMap = new Map<string, (typeof techDdRes.data)[0]>()
+    for (const hc of [...(techDdRes.data || []), ...(techCaRes.data || [])]) {
+      if (!techHcMap.has(hc.id)) techHcMap.set(hc.id, hc)
     }
+    const healthChecks = Array.from(techHcMap.values())
 
     // Aggregate per technician
     const techData: Record<string, {
@@ -1019,9 +1157,10 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       techData[key].amberCount += hc.amber_count || 0
       techData[key].greenCount += hc.green_count || 0
 
-      // Revenue identified
-      const items = hc.repair_items as Array<{ total_inc_vat?: number; outcome_status?: string }> | null
-      techData[key].revenueIdentified += items?.reduce((s, i) => s + (Number(i.total_inc_vat) || 0), 0) || 0
+      // Revenue identified — top-level non-deleted items only
+      const items = hc.repair_items as Array<{ total_inc_vat?: number; outcome_status?: string; deleted_at?: string | null; parent_repair_item_id?: string | null }> | null
+      const topLevelActive = items?.filter(i => !i.deleted_at && !i.parent_repair_item_id) || []
+      techData[key].revenueIdentified += topLevelActive.reduce((s, i) => s + (Number(i.total_inc_vat) || 0), 0)
 
       // Inspection time calculation
       if (hc.tech_started_at && hc.tech_completed_at) {
@@ -1156,34 +1295,52 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
     const startDate = date_from || thirtyDaysAgo.toISOString()
     const endDate = date_to || new Date().toISOString()
 
-    let query = supabaseAdmin
+    // Dual-date approach
+    const advSelect = `
+      id,
+      status,
+      created_at,
+      due_date,
+      sent_at,
+      first_opened_at,
+      tech_completed_at,
+      advisor_id,
+      advisor:users!health_checks_advisor_id_fkey(id, first_name, last_name),
+      repair_items(id, total_inc_vat, outcome_status, customer_approved, is_group, parent_repair_item_id, deleted_at),
+      mri_scan_results(not_applicable, completed_by)
+    `
+
+    let advDdQ = supabaseAdmin
       .from('health_checks')
-      .select(`
-        id,
-        status,
-        created_at,
-        sent_at,
-        first_opened_at,
-        tech_completed_at,
-        advisor_id,
-        advisor:users!health_checks_advisor_id_fkey(id, first_name, last_name),
-        repair_items(total_inc_vat, outcome_status, deleted_at),
-        mri_scan_results(not_applicable, completed_by)
-      `)
+      .select(advSelect)
       .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .gte('due_date', startDate)
+      .lte('due_date', endDate)
+      .not('advisor_id', 'is', null)
+
+    let advCaQ = supabaseAdmin
+      .from('health_checks')
+      .select(advSelect)
+      .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .is('due_date', null)
       .gte('created_at', startDate)
       .lte('created_at', endDate)
       .not('advisor_id', 'is', null)
 
-    if (site_id) query = query.eq('site_id', site_id)
-    if (advisor_id) query = query.eq('advisor_id', advisor_id)
+    if (site_id) { advDdQ = advDdQ.eq('site_id', site_id); advCaQ = advCaQ.eq('site_id', site_id) }
+    if (advisor_id) { advDdQ = advDdQ.eq('advisor_id', advisor_id); advCaQ = advCaQ.eq('advisor_id', advisor_id) }
 
-    const { data: healthChecks, error } = await query
+    const [advDdRes, advCaRes] = await Promise.all([advDdQ, advCaQ])
+    if (advDdRes.error) { console.error('Advisor report error:', advDdRes.error); return c.json({ error: advDdRes.error.message }, 500) }
+    if (advCaRes.error) { console.error('Advisor report error:', advCaRes.error); return c.json({ error: advCaRes.error.message }, 500) }
 
-    if (error) {
-      console.error('Advisor report error:', error)
-      return c.json({ error: error.message }, 500)
+    const advHcMap = new Map<string, (typeof advDdRes.data)[0]>()
+    for (const hc of [...(advDdRes.data || []), ...(advCaRes.data || [])]) {
+      if (!advHcMap.has(hc.id)) advHcMap.set(hc.id, hc)
     }
+    const healthChecks = Array.from(advHcMap.values())
 
     const advisorData: Record<string, {
       id: string
@@ -1235,19 +1392,49 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
       }
 
       advisorData[key].managed++
-      const items = hc.repair_items as Array<{ total_inc_vat?: number; outcome_status?: string; deleted_at?: string | null }> | null
-      const activeItems = items?.filter(i => !i.deleted_at) || []
-      const hcValue = activeItems.reduce((s, i) => s + (Number(i.total_inc_vat) || 0), 0)
+      const items = hc.repair_items as Array<{ id?: string; total_inc_vat?: number; outcome_status?: string; customer_approved?: boolean | null; is_group?: boolean | null; parent_repair_item_id?: string | null; deleted_at?: string | null }> | null
+
+      // Build children map for group handling
+      const advChildrenByParent = new Map<string, typeof items>()
+      for (const item of items || []) {
+        if (item.parent_repair_item_id) {
+          const children = advChildrenByParent.get(item.parent_repair_item_id) || []
+          children.push(item)
+          advChildrenByParent.set(item.parent_repair_item_id, children as any)
+        }
+      }
+
+      const isAdvItemAuth = (item: any) => item.customer_approved === true || item.outcome_status === 'authorised'
+
+      // Only top-level non-deleted items
+      const topLevelActive = (items || []).filter(i => !i.deleted_at && !i.parent_repair_item_id)
+      const hcValue = topLevelActive.reduce((s, i) => s + (Number(i.total_inc_vat) || 0), 0)
       advisorData[key].valueIdentified += hcValue
 
+      let hcAuthorisedValue = 0
+
       // Deferred and authorised item-level tracking
-      for (const item of activeItems) {
+      for (const item of topLevelActive) {
         if (item.outcome_status === 'deferred') {
           advisorData[key].deferredCount++
           advisorData[key].deferredValue += Number(item.total_inc_vat) || 0
         }
-        if (item.outcome_status === 'authorised') {
-          advisorData[key].itemAuthorisedValue += Number(item.total_inc_vat) || 0
+
+        let authorised = isAdvItemAuth(item)
+        let authVal = Number(item.total_inc_vat) || 0
+
+        if (item.is_group && !authorised) {
+          const children = advChildrenByParent.get(item.id!) || []
+          const authChildren = (children as any[]).filter((c: any) => !c.deleted_at && isAdvItemAuth(c))
+          if (authChildren.length > 0) {
+            authorised = true
+            authVal = authChildren.reduce((s: number, c: any) => s + (Number(c.total_inc_vat) || 0), 0)
+          }
+        }
+
+        if (authorised) {
+          advisorData[key].itemAuthorisedValue += authVal
+          hcAuthorisedValue += authVal
         }
       }
 
@@ -1285,11 +1472,16 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
         }
       }
 
-      if (hc.status === 'authorized' || hc.status === 'completed') {
+      if (hcAuthorisedValue > 0) {
         advisorData[key].authorized++
-        advisorData[key].valueAuthorized += hcValue
-      } else if (hc.status === 'declined') {
-        advisorData[key].valueDeclined += hcValue
+        advisorData[key].valueAuthorized += hcAuthorisedValue
+      }
+      // Declined value: sum declined top-level items
+      const hcDeclinedValue = topLevelActive
+        .filter(i => i.outcome_status === 'declined')
+        .reduce((s, i) => s + (Number(i.total_inc_vat) || 0), 0)
+      if (hcDeclinedValue > 0) {
+        advisorData[key].valueDeclined += hcDeclinedValue
       }
 
       // Pricing time
@@ -2095,6 +2287,7 @@ reports.get('/mri-performance', authorize(['super_admin', 'org_admin', 'site_adm
             mri_result_id,
             total_inc_vat,
             outcome_status,
+            customer_approved,
             health_check:health_checks!inner(
               id,
               organization_id,
@@ -2158,15 +2351,20 @@ reports.get('/mri-performance', authorize(['super_admin', 'org_admin', 'site_adm
     const healthChecks = healthChecksRes.data || []
 
     // Build a map of repair items by mri_result_id for quick lookup
-    const repairByMriResult: Record<string, { total_inc_vat: number; outcome_status: string }> = {}
+    const repairByMriResult: Record<string, { total_inc_vat: number; outcome_status: string; customer_approved: boolean | null }> = {}
     for (const ri of repairItems) {
       if (ri.mri_result_id) {
         repairByMriResult[ri.mri_result_id] = {
           total_inc_vat: Number(ri.total_inc_vat) || 0,
           outcome_status: ri.outcome_status as string || 'incomplete',
+          customer_approved: (ri as any).customer_approved ?? null,
         }
       }
     }
+
+    // MRI item auth helper
+    const isMriRepairAuth = (repair: { outcome_status: string; customer_approved: boolean | null } | null) =>
+      repair?.customer_approved === true || repair?.outcome_status === 'authorised'
 
     // ---- Summary KPIs ----
     const totalScans = new Set(scanResults.map(r => (r.health_check as any).id)).size
@@ -2239,7 +2437,7 @@ reports.get('/mri-performance', authorize(['super_admin', 'org_admin', 'site_adm
       if (hasRepair) {
         repairItemsCreated++
         revenueIdentified += repairValue
-        if (repair?.outcome_status === 'authorised') {
+        if (isMriRepairAuth(repair)) {
           revenueAuthorized += repairValue
         }
       }
@@ -2285,7 +2483,7 @@ reports.get('/mri-performance', authorize(['super_admin', 'org_admin', 'site_adm
       if (hasRepair) {
         itemMap[itemKey].repairItems++
         itemMap[itemKey].revenueIdentified += repairValue
-        if (repair?.outcome_status === 'authorised') {
+        if (isMriRepairAuth(repair)) {
           itemMap[itemKey].revenueAuthorized += repairValue
         }
       }
@@ -2310,7 +2508,7 @@ reports.get('/mri-performance', authorize(['super_admin', 'org_admin', 'site_adm
         if (result.not_applicable) advisorMap[hc.checked_in_by].naCount++
         if (hasRepair) {
           advisorMap[hc.checked_in_by].revenueIdentified += repairValue
-          if (repair?.outcome_status === 'authorised') {
+          if (isMriRepairAuth(repair)) {
             advisorMap[hc.checked_in_by].revenueAuthorized += repairValue
           }
         }
@@ -2322,7 +2520,7 @@ reports.get('/mri-performance', authorize(['super_admin', 'org_admin', 'site_adm
         funnel.flagged++
         if (hasRepair) {
           funnel.repairCreated++
-          if (repair?.outcome_status === 'authorised') funnel.authorised++
+          if (isMriRepairAuth(repair)) funnel.authorised++
           if (repair?.outcome_status === 'declined') funnel.declined++
           if (repair?.outcome_status === 'deferred') funnel.deferred++
         }
@@ -2350,7 +2548,7 @@ reports.get('/mri-performance', authorize(['super_admin', 'org_admin', 'site_adm
         if (isFlagged) timelineMap[periodKey].flagged++
         if (hasRepair) {
           timelineMap[periodKey].revenueIdentified += repairValue
-          if (repair?.outcome_status === 'authorised') {
+          if (isMriRepairAuth(repair)) {
             timelineMap[periodKey].revenueAuthorized += repairValue
           }
         }

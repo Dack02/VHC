@@ -45,6 +45,7 @@ import labourCodes from './routes/labour-codes.js'
 import suppliers from './routes/suppliers.js'
 import pricing from './routes/pricing.js'
 import declinedReasons from './routes/declined-reasons.js'
+import unableToSendReasons from './routes/unable-to-send-reasons.js'
 import deletedReasons from './routes/deleted-reasons.js'
 import hcDeletionReasons from './routes/hc-deletion-reasons.js'
 import supplierTypes from './routes/supplier-types.js'
@@ -180,6 +181,9 @@ app.route('/api/v1/organizations/:orgId/suppliers', suppliers)
 
 // Declined reasons routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/declined-reasons', declinedReasons)
+
+// Unable to send reasons routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/unable-to-send-reasons', unableToSendReasons)
 
 // Deleted reasons routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/deleted-reasons', deletedReasons)

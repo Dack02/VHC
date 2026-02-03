@@ -503,8 +503,8 @@ export default function HealthCheckDetail() {
   const canResend = ['sent', 'expired', 'opened', 'customer_viewed', 'customer_approved', 'customer_partial', 'customer_declined'].includes(healthCheck.status)
   const isOrgAdminOrAbove = user && ['super_admin', 'org_admin'].includes(user.role)
   const canDelete = (isOrgAdminOrAbove || ['created', 'assigned', 'cancelled', 'awaiting_checkin'].includes(healthCheck.status)) && !healthCheck.deleted_at
-  const canRecordAuth = ['ready_to_send', 'sent', 'delivered', 'opened', 'partial_response', 'expired'].includes(healthCheck.status) && !healthCheck.closed_at
-  const canClose = ['sent', 'expired', 'opened', 'partial_response', 'authorized', 'declined'].includes(healthCheck.status) && !healthCheck.closed_at
+  const canRecordAuth = ['tech_completed', 'ready_to_send', 'sent', 'delivered', 'opened', 'partial_response', 'expired'].includes(healthCheck.status) && !healthCheck.closed_at
+  const canClose = ['authorized', 'declined', 'expired'].includes(healthCheck.status) && !healthCheck.closed_at
   const isClosed = !!healthCheck.closed_at
 
   return (

@@ -45,6 +45,7 @@ const Suppliers = lazy(() => import('./pages/Settings/Suppliers'))
 const SupplierTypes = lazy(() => import('./pages/Settings/SupplierTypes'))
 const PricingSettings = lazy(() => import('./pages/Settings/PricingSettings'))
 const DeclinedReasons = lazy(() => import('./pages/Settings/DeclinedReasons'))
+const UnableToSendReasons = lazy(() => import('./pages/Settings/UnableToSendReasons'))
 const DeletedReasons = lazy(() => import('./pages/Settings/DeletedReasons'))
 const HcDeletionReasons = lazy(() => import('./pages/Settings/HcDeletionReasons'))
 const WorkflowSettings = lazy(() => import('./pages/Settings/WorkflowSettings'))
@@ -179,6 +180,7 @@ function App() {
                         <Route path="/settings/supplier-types" element={<SupplierTypes />} />
                         <Route path="/settings/pricing" element={<PricingSettings />} />
                         <Route path="/settings/declined-reasons" element={<DeclinedReasons />} />
+                        <Route path="/settings/unable-to-send-reasons" element={<UnableToSendReasons />} />
                         <Route path="/settings/deleted-reasons" element={<DeletedReasons />} />
                         <Route path="/settings/vhc-deletion-reasons" element={<HcDeletionReasons />} />
                         <Route path="/settings/vehicle-locations" element={<VehicleLocations />} />

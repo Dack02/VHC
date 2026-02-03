@@ -232,11 +232,15 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       totalValueSent: number
       totalValueAuthorized: number
       authorizedCount: number
+      redIdentified: number
+      redAuthorized: number
     }>()
 
     // Process repair items following dashboard.ts pattern (lines 321-443)
     const repairValueByHc: Record<string, number> = {}
     const authorizedValueByHc: Record<string, number> = {}
+    const redIdentifiedByHc: Record<string, number> = {}
+    const redAuthorizedByHc: Record<string, number> = {}
 
     // Helper to check if an item is authorised
     const isItemAuthorised = (item: { customer_approved: boolean | null; outcome_status: string | null }) =>
@@ -319,6 +323,7 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         if (derivedRagStatus === 'red') {
           redIdentifiedValue += totalIncVat
           redItemCount++
+          redIdentifiedByHc[item.health_check_id] = (redIdentifiedByHc[item.health_check_id] || 0) + 1
         } else if (derivedRagStatus === 'amber') {
           amberIdentifiedValue += totalIncVat
           amberItemCount++
@@ -335,6 +340,7 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         if (derivedRagStatus === 'red') {
           redAuthorizedValue += authorizedValue
           redAuthorizedCount++
+          redAuthorizedByHc[item.health_check_id] = (redAuthorizedByHc[item.health_check_id] || 0) + 1
         } else if (derivedRagStatus === 'amber') {
           amberAuthorizedValue += authorizedValue
           amberAuthorizedCount++
@@ -471,7 +477,9 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
           processingSampleCount: 0,
           totalValueSent: 0,
           totalValueAuthorized: 0,
-          authorizedCount: 0
+          authorizedCount: 0,
+          redIdentified: 0,
+          redAuthorized: 0
         })
       }
 
@@ -496,6 +504,9 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         entry.totalValueAuthorized += authVal
         entry.authorizedCount++
       }
+
+      entry.redIdentified += redIdentifiedByHc[hc.id] || 0
+      entry.redAuthorized += redAuthorizedByHc[hc.id] || 0
     }
 
     const advisors = Array.from(advisorMap.values())
@@ -507,8 +518,8 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
           : null,
         totalValueSent: Math.round(a.totalValueSent * 100) / 100,
         totalValueAuthorized: Math.round(a.totalValueAuthorized * 100) / 100,
-        conversionRate: a.sentCount > 0
-          ? Math.round((a.authorizedCount / a.sentCount) * 1000) / 10
+        redSoldPercent: a.redIdentified > 0
+          ? Math.round((a.redAuthorized / a.redIdentified) * 1000) / 10
           : 0
       }))
       .sort((a, b) => b.sentCount - a.sentCount)

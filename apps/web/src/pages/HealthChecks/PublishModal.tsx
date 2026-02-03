@@ -1,6 +1,13 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
+import { useToast } from '../../contexts/ToastContext'
 import { api, HealthCheck, Customer } from '../../lib/api'
+
+interface UnableToSendReason {
+  id: string
+  reason: string
+  description: string | null
+}
 
 interface PublishModalProps {
   healthCheck: HealthCheck
@@ -11,10 +18,15 @@ interface PublishModalProps {
 }
 
 export function PublishModal({ healthCheck, customer, onClose, onPublished, onRecordAuth }: PublishModalProps) {
-  const { session } = useAuth()
+  const { session, user } = useAuth()
+  const toast = useToast()
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [showUnableToSend, setShowUnableToSend] = useState(false)
+  const [unableReasons, setUnableReasons] = useState<UnableToSendReason[]>([])
+  const [loadingReasons, setLoadingReasons] = useState(false)
+  const [savingReason, setSavingReason] = useState(false)
 
   const [sendOptions, setSendOptions] = useState({
     sendEmail: !!customer?.email,
@@ -24,6 +36,64 @@ export function PublishModal({ healthCheck, customer, onClose, onPublished, onRe
   })
 
   const canSend = sendOptions.sendEmail || sendOptions.sendSms
+  const organizationId = user?.organization?.id
+
+  const fetchUnableReasons = async () => {
+    if (!organizationId || !session?.accessToken) return
+
+    try {
+      setLoadingReasons(true)
+      const data = await api<{ reasons: UnableToSendReason[] }>(
+        `/api/v1/organizations/${organizationId}/unable-to-send-reasons`,
+        { token: session.accessToken }
+      )
+      let reasons = data.reasons || []
+
+      // If no reasons exist, seed defaults first
+      if (reasons.length === 0) {
+        await api(
+          `/api/v1/organizations/${organizationId}/unable-to-send-reasons/seed-defaults`,
+          { method: 'POST', token: session.accessToken }
+        )
+        const refreshed = await api<{ reasons: UnableToSendReason[] }>(
+          `/api/v1/organizations/${organizationId}/unable-to-send-reasons`,
+          { token: session.accessToken }
+        )
+        reasons = refreshed.reasons || []
+      }
+
+      setUnableReasons(reasons)
+    } catch {
+      setUnableReasons([])
+    } finally {
+      setLoadingReasons(false)
+    }
+  }
+
+  useEffect(() => {
+    if (showUnableToSend && unableReasons.length === 0) {
+      fetchUnableReasons()
+    }
+  }, [showUnableToSend])
+
+  const handleSelectReason = async (reasonId: string) => {
+    if (!session?.accessToken) return
+
+    try {
+      setSavingReason(true)
+      await api(`/api/v1/health-checks/${healthCheck.id}/unable-to-send`, {
+        method: 'PATCH',
+        token: session.accessToken,
+        body: { unable_to_send_reason_id: reasonId }
+      })
+      toast.success('Unable to send reason recorded')
+      onPublished()
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to record reason')
+      setSavingReason(false)
+    }
+  }
 
   const handlePublish = async () => {
     if (!session?.accessToken || !canSend) return
@@ -59,7 +129,9 @@ export function PublishModal({ healthCheck, customer, onClose, onPublished, onRe
       <div className="bg-white w-full max-w-md shadow-xl">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-gray-900">Send to Customer</h2>
+          <h2 className="text-lg font-semibold text-gray-900">
+            {showUnableToSend ? 'Unable to Send' : 'Send to Customer'}
+          </h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -79,6 +151,49 @@ export function PublishModal({ healthCheck, customer, onClose, onPublished, onRe
               <p className="text-lg font-medium text-gray-900">Sent Successfully!</p>
               <p className="text-gray-500 mt-1">The customer will receive their health check report.</p>
             </div>
+          ) : showUnableToSend ? (
+            <>
+              {error && (
+                <div className="bg-red-50 text-red-700 p-4 mb-4">
+                  {error}
+                </div>
+              )}
+
+              <p className="text-sm text-gray-600 mb-4">
+                Select the reason this health check cannot be sent to the customer:
+              </p>
+
+              {loadingReasons ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin h-6 w-6 border-4 border-primary border-t-transparent rounded-full" />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {unableReasons.map((reason) => (
+                    <button
+                      key={reason.id}
+                      onClick={() => handleSelectReason(reason.id)}
+                      disabled={savingReason}
+                      className="w-full text-left p-3 border border-gray-200 hover:border-primary hover:bg-indigo-50 transition-colors disabled:opacity-50"
+                    >
+                      <div className="font-medium text-gray-900">{reason.reason}</div>
+                      {reason.description && (
+                        <div className="text-sm text-gray-500 mt-0.5">{reason.description}</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="mt-4">
+                <button
+                  onClick={() => { setShowUnableToSend(false); setError(null) }}
+                  className="text-sm text-gray-500 hover:text-gray-700"
+                >
+                  &larr; Back to send options
+                </button>
+              </div>
+            </>
           ) : (
             <>
               {error && (
@@ -156,6 +271,19 @@ export function PublishModal({ healthCheck, customer, onClose, onPublished, onRe
                 </div>
               )}
 
+              {/* Unable to Send option */}
+              <div className="mb-6 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                <p className="text-sm text-gray-600">
+                  Can't send this to the customer?
+                </p>
+                <button
+                  onClick={() => setShowUnableToSend(true)}
+                  className="mt-2 px-3 py-1.5 text-sm border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100"
+                >
+                  Unable to Send
+                </button>
+              </div>
+
               {/* Expiry */}
               <div className="mb-6">
                 <h3 className="text-sm font-medium text-gray-700 mb-2">Link expires in</h3>
@@ -187,7 +315,7 @@ export function PublishModal({ healthCheck, customer, onClose, onPublished, onRe
         </div>
 
         {/* Footer */}
-        {!success && (
+        {!success && !showUnableToSend && (
           <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
             <button
               onClick={onClose}

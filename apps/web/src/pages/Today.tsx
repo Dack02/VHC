@@ -47,7 +47,7 @@ interface TodayData {
     avgProcessingMinutes: number | null
     totalValueSent: number
     totalValueAuthorized: number
-    conversionRate: number
+    redSoldPercent: number
   }>
   deferred: {
     todayCount: number
@@ -502,7 +502,7 @@ export default function Today() {
                   <th className="px-4 py-3 text-center">Avg Time</th>
                   <th className="px-4 py-3 text-right">Sent Value</th>
                   <th className="px-4 py-3 text-right">Auth Value</th>
-                  <th className="px-4 py-3 text-center">Conv %</th>
+                  <th className="px-4 py-3 text-center">Red Sold %</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -513,7 +513,7 @@ export default function Today() {
                     <td className="px-4 py-3 text-sm text-center text-gray-600">{formatTime(adv.avgProcessingMinutes)}</td>
                     <td className="px-4 py-3 text-sm text-right text-gray-600">{formatCurrency(adv.totalValueSent)}</td>
                     <td className="px-4 py-3 text-sm text-right text-rag-green font-medium">{formatCurrency(adv.totalValueAuthorized)}</td>
-                    <td className="px-4 py-3 text-sm text-center text-primary font-semibold">{adv.conversionRate}%</td>
+                    <td className="px-4 py-3 text-sm text-center text-primary font-semibold">{adv.redSoldPercent}%</td>
                   </tr>
                 ))}
                 {(!data?.advisors || data.advisors.length === 0) && (

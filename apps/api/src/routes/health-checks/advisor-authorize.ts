@@ -7,7 +7,7 @@ import { notifyHealthCheckStatusChanged } from '../../services/websocket.js'
 const advisorAuthorize = new Hono()
 
 // Valid statuses from which advisor can record authorization
-const ALLOWED_STATUSES = ['ready_to_send', 'sent', 'delivered', 'opened', 'partial_response', 'expired']
+const ALLOWED_STATUSES = ['tech_completed', 'ready_to_send', 'sent', 'delivered', 'opened', 'partial_response', 'expired']
 
 // POST /:id/advisor-authorize - Record customer authorization (advisor action)
 advisorAuthorize.post('/:id/advisor-authorize', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {

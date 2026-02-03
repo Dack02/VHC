@@ -10,6 +10,61 @@ const outcomesRouter = new Hono()
 // Helper Functions
 // =============================================================================
 
+// Helper to auto-transition health check status when all repair items have outcomes
+// Called after setting an outcome on a repair item while HC is in a "with customer" status
+async function maybeAutoTransitionHealthCheck(healthCheckId: string, userId: string) {
+  // Fetch the HC's current status
+  const { data: hc } = await supabaseAdmin
+    .from('health_checks')
+    .select('id, status')
+    .eq('id', healthCheckId)
+    .single()
+
+  if (!hc) return
+
+  // Only auto-transition from "with customer" statuses
+  const customerStatuses = ['sent', 'delivered', 'opened', 'partial_response']
+  if (!customerStatuses.includes(hc.status)) return
+
+  // Fetch all top-level non-deleted repair items for this HC
+  const { data: items } = await supabaseAdmin
+    .from('repair_items')
+    .select('id, outcome_status')
+    .eq('health_check_id', healthCheckId)
+    .is('deleted_at', null)
+    .is('parent_repair_item_id', null)
+
+  if (!items || items.length === 0) return
+
+  // Check if ALL items have a terminal outcome
+  const terminalOutcomes = ['authorised', 'deferred', 'declined', 'deleted']
+  const allDecided = items.every(item => terminalOutcomes.includes(item.outcome_status))
+  if (!allDecided) return
+
+  // Determine new HC status based on outcomes
+  const hasAuthorised = items.some(item => item.outcome_status === 'authorised')
+  const newStatus = hasAuthorised ? 'authorized' : 'declined'
+
+  // Update HC status
+  const now = new Date().toISOString()
+  await supabaseAdmin
+    .from('health_checks')
+    .update({ status: newStatus, updated_at: now })
+    .eq('id', healthCheckId)
+
+  // Record the transition in status history
+  await supabaseAdmin
+    .from('health_check_status_history')
+    .insert({
+      health_check_id: healthCheckId,
+      from_status: hc.status,
+      to_status: newStatus,
+      changed_by: userId,
+      change_source: 'system',
+      notes: 'Auto-transitioned: all repair items have outcomes'
+    })
+}
+
 // Helper to verify a declined reason belongs to the organization
 async function verifyDeclinedReasonAccess(reasonId: string, orgId: string) {
   const { data } = await supabaseAdmin
@@ -134,6 +189,9 @@ outcomesRouter.post('/repair-items/:id/authorise', authorize(['super_admin', 'or
       ...reqContext
     })
 
+    // Auto-transition HC if all items now have outcomes
+    await maybeAutoTransitionHealthCheck(repairItem.health_check_id, auth.user.id)
+
     return c.json({
       success: true,
       repairItem: {
@@ -232,6 +290,9 @@ outcomesRouter.post('/repair-items/:id/defer', authorize(['super_admin', 'org_ad
       },
       ...reqContext
     })
+
+    // Auto-transition HC if all items now have outcomes
+    await maybeAutoTransitionHealthCheck(repairItem.health_check_id, auth.user.id)
 
     return c.json({
       success: true,
@@ -340,6 +401,9 @@ outcomesRouter.post('/repair-items/:id/decline', authorize(['super_admin', 'org_
       },
       ...reqContext
     })
+
+    // Auto-transition HC if all items now have outcomes
+    await maybeAutoTransitionHealthCheck(repairItem.health_check_id, auth.user.id)
 
     return c.json({
       success: true,
@@ -453,6 +517,9 @@ outcomesRouter.post('/repair-items/:id/delete', authorize(['super_admin', 'org_a
       },
       ...reqContext
     })
+
+    // Auto-transition HC if all items now have outcomes
+    await maybeAutoTransitionHealthCheck(repairItem.health_check_id, auth.user.id)
 
     return c.json({
       success: true,
@@ -636,6 +703,12 @@ outcomesRouter.post('/repair-items/bulk-authorise', authorize(['super_admin', 'o
       ...reqContext
     })
 
+    // Auto-transition HC(s) if all items now have outcomes
+    const healthCheckIds = [...new Set(repairItems.map(item => item.health_check_id))]
+    for (const hcId of healthCheckIds) {
+      await maybeAutoTransitionHealthCheck(hcId, auth.user.id)
+    }
+
     return c.json({
       success: true,
       updatedCount: updated?.length || 0,
@@ -718,6 +791,12 @@ outcomesRouter.post('/repair-items/bulk-defer', authorize(['super_admin', 'org_a
       },
       ...reqContext
     })
+
+    // Auto-transition HC(s) if all items now have outcomes
+    const healthCheckIds = [...new Set(repairItems.map(item => item.health_check_id))]
+    for (const hcId of healthCheckIds) {
+      await maybeAutoTransitionHealthCheck(hcId, auth.user.id)
+    }
 
     return c.json({
       success: true,
@@ -805,6 +884,12 @@ outcomesRouter.post('/repair-items/bulk-decline', authorize(['super_admin', 'org
       },
       ...reqContext
     })
+
+    // Auto-transition HC(s) if all items now have outcomes
+    const healthCheckIds = [...new Set(repairItems.map(item => item.health_check_id))]
+    for (const hcId of healthCheckIds) {
+      await maybeAutoTransitionHealthCheck(hcId, auth.user.id)
+    }
 
     return c.json({
       success: true,

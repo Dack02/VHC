@@ -1236,6 +1236,15 @@ status.post('/:id/close', authorize(['super_admin', 'org_admin', 'site_admin', '
       return c.json({ error: 'Health check not found' }, 404)
     }
 
+    // Status guard: only allow closing from authorized, declined, or expired
+    const closableStatuses = ['authorized', 'declined', 'expired']
+    if (!closableStatuses.includes(healthCheck.status)) {
+      return c.json({
+        error: `Cannot close health check with status '${healthCheck.status}'. Must be authorized, declined, or expired.`,
+        code: 'INVALID_STATUS_FOR_CLOSE'
+      }, 400)
+    }
+
     // Get all non-deleted repair items (top-level only, not children)
     const { data: repairItems } = await supabaseAdmin
       .from('repair_items')

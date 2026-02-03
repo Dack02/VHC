@@ -116,16 +116,45 @@ dashboard.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
     if (healthCheckIds.length > 0) {
       const { data: repairData } = await supabaseAdmin
         .from('repair_items')
-        .select('health_check_id, total_inc_vat, parent_repair_item_id, deleted_at, customer_approved, outcome_status')
+        .select('id, health_check_id, total_inc_vat, parent_repair_item_id, deleted_at, customer_approved, outcome_status, is_group')
         .in('health_check_id', healthCheckIds)
         .is('deleted_at', null)
-        .is('parent_repair_item_id', null)
+
+      const isItemAuthorised = (item: { customer_approved: boolean | null; outcome_status: string | null }) =>
+        item.customer_approved === true || item.outcome_status === 'authorised'
+
+      // Build children-by-parent map for group authorization
+      const childrenByParent = new Map<string, typeof repairData>()
+      repairData?.forEach(item => {
+        if (item.parent_repair_item_id) {
+          const children = childrenByParent.get(item.parent_repair_item_id) || []
+          children.push(item)
+          childrenByParent.set(item.parent_repair_item_id, children)
+        }
+      })
 
       repairData?.forEach(item => {
+        // Only count top-level items to avoid double-counting
+        if (item.parent_repair_item_id) return
+
         const value = parseFloat(String(item.total_inc_vat)) || 0
         repairTotals[item.health_check_id] = (repairTotals[item.health_check_id] || 0) + value
-        if (item.customer_approved === true) {
-          authorizedTotals[item.health_check_id] = (authorizedTotals[item.health_check_id] || 0) + value
+
+        // Check authorization: direct check on item, or check children for groups
+        let isAuthorised = isItemAuthorised(item)
+        let authorizedValue = value
+
+        if (item.is_group && !isAuthorised) {
+          const children = childrenByParent.get(item.id) || []
+          const authorizedChildren = children.filter(c => !c.deleted_at && isItemAuthorised(c))
+          if (authorizedChildren.length > 0) {
+            isAuthorised = true
+            authorizedValue = authorizedChildren.reduce((sum, child) => sum + (parseFloat(String(child.total_inc_vat)) || 0), 0)
+          }
+        }
+
+        if (isAuthorised) {
+          authorizedTotals[item.health_check_id] = (authorizedTotals[item.health_check_id] || 0) + authorizedValue
         }
         if (item.outcome_status === 'declined') {
           declinedTotals[item.health_check_id] = (declinedTotals[item.health_check_id] || 0) + value

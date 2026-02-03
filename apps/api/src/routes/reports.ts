@@ -2494,7 +2494,7 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
     const startDate = date_from || thirtyDaysAgo.toISOString()
     const endDate = date_to || new Date().toISOString()
 
-    // Get health checks with repair items for the date range
+    // Get health checks with repair items (including rag_status + linked check results) for the date range
     let query = supabaseAdmin
       .from('health_checks')
       .select(`
@@ -2502,7 +2502,7 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
         status,
         created_at,
         tech_completed_at,
-        repair_items(total_inc_vat, outcome_status, source, deleted_at)
+        repair_items(total_inc_vat, outcome_status, source, deleted_at, rag_status, check_results:repair_item_check_results(check_result:check_results(rag_status)))
       `)
       .eq('organization_id', auth.orgId)
       .gte('created_at', startDate)
@@ -2518,6 +2518,26 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       return c.json({ error: error.message }, 500)
     }
 
+    // Helper to derive effective rag_status for a repair item
+    function deriveRagStatus(item: any): 'red' | 'amber' | null {
+      // MRI items have rag_status directly
+      if (item.source === 'mri_scan' && item.rag_status) {
+        return item.rag_status as 'red' | 'amber'
+      }
+      // Direct rag_status if set
+      if (item.rag_status) {
+        return item.rag_status as 'red' | 'amber'
+      }
+      // Derive from linked check results (highest severity wins)
+      let derived: 'red' | 'amber' | null = null
+      for (const link of item.check_results || []) {
+        const cr = link?.check_result as { rag_status?: string } | null
+        if (cr?.rag_status === 'red') return 'red'
+        if (cr?.rag_status === 'amber') derived = 'amber'
+      }
+      return derived
+    }
+
     // Group by day
     const dayMap: Record<string, {
       jobsQty: number
@@ -2527,6 +2547,10 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       totalSold: number
       mriIdentified: number
       mriSold: number
+      redIdentified: number
+      redSold: number
+      amberIdentified: number
+      amberSold: number
     }> = {}
 
     for (const hc of healthChecks || []) {
@@ -2541,6 +2565,10 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
           totalSold: 0,
           mriIdentified: 0,
           mriSold: 0,
+          redIdentified: 0,
+          redSold: 0,
+          amberIdentified: 0,
+          amberSold: 0,
         }
       }
 
@@ -2554,12 +2582,7 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       }
 
       // Aggregate repair items
-      const items = hc.repair_items as Array<{
-        total_inc_vat?: number
-        outcome_status?: string
-        source?: string
-        deleted_at?: string | null
-      }> | null
+      const items = hc.repair_items as any[] | null
 
       for (const item of items || []) {
         if (item.deleted_at) continue
@@ -2574,6 +2597,16 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
           if (item.outcome_status === 'authorised') {
             day.mriSold += value
           }
+        }
+
+        // RAG status tracking
+        const rag = deriveRagStatus(item)
+        if (rag === 'red') {
+          day.redIdentified += value
+          if (item.outcome_status === 'authorised') day.redSold += value
+        } else if (rag === 'amber') {
+          day.amberIdentified += value
+          if (item.outcome_status === 'authorised') day.amberSold += value
         }
       }
     }
@@ -2596,6 +2629,12 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
           totalSold: Math.round(d.totalSold * 100) / 100,
           mriIdentified: Math.round(d.mriIdentified * 100) / 100,
           mriSold: Math.round(d.mriSold * 100) / 100,
+          redSoldPercent: d.redIdentified > 0
+            ? Math.round((d.redSold / d.redIdentified) * 100 * 10) / 10
+            : 0,
+          amberSoldPercent: d.amberIdentified > 0
+            ? Math.round((d.amberSold / d.amberIdentified) * 100 * 10) / 10
+            : 0,
         }
       })
 
@@ -2613,6 +2652,17 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       { jobsQty: 0, noShows: 0, hcQty: 0, totalIdentified: 0, totalSold: 0, mriIdentified: 0, mriSold: 0 }
     )
 
+    // Calculate RAG totals from raw dayMap (need un-rounded values for accurate %)
+    const ragTotals = Object.values(dayMap).reduce(
+      (acc, d) => ({
+        redIdentified: acc.redIdentified + d.redIdentified,
+        redSold: acc.redSold + d.redSold,
+        amberIdentified: acc.amberIdentified + d.amberIdentified,
+        amberSold: acc.amberSold + d.amberSold,
+      }),
+      { redIdentified: 0, redSold: 0, amberIdentified: 0, amberSold: 0 }
+    )
+
     const totalEligible = totalsRaw.jobsQty - totalsRaw.noShows
     const totals = {
       ...totalsRaw,
@@ -2623,6 +2673,12 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       totalSold: Math.round(totalsRaw.totalSold * 100) / 100,
       mriIdentified: Math.round(totalsRaw.mriIdentified * 100) / 100,
       mriSold: Math.round(totalsRaw.mriSold * 100) / 100,
+      redSoldPercent: ragTotals.redIdentified > 0
+        ? Math.round((ragTotals.redSold / ragTotals.redIdentified) * 100 * 10) / 10
+        : 0,
+      amberSoldPercent: ragTotals.amberIdentified > 0
+        ? Math.round((ragTotals.amberSold / ragTotals.amberIdentified) * 100 * 10) / 10
+        : 0,
     }
 
     return c.json({
@@ -2654,7 +2710,7 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
         status,
         created_at,
         tech_completed_at,
-        repair_items(total_inc_vat, outcome_status, source, deleted_at)
+        repair_items(total_inc_vat, outcome_status, source, deleted_at, rag_status, check_results:repair_item_check_results(check_result:check_results(rag_status)))
       `)
       .eq('organization_id', auth.orgId)
       .gte('created_at', startDate)
@@ -2669,16 +2725,30 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
       return c.json({ error: error.message }, 500)
     }
 
+    // Helper to derive effective rag_status for a repair item
+    function deriveRagStatusExport(item: any): 'red' | 'amber' | null {
+      if (item.source === 'mri_scan' && item.rag_status) return item.rag_status as 'red' | 'amber'
+      if (item.rag_status) return item.rag_status as 'red' | 'amber'
+      let derived: 'red' | 'amber' | null = null
+      for (const link of item.check_results || []) {
+        const cr = link?.check_result as { rag_status?: string } | null
+        if (cr?.rag_status === 'red') return 'red'
+        if (cr?.rag_status === 'amber') derived = 'amber'
+      }
+      return derived
+    }
+
     // Group by day (same logic as main endpoint)
     const dayMap: Record<string, {
       jobsQty: number; noShows: number; hcQty: number
       totalIdentified: number; totalSold: number; mriIdentified: number; mriSold: number
+      redIdentified: number; redSold: number; amberIdentified: number; amberSold: number
     }> = {}
 
     for (const hc of healthChecks || []) {
       const dateKey = new Date(hc.created_at).toISOString().split('T')[0]
       if (!dayMap[dateKey]) {
-        dayMap[dateKey] = { jobsQty: 0, noShows: 0, hcQty: 0, totalIdentified: 0, totalSold: 0, mriIdentified: 0, mriSold: 0 }
+        dayMap[dateKey] = { jobsQty: 0, noShows: 0, hcQty: 0, totalIdentified: 0, totalSold: 0, mriIdentified: 0, mriSold: 0, redIdentified: 0, redSold: 0, amberIdentified: 0, amberSold: 0 }
       }
       const day = dayMap[dateKey]
       day.jobsQty++
@@ -2687,7 +2757,7 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
       } else if (hc.tech_completed_at) {
         day.hcQty++
       }
-      const items = hc.repair_items as Array<{ total_inc_vat?: number; outcome_status?: string; source?: string; deleted_at?: string | null }> | null
+      const items = hc.repair_items as any[] | null
       for (const item of items || []) {
         if (item.deleted_at) continue
         const value = Number(item.total_inc_vat) || 0
@@ -2697,16 +2767,26 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
           day.mriIdentified += value
           if (item.outcome_status === 'authorised') day.mriSold += value
         }
+        const rag = deriveRagStatusExport(item)
+        if (rag === 'red') {
+          day.redIdentified += value
+          if (item.outcome_status === 'authorised') day.redSold += value
+        } else if (rag === 'amber') {
+          day.amberIdentified += value
+          if (item.outcome_status === 'authorised') day.amberSold += value
+        }
       }
     }
 
-    const csvHeaders = ['Date', 'Jobs', 'No Shows', 'HCs', 'Conversion %', 'Identified', 'Sold', 'MRI Identified', 'MRI Sold']
+    const csvHeaders = ['Date', 'Jobs', 'No Shows', 'HCs', 'Conversion %', 'Identified', 'Sold', 'MRI Identified', 'MRI Sold', '% Red Sold', '% Amber Sold']
     const csvRows = Object.entries(dayMap)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, d]) => {
         const eligible = d.jobsQty - d.noShows
         const conv = eligible > 0 ? ((d.hcQty / eligible) * 100).toFixed(1) : '0.0'
-        return [date, d.jobsQty, d.noShows, d.hcQty, `${conv}%`, d.totalIdentified.toFixed(2), d.totalSold.toFixed(2), d.mriIdentified.toFixed(2), d.mriSold.toFixed(2)]
+        const redPct = d.redIdentified > 0 ? ((d.redSold / d.redIdentified) * 100).toFixed(1) : '0.0'
+        const amberPct = d.amberIdentified > 0 ? ((d.amberSold / d.amberIdentified) * 100).toFixed(1) : '0.0'
+        return [date, d.jobsQty, d.noShows, d.hcQty, `${conv}%`, d.totalIdentified.toFixed(2), d.totalSold.toFixed(2), d.mriIdentified.toFixed(2), d.mriSold.toFixed(2), `${redPct}%`, `${amberPct}%`]
       })
 
     const csvContent = [

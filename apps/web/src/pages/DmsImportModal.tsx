@@ -42,8 +42,10 @@ interface ImportResult {
   imported?: number
   bookingsImported?: number
   bookingsSkipped?: number
+  bookingsFailed?: number
   skipped?: number
   error?: string
+  errors?: Array<{ bookingId: string; error: string }>
 }
 
 type ModalState = 'loading' | 'empty' | 'preview' | 'importing' | 'success' | 'error'
@@ -173,11 +175,20 @@ export default function DmsImportModal({ open, onClose, onImportComplete, token 
       const data = await api<ImportResult>('/api/v1/dms-settings/import', {
         method: 'POST',
         token,
-        body: { date: today, endDate, bookingIds: Array.from(selected) }
+        body: { date: today, endDate, bookingIds: Array.from(selected), sync: true },
+        timeout: 60000
       })
 
       if (data.error) {
         setError(data.error)
+        setState('error')
+        return
+      }
+
+      // Check for sync import failures
+      if (!data.queued && data.bookingsFailed && data.bookingsFailed > 0 && !data.bookingsImported) {
+        const firstError = data.errors?.[0]?.error || 'All bookings failed to import'
+        setError(firstError)
         setState('error')
         return
       }
@@ -400,7 +411,18 @@ export default function DmsImportModal({ open, onClose, onImportComplete, token 
                       <div className="text-2xl font-bold text-gray-400">{result.bookingsSkipped ?? result.skipped ?? 0}</div>
                       <div className="text-gray-500">Skipped</div>
                     </div>
+                    {(result.bookingsFailed || 0) > 0 && (
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-rag-red">{result.bookingsFailed}</div>
+                        <div className="text-gray-500">Failed</div>
+                      </div>
+                    )}
                   </div>
+                  {result.errors && result.errors.length > 0 && (
+                    <div className="mt-3 text-xs text-red-600">
+                      {result.errors[0].error}
+                    </div>
+                  )}
                 </>
               )}
             </div>

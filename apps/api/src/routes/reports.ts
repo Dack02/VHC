@@ -2494,29 +2494,60 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
     const startDate = date_from || thirtyDaysAgo.toISOString()
     const endDate = date_to || new Date().toISOString()
 
-    // Get health checks with repair items (including rag_status + linked check results) for the date range
-    let query = supabaseAdmin
+    // Get health checks with repair items for the date range
+    // Use dual-date approach: due_date range + created_at when due_date IS NULL (matches Today page logic)
+    const hcSelect = `
+      id,
+      status,
+      created_at,
+      due_date,
+      tech_completed_at,
+      repair_items(id, total_inc_vat, outcome_status, customer_approved, source, deleted_at, rag_status, is_group, parent_repair_item_id, check_results:repair_item_check_results(check_result:check_results(rag_status)))
+    `
+
+    let dueDateQuery = supabaseAdmin
       .from('health_checks')
-      .select(`
-        id,
-        status,
-        created_at,
-        tech_completed_at,
-        repair_items(total_inc_vat, outcome_status, source, deleted_at, rag_status, check_results:repair_item_check_results(check_result:check_results(rag_status)))
-      `)
+      .select(hcSelect)
       .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .gte('due_date', startDate)
+      .lte('due_date', endDate)
+      .order('created_at', { ascending: true })
+
+    let createdAtQuery = supabaseAdmin
+      .from('health_checks')
+      .select(hcSelect)
+      .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .is('due_date', null)
       .gte('created_at', startDate)
       .lte('created_at', endDate)
       .order('created_at', { ascending: true })
 
-    if (site_id) query = query.eq('site_id', site_id)
-
-    const { data: healthChecks, error } = await query
-
-    if (error) {
-      console.error('Daily overview error:', error)
-      return c.json({ error: error.message }, 500)
+    if (site_id) {
+      dueDateQuery = dueDateQuery.eq('site_id', site_id)
+      createdAtQuery = createdAtQuery.eq('site_id', site_id)
     }
+
+    const [dueDateResult, createdAtResult] = await Promise.all([dueDateQuery, createdAtQuery])
+
+    if (dueDateResult.error) {
+      console.error('Daily overview due_date query error:', dueDateResult.error)
+      return c.json({ error: dueDateResult.error.message }, 500)
+    }
+    if (createdAtResult.error) {
+      console.error('Daily overview created_at query error:', createdAtResult.error)
+      return c.json({ error: createdAtResult.error.message }, 500)
+    }
+
+    // Deduplicate by HC ID
+    const healthCheckMap = new Map<string, (typeof dueDateResult.data)[0]>()
+    for (const hc of [...(dueDateResult.data || []), ...(createdAtResult.data || [])]) {
+      if (!healthCheckMap.has(hc.id)) {
+        healthCheckMap.set(hc.id, hc)
+      }
+    }
+    const healthChecks = Array.from(healthCheckMap.values())
 
     // Helper to derive effective rag_status for a repair item
     function deriveRagStatus(item: any): 'red' | 'amber' | null {
@@ -2538,6 +2569,10 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       return derived
     }
 
+    // Helper to check if item is authorised (matches Today page logic)
+    const isItemAuthorised = (item: any) =>
+      item.customer_approved === true || item.outcome_status === 'authorised'
+
     // Group by day
     const dayMap: Record<string, {
       jobsQty: number
@@ -2553,8 +2588,12 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       amberSold: number
     }> = {}
 
-    for (const hc of healthChecks || []) {
-      const dateKey = new Date(hc.created_at).toISOString().split('T')[0]
+    for (const hc of healthChecks) {
+      // Use due_date if set, otherwise fall back to created_at
+      // due_date is date-only (YYYY-MM-DD), created_at is ISO timestamp
+      const dateKey = hc.due_date
+        ? hc.due_date.split('T')[0]
+        : new Date(hc.created_at).toISOString().split('T')[0]
 
       if (!dayMap[dateKey]) {
         dayMap[dateKey] = {
@@ -2581,21 +2620,49 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
         day.hcQty++
       }
 
-      // Aggregate repair items
+      // Aggregate repair items with group handling
       const items = hc.repair_items as any[] | null
+
+      // Build children-by-parent map for group authorization
+      const childrenByParent = new Map<string, any[]>()
+      for (const item of items || []) {
+        if (item.parent_repair_item_id) {
+          const children = childrenByParent.get(item.parent_repair_item_id) || []
+          children.push(item)
+          childrenByParent.set(item.parent_repair_item_id, children)
+        }
+      }
 
       for (const item of items || []) {
         if (item.deleted_at) continue
+        // Skip child items — their values roll up to the parent group
+        if (item.parent_repair_item_id) continue
+
         const value = Number(item.total_inc_vat) || 0
 
         day.totalIdentified += value
-        if (item.outcome_status === 'authorised') {
-          day.totalSold += value
+
+        // Check authorization: direct check on item, or check children for groups
+        let authorised = isItemAuthorised(item)
+        let authorisedValue = value
+
+        if (item.is_group && !authorised) {
+          const children = childrenByParent.get(item.id) || []
+          const authorisedChildren = children.filter((c: any) => !c.deleted_at && isItemAuthorised(c))
+          if (authorisedChildren.length > 0) {
+            authorised = true
+            authorisedValue = authorisedChildren.reduce((sum: number, child: any) => sum + (Number(child.total_inc_vat) || 0), 0)
+          }
         }
+
+        if (authorised) {
+          day.totalSold += authorisedValue
+        }
+
         if (item.source === 'mri_scan') {
           day.mriIdentified += value
-          if (item.outcome_status === 'authorised') {
-            day.mriSold += value
+          if (authorised) {
+            day.mriSold += authorisedValue
           }
         }
 
@@ -2603,10 +2670,10 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
         const rag = deriveRagStatus(item)
         if (rag === 'red') {
           day.redIdentified += value
-          if (item.outcome_status === 'authorised') day.redSold += value
+          if (authorised) day.redSold += authorisedValue
         } else if (rag === 'amber') {
           day.amberIdentified += value
-          if (item.outcome_status === 'authorised') day.amberSold += value
+          if (authorised) day.amberSold += authorisedValue
         }
       }
     }
@@ -2703,27 +2770,51 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
     const startDate = date_from || thirtyDaysAgo.toISOString()
     const endDate = date_to || new Date().toISOString()
 
-    let query = supabaseAdmin
+    // Use dual-date approach matching main daily-overview endpoint
+    const hcSelectExport = `
+      id,
+      status,
+      created_at,
+      due_date,
+      tech_completed_at,
+      repair_items(id, total_inc_vat, outcome_status, customer_approved, source, deleted_at, rag_status, is_group, parent_repair_item_id, check_results:repair_item_check_results(check_result:check_results(rag_status)))
+    `
+
+    let dueDateQueryExport = supabaseAdmin
       .from('health_checks')
-      .select(`
-        id,
-        status,
-        created_at,
-        tech_completed_at,
-        repair_items(total_inc_vat, outcome_status, source, deleted_at, rag_status, check_results:repair_item_check_results(check_result:check_results(rag_status)))
-      `)
+      .select(hcSelectExport)
       .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .gte('due_date', startDate)
+      .lte('due_date', endDate)
+      .order('created_at', { ascending: true })
+
+    let createdAtQueryExport = supabaseAdmin
+      .from('health_checks')
+      .select(hcSelectExport)
+      .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .is('due_date', null)
       .gte('created_at', startDate)
       .lte('created_at', endDate)
       .order('created_at', { ascending: true })
 
-    if (site_id) query = query.eq('site_id', site_id)
-
-    const { data: healthChecks, error } = await query
-
-    if (error) {
-      return c.json({ error: error.message }, 500)
+    if (site_id) {
+      dueDateQueryExport = dueDateQueryExport.eq('site_id', site_id)
+      createdAtQueryExport = createdAtQueryExport.eq('site_id', site_id)
     }
+
+    const [dueDateResExport, createdAtResExport] = await Promise.all([dueDateQueryExport, createdAtQueryExport])
+
+    if (dueDateResExport.error) return c.json({ error: dueDateResExport.error.message }, 500)
+    if (createdAtResExport.error) return c.json({ error: createdAtResExport.error.message }, 500)
+
+    // Deduplicate by HC ID
+    const hcMapExport = new Map<string, (typeof dueDateResExport.data)[0]>()
+    for (const hc of [...(dueDateResExport.data || []), ...(createdAtResExport.data || [])]) {
+      if (!hcMapExport.has(hc.id)) hcMapExport.set(hc.id, hc)
+    }
+    const healthChecks = Array.from(hcMapExport.values())
 
     // Helper to derive effective rag_status for a repair item
     function deriveRagStatusExport(item: any): 'red' | 'amber' | null {
@@ -2738,6 +2829,10 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
       return derived
     }
 
+    // Helper to check if item is authorised (matches Today page logic)
+    const isItemAuthorisedExport = (item: any) =>
+      item.customer_approved === true || item.outcome_status === 'authorised'
+
     // Group by day (same logic as main endpoint)
     const dayMap: Record<string, {
       jobsQty: number; noShows: number; hcQty: number
@@ -2745,8 +2840,10 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
       redIdentified: number; redSold: number; amberIdentified: number; amberSold: number
     }> = {}
 
-    for (const hc of healthChecks || []) {
-      const dateKey = new Date(hc.created_at).toISOString().split('T')[0]
+    for (const hc of healthChecks) {
+      const dateKey = hc.due_date
+        ? hc.due_date.split('T')[0]
+        : new Date(hc.created_at).toISOString().split('T')[0]
       if (!dayMap[dateKey]) {
         dayMap[dateKey] = { jobsQty: 0, noShows: 0, hcQty: 0, totalIdentified: 0, totalSold: 0, mriIdentified: 0, mriSold: 0, redIdentified: 0, redSold: 0, amberIdentified: 0, amberSold: 0 }
       }
@@ -2758,22 +2855,48 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
         day.hcQty++
       }
       const items = hc.repair_items as any[] | null
+
+      // Build children-by-parent map for group authorization
+      const childrenByParentExport = new Map<string, any[]>()
+      for (const item of items || []) {
+        if (item.parent_repair_item_id) {
+          const children = childrenByParentExport.get(item.parent_repair_item_id) || []
+          children.push(item)
+          childrenByParentExport.set(item.parent_repair_item_id, children)
+        }
+      }
+
       for (const item of items || []) {
         if (item.deleted_at) continue
+        if (item.parent_repair_item_id) continue
+
         const value = Number(item.total_inc_vat) || 0
         day.totalIdentified += value
-        if (item.outcome_status === 'authorised') day.totalSold += value
+
+        let authorised = isItemAuthorisedExport(item)
+        let authorisedValue = value
+
+        if (item.is_group && !authorised) {
+          const children = childrenByParentExport.get(item.id) || []
+          const authorisedChildren = children.filter((c: any) => !c.deleted_at && isItemAuthorisedExport(c))
+          if (authorisedChildren.length > 0) {
+            authorised = true
+            authorisedValue = authorisedChildren.reduce((sum: number, child: any) => sum + (Number(child.total_inc_vat) || 0), 0)
+          }
+        }
+
+        if (authorised) day.totalSold += authorisedValue
         if (item.source === 'mri_scan') {
           day.mriIdentified += value
-          if (item.outcome_status === 'authorised') day.mriSold += value
+          if (authorised) day.mriSold += authorisedValue
         }
         const rag = deriveRagStatusExport(item)
         if (rag === 'red') {
           day.redIdentified += value
-          if (item.outcome_status === 'authorised') day.redSold += value
+          if (authorised) day.redSold += authorisedValue
         } else if (rag === 'amber') {
           day.amberIdentified += value
-          if (item.outcome_status === 'authorised') day.amberSold += value
+          if (authorised) day.amberSold += authorisedValue
         }
       }
     }

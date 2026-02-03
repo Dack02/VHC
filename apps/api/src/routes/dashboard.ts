@@ -47,25 +47,58 @@ dashboard.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
     const startDate = date_from || todayISO
     const endDate = date_to || tomorrowISO
 
-    // Get all health checks for the period
-    let query = supabaseAdmin
+    // Get all health checks for the period using dual-date approach
+    // (due_date range + created_at when due_date IS NULL — matches Today page logic)
+    const hcSelect = 'id, status, created_at, sent_at, first_opened_at, technician_id, advisor_id, promised_at'
+
+    let dueDateQuery = supabaseAdmin
       .from('health_checks')
-      .select('id, status, created_at, sent_at, first_opened_at, technician_id, advisor_id, promised_at')
+      .select(hcSelect)
       .eq('organization_id', auth.orgId)
-      .is('deleted_at', null) // Exclude soft-deleted records
+      .is('deleted_at', null)
+      .gte('due_date', startDate)
+      .lt('due_date', endDate)
+
+    let createdAtQuery = supabaseAdmin
+      .from('health_checks')
+      .select(hcSelect)
+      .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .is('due_date', null)
       .gte('created_at', startDate)
       .lt('created_at', endDate)
 
     // Apply optional filters
-    if (site_id) query = query.eq('site_id', site_id)
-    if (technician_id) query = query.eq('technician_id', technician_id)
-    if (advisor_id) query = query.eq('advisor_id', advisor_id)
-
-    const { data: healthChecks, error } = await query
-
-    if (error) {
-      return c.json({ error: error.message }, 500)
+    if (site_id) {
+      dueDateQuery = dueDateQuery.eq('site_id', site_id)
+      createdAtQuery = createdAtQuery.eq('site_id', site_id)
     }
+    if (technician_id) {
+      dueDateQuery = dueDateQuery.eq('technician_id', technician_id)
+      createdAtQuery = createdAtQuery.eq('technician_id', technician_id)
+    }
+    if (advisor_id) {
+      dueDateQuery = dueDateQuery.eq('advisor_id', advisor_id)
+      createdAtQuery = createdAtQuery.eq('advisor_id', advisor_id)
+    }
+
+    const [dueDateResult, createdAtResult] = await Promise.all([dueDateQuery, createdAtQuery])
+
+    if (dueDateResult.error) {
+      return c.json({ error: dueDateResult.error.message }, 500)
+    }
+    if (createdAtResult.error) {
+      return c.json({ error: createdAtResult.error.message }, 500)
+    }
+
+    // Deduplicate by HC ID
+    const healthCheckMap = new Map<string, (typeof dueDateResult.data)[0]>()
+    for (const hc of [...(dueDateResult.data || []), ...(createdAtResult.data || [])]) {
+      if (!healthCheckMap.has(hc.id)) {
+        healthCheckMap.set(hc.id, hc)
+      }
+    }
+    const healthChecks = Array.from(healthCheckMap.values())
 
     // Calculate metrics
     const totalToday = healthChecks?.length || 0

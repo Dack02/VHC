@@ -7,6 +7,25 @@ export function setActiveOrgId(orgId: string | null) {
   _activeOrgId = orgId
 }
 
+// Token refresh callback — set by AuthContext to avoid circular imports
+let _tokenRefreshCallback: (() => Promise<string | null>) | null = null
+
+export function setTokenRefreshCallback(cb: (() => Promise<string | null>) | null) {
+  _tokenRefreshCallback = cb
+}
+
+// Mutex for concurrent 401 refresh: only one refresh at a time
+let _refreshPromise: Promise<string | null> | null = null
+
+async function attemptTokenRefresh(): Promise<string | null> {
+  if (!_tokenRefreshCallback) return null
+  if (_refreshPromise) return _refreshPromise
+  _refreshPromise = _tokenRefreshCallback().finally(() => {
+    _refreshPromise = null
+  })
+  return _refreshPromise
+}
+
 interface FetchOptions extends RequestInit {
   token?: string
 }
@@ -36,6 +55,22 @@ export async function api<T>(
   })
 
   if (!response.ok) {
+    // On 401, attempt token refresh and retry the request once
+    if (response.status === 401 && token && _tokenRefreshCallback) {
+      const newToken = await attemptTokenRefresh()
+      if (newToken) {
+        const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` }
+        const retryResponse = await fetch(`${API_URL}${endpoint}`, {
+          ...fetchOptions,
+          headers: retryHeaders
+        })
+
+        if (retryResponse.ok) {
+          return retryResponse.json()
+        }
+      }
+    }
+
     const error = await response.json().catch(() => ({ error: 'Unknown error' }))
     throw new Error(error.error || `HTTP ${response.status}`)
   }

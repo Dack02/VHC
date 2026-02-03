@@ -49,6 +49,12 @@ interface TodayData {
     totalValueAuthorized: number
     conversionRate: number
   }>
+  deferred: {
+    todayCount: number
+    todayValue: number
+    overdueCount: number
+    overdueValue: number
+  }
   recentActivity: Array<{
     timestamp: string
     vehicleReg: string
@@ -407,6 +413,37 @@ export default function Today() {
             <span className="text-lg font-bold text-rag-green">
               {formatCurrency((rag?.red.authorizedValue || 0) + (rag?.amber.authorizedValue || 0) + (rag?.green.authorizedValue || 0))}
             </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Section 4.5 - Deferred Work Widget */}
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Deferred Work</h2>
+          <Link to="/reports/deferred" className="text-sm text-primary hover:underline font-medium">
+            View Report &rarr;
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 gap-6">
+          <div>
+            <div className="text-sm text-gray-500 mb-2">Deferred Today</div>
+            <div className="text-3xl font-bold text-gray-900">{data?.deferred?.todayCount || 0} <span className="text-base font-normal text-gray-500">items</span></div>
+            <div className="text-sm text-gray-600 mt-1">{formatCurrency(data?.deferred?.todayValue || 0)}</div>
+          </div>
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm text-gray-500">Overdue Deferrals</span>
+              {(data?.deferred?.overdueCount || 0) > 0 && (
+                <span className="w-2 h-2 rounded-full bg-red-500" />
+              )}
+            </div>
+            <div className={`text-3xl font-bold ${(data?.deferred?.overdueCount || 0) > 0 ? 'text-red-600' : 'text-gray-900'}`}>
+              {data?.deferred?.overdueCount || 0} <span className="text-base font-normal text-gray-500">items</span>
+            </div>
+            <div className={`text-sm mt-1 ${(data?.deferred?.overdueValue || 0) > 0 ? 'text-red-600' : 'text-gray-600'}`}>
+              {formatCurrency(data?.deferred?.overdueValue || 0)}
+            </div>
           </div>
         </div>
       </div>

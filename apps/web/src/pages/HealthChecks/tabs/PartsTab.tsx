@@ -387,10 +387,10 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
     if (!session?.accessToken) return false
 
     const qty = parseFloat(partData.quantity) || 1
-    const costPriceNum = parseFloat(partData.costPrice)
+    const costPriceNum = partData.costPrice ? parseFloat(partData.costPrice) : 0
     const sellPriceNum = parseFloat(partData.sellPrice)
 
-    if (!partData.description || isNaN(costPriceNum) || isNaN(sellPriceNum)) {
+    if (!partData.description || isNaN(sellPriceNum)) {
       return false
     }
 
@@ -1128,6 +1128,7 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         + Add
                                       </button>
                                     )}
+                                    {(childParts.length === 0 || child.noPartsRequired) && (
                                     <Tooltip content={child.noPartsRequired ? "Undo no parts required" : "No parts required"}>
                                       <button
                                         onClick={() => child.noPartsRequired ? handleRemoveNoPartsRequired(child.id) : handleMarkNoPartsRequired(child.id)}
@@ -1147,6 +1148,7 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         )}
                                       </button>
                                     </Tooltip>
+                                    )}
                                   </div>
                                 </td>
                               </tr>
@@ -1297,6 +1299,7 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                               + Add
                             </button>
                           )}
+                          {(standaloneParts.length === 0 || item.noPartsRequired) && (
                           <Tooltip content={item.noPartsRequired ? "Undo no parts required" : "No parts required"}>
                             <button
                               onClick={() => item.noPartsRequired ? handleRemoveNoPartsRequired(item.id) : handleMarkNoPartsRequired(item.id)}
@@ -1316,6 +1319,7 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                               )}
                             </button>
                           </Tooltip>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1819,7 +1823,7 @@ function MultiPartRow({
 
   const handleSave = async (moveToNext = false) => {
     if (editState.isSaving) return
-    if (!localDescription || !localCostPrice || !localSellPrice) return
+    if (!localDescription || !localSellPrice) return
 
     saveTriggeredRef.current = true
     const success = await onSave({
@@ -1870,7 +1874,7 @@ function MultiPartRow({
   const handleKeyDown = (e: React.KeyboardEvent, inputType: string) => {
     if (e.key === 'Enter') {
       e.preventDefault()
-      if (localDescription && localCostPrice && localSellPrice) {
+      if (localDescription && localSellPrice) {
         handleSave(true)
       } else if (inputType === 'desc' && localDescription) {
         focusNext(descRefKey)
@@ -1881,7 +1885,7 @@ function MultiPartRow({
       e.preventDefault()
       handleClear()
     } else if (e.key === 'Tab' && !e.shiftKey && inputType === 'sell') {
-      if (isDirty && localDescription && localCostPrice && localSellPrice) {
+      if (isDirty && localDescription && localSellPrice) {
         handleSave(false)
       }
     } else if (e.key === 'Tab' && e.shiftKey && inputType === 'desc') {
@@ -1891,7 +1895,7 @@ function MultiPartRow({
 
   const handleBlur = () => {
     if (saveTriggeredRef.current || editState.isSaving) return
-    if (isDirty && localDescription && localCostPrice && localSellPrice) {
+    if (isDirty && localDescription && localSellPrice) {
       handleSave(false)
     }
   }
@@ -2192,7 +2196,7 @@ function MultiPartRow({
             </>
           ) : isDirty ? (
             <>
-              {localDescription && localCostPrice && localSellPrice && (
+              {localDescription && localSellPrice && (
                 <button
                   onClick={() => handleSave(false)}
                   className="p-1 text-green-600 hover:text-green-700 hover:bg-green-50 rounded"

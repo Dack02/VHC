@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../../lib/supabase.js'
+import { applyServicePackageToRepairItem } from '../../services/apply-service-package.js'
 
 // Valid status transitions
 export const validTransitions: Record<string, string[]> = {
@@ -173,7 +174,7 @@ export async function autoCreateMriRepairItems(healthCheckId: string, organizati
       .from('mri_scan_results')
       .select(`
         id, rag_status, notes, mri_item_id,
-        mri_item:mri_items(id, name, description, sales_description, item_type, severity_when_due, severity_when_yes, severity_when_no)
+        mri_item:mri_items(id, name, description, sales_description, item_type, severity_when_due, severity_when_yes, severity_when_no, service_package_id)
       `)
       .eq('health_check_id', healthCheckId)
       .eq('organization_id', organizationId)
@@ -219,6 +220,7 @@ export async function autoCreateMriRepairItems(healthCheckId: string, organizati
         severity_when_due: string | null
         severity_when_yes: string | null
         severity_when_no: string | null
+        service_package_id: string | null
       }
 
       // Prefer sales_description (customer-facing) over technical description
@@ -228,7 +230,7 @@ export async function autoCreateMriRepairItems(healthCheckId: string, organizati
       }
 
       // Create the repair item with rag_status from MRI result
-      const { error: insertError } = await supabaseAdmin
+      const { data: repairItem, error: insertError } = await supabaseAdmin
         .from('repair_items')
         .insert({
           health_check_id: healthCheckId,
@@ -248,10 +250,30 @@ export async function autoCreateMriRepairItems(healthCheckId: string, organizati
           mri_result_id: result.id,
           rag_status: result.rag_status  // Use MRI result's rag_status
         })
+        .select('id')
+        .single()
 
-      if (insertError) {
+      if (insertError || !repairItem) {
         console.error('Failed to create MRI repair item:', insertError)
         continue
+      }
+
+      // Auto-apply linked service package if configured
+      if (typedMriItem.service_package_id) {
+        try {
+          const applyResult = await applyServicePackageToRepairItem(
+            repairItem.id,
+            typedMriItem.service_package_id,
+            organizationId,
+            null // system-initiated, no user
+          )
+          if (applyResult) {
+            console.log(`Auto-applied service package "${applyResult.packageName}" to MRI repair item: ${applyResult.labourInserted} labour, ${applyResult.partsInserted} parts`)
+          }
+        } catch (applyError) {
+          console.error('Failed to auto-apply service package to MRI repair item:', applyError)
+          // Continue — repair item is still created, just without package contents
+        }
       }
 
       createdCount++

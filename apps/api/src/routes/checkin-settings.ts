@@ -223,6 +223,7 @@ checkinSettings.get('/:orgId/mri-items', async (c) => {
     salesDescription: string | null
     aiGenerated: boolean
     aiReviewed: boolean
+    servicePackageId: string | null
   }>> = {}
 
   for (const item of items || []) {
@@ -244,7 +245,8 @@ checkinSettings.get('/:orgId/mri-items', async (c) => {
       isDefault: item.is_default,
       salesDescription: item.sales_description,
       aiGenerated: item.ai_generated || false,
-      aiReviewed: item.ai_reviewed || false
+      aiReviewed: item.ai_reviewed || false,
+      servicePackageId: item.service_package_id || null
     })
   }
 
@@ -264,7 +266,8 @@ checkinSettings.get('/:orgId/mri-items', async (c) => {
       isDefault: item.is_default,
       salesDescription: item.sales_description,
       aiGenerated: item.ai_generated || false,
-      aiReviewed: item.ai_reviewed || false
+      aiReviewed: item.ai_reviewed || false,
+      servicePackageId: item.service_package_id || null
     })) || [],
     grouped
   })
@@ -319,7 +322,8 @@ checkinSettings.post('/:orgId/mri-items', requireOrgAdmin(), async (c) => {
       is_informational: body.isInformational || false,
       enabled: body.enabled !== false,
       sort_order: nextSortOrder,
-      is_default: false
+      is_default: false,
+      service_package_id: body.servicePackageId || null
     })
     .select()
     .single()
@@ -340,7 +344,8 @@ checkinSettings.post('/:orgId/mri-items', requireOrgAdmin(), async (c) => {
     isInformational: item.is_informational,
     enabled: item.enabled,
     sortOrder: item.sort_order,
-    isDefault: item.is_default
+    isDefault: item.is_default,
+    servicePackageId: item.service_package_id || null
   }, 201)
 })
 
@@ -386,6 +391,7 @@ checkinSettings.patch('/:orgId/mri-items/:itemId', requireOrgAdmin(), async (c) 
   if (body.sortOrder !== undefined) updateData.sort_order = body.sortOrder
   if (body.salesDescription !== undefined) updateData.sales_description = body.salesDescription
   if (body.aiReviewed !== undefined) updateData.ai_reviewed = body.aiReviewed
+  if (body.servicePackageId !== undefined) updateData.service_package_id = body.servicePackageId || null
 
   const { data: item, error } = await supabaseAdmin
     .from('mri_items')
@@ -413,7 +419,8 @@ checkinSettings.patch('/:orgId/mri-items/:itemId', requireOrgAdmin(), async (c) 
     isDefault: item.is_default,
     salesDescription: item.sales_description,
     aiGenerated: item.ai_generated || false,
-    aiReviewed: item.ai_reviewed || false
+    aiReviewed: item.ai_reviewed || false,
+    servicePackageId: item.service_package_id || null
   })
 })
 

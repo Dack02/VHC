@@ -195,6 +195,8 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     let totalAuthorized = 0
     let totalDeclined = 0
     let totalPending = 0
+    let deferredTodayCount = 0
+    let deferredTodayValue = 0
 
     let redIdentifiedValue = 0
     let redAuthorizedValue = 0
@@ -311,6 +313,9 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         }
       } else if (!isDeleted && item.outcome_status === 'declined') {
         totalDeclined += totalIncVat
+      } else if (!isDeleted && item.outcome_status === 'deferred') {
+        deferredTodayCount++
+        deferredTodayValue += totalIncVat
       } else if (!isDeleted && !isAuthorised && item.outcome_status !== 'declined') {
         totalPending += totalIncVat
       }
@@ -477,6 +482,33 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       }))
       .sort((a, b) => b.sentCount - a.sentCount)
 
+    // ── Overdue deferred items (across org, not just today's HCs) ──
+    let overdueCount = 0
+    let overdueValue = 0
+    {
+      let overdueQuery = supabaseAdmin
+        .from('repair_items')
+        .select(`
+          total_inc_vat,
+          health_check:health_checks!inner(organization_id, site_id)
+        `)
+        .eq('outcome_status', 'deferred')
+        .is('deleted_at', null)
+        .lt('deferred_until', todayISO)
+        .eq('health_check.organization_id', auth.orgId)
+
+      if (site_id) {
+        overdueQuery = overdueQuery.eq('health_check.site_id', site_id)
+      }
+
+      const { data: overdueItems, error: overdueError } = await overdueQuery
+
+      if (!overdueError && overdueItems) {
+        overdueCount = overdueItems.length
+        overdueValue = overdueItems.reduce((sum, item) => sum + (Number(item.total_inc_vat) || 0), 0)
+      }
+    }
+
     // ── Financial conversion rate ──
     const conversionRate = totalIdentified > 0
       ? Math.round((totalAuthorized / totalIdentified) * 1000) / 10
@@ -527,6 +559,12 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
           itemCount: greenItemCount,
           authorizedCount: greenAuthorizedCount
         }
+      },
+      deferred: {
+        todayCount: deferredTodayCount,
+        todayValue: Math.round(deferredTodayValue * 100) / 100,
+        overdueCount,
+        overdueValue: Math.round(overdueValue * 100) / 100,
       },
       technicians,
       advisors,

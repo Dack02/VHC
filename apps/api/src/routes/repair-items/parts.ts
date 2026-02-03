@@ -59,8 +59,8 @@ partsRouter.post('/repair-items/:id/parts', authorize(['super_admin', 'org_admin
     const body = await c.req.json()
     const { part_number, description, quantity, supplier_id, cost_price, sell_price, notes, allocation_type } = body
 
-    if (!description || cost_price === undefined || sell_price === undefined) {
-      return c.json({ error: 'description, cost_price, and sell_price are required' }, 400)
+    if (!description || sell_price === undefined) {
+      return c.json({ error: 'description and sell_price are required' }, 400)
     }
 
     const existing = await verifyRepairItemAccess(id, auth.orgId)
@@ -69,7 +69,7 @@ partsRouter.post('/repair-items/:id/parts', authorize(['super_admin', 'org_admin
     }
 
     const qty = parseFloat(quantity) || 1
-    const costPriceNum = parseFloat(cost_price)
+    const costPriceNum = cost_price !== undefined && cost_price !== null && cost_price !== '' ? parseFloat(cost_price) : 0
     const sellPriceNum = parseFloat(sell_price)
     const lineTotal = qty * sellPriceNum
 
@@ -230,8 +230,8 @@ partsRouter.post('/repair-options/:id/parts', authorize(['super_admin', 'org_adm
     const body = await c.req.json()
     const { part_number, description, quantity, supplier_id, cost_price, sell_price, notes } = body
 
-    if (!description || cost_price === undefined || sell_price === undefined) {
-      return c.json({ error: 'description, cost_price, and sell_price are required' }, 400)
+    if (!description || sell_price === undefined) {
+      return c.json({ error: 'description and sell_price are required' }, 400)
     }
 
     const existing = await verifyRepairOptionAccess(id, auth.orgId)
@@ -240,7 +240,7 @@ partsRouter.post('/repair-options/:id/parts', authorize(['super_admin', 'org_adm
     }
 
     const qty = parseFloat(quantity) || 1
-    const costPriceNum = parseFloat(cost_price)
+    const costPriceNum = cost_price !== undefined && cost_price !== null && cost_price !== '' ? parseFloat(cost_price) : 0
     const sellPriceNum = parseFloat(sell_price)
     const lineTotal = qty * sellPriceNum
 

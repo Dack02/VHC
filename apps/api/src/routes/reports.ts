@@ -1603,6 +1603,266 @@ reports.get('/operations', authorize(['super_admin', 'org_admin', 'site_admin', 
 })
 
 // ============================================================================
+// DEFERRED WORK
+// ============================================================================
+
+reports.get('/deferred', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id, advisor_id, group_by = 'day' } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    // Query repair items where outcome_status = 'deferred'
+    let query = supabaseAdmin
+      .from('repair_items')
+      .select(`
+        id,
+        name,
+        total_inc_vat,
+        outcome_status,
+        outcome_set_at,
+        deferred_until,
+        deferred_notes,
+        created_at,
+        health_check:health_checks!inner(
+          id,
+          organization_id,
+          site_id,
+          advisor_id,
+          vehicle:vehicles(registration),
+          customer:customers(first_name, last_name),
+          advisor:users!health_checks_advisor_id_fkey(first_name, last_name)
+        )
+      `)
+      .eq('outcome_status', 'deferred')
+      .eq('health_check.organization_id', auth.orgId)
+      .is('deleted_at', null)
+
+    // Filter by outcome_set_at date range
+    if (date_from) {
+      query = query.gte('outcome_set_at', startDate)
+    }
+    if (date_to) {
+      query = query.lte('outcome_set_at', endDate)
+    }
+
+    if (site_id) query = query.eq('health_check.site_id', site_id)
+    if (advisor_id) query = query.eq('health_check.advisor_id', advisor_id)
+
+    const { data: items, error } = await query
+
+    if (error) {
+      console.error('Deferred work report error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+
+    const now = new Date()
+    const todayStart = new Date(now)
+    todayStart.setHours(0, 0, 0, 0)
+
+    // Summary
+    let totalCount = 0
+    let totalValue = 0
+    let overdueCount = 0
+    let overdueValue = 0
+    let totalDeferralDays = 0
+    let deferralDaysSamples = 0
+
+    // Due breakdown buckets
+    const dueBuckets: Record<string, { count: number; value: number }> = {
+      'Overdue': { count: 0, value: 0 },
+      'This Week': { count: 0, value: 0 },
+      'This Month': { count: 0, value: 0 },
+      '1-3 Months': { count: 0, value: 0 },
+      '3-6 Months': { count: 0, value: 0 },
+      '6+ Months': { count: 0, value: 0 },
+      'No Due Date': { count: 0, value: 0 },
+    }
+
+    // Timeline
+    const timelineMap: Record<string, { count: number; value: number }> = {}
+
+    // Top items
+    const itemAggregates: Record<string, { name: string; count: number; totalValue: number }> = {}
+
+    // Detailed items
+    const detailedItems: Array<{
+      id: string
+      itemName: string
+      vehicleReg: string
+      customerName: string
+      advisorName: string
+      value: number
+      deferredAt: string
+      deferredUntil: string | null
+      deferredNotes: string | null
+      isOverdue: boolean
+      healthCheckId: string
+    }> = []
+
+    // Calculate week and month boundaries
+    const weekEnd = new Date(todayStart)
+    weekEnd.setDate(weekEnd.getDate() + (7 - weekEnd.getDay()))
+    const monthEnd = new Date(todayStart.getFullYear(), todayStart.getMonth() + 1, 0)
+    const threeMonths = new Date(todayStart)
+    threeMonths.setMonth(threeMonths.getMonth() + 3)
+    const sixMonths = new Date(todayStart)
+    sixMonths.setMonth(sixMonths.getMonth() + 6)
+
+    for (const item of items || []) {
+      const value = Number(item.total_inc_vat) || 0
+      const hc = item.health_check as unknown as {
+        id: string
+        advisor_id: string
+        vehicle: { registration: string } | null
+        customer: { first_name: string; last_name: string } | null
+        advisor: { first_name: string; last_name: string } | null
+      }
+
+      totalCount++
+      totalValue += value
+
+      const deferredUntil = item.deferred_until ? new Date(item.deferred_until as string) : null
+      const isOverdue = deferredUntil ? deferredUntil < todayStart : false
+
+      if (isOverdue) {
+        overdueCount++
+        overdueValue += value
+      }
+
+      // Deferral days calculation
+      if (item.outcome_set_at && deferredUntil) {
+        const setAt = new Date(item.outcome_set_at as string)
+        const days = (deferredUntil.getTime() - setAt.getTime()) / 86400000
+        if (days >= 0) {
+          totalDeferralDays += days
+          deferralDaysSamples++
+        }
+      }
+
+      // Due breakdown
+      if (!deferredUntil) {
+        dueBuckets['No Due Date'].count++
+        dueBuckets['No Due Date'].value += value
+      } else if (deferredUntil < todayStart) {
+        dueBuckets['Overdue'].count++
+        dueBuckets['Overdue'].value += value
+      } else if (deferredUntil <= weekEnd) {
+        dueBuckets['This Week'].count++
+        dueBuckets['This Week'].value += value
+      } else if (deferredUntil <= monthEnd) {
+        dueBuckets['This Month'].count++
+        dueBuckets['This Month'].value += value
+      } else if (deferredUntil <= threeMonths) {
+        dueBuckets['1-3 Months'].count++
+        dueBuckets['1-3 Months'].value += value
+      } else if (deferredUntil <= sixMonths) {
+        dueBuckets['3-6 Months'].count++
+        dueBuckets['3-6 Months'].value += value
+      } else {
+        dueBuckets['6+ Months'].count++
+        dueBuckets['6+ Months'].value += value
+      }
+
+      // Timeline grouping (by outcome_set_at)
+      if (item.outcome_set_at) {
+        const date = new Date(item.outcome_set_at as string)
+        let periodKey: string
+        if (group_by === 'week') {
+          const weekStart = new Date(date)
+          const day = weekStart.getDay()
+          const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1)
+          weekStart.setDate(diff)
+          periodKey = weekStart.toISOString().split('T')[0]
+        } else if (group_by === 'month') {
+          periodKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+        } else {
+          periodKey = date.toISOString().split('T')[0]
+        }
+
+        if (!timelineMap[periodKey]) {
+          timelineMap[periodKey] = { count: 0, value: 0 }
+        }
+        timelineMap[periodKey].count++
+        timelineMap[periodKey].value += value
+      }
+
+      // Top items aggregation
+      const name = item.name || 'Unknown'
+      if (!itemAggregates[name]) {
+        itemAggregates[name] = { name, count: 0, totalValue: 0 }
+      }
+      itemAggregates[name].count++
+      itemAggregates[name].totalValue += value
+
+      // Detailed item
+      detailedItems.push({
+        id: item.id,
+        itemName: name,
+        vehicleReg: hc?.vehicle?.registration || 'Unknown',
+        customerName: hc?.customer
+          ? `${hc.customer.first_name} ${hc.customer.last_name}`
+          : 'Unknown',
+        advisorName: hc?.advisor
+          ? `${hc.advisor.first_name} ${hc.advisor.last_name}`
+          : 'Unknown',
+        value,
+        deferredAt: (item.outcome_set_at as string) || (item.created_at as string),
+        deferredUntil: item.deferred_until as string | null,
+        deferredNotes: item.deferred_notes as string | null,
+        isOverdue,
+        healthCheckId: hc?.id || '',
+      })
+    }
+
+    const dueBreakdown = Object.entries(dueBuckets)
+      .map(([label, data]) => ({ label, count: data.count, value: Math.round(data.value * 100) / 100 }))
+      .filter(d => d.count > 0)
+
+    const timeline = Object.entries(timelineMap)
+      .map(([period, data]) => ({ period, count: data.count, value: Math.round(data.value * 100) / 100 }))
+      .sort((a, b) => a.period.localeCompare(b.period))
+
+    const topItems = Object.values(itemAggregates)
+      .map(i => ({
+        name: i.name,
+        count: i.count,
+        totalValue: Math.round(i.totalValue * 100) / 100,
+        avgValue: i.count > 0 ? Math.round((i.totalValue / i.count) * 100) / 100 : 0,
+      }))
+      .sort((a, b) => b.totalValue - a.totalValue)
+      .slice(0, 20)
+
+    return c.json({
+      period: { from: startDate, to: endDate },
+      summary: {
+        totalCount,
+        totalValue: Math.round(totalValue * 100) / 100,
+        overdueCount,
+        overdueValue: Math.round(overdueValue * 100) / 100,
+        avgDeferralDays: deferralDaysSamples > 0
+          ? Math.round((totalDeferralDays / deferralDaysSamples) * 10) / 10
+          : 0,
+      },
+      dueBreakdown,
+      timeline,
+      topItems,
+      items: detailedItems.map(i => ({
+        ...i,
+        value: Math.round(i.value * 100) / 100,
+      })),
+    })
+  } catch (error) {
+    console.error('Deferred work report error:', error)
+    return c.json({ error: 'Failed to fetch deferred work report' }, 500)
+  }
+})
+
+// ============================================================================
 // COMPLIANCE / AUDIT TRAIL
 // ============================================================================
 

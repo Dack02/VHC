@@ -26,6 +26,12 @@ interface MriItem {
   salesDescription: string | null
   aiGenerated: boolean
   aiReviewed: boolean
+  servicePackageId: string | null
+}
+
+interface ServicePackage {
+  id: string
+  name: string
 }
 
 interface MriItemsResponse {
@@ -50,6 +56,7 @@ export default function MriItemsSettings() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [savingId, setSavingId] = useState<string | null>(null)
   const [generatingId, setGeneratingId] = useState<string | null>(null)
+  const [servicePackages, setServicePackages] = useState<ServicePackage[]>([])
 
   const organizationId = user?.organization?.id
 
@@ -71,11 +78,25 @@ export default function MriItemsSettings() {
     }
   }, [organizationId, session?.accessToken, toast])
 
+  const fetchServicePackages = useCallback(async () => {
+    if (!organizationId || !session?.accessToken) return
+    try {
+      const data = await api<{ servicePackages: ServicePackage[] }>(
+        `/api/v1/organizations/${organizationId}/service-packages`,
+        { token: session.accessToken }
+      )
+      setServicePackages(data.servicePackages || [])
+    } catch {
+      // Non-critical — dropdown will just be empty
+    }
+  }, [organizationId, session?.accessToken])
+
   useEffect(() => {
     if (organizationId) {
       fetchItems()
+      fetchServicePackages()
     }
-  }, [organizationId, fetchItems])
+  }, [organizationId, fetchItems, fetchServicePackages])
 
   const handleToggleEnabled = async (item: MriItem) => {
     if (!organizationId || !session?.accessToken) return
@@ -125,6 +146,7 @@ export default function MriItemsSettings() {
             severityWhenNo: item.severityWhenNo,
             isInformational: item.isInformational,
             salesDescription: item.salesDescription,
+            servicePackageId: item.servicePackageId,
           },
           token: session.accessToken
         }
@@ -272,6 +294,7 @@ export default function MriItemsSettings() {
                     onGenerateSalesDescription={() => handleGenerateSalesDescription(editingItem || item)}
                     saving={savingId === item.id}
                     generating={generatingId === item.id}
+                    servicePackages={servicePackages}
                   />
                 ))}
               </div>
@@ -285,6 +308,7 @@ export default function MriItemsSettings() {
         <AddItemModal
           organizationId={organizationId!}
           token={session?.accessToken || ''}
+          servicePackages={servicePackages}
           onClose={() => setShowAddModal(false)}
           onSaved={() => {
             setShowAddModal(false)
@@ -309,6 +333,7 @@ interface MriItemRowProps {
   onGenerateSalesDescription: () => void
   saving: boolean
   generating: boolean
+  servicePackages: ServicePackage[]
 }
 
 function MriItemRow({
@@ -322,6 +347,7 @@ function MriItemRow({
   onGenerateSalesDescription,
   saving,
   generating,
+  servicePackages,
 }: MriItemRowProps) {
   const getSeverityBadge = (severity: string | null) => {
     if (!severity) return null
@@ -418,6 +444,26 @@ function MriItemRow({
             />
             <span className="text-sm text-gray-700">Informational only (never creates repair item)</span>
           </label>
+
+          {/* Service Package Link */}
+          {!editingItem.isInformational && servicePackages.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Service Package</label>
+              <select
+                value={editingItem.servicePackageId || ''}
+                onChange={(e) => setEditingItem({ ...editingItem, servicePackageId: e.target.value || null })}
+                className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">None</option>
+                {servicePackages.map(pkg => (
+                  <option key={pkg.id} value={pkg.id}>{pkg.name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                When this item flags red/amber, the linked package's labour and parts are auto-applied to the repair item
+              </p>
+            </div>
+          )}
 
           {/* Sales Description */}
           <div>
@@ -518,6 +564,14 @@ function MriItemRow({
             <span className="px-1.5 py-0.5 text-xs bg-gray-100 text-gray-500">
               {item.itemType === 'date_mileage' ? 'Date/Mileage' : 'Yes/No'}
             </span>
+            {item.servicePackageId && (() => {
+              const pkg = servicePackages.find(p => p.id === item.servicePackageId)
+              return pkg ? (
+                <span className="px-1.5 py-0.5 text-xs bg-indigo-100 text-indigo-700">
+                  {pkg.name}
+                </span>
+              ) : null
+            })()}
           </div>
           {item.description && (
             <p className="text-sm text-gray-500 mt-0.5">{item.description}</p>
@@ -588,11 +642,12 @@ function MriItemRow({
 interface AddItemModalProps {
   organizationId: string
   token: string
+  servicePackages: ServicePackage[]
   onClose: () => void
   onSaved: () => void
 }
 
-function AddItemModal({ organizationId, token, onClose, onSaved }: AddItemModalProps) {
+function AddItemModal({ organizationId, token, servicePackages, onClose, onSaved }: AddItemModalProps) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [category, setCategory] = useState('Other')
@@ -601,6 +656,7 @@ function AddItemModal({ organizationId, token, onClose, onSaved }: AddItemModalP
   const [severityWhenYes, setSeverityWhenYes] = useState<string>('')
   const [severityWhenNo, setSeverityWhenNo] = useState<string>('')
   const [isInformational, setIsInformational] = useState(false)
+  const [servicePackageId, setServicePackageId] = useState<string>('')
   const [saving, setSaving] = useState(false)
   const toast = useToast()
 
@@ -625,6 +681,7 @@ function AddItemModal({ organizationId, token, onClose, onSaved }: AddItemModalP
             severityWhenYes: itemType === 'yes_no' && severityWhenYes ? severityWhenYes : null,
             severityWhenNo: itemType === 'yes_no' && severityWhenNo ? severityWhenNo : null,
             isInformational,
+            servicePackageId: !isInformational && servicePackageId ? servicePackageId : null,
           },
           token
         }
@@ -747,6 +804,26 @@ function AddItemModal({ organizationId, token, onClose, onSaved }: AddItemModalP
             />
             <span className="text-sm text-gray-700">Informational only (never creates repair item)</span>
           </label>
+
+          {/* Service Package Link */}
+          {!isInformational && servicePackages.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Service Package</label>
+              <select
+                value={servicePackageId}
+                onChange={(e) => setServicePackageId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">None</option>
+                {servicePackages.map(pkg => (
+                  <option key={pkg.id} value={pkg.id}>{pkg.name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Auto-apply this package's labour and parts when the item flags red/amber
+              </p>
+            </div>
+          )}
         </div>
         <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
           <button

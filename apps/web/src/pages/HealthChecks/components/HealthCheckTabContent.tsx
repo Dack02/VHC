@@ -19,6 +19,7 @@ import { BulkOutcomeActionBar } from './BulkOutcomeActionBar'
 import { BulkDeferModal, BulkDeclineModal, DeferModal, DeclineModal, DeleteModal } from './OutcomeModals'
 import { calculateOutcomeStatus, OutcomeStatus } from './OutcomeButton'
 import { RepairOptionsModal } from './RepairOptionsModal'
+import { ServicePackageApplyModal } from './ServicePackageApplyModal'
 import { useToast } from '../../../contexts/ToastContext'
 
 interface HealthCheckTabContentProps {
@@ -65,6 +66,9 @@ export function HealthCheckTabContent({
   // Repair options modal state
   const [optionsModalItemId, setOptionsModalItemId] = useState<string | null>(null)
   const [optionsModalItemTitle, setOptionsModalItemTitle] = useState('')
+
+  // Service package apply modal state
+  const [servicePackageModal, setServicePackageModal] = useState<{ repairItemId: string; repairItemTitle: string } | null>(null)
 
   // Lifted outcome modal state (single set of modals for all RepairItemRows)
   const [activeOutcomeModal, setActiveOutcomeModal] = useState<{
@@ -709,6 +713,7 @@ export function HealthCheckTabContent({
                     onUngroup={item.is_group && item.children?.length ? () => handleUngroup(item.id) : undefined}
                     onManageOptions={() => handleManageOptions(item.id, item.title)}
                     onOpenModal={openOutcomeModal}
+                    onApplyServicePackage={() => setServicePackageModal({ repairItemId: item.id, repairItemTitle: item.title })}
                     preloadedReasons={checkResultId ? reasonsByCheckResult[checkResultId] : undefined}
                     specialDisplay={renderSpecialDisplay(result)}
                   />
@@ -766,6 +771,7 @@ export function HealthCheckTabContent({
                     onUngroup={item.is_group && item.children?.length ? () => handleUngroup(item.id) : undefined}
                     onManageOptions={() => handleManageOptions(item.id, item.title)}
                     onOpenModal={openOutcomeModal}
+                    onApplyServicePackage={() => setServicePackageModal({ repairItemId: item.id, repairItemTitle: item.title })}
                     preloadedReasons={checkResultId ? reasonsByCheckResult[checkResultId] : undefined}
                     specialDisplay={renderSpecialDisplay(result)}
                   />
@@ -860,6 +866,7 @@ export function HealthCheckTabContent({
                   onUngroup={item.is_group && item.children?.length ? () => handleUngroup(item.id) : undefined}
                   onManageOptions={() => handleManageOptions(item.id, item.title)}
                   onOpenModal={openOutcomeModal}
+                  onApplyServicePackage={() => setServicePackageModal({ repairItemId: item.id, repairItemTitle: item.title })}
                   preloadedReasons={checkResultId ? reasonsByCheckResult[checkResultId] : undefined}
                 />
               </div>
@@ -970,6 +977,16 @@ export function HealthCheckTabContent({
       )}
 
       {/* Lifted outcome modals (single set for all RepairItemRows) */}
+      {/* Service Package Apply Modal */}
+      {servicePackageModal && (
+        <ServicePackageApplyModal
+          repairItemId={servicePackageModal.repairItemId}
+          repairItemTitle={servicePackageModal.repairItemTitle}
+          onClose={() => setServicePackageModal(null)}
+          onApplied={onUpdate}
+        />
+      )}
+
       {activeOutcomeModal?.type === 'defer' && (
         <DeferModal
           isOpen={true}

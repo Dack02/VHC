@@ -870,4 +870,38 @@ repairItemsRouter.delete('/repair-items/:id/check-results/:checkResultId', autho
   }
 })
 
+// ============================================================================
+// AI DESCRIPTION GENERATION
+// ============================================================================
+
+// POST /repair-items/:id/generate-description - Generate AI description from tech notes
+repairItemsRouter.post('/repair-items/:id/generate-description', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const body = await c.req.json().catch(() => ({}))
+    const { checkResultId } = body
+
+    const existing = await verifyRepairItemAccess(id, auth.orgId)
+    if (!existing) {
+      return c.json({ error: 'Repair item not found' }, 404)
+    }
+
+    const { generateRepairDescription } = await import('../../services/ai-repair-description.js')
+
+    const description = await generateRepairDescription(
+      id,
+      auth.orgId,
+      auth.user.id,
+      checkResultId
+    )
+
+    return c.json({ description })
+  } catch (error) {
+    console.error('Generate repair description error:', error)
+    const message = error instanceof Error ? error.message : 'Failed to generate description'
+    return c.json({ error: message }, 500)
+  }
+})
+
 export default repairItemsRouter

@@ -8,6 +8,7 @@ import labourRouter from './labour.js'
 import partsRouter from './parts.js'
 import workflowRouter from './workflow.js'
 import outcomesRouter from './outcomes.js'
+import applyPackageRouter from './apply-package.js'
 
 const repairItems = new Hono()
 
@@ -26,5 +27,6 @@ repairItems.route('/', labourRouter)
 repairItems.route('/', partsRouter)
 repairItems.route('/', workflowRouter)
 repairItems.route('/', outcomesRouter)
+repairItems.route('/', applyPackageRouter)
 
 export default repairItems

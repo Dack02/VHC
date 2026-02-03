@@ -60,6 +60,9 @@ export type AuditAction =
   | 'parts.delete'
   | 'parts.complete'
 
+  // Service package events
+  | 'service_package.apply'
+
   // Admin actions
   | 'admin.impersonate_start'
   | 'admin.impersonate_end'

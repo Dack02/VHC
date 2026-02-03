@@ -77,6 +77,7 @@ const Today = lazy(() => import('./pages/Today'))
 const Upcoming = lazy(() => import('./pages/Upcoming'))
 const PartsCatalog = lazy(() => import('./pages/Parts/PartsCatalog'))
 const Messages = lazy(() => import('./pages/Messages/Messages'))
+const ServicePackages = lazy(() => import('./pages/ServicePackages/ServicePackages'))
 
 // Page loading fallback
 function PageLoader() {
@@ -149,6 +150,7 @@ function App() {
                         <Route path="/parts" element={<PartsCatalog />} />
                         <Route path="/templates" element={<TemplateList />} />
                         <Route path="/templates/:id" element={<TemplateBuilder />} />
+                        <Route path="/service-packages" element={<ServicePackages />} />
                         <Route path="/settings" element={<SettingsHub />} />
                         <Route path="/settings/tyre-manufacturers" element={<TyreManufacturers />} />
                         <Route path="/settings/tyre-sizes" element={<TyreSizes />} />

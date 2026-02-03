@@ -322,9 +322,9 @@ partsRouter.patch('/repair-parts/:id', authorize(['super_admin', 'org_admin', 's
       .from('repair_parts')
       .select(`
         *,
-        repair_item:repair_items(organization_id),
-        repair_option:repair_options(
-          repair_item:repair_items(organization_id)
+        repair_item:repair_items!repair_parts_repair_item_id_fkey(organization_id),
+        repair_option:repair_options!repair_parts_repair_option_id_fkey(
+          repair_item:repair_items!repair_options_repair_item_id_fkey(organization_id)
         )
       `)
       .eq('id', id)

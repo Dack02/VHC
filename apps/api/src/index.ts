@@ -53,6 +53,7 @@ import messageTemplates from './routes/message-templates.js'
 import vehicleLocations from './routes/vehicle-locations.js'
 import pushSubscriptions from './routes/push-subscriptions.js'
 import partsCatalog from './routes/parts-catalog.js'
+import servicePackages from './routes/service-packages.js'
 import twilioWebhookRoutes from './routes/webhooks/twilio.js'
 import smsConversations from './routes/sms-conversations.js'
 import messages from './routes/messages.js'
@@ -194,6 +195,9 @@ app.route('/api/v1/organizations/:orgId/vehicle-locations', vehicleLocations)
 
 // Parts catalog routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/parts-catalog', partsCatalog)
+
+// Service packages routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/service-packages', servicePackages)
 
 // Check-in settings and MRI items routes (nested under organizations)
 app.route('/api/v1/organizations', checkinSettings)

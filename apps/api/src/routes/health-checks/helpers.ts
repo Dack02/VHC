@@ -258,6 +258,12 @@ export async function autoCreateMriRepairItems(healthCheckId: string, organizati
         continue
       }
 
+      // Link repair item back to the MRI scan result
+      await supabaseAdmin
+        .from('mri_scan_results')
+        .update({ repair_item_id: repairItem.id })
+        .eq('id', result.id)
+
       // Auto-apply linked service package if configured
       if (typedMriItem.service_package_id) {
         try {

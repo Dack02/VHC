@@ -15,11 +15,61 @@ export async function verifyHealthCheckAccess(healthCheckId: string, orgId: stri
 export async function verifyRepairItemAccess(repairItemId: string, orgId: string) {
   const { data } = await supabaseAdmin
     .from('repair_items')
-    .select('id, name, health_check_id, organization_id')
+    .select('id, name, health_check_id, organization_id, is_group')
     .eq('id', repairItemId)
     .eq('organization_id', orgId)
     .single()
   return data
+}
+
+// Helper to cascade outcome_status to children of a group item
+export async function cascadeOutcomeToChildren(
+  groupId: string,
+  outcomeData: {
+    outcome_status: string
+    outcome_set_by: string
+    outcome_set_at: string
+    outcome_source: string
+    declined_reason_id?: string | null
+    declined_notes?: string | null
+    deferred_until?: string | null
+    deferred_notes?: string | null
+    customer_approved?: boolean | null
+    customer_approved_at?: string | null
+    customer_declined_reason?: string | null
+  }
+) {
+  const updatePayload: Record<string, unknown> = {
+    outcome_status: outcomeData.outcome_status,
+    outcome_set_by: outcomeData.outcome_set_by,
+    outcome_set_at: outcomeData.outcome_set_at,
+    outcome_source: outcomeData.outcome_source,
+    updated_at: outcomeData.outcome_set_at,
+  }
+
+  // Include type-specific fields
+  if (outcomeData.declined_reason_id !== undefined) {
+    updatePayload.declined_reason_id = outcomeData.declined_reason_id
+    updatePayload.declined_notes = outcomeData.declined_notes || null
+  }
+  if (outcomeData.deferred_until !== undefined) {
+    updatePayload.deferred_until = outcomeData.deferred_until
+    updatePayload.deferred_notes = outcomeData.deferred_notes || null
+  }
+  if (outcomeData.customer_approved !== undefined) {
+    updatePayload.customer_approved = outcomeData.customer_approved
+    updatePayload.customer_approved_at = outcomeData.customer_approved_at || null
+    updatePayload.customer_declined_reason = outcomeData.customer_declined_reason || null
+  }
+
+  const { error } = await supabaseAdmin
+    .from('repair_items')
+    .update(updatePayload)
+    .eq('parent_repair_item_id', groupId)
+
+  if (error) {
+    console.error('Cascade outcome to children error:', error)
+  }
 }
 
 // Helper to verify repair option access

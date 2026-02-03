@@ -65,9 +65,28 @@ export function AdvisorAuthorizationModal({
   const isDecided = (status: string | null | undefined) =>
     status === 'authorised' || status === 'declined' || status === 'deferred'
 
-  // Items with null outcomeStatus are green/OK items not in the authorization flow
-  const isInAuthFlow = (status: string | null | undefined) =>
-    status !== null && status !== undefined
+  // Check if an item has red/amber check results (needs authorization)
+  const hasRedAmberResults = (item: NewRepairItem): boolean => {
+    if (item.checkResults && item.checkResults.length > 0) {
+      return item.checkResults.some(cr => cr.ragStatus === 'red' || cr.ragStatus === 'amber')
+    }
+    return false
+  }
+
+  // An item is in the auth flow if it has red/amber findings OR is a group with children that do
+  // Items with only green/no check results are OK items, not in auth flow
+  const isItemInAuthFlow = (item: NewRepairItem): boolean => {
+    // Items with a decided outcome are always in auth flow
+    if (isDecided(item.outcomeStatus)) return true
+    // Non-group items: check their own check results
+    if (!item.isGroup) return hasRedAmberResults(item)
+    // Groups: in auth flow if they have red/amber results or children with them
+    if (hasRedAmberResults(item)) return true
+    if (item.children && item.children.length > 0) {
+      return item.children.some(c => isDecided(c.outcomeStatus) || c.outcomeStatus === 'ready' || c.outcomeStatus === 'incomplete')
+    }
+    return false
+  }
 
   const getEffectiveOutcome = (item: NewRepairItem): string | null => {
     // If the item itself has an outcome, use it
@@ -75,21 +94,25 @@ export function AdvisorAuthorizationModal({
 
     // For groups, derive from children
     if (item.isGroup && item.children && item.children.length > 0) {
-      const activeChildren = item.children.filter(c => isInAuthFlow(c.outcomeStatus))
+      const activeChildren = item.children.filter(c => isDecided(c.outcomeStatus) || c.outcomeStatus === 'ready' || c.outcomeStatus === 'incomplete')
       if (activeChildren.length > 0 && activeChildren.every(c => isDecided(c.outcomeStatus))) {
         if (activeChildren.some(c => c.outcomeStatus === 'authorised')) return 'authorised'
         if (activeChildren.some(c => c.outcomeStatus === 'deferred')) return 'deferred'
         return 'declined'
       }
-      // Group with no children in auth flow = green group
+      // Group with no active children = green group
       if (activeChildren.length === 0) return null
     }
+
+    // Not in auth flow = green/OK item
+    if (!isItemInAuthFlow(item)) return null
 
     return item.outcomeStatus || null
   }
 
-  // Items need a decision only if they're in the auth flow (non-null outcomeStatus)
+  // Items need a decision only if they're in the auth flow
   const itemsNeedingDecision = visibleItems.filter(item => {
+    if (!isItemInAuthFlow(item)) return false
     const effective = getEffectiveOutcome(item)
     // null = green/OK item, not in auth flow
     if (effective === null) return false

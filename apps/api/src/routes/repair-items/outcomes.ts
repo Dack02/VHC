@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { authorize } from '../../middleware/auth.js'
-import { verifyRepairItemAccess, verifyHealthCheckAccess } from './helpers.js'
+import { verifyRepairItemAccess, verifyHealthCheckAccess, cascadeOutcomeToChildren } from './helpers.js'
 import { logAudit, getRequestContext } from '../../services/audit.js'
 
 const outcomesRouter = new Hono()
@@ -105,6 +105,18 @@ outcomesRouter.post('/repair-items/:id/authorise', authorize(['super_admin', 'or
       return c.json({ error: error.message }, 500)
     }
 
+    // Cascade outcome to children if this is a group item
+    if (repairItem.is_group) {
+      await cascadeOutcomeToChildren(id, {
+        outcome_status: 'authorised',
+        outcome_set_by: auth.user.id,
+        outcome_set_at: now,
+        outcome_source: 'manual',
+        customer_approved: true,
+        customer_approved_at: now,
+      })
+    }
+
     // Audit log the outcome change
     const reqContext = getRequestContext(c)
     await logAudit({
@@ -189,6 +201,18 @@ outcomesRouter.post('/repair-items/:id/defer', authorize(['super_admin', 'org_ad
     if (error) {
       console.error('Defer repair item error:', error)
       return c.json({ error: error.message }, 500)
+    }
+
+    // Cascade outcome to children if this is a group item
+    if (repairItem.is_group) {
+      await cascadeOutcomeToChildren(id, {
+        outcome_status: 'deferred',
+        outcome_set_by: auth.user.id,
+        outcome_set_at: now,
+        outcome_source: 'manual',
+        deferred_until: deferred_until,
+        deferred_notes: notes?.trim() || null,
+      })
     }
 
     // Audit log the outcome change
@@ -284,6 +308,20 @@ outcomesRouter.post('/repair-items/:id/decline', authorize(['super_admin', 'org_
       return c.json({ error: error.message }, 500)
     }
 
+    // Cascade outcome to children if this is a group item
+    if (repairItem.is_group) {
+      await cascadeOutcomeToChildren(id, {
+        outcome_status: 'declined',
+        outcome_set_by: auth.user.id,
+        outcome_set_at: now,
+        outcome_source: 'manual',
+        declined_reason_id: declined_reason_id,
+        declined_notes: notes?.trim() || null,
+        customer_approved: false,
+        customer_declined_reason: declinedReason.reason,
+      })
+    }
+
     // Audit log the outcome change
     const reqContext = getRequestContext(c)
     await logAudit({
@@ -377,6 +415,26 @@ outcomesRouter.post('/repair-items/:id/delete', authorize(['super_admin', 'org_a
       return c.json({ error: error.message }, 500)
     }
 
+    // Cascade outcome to children if this is a group item
+    if (repairItem.is_group) {
+      await cascadeOutcomeToChildren(id, {
+        outcome_status: 'deleted',
+        outcome_set_by: auth.user.id,
+        outcome_set_at: now,
+        outcome_source: 'manual',
+      })
+      // Also set deleted_at/deleted_by on children
+      await supabaseAdmin
+        .from('repair_items')
+        .update({
+          deleted_at: now,
+          deleted_by: auth.user.id,
+          deleted_reason_id: deleted_reason_id,
+          deleted_notes: notes?.trim() || null,
+        })
+        .eq('parent_repair_item_id', id)
+    }
+
     // Audit log the outcome change
     const reqContext = getRequestContext(c)
     await logAudit({
@@ -459,6 +517,31 @@ outcomesRouter.post('/repair-items/:id/reset', authorize(['super_admin', 'org_ad
     if (error) {
       console.error('Reset repair item error:', error)
       return c.json({ error: error.message }, 500)
+    }
+
+    // Cascade reset to children if this is a group item
+    if (repairItem.is_group) {
+      await supabaseAdmin
+        .from('repair_items')
+        .update({
+          outcome_status: 'ready',
+          outcome_set_by: auth.user.id,
+          outcome_set_at: now,
+          outcome_source: 'manual',
+          deferred_until: null,
+          deferred_notes: null,
+          declined_reason_id: null,
+          declined_notes: null,
+          deleted_reason_id: null,
+          deleted_notes: null,
+          deleted_at: null,
+          deleted_by: null,
+          customer_approved: null,
+          customer_approved_at: null,
+          customer_declined_reason: null,
+          updated_at: now,
+        })
+        .eq('parent_repair_item_id', id)
     }
 
     // Audit log the outcome change

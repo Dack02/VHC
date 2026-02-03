@@ -319,7 +319,11 @@ export async function cancelReminders(healthCheckId: string) {
 
 // DMS Import Queue Functions
 export async function queueDmsImport(job: DmsImportJob) {
-  const jobId = `dms-import-${job.organizationId}-${job.date}`
+  // Manual imports with specific bookingIds need unique job IDs to avoid
+  // BullMQ deduplication (otherwise a second import on the same date is silently skipped)
+  const jobId = job.bookingIds?.length
+    ? `dms-import-${job.organizationId}-${job.date}-${Date.now()}`
+    : `dms-import-${job.organizationId}-${job.date}`
   return dmsImportQueue.add('import', job, { jobId })
 }
 

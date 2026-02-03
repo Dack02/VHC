@@ -2225,8 +2225,9 @@ reports.get('/mri-performance', authorize(['super_admin', 'org_admin', 'site_adm
       const hc = result.health_check as unknown as { id: string; checked_in_at: string; checked_in_by: string; site_id: string }
       const mriItem = result.mri_item as unknown as { id: string; name: string; category: string; item_type: string }
       const isFlagged = result.rag_status === 'red' || result.rag_status === 'amber'
-      const hasRepair = !!result.repair_item_id
-      const repair = result.repair_item_id ? repairByMriResult[result.repair_item_id] : null
+      // Look up repair by scan result's own ID (map is keyed by mri_result_id which equals scan result id)
+      const repair = repairByMriResult[result.id as string] || null
+      const hasRepair = !!repair
       const repairValue = repair?.total_inc_vat || 0
 
       // Summary

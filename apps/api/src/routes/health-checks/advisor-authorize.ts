@@ -46,10 +46,15 @@ advisorAuthorize.post('/:id/advisor-authorize', authorize(['super_admin', 'org_a
       }, 400)
     }
 
-    // Fetch ALL non-deleted repair items (top-level + children) for this health check
+    // Fetch ALL non-deleted repair items (top-level + children) with their check results
     const { data: allItems } = await supabaseAdmin
       .from('repair_items')
-      .select('id, name, outcome_status, is_group, parent_repair_item_id')
+      .select(`
+        id, name, outcome_status, is_group, parent_repair_item_id,
+        check_results:repair_item_check_results(
+          check_result:check_results(rag_status)
+        )
+      `)
       .eq('health_check_id', id)
       .eq('organization_id', auth.orgId)
       .is('deleted_at', null)
@@ -58,31 +63,47 @@ advisorAuthorize.post('/:id/advisor-authorize', authorize(['super_admin', 'org_a
     const childItems = (allItems || []).filter(i => i.parent_repair_item_id)
 
     const hasOutcome = (s: string | null) => ['authorised', 'declined', 'deferred'].includes(s || '')
-    // Items with null outcome_status are green/OK items not in the authorization flow
-    const isInAuthFlow = (s: string | null) => s !== null
+
+    // Check if an item has red/amber check results (needs authorization)
+    const hasRedAmberResults = (item: typeof topLevelItems[0]): boolean => {
+      if (item.check_results && item.check_results.length > 0) {
+        return item.check_results.some((cr: Record<string, unknown>) => {
+          const result = cr.check_result as Record<string, unknown> | null
+          return result?.rag_status === 'red' || result?.rag_status === 'amber'
+        })
+      }
+      return false
+    }
+
+    // An item is in the auth flow if it has red/amber findings, a decided outcome,
+    // or is a group with children that need authorization
+    const isItemInAuthFlow = (item: typeof topLevelItems[0]): boolean => {
+      if (hasOutcome(item.outcome_status)) return true
+      if (!item.is_group) return hasRedAmberResults(item)
+      if (hasRedAmberResults(item)) return true
+      const children = childItems.filter(c => c.parent_repair_item_id === item.id)
+      return children.some(c => hasOutcome(c.outcome_status) || c.outcome_status === 'ready' || c.outcome_status === 'incomplete')
+    }
 
     // For groups, derive outcome from children
     const getEffectiveOutcome = (item: typeof topLevelItems[0]): string | null => {
       if (hasOutcome(item.outcome_status)) return item.outcome_status
       if (item.is_group) {
         const children = childItems.filter(c => c.parent_repair_item_id === item.id)
-        const activeChildren = children.filter(c => isInAuthFlow(c.outcome_status))
+        const activeChildren = children.filter(c => hasOutcome(c.outcome_status) || c.outcome_status === 'ready' || c.outcome_status === 'incomplete')
         if (activeChildren.length > 0 && activeChildren.every(c => hasOutcome(c.outcome_status))) {
           if (activeChildren.some(c => c.outcome_status === 'authorised')) return 'authorised'
           if (activeChildren.some(c => c.outcome_status === 'deferred')) return 'deferred'
           return 'declined'
         }
-        // Group with no children in auth flow = green group, skip it
         if (activeChildren.length === 0) return null
       }
+      if (!isItemInAuthFlow(item)) return null
       return item.outcome_status
     }
 
     // Only require decisions for items actually in the authorization flow
-    const itemsInAuthFlow = topLevelItems.filter(i => {
-      const effective = getEffectiveOutcome(i)
-      return effective !== null
-    })
+    const itemsInAuthFlow = topLevelItems.filter(i => isItemInAuthFlow(i))
     const undecidedItems = itemsInAuthFlow.filter(i => !hasOutcome(getEffectiveOutcome(i)))
 
     if (undecidedItems.length > 0) {

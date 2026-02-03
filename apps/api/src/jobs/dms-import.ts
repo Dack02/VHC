@@ -522,7 +522,7 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
         .select('id')
         .eq('organization_id', organizationId)
         .eq('is_active', true)
-        .order('created_at', { ascending: true })
+        .order('created_at', { ascending: false })
         .limit(1)
         .single()
 
@@ -530,7 +530,7 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
         throw new Error('No site found for organization')
       }
       effectiveSiteId = defaultSite.id
-      console.log('[DMS Import] Using default site:', effectiveSiteId)
+      console.warn('[DMS Import] No site_id provided, falling back to most recent active site:', effectiveSiteId)
     }
 
     // Fetch bookings from DMS

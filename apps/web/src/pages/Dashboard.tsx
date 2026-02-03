@@ -53,6 +53,28 @@ interface DashboardData {
   period: { from: string; to: string }
 }
 
+interface MonthlyKpiMonth {
+  label: string
+  hcCount: number
+  completedCount: number
+  redSoldPct: number | null
+  avgIdentified: number | null
+  avgSold: number | null
+  avgPerDay: number
+  topAdvisor: { advisorId: string; name: string; redSoldPct: number; totalSold: number; score: number } | null
+}
+
+interface MonthlyKpiData {
+  currentMonth: MonthlyKpiMonth
+  previousMonth: MonthlyKpiMonth
+  deltas: {
+    redSoldPct: number | null
+    avgIdentified: number | null
+    avgSold: number | null
+    avgPerDay: number | null
+  }
+}
+
 interface QueuesData {
   needsAttention: { items: QueueItem[]; total: number }
   technicianQueue: { items: QueueItem[]; total: number }
@@ -113,6 +135,7 @@ export default function Dashboard() {
   const [liveUpdate, setLiveUpdate] = useState<string | null>(null)
   const [dmsEnabled, setDmsEnabled] = useState(false)
   const [showDmsModal, setShowDmsModal] = useState(false)
+  const [monthlyKpis, setMonthlyKpis] = useState<MonthlyKpiData | null>(null)
 
   const token = session?.accessToken
 
@@ -214,6 +237,17 @@ export default function Dashboard() {
     }
   }, [token])
 
+  // Fetch monthly KPIs
+  const fetchMonthlyKpis = useCallback(async () => {
+    if (!token) return
+    try {
+      const data = await api<MonthlyKpiData>('/api/v1/dashboard/monthly-kpis', { token })
+      setMonthlyKpis(data)
+    } catch (err) {
+      console.error('Failed to fetch monthly KPIs:', err)
+    }
+  }, [token])
+
   // Debounced refresh for WebSocket events (500ms, leading + trailing)
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
   const lastCallRef = useRef<number>(0)
@@ -252,12 +286,13 @@ export default function Dashboard() {
     }
   }, [fetchDashboard, isConnected])
 
-  // Initial fetch for awaiting arrival, check-in, and DMS status
+  // Initial fetch for awaiting arrival, check-in, DMS status, and monthly KPIs
   useEffect(() => {
     fetchAwaitingArrival()
     fetchAwaitingCheckin()
     checkDmsEnabled()
-  }, [fetchAwaitingArrival, fetchAwaitingCheckin, checkDmsEnabled])
+    fetchMonthlyKpis()
+  }, [fetchAwaitingArrival, fetchAwaitingCheckin, checkDmsEnabled, fetchMonthlyKpis])
 
   // Subscribe to real-time WebSocket events (debounced to prevent request storms)
   useEffect(() => {
@@ -497,6 +532,103 @@ export default function Dashboard() {
           <div className="text-sm text-gray-500 mt-1">Declined</div>
         </div>
       </div>
+
+      {/* Monthly Performance KPIs */}
+      {monthlyKpis && (
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900 mb-3">
+            Monthly Performance — {monthlyKpis.currentMonth.label}
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+            {/* Red Work Sold % */}
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+              <div className="flex items-start justify-between">
+                <div className="text-sm text-gray-500">Red Work Sold %</div>
+                {monthlyKpis.deltas.redSoldPct !== null && (
+                  <span className={`flex items-center text-xs font-medium ${monthlyKpis.deltas.redSoldPct >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    <svg className={`w-3 h-3 mr-0.5 ${monthlyKpis.deltas.redSoldPct < 0 ? 'rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                    </svg>
+                    {monthlyKpis.deltas.redSoldPct > 0 ? '+' : ''}{monthlyKpis.deltas.redSoldPct}%
+                  </span>
+                )}
+              </div>
+              <div className="text-3xl font-bold text-gray-900 mt-2">
+                {monthlyKpis.currentMonth.redSoldPct !== null ? `${monthlyKpis.currentMonth.redSoldPct}%` : '--'}
+              </div>
+            </div>
+
+            {/* Avg HC Value Identified */}
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+              <div className="flex items-start justify-between">
+                <div className="text-sm text-gray-500">Avg Identified</div>
+                {monthlyKpis.deltas.avgIdentified !== null && (
+                  <span className={`flex items-center text-xs font-medium ${monthlyKpis.deltas.avgIdentified >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    <svg className={`w-3 h-3 mr-0.5 ${monthlyKpis.deltas.avgIdentified < 0 ? 'rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                    </svg>
+                    {monthlyKpis.deltas.avgIdentified > 0 ? '+' : ''}{formatCurrency(monthlyKpis.deltas.avgIdentified)}
+                  </span>
+                )}
+              </div>
+              <div className="text-2xl font-bold text-gray-900 mt-2">
+                {monthlyKpis.currentMonth.avgIdentified !== null ? formatCurrency(monthlyKpis.currentMonth.avgIdentified) : '--'}
+              </div>
+            </div>
+
+            {/* Avg HC Value Sold */}
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+              <div className="flex items-start justify-between">
+                <div className="text-sm text-gray-500">Avg Sold</div>
+                {monthlyKpis.deltas.avgSold !== null && (
+                  <span className={`flex items-center text-xs font-medium ${monthlyKpis.deltas.avgSold >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    <svg className={`w-3 h-3 mr-0.5 ${monthlyKpis.deltas.avgSold < 0 ? 'rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                    </svg>
+                    {monthlyKpis.deltas.avgSold > 0 ? '+' : ''}{formatCurrency(monthlyKpis.deltas.avgSold)}
+                  </span>
+                )}
+              </div>
+              <div className="text-2xl font-bold text-gray-900 mt-2">
+                {monthlyKpis.currentMonth.avgSold !== null ? formatCurrency(monthlyKpis.currentMonth.avgSold) : '--'}
+              </div>
+            </div>
+
+            {/* Avg HCs Completed Per Day */}
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+              <div className="flex items-start justify-between">
+                <div className="text-sm text-gray-500">HCs / Day</div>
+                {monthlyKpis.deltas.avgPerDay !== null && (
+                  <span className={`flex items-center text-xs font-medium ${monthlyKpis.deltas.avgPerDay >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    <svg className={`w-3 h-3 mr-0.5 ${monthlyKpis.deltas.avgPerDay < 0 ? 'rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                    </svg>
+                    {monthlyKpis.deltas.avgPerDay > 0 ? '+' : ''}{monthlyKpis.deltas.avgPerDay}
+                  </span>
+                )}
+              </div>
+              <div className="text-3xl font-bold text-gray-900 mt-2">
+                {monthlyKpis.currentMonth.avgPerDay}
+              </div>
+            </div>
+
+            {/* Advisor of the Month */}
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+              <div className="text-sm text-gray-500">Advisor of the Month</div>
+              {monthlyKpis.currentMonth.topAdvisor ? (
+                <div className="mt-2">
+                  <div className="text-lg font-bold text-gray-900 truncate">{monthlyKpis.currentMonth.topAdvisor.name}</div>
+                  <div className="text-sm text-gray-500 mt-0.5">
+                    {Math.round(monthlyKpis.currentMonth.topAdvisor.redSoldPct)}% red sold · {formatCurrency(monthlyKpis.currentMonth.topAdvisor.totalSold)}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-2xl font-bold text-gray-400 mt-2">--</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Alerts Section */}
       {(data?.alerts.overdueCount || 0) + (data?.alerts.expiringLinksCount || 0) > 0 && (

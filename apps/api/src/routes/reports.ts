@@ -1099,7 +1099,8 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
         tech_completed_at,
         advisor_id,
         advisor:users!health_checks_advisor_id_fkey(id, first_name, last_name),
-        repair_items(total_inc_vat, outcome_status)
+        repair_items(total_inc_vat, outcome_status, deleted_at),
+        mri_scan_results(not_applicable, completed_by)
       `)
       .eq('organization_id', auth.orgId)
       .gte('created_at', startDate)
@@ -1127,6 +1128,10 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
       valueAuthorized: number
       valueDeclined: number
       responseTimes: number[]
+      deferredCount: number
+      deferredValue: number
+      mriNaCount: number
+      itemAuthorisedValue: number
     }> = {}
 
     // Aging checks (sent but not responded)
@@ -1154,13 +1159,37 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
           valueAuthorized: 0,
           valueDeclined: 0,
           responseTimes: [],
+          deferredCount: 0,
+          deferredValue: 0,
+          mriNaCount: 0,
+          itemAuthorisedValue: 0,
         }
       }
 
       advisorData[key].managed++
-      const items = hc.repair_items as Array<{ total_inc_vat?: number; outcome_status?: string }> | null
-      const hcValue = items?.reduce((s, i) => s + (Number(i.total_inc_vat) || 0), 0) || 0
+      const items = hc.repair_items as Array<{ total_inc_vat?: number; outcome_status?: string; deleted_at?: string | null }> | null
+      const activeItems = items?.filter(i => !i.deleted_at) || []
+      const hcValue = activeItems.reduce((s, i) => s + (Number(i.total_inc_vat) || 0), 0)
       advisorData[key].valueIdentified += hcValue
+
+      // Deferred and authorised item-level tracking
+      for (const item of activeItems) {
+        if (item.outcome_status === 'deferred') {
+          advisorData[key].deferredCount++
+          advisorData[key].deferredValue += Number(item.total_inc_vat) || 0
+        }
+        if (item.outcome_status === 'authorised') {
+          advisorData[key].itemAuthorisedValue += Number(item.total_inc_vat) || 0
+        }
+      }
+
+      // MRI N/A count
+      const mriResults = hc.mri_scan_results as Array<{ not_applicable?: boolean; completed_by?: string }> | null
+      if (mriResults) {
+        for (const mri of mriResults) {
+          if (mri.not_applicable) advisorData[key].mriNaCount++
+        }
+      }
 
       if (hc.sent_at) {
         advisorData[key].sent++
@@ -1224,6 +1253,11 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
         avgResponseHours: a.responseTimes.length > 0
           ? Math.round(a.responseTimes.reduce((x, y) => x + y, 0) / a.responseTimes.length * 10) / 10
           : 0,
+        mriNaCount: a.mriNaCount,
+        deferredCount: a.deferredCount,
+        deferredValue: Math.round(a.deferredValue * 100) / 100,
+        avgIdentifiedValue: a.managed > 0 ? Math.round((a.valueIdentified / a.managed) * 100) / 100 : 0,
+        avgSoldValue: a.managed > 0 ? Math.round((a.itemAuthorisedValue / a.managed) * 100) / 100 : 0,
       }))
       .sort((a, b) => b.valueAuthorized - a.valueAuthorized)
 

@@ -1041,6 +1041,295 @@ dashboard.get('/queues', authorize(['super_admin', 'org_admin', 'site_admin', 's
   }
 })
 
+// GET /api/v1/dashboard/monthly-kpis - Monthly performance KPIs with previous month deltas
+dashboard.get('/monthly-kpis', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { site_id } = c.req.query()
+
+    const now = new Date()
+    // Current month: 1st of this month to now
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    const currentMonthEnd = now
+
+    // Previous month: 1st to last day of previous month
+    const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    const previousMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999)
+
+    // Days elapsed in current month (at least 1)
+    const currentDaysElapsed = Math.max(1, now.getDate())
+    // Total days in previous month
+    const previousMonthDays = new Date(now.getFullYear(), now.getMonth(), 0).getDate()
+
+    // Completed statuses (post-tech-completed)
+    const completedStatuses = [
+      'tech_completed', 'awaiting_review', 'awaiting_pricing', 'awaiting_parts',
+      'ready_to_send', 'sent', 'delivered', 'opened', 'partial_response',
+      'authorized', 'declined', 'completed', 'expired', 'cancelled'
+    ]
+
+    // Fetch health checks for both months
+    const buildHcQuery = (start: Date, end: Date) => {
+      let q = supabaseAdmin
+        .from('health_checks')
+        .select('id, status, advisor_id, created_at')
+        .eq('organization_id', auth.orgId)
+        .is('deleted_at', null)
+        .gte('created_at', start.toISOString())
+        .lte('created_at', end.toISOString())
+      if (site_id) q = q.eq('site_id', site_id)
+      return q
+    }
+
+    const [currentHcRes, previousHcRes] = await Promise.all([
+      buildHcQuery(currentMonthStart, currentMonthEnd),
+      buildHcQuery(previousMonthStart, previousMonthEnd)
+    ])
+
+    if (currentHcRes.error) throw currentHcRes.error
+    if (previousHcRes.error) throw previousHcRes.error
+
+    const currentHcs = currentHcRes.data || []
+    const previousHcs = previousHcRes.data || []
+
+    const allHcIds = [...currentHcs.map(h => h.id), ...previousHcs.map(h => h.id)]
+
+    // Fetch repair items for all health checks (with RAG derivation)
+    let repairData: any[] = []
+    let optionTotalsMap: Record<string, { labour_total: any; parts_total: any; total_inc_vat: any }> = {}
+
+    if (allHcIds.length > 0) {
+      const { data: items, error: repairError } = await supabaseAdmin
+        .from('repair_items')
+        .select(`
+          id,
+          health_check_id,
+          labour_total,
+          parts_total,
+          total_inc_vat,
+          deleted_at,
+          customer_approved,
+          is_group,
+          parent_repair_item_id,
+          selected_option_id,
+          check_results:repair_item_check_results(
+            check_result:check_results(rag_status)
+          )
+        `)
+        .in('health_check_id', allHcIds)
+
+      if (repairError) {
+        console.error('Error fetching repair items for monthly KPIs:', repairError)
+      }
+      repairData = items || []
+
+      // Fetch selected option totals (price options feature)
+      const selectedOptionIds = repairData
+        .map(item => item.selected_option_id)
+        .filter((id: string | null): id is string => !!id)
+
+      if (selectedOptionIds.length > 0) {
+        const { data: optionData } = await supabaseAdmin
+          .from('repair_options')
+          .select('id, labour_total, parts_total, total_inc_vat')
+          .in('id', selectedOptionIds)
+
+        if (optionData) {
+          for (const opt of optionData) {
+            optionTotalsMap[opt.id] = opt
+          }
+        }
+      }
+    }
+
+    const VAT_RATE = 0.20
+
+    // Process repair items into per-HC aggregations
+    type HcAgg = {
+      identified_total: number
+      authorised_total: number
+      red_identified: number
+      red_authorised: number
+    }
+    const aggByHc: Record<string, HcAgg> = {}
+
+    for (const item of repairData) {
+      const isChild = !!item.parent_repair_item_id
+      const isDeleted = !!item.deleted_at
+      const isAuthorised = item.customer_approved === true
+
+      // Only count top-level, non-deleted items
+      if (isChild) continue
+
+      // Resolve price from selected option or item itself
+      const selectedOpt = item.selected_option_id ? optionTotalsMap[item.selected_option_id] : null
+      const srcTotalIncVat = selectedOpt?.total_inc_vat ?? item.total_inc_vat
+      const srcLabourTotal = selectedOpt?.labour_total ?? item.labour_total
+      const srcPartsTotal = selectedOpt?.parts_total ?? item.parts_total
+
+      let totalIncVat = parseFloat(String(srcTotalIncVat ?? 0)) || 0
+      if (totalIncVat === 0) {
+        const labourTotal = parseFloat(String(srcLabourTotal ?? 0)) || 0
+        const partsTotal = parseFloat(String(srcPartsTotal ?? 0)) || 0
+        if (labourTotal > 0 || partsTotal > 0) {
+          const subtotal = labourTotal + partsTotal
+          totalIncVat = subtotal + subtotal * VAT_RATE
+        }
+      }
+
+      // Derive RAG status
+      let derivedRagStatus: string | null = null
+      const checkResultLinks = item.check_results as unknown as Array<{ check_result: { rag_status: string } | { rag_status: string }[] | null }> | null
+      if (checkResultLinks && Array.isArray(checkResultLinks)) {
+        for (const link of checkResultLinks) {
+          const checkResult = Array.isArray(link?.check_result) ? link.check_result[0] : link?.check_result
+          const ragStatus = checkResult?.rag_status
+          if (ragStatus === 'red') { derivedRagStatus = 'red'; break }
+          else if (ragStatus === 'amber' && derivedRagStatus !== 'red') derivedRagStatus = 'amber'
+          else if (ragStatus === 'green' && !derivedRagStatus) derivedRagStatus = 'green'
+        }
+      }
+
+      if (!aggByHc[item.health_check_id]) {
+        aggByHc[item.health_check_id] = { identified_total: 0, authorised_total: 0, red_identified: 0, red_authorised: 0 }
+      }
+      const agg = aggByHc[item.health_check_id]
+
+      if (!isDeleted) {
+        agg.identified_total += totalIncVat
+        if (derivedRagStatus === 'red') agg.red_identified++
+      }
+      if (isAuthorised) {
+        agg.authorised_total += totalIncVat
+        if (derivedRagStatus === 'red') agg.red_authorised++
+      }
+    }
+
+    // Compute KPIs for a month
+    function computeKpis(hcs: typeof currentHcs, daysInPeriod: number) {
+      const hcCount = hcs.length
+      const completedCount = hcs.filter(h => completedStatuses.includes(h.status)).length
+
+      let totalRedIdentified = 0
+      let totalRedAuthorised = 0
+      let totalIdentifiedValue = 0
+      let totalAuthorisedValue = 0
+
+      for (const hc of hcs) {
+        const agg = aggByHc[hc.id]
+        if (agg) {
+          totalRedIdentified += agg.red_identified
+          totalRedAuthorised += agg.red_authorised
+          totalIdentifiedValue += agg.identified_total
+          totalAuthorisedValue += agg.authorised_total
+        }
+      }
+
+      const redSoldPct = totalRedIdentified > 0 ? (totalRedAuthorised / totalRedIdentified) * 100 : null
+      const avgIdentified = hcCount > 0 ? totalIdentifiedValue / hcCount : null
+      const avgSold = hcCount > 0 ? totalAuthorisedValue / hcCount : null
+      const avgPerDay = completedCount / daysInPeriod
+
+      // Advisor of the month: group by advisor_id
+      const advisorStats: Record<string, { advisorId: string; hcCount: number; redIdentified: number; redAuthorised: number; totalAuthorised: number }> = {}
+      for (const hc of hcs) {
+        if (!hc.advisor_id) continue
+        if (!advisorStats[hc.advisor_id]) {
+          advisorStats[hc.advisor_id] = { advisorId: hc.advisor_id, hcCount: 0, redIdentified: 0, redAuthorised: 0, totalAuthorised: 0 }
+        }
+        const stat = advisorStats[hc.advisor_id]
+        stat.hcCount++
+        const agg = aggByHc[hc.id]
+        if (agg) {
+          stat.redIdentified += agg.red_identified
+          stat.redAuthorised += agg.red_authorised
+          stat.totalAuthorised += agg.authorised_total
+        }
+      }
+
+      // Find top advisor (minimum 5 HCs)
+      let topAdvisor: { advisorId: string; redSoldPct: number; totalSold: number; score: number } | null = null
+      const qualifiedAdvisors = Object.values(advisorStats).filter(a => a.hcCount >= 5)
+      if (qualifiedAdvisors.length > 0) {
+        // Normalize: find max total authorised for normalization
+        const maxTotalAuthorised = Math.max(...qualifiedAdvisors.map(a => a.totalAuthorised), 1)
+        for (const a of qualifiedAdvisors) {
+          const rsPct = a.redIdentified > 0 ? (a.redAuthorised / a.redIdentified) * 100 : 0
+          const normalizedSold = a.totalAuthorised / maxTotalAuthorised
+          const score = (rsPct * 0.6) + (normalizedSold * 100 * 0.4)
+          if (!topAdvisor || score > topAdvisor.score) {
+            topAdvisor = { advisorId: a.advisorId, redSoldPct: rsPct, totalSold: a.totalAuthorised, score }
+          }
+        }
+      }
+
+      return {
+        hcCount,
+        completedCount,
+        redSoldPct: redSoldPct !== null ? Math.round(redSoldPct * 10) / 10 : null,
+        avgIdentified: avgIdentified !== null ? Math.round(avgIdentified * 100) / 100 : null,
+        avgSold: avgSold !== null ? Math.round(avgSold * 100) / 100 : null,
+        avgPerDay: Math.round(avgPerDay * 10) / 10,
+        topAdvisor
+      }
+    }
+
+    const currentKpis = computeKpis(currentHcs, currentDaysElapsed)
+    const previousKpis = computeKpis(previousHcs, previousMonthDays)
+
+    // Fetch advisor names for top advisors
+    const advisorIds = [currentKpis.topAdvisor?.advisorId, previousKpis.topAdvisor?.advisorId].filter((id): id is string => !!id)
+    let advisorNames: Record<string, string> = {}
+    if (advisorIds.length > 0) {
+      const { data: advisors } = await supabaseAdmin
+        .from('users')
+        .select('id, first_name, last_name')
+        .in('id', advisorIds)
+      if (advisors) {
+        for (const a of advisors) {
+          advisorNames[a.id] = `${a.first_name} ${a.last_name}`
+        }
+      }
+    }
+
+    // Compute deltas
+    const delta = (curr: number | null, prev: number | null) => {
+      if (curr === null || prev === null) return null
+      return Math.round((curr - prev) * 10) / 10
+    }
+
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+    return c.json({
+      currentMonth: {
+        label: `${monthNames[now.getMonth()]} ${now.getFullYear()}`,
+        ...currentKpis,
+        topAdvisor: currentKpis.topAdvisor ? {
+          ...currentKpis.topAdvisor,
+          name: advisorNames[currentKpis.topAdvisor.advisorId] || 'Unknown'
+        } : null
+      },
+      previousMonth: {
+        label: `${monthNames[previousMonthStart.getMonth()]} ${previousMonthStart.getFullYear()}`,
+        ...previousKpis,
+        topAdvisor: previousKpis.topAdvisor ? {
+          ...previousKpis.topAdvisor,
+          name: advisorNames[previousKpis.topAdvisor.advisorId] || 'Unknown'
+        } : null
+      },
+      deltas: {
+        redSoldPct: delta(currentKpis.redSoldPct, previousKpis.redSoldPct),
+        avgIdentified: delta(currentKpis.avgIdentified, previousKpis.avgIdentified),
+        avgSold: delta(currentKpis.avgSold, previousKpis.avgSold),
+        avgPerDay: delta(currentKpis.avgPerDay, previousKpis.avgPerDay)
+      }
+    })
+  } catch (error) {
+    console.error('Monthly KPIs error:', error)
+    return c.json({ error: 'Failed to fetch monthly KPIs' }, 500)
+  }
+})
+
 // Helper function to format duration
 function formatDuration(minutes: number): string {
   if (minutes < 60) {

@@ -26,6 +26,11 @@ interface AdvisorData {
     valueDeclined: number
     avgPricingHours: number
     avgResponseHours: number
+    mriNaCount: number
+    deferredCount: number
+    deferredValue: number
+    avgIdentifiedValue: number
+    avgSoldValue: number
   }>
   funnelComparison: Array<{ name: string; managed: number; sent: number; authorized: number }>
   agingChecks: Array<{
@@ -59,7 +64,11 @@ export default function AdvisorPerformance() {
       </span>
     ), align: 'right', sortable: true, sortValue: r => r.conversionRate },
     { key: 'value', label: 'Authorized', render: r => <span className="font-medium text-green-600">{formatCurrency(r.valueAuthorized)}</span>, align: 'right', sortable: true, sortValue: r => r.valueAuthorized },
-    { key: 'avgPricing', label: 'Avg Pricing', render: r => r.avgPricingHours > 0 ? formatDuration(r.avgPricingHours * 60) : '-', align: 'right', sortable: true, sortValue: r => r.avgPricingHours },
+    { key: 'avgIdentified', label: 'Avg Identified', render: r => formatCurrency(r.avgIdentifiedValue), align: 'right', sortable: true, sortValue: r => r.avgIdentifiedValue },
+    { key: 'avgSold', label: 'Avg Sold', render: r => <span className="text-green-600">{formatCurrency(r.avgSoldValue)}</span>, align: 'right', sortable: true, sortValue: r => r.avgSoldValue },
+    { key: 'deferred', label: 'Deferred', render: r => <span>{r.deferredCount} ({formatCurrency(r.deferredValue)})</span>, align: 'right', sortable: true, sortValue: r => r.deferredCount },
+    { key: 'mriNa', label: 'MRI N/A', render: r => r.mriNaCount, align: 'right', sortable: true, sortValue: r => r.mriNaCount },
+    { key: 'avgCompletion', label: 'Avg Completion', render: r => r.avgPricingHours > 0 ? formatDuration(r.avgPricingHours * 60) : '-', align: 'right', sortable: true, sortValue: r => r.avgPricingHours },
   ]
 
   const agingColumns: Column<AdvisorData['agingChecks'][0]>[] = [

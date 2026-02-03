@@ -493,6 +493,8 @@ export default function HealthCheckDetail() {
   ]
 
   // Determine available actions based on status
+  const isCleanCheck = healthCheck.red_count === 0 && healthCheck.amber_count === 0 && healthCheck.green_count > 0
+  const canSendClean = healthCheck.status === 'tech_completed' && isCleanCheck
   const canMarkReady = ['awaiting_review', 'awaiting_pricing'].includes(healthCheck.status)
   const canSend = healthCheck.status === 'ready_to_send'
   const canResend = ['sent', 'expired', 'opened', 'customer_viewed', 'customer_approved', 'customer_partial', 'customer_declined'].includes(healthCheck.status)
@@ -519,6 +521,26 @@ export default function HealthCheckDetail() {
           </div>
 
           <div className="flex items-center gap-2 md:gap-3 overflow-x-auto">
+            {canSendClean && (
+              <>
+                <button
+                  onClick={() => setShowPreviewModal(true)}
+                  className="px-3 md:px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50 rounded whitespace-nowrap"
+                >
+                  Preview
+                </button>
+                <button
+                  onClick={async () => {
+                    await handleStatusChange('ready_to_send')
+                    setShowPublishModal(true)
+                  }}
+                  className="px-3 md:px-4 py-2 bg-green-600 text-white text-sm font-medium hover:bg-green-700 rounded whitespace-nowrap"
+                >
+                  <span className="hidden md:inline">Send Clean Report</span>
+                  <span className="md:hidden">Send</span>
+                </button>
+              </>
+            )}
             {canMarkReady && (
               <button
                 onClick={() => handleStatusChange('ready_to_send')}

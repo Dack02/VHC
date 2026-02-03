@@ -12,7 +12,7 @@ export const validTransitions: Record<string, string[]> = {
   assigned: ['in_progress', 'cancelled'],
   in_progress: ['paused', 'tech_completed', 'cancelled'],
   paused: ['in_progress', 'cancelled'],
-  tech_completed: ['awaiting_review', 'awaiting_pricing'],
+  tech_completed: ['awaiting_review', 'awaiting_pricing', 'ready_to_send'],
   awaiting_review: ['awaiting_pricing', 'ready_to_send'],
   awaiting_pricing: ['awaiting_parts', 'ready_to_send'],
   awaiting_parts: ['ready_to_send'],

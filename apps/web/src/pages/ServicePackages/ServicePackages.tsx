@@ -24,6 +24,7 @@ interface CatalogEntry {
 
 interface PackageLabour {
   labourCodeId: string
+  rate: string
   hours: string
   discountPercent: string
   isVatExempt: boolean
@@ -48,6 +49,7 @@ interface ServicePackage {
   labour: Array<{
     id: string
     labourCodeId: string
+    rate: number | null
     hours: number
     discountPercent: number
     isVatExempt: boolean
@@ -69,6 +71,7 @@ interface ServicePackage {
 
 const emptyLabour = (): PackageLabour => ({
   labourCodeId: '',
+  rate: '',
   hours: '1',
   discountPercent: '0',
   isVatExempt: false,
@@ -390,6 +393,7 @@ export default function ServicePackages() {
       setLabourEntries(
         pkg.labour.map(l => ({
           labourCodeId: l.labourCodeId,
+          rate: l.rate != null ? l.rate.toString() : (l.labourCode?.hourlyRate?.toString() || ''),
           hours: l.hours.toString(),
           discountPercent: l.discountPercent.toString(),
           isVatExempt: l.isVatExempt,
@@ -459,6 +463,7 @@ export default function ServicePackages() {
         description: description.trim() || null,
         labour: labourEntries.map(l => ({
           labour_code_id: l.labourCodeId,
+          rate: l.rate !== '' ? parseFloat(l.rate) || null : null,
           hours: isNaN(parseFloat(l.hours)) ? 1 : parseFloat(l.hours),
           discount_percent: parseFloat(l.discountPercent) || 0,
           is_vat_exempt: l.isVatExempt,
@@ -521,6 +526,22 @@ export default function ServicePackages() {
   const updateLabour = (i: number, field: keyof PackageLabour, value: string | boolean) => {
     setLabourEntries(labourEntries.map((l, idx) => idx === i ? { ...l, [field]: value } : l))
   }
+
+  // Package total calculations
+  const packageTotals = useMemo(() => {
+    const labourTotal = labourEntries.reduce((sum, l) => {
+      const rate = parseFloat(l.rate) || 0
+      const hours = parseFloat(l.hours) || 0
+      const discountPct = parseFloat(l.discountPercent) || 0
+      return sum + rate * hours * (1 - discountPct / 100)
+    }, 0)
+    const partsTotal = partsEntries.reduce((sum, p) => {
+      const qty = parseFloat(p.quantity) || 0
+      const sell = parseFloat(p.sellPrice) || 0
+      return sum + qty * sell
+    }, 0)
+    return { labourTotal, partsTotal, total: labourTotal + partsTotal }
+  }, [labourEntries, partsEntries])
 
   // Parts entry helpers
   const addPart = () => setPartsEntries([...partsEntries, emptyPart()])
@@ -683,11 +704,18 @@ export default function ServicePackages() {
                       {labourEntries.map((entry, i) => (
                         <div key={i} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                           <div className="grid grid-cols-12 gap-2 items-end">
-                            <div className="col-span-5">
+                            <div className="col-span-4">
                               <label className="block text-xs text-gray-500 mb-1">Labour Code</label>
                               <select
                                 value={entry.labourCodeId}
-                                onChange={e => updateLabour(i, 'labourCodeId', e.target.value)}
+                                onChange={e => {
+                                  const selectedId = e.target.value
+                                  const lc = labourCodes.find(c => c.id === selectedId)
+                                  setLabourEntries(labourEntries.map((l, idx) => idx === i
+                                    ? { ...l, labourCodeId: selectedId, rate: lc ? lc.hourlyRate.toString() : l.rate }
+                                    : l
+                                  ))
+                                }}
                                 className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                               >
                                 <option value="">Select...</option>
@@ -699,6 +727,18 @@ export default function ServicePackages() {
                               </select>
                             </div>
                             <div className="col-span-2">
+                              <label className="block text-xs text-gray-500 mb-1">Rate ({'\u00A3'}/hr)</label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={entry.rate}
+                                onChange={e => updateLabour(i, 'rate', e.target.value)}
+                                placeholder="0.00"
+                                className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                              />
+                            </div>
+                            <div className="col-span-1">
                               <label className="block text-xs text-gray-500 mb-1">Hours</label>
                               <input
                                 type="number"
@@ -783,6 +823,31 @@ export default function ServicePackages() {
                     </div>
                   )}
                 </div>
+
+                {/* Package Total */}
+                {(labourEntries.length > 0 || partsEntries.length > 0) && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <h4 className="text-sm font-semibold text-gray-900 mb-2">Package Total</h4>
+                    <div className="space-y-1 text-sm">
+                      {labourEntries.length > 0 && (
+                        <div className="flex justify-between text-gray-600">
+                          <span>Labour ({labourEntries.length} item{labourEntries.length !== 1 ? 's' : ''})</span>
+                          <span>{'\u00A3'}{packageTotals.labourTotal.toFixed(2)}</span>
+                        </div>
+                      )}
+                      {partsEntries.length > 0 && (
+                        <div className="flex justify-between text-gray-600">
+                          <span>Parts ({partsEntries.length} item{partsEntries.length !== 1 ? 's' : ''})</span>
+                          <span>{'\u00A3'}{packageTotals.partsTotal.toFixed(2)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between font-bold text-gray-900 pt-1 border-t border-gray-300">
+                        <span>Total</span>
+                        <span>{'\u00A3'}{packageTotals.total.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Actions */}
                 <div className="flex gap-3 pt-4 border-t border-gray-200">

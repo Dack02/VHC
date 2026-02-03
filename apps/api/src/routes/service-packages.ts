@@ -21,7 +21,7 @@ servicePackages.get('/', async (c) => {
       .select(`
         *,
         labour:service_package_labour(
-          id, labour_code_id, hours, discount_percent, is_vat_exempt, notes, sort_order,
+          id, labour_code_id, hours, discount_percent, is_vat_exempt, notes, sort_order, rate,
           labour_code:labour_codes(id, code, description, hourly_rate)
         ),
         parts:service_package_parts(
@@ -57,6 +57,7 @@ servicePackages.get('/', async (c) => {
             isVatExempt: l.is_vat_exempt,
             notes: l.notes,
             sortOrder: l.sort_order,
+            rate: l.rate != null ? parseFloat(l.rate as string) : null,
             labourCode: labourCode ? {
               id: labourCode.id,
               code: labourCode.code,
@@ -143,7 +144,8 @@ servicePackages.post('/', authorize(['super_admin', 'org_admin']), async (c) => 
         discount_percent: parseFloat(l.discount_percent as string) || 0,
         is_vat_exempt: l.is_vat_exempt || false,
         notes: (l.notes as string)?.trim() || null,
-        sort_order: i
+        sort_order: i,
+        rate: l.rate != null ? parseFloat(l.rate as string) : null
       }))
 
       const { error: labourError } = await supabaseAdmin
@@ -245,7 +247,8 @@ servicePackages.patch('/:id', authorize(['super_admin', 'org_admin']), async (c)
           discount_percent: parseFloat(l.discount_percent as string) || 0,
           is_vat_exempt: l.is_vat_exempt || false,
           notes: (l.notes as string)?.trim() || null,
-          sort_order: i
+          sort_order: i,
+          rate: l.rate != null ? parseFloat(l.rate as string) : null
         }))
 
         const { error: labourError } = await supabaseAdmin

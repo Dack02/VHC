@@ -110,30 +110,37 @@ dashboard.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
     // Fetch repair item totals for value metrics
     const healthCheckIds = healthChecks?.map(hc => hc.id) || []
     let repairTotals: Record<string, number> = {}
+    let authorizedTotals: Record<string, number> = {}
+    let declinedTotals: Record<string, number> = {}
 
     if (healthCheckIds.length > 0) {
       const { data: repairData } = await supabaseAdmin
         .from('repair_items')
-        .select('health_check_id, total_inc_vat, parent_repair_item_id, deleted_at')
+        .select('health_check_id, total_inc_vat, parent_repair_item_id, deleted_at, customer_approved, outcome_status')
         .in('health_check_id', healthCheckIds)
         .is('deleted_at', null)
         .is('parent_repair_item_id', null)
 
       repairData?.forEach(item => {
-        repairTotals[item.health_check_id] = (repairTotals[item.health_check_id] || 0) + (parseFloat(String(item.total_inc_vat)) || 0)
+        const value = parseFloat(String(item.total_inc_vat)) || 0
+        repairTotals[item.health_check_id] = (repairTotals[item.health_check_id] || 0) + value
+        if (item.customer_approved === true) {
+          authorizedTotals[item.health_check_id] = (authorizedTotals[item.health_check_id] || 0) + value
+        }
+        if (item.outcome_status === 'declined') {
+          declinedTotals[item.health_check_id] = (declinedTotals[item.health_check_id] || 0) + value
+        }
       })
     }
 
-    // Value metrics
+    // Value metrics - use item-level customer_approved for accuracy
     const totalValueSent = healthChecks?.filter(hc => hc.sent_at).reduce((sum, hc) => sum + (repairTotals[hc.id] || 0), 0) || 0
-    const totalValueAuthorized = healthChecks?.filter(hc => hc.status === 'authorized' || hc.status === 'completed')
-      .reduce((sum, hc) => sum + (repairTotals[hc.id] || 0), 0) || 0
-    const totalValueDeclined = healthChecks?.filter(hc => hc.status === 'declined')
-      .reduce((sum, hc) => sum + (repairTotals[hc.id] || 0), 0) || 0
+    const totalValueAuthorized = Object.values(authorizedTotals).reduce((sum, val) => sum + val, 0)
+    const totalValueDeclined = Object.values(declinedTotals).reduce((sum, val) => sum + val, 0)
 
-    // Conversion rate
+    // Conversion rate - count HCs that have at least one approved item
     const sentCount = healthChecks?.filter(hc => hc.sent_at).length || 0
-    const authorizedCount = healthChecks?.filter(hc => hc.status === 'authorized' || hc.status === 'completed').length || 0
+    const authorizedCount = Object.keys(authorizedTotals).length
     const conversionRate = sentCount > 0 ? (authorizedCount / sentCount) * 100 : 0
 
     // Get overdue items (past promise time and not completed)

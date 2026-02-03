@@ -87,6 +87,7 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
 
     // ── Query 2: Repair items for today's HCs ──
     let repairData: Array<{
+      id: string
       health_check_id: string
       labour_total: number | null
       parts_total: number | null
@@ -104,6 +105,7 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       const { data, error } = await supabaseAdmin
         .from('repair_items')
         .select(`
+          id,
           health_check_id,
           labour_total,
           parts_total,
@@ -236,6 +238,38 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     const repairValueByHc: Record<string, number> = {}
     const authorizedValueByHc: Record<string, number> = {}
 
+    // Helper to check if an item is authorised
+    const isItemAuthorised = (item: { customer_approved: boolean | null; outcome_status: string | null }) =>
+      item.customer_approved === true || item.outcome_status === 'authorised'
+
+    // Helper to calculate an item's totalIncVat
+    const calcItemTotal = (item: typeof repairData[0]) => {
+      const selectedOpt = item.selected_option_id ? optionTotalsMap[item.selected_option_id] : null
+      const srcTotalIncVat = selectedOpt?.total_inc_vat ?? item.total_inc_vat
+      const srcLabourTotal = selectedOpt?.labour_total ?? item.labour_total
+      const srcPartsTotal = selectedOpt?.parts_total ?? item.parts_total
+      let total = parseFloat(String(srcTotalIncVat ?? 0)) || 0
+      if (total === 0) {
+        const labourTotal = parseFloat(String(srcLabourTotal ?? 0)) || 0
+        const partsTotal = parseFloat(String(srcPartsTotal ?? 0)) || 0
+        if (labourTotal > 0 || partsTotal > 0) {
+          const subtotal = labourTotal + partsTotal
+          total = subtotal + subtotal * VAT_RATE
+        }
+      }
+      return total
+    }
+
+    // Build children-by-parent map for group authorization
+    const childrenByParent = new Map<string, typeof repairData>()
+    repairData.forEach(item => {
+      if (item.parent_repair_item_id) {
+        const children = childrenByParent.get(item.parent_repair_item_id) || []
+        children.push(item)
+        childrenByParent.set(item.parent_repair_item_id, children)
+      }
+    })
+
     repairData.forEach(item => {
       const isChild = !!item.parent_repair_item_id
       const isDeleted = !!item.deleted_at
@@ -243,23 +277,7 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       // Only count top-level items to avoid double-counting
       if (isChild) return
 
-      // Get effective totals (selected option overrides base item)
-      const selectedOpt = item.selected_option_id ? optionTotalsMap[item.selected_option_id] : null
-      const srcTotalIncVat = selectedOpt?.total_inc_vat ?? item.total_inc_vat
-      const srcLabourTotal = selectedOpt?.labour_total ?? item.labour_total
-      const srcPartsTotal = selectedOpt?.parts_total ?? item.parts_total
-
-      let totalIncVat = parseFloat(String(srcTotalIncVat ?? 0)) || 0
-
-      // Calculate total from labour+parts when total_inc_vat is 0
-      if (totalIncVat === 0) {
-        const labourTotal = parseFloat(String(srcLabourTotal ?? 0)) || 0
-        const partsTotal = parseFloat(String(srcPartsTotal ?? 0)) || 0
-        if (labourTotal > 0 || partsTotal > 0) {
-          const subtotal = labourTotal + partsTotal
-          totalIncVat = subtotal + subtotal * VAT_RATE
-        }
-      }
+      const totalIncVat = calcItemTotal(item)
 
       // Derive RAG from check_results junction
       let derivedRagStatus: string | null = null
@@ -279,7 +297,20 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         }
       }
 
-      const isAuthorised = item.customer_approved === true
+      // Check authorization: direct check on item, or check children for groups
+      let isAuthorised = isItemAuthorised(item)
+      let authorizedValue = totalIncVat
+
+      // For group parents, derive authorization from children if parent itself isn't marked
+      if (item.is_group && !isAuthorised) {
+        const children = childrenByParent.get(item.id) || []
+        const authorizedChildren = children.filter(c => !c.deleted_at && isItemAuthorised(c))
+        if (authorizedChildren.length > 0) {
+          isAuthorised = true
+          // Sum authorized children's values instead of using parent's total
+          authorizedValue = authorizedChildren.reduce((sum, child) => sum + calcItemTotal(child), 0)
+        }
+      }
 
       if (!isDeleted) {
         totalIdentified += totalIncVat
@@ -298,17 +329,17 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       }
 
       if (isAuthorised) {
-        totalAuthorized += totalIncVat
-        authorizedValueByHc[item.health_check_id] = (authorizedValueByHc[item.health_check_id] || 0) + totalIncVat
+        totalAuthorized += authorizedValue
+        authorizedValueByHc[item.health_check_id] = (authorizedValueByHc[item.health_check_id] || 0) + authorizedValue
 
         if (derivedRagStatus === 'red') {
-          redAuthorizedValue += totalIncVat
+          redAuthorizedValue += authorizedValue
           redAuthorizedCount++
         } else if (derivedRagStatus === 'amber') {
-          amberAuthorizedValue += totalIncVat
+          amberAuthorizedValue += authorizedValue
           amberAuthorizedCount++
         } else if (derivedRagStatus === 'green') {
-          greenAuthorizedValue += totalIncVat
+          greenAuthorizedValue += authorizedValue
           greenAuthorizedCount++
         }
       } else if (!isDeleted && item.outcome_status === 'declined') {

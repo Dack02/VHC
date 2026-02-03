@@ -18,7 +18,7 @@ tyres.get('/tyre-manufacturers', authorize(['super_admin', 'org_admin', 'site_ad
       .from('tyre_manufacturers')
       .select('*')
       .eq('organization_id', auth.orgId)
-      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true })
 
     if (active_only === 'true') {
       query = query.eq('is_active', true)
@@ -165,7 +165,9 @@ tyres.get('/tyre-sizes', authorize(['super_admin', 'org_admin', 'site_admin', 's
       .from('tyre_sizes')
       .select('*')
       .eq('organization_id', auth.orgId)
-      .order('sort_order', { ascending: true })
+      .order('width', { ascending: true, nullsFirst: false })
+      .order('profile', { ascending: true, nullsFirst: false })
+      .order('rim_size', { ascending: true, nullsFirst: false })
 
     if (active_only === 'true') {
       query = query.eq('is_active', true)

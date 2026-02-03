@@ -2035,4 +2035,448 @@ reports.get('/compliance/audit-trail', authorize(['super_admin', 'org_admin', 's
   }
 })
 
+// ============================================================================
+// MRI PERFORMANCE
+// ============================================================================
+
+reports.get('/mri-performance', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id, group_by = 'day' } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    // Three parallel queries
+    const [scanResultsRes, repairItemsRes, healthChecksRes] = await Promise.all([
+      // 1. MRI scan results with item info and health check for date filtering
+      supabaseAdmin
+        .from('mri_scan_results')
+        .select(`
+          id,
+          rag_status,
+          not_applicable,
+          not_due_yet,
+          recommended_this_visit,
+          already_booked_this_visit,
+          repair_item_id,
+          completed_by,
+          mri_item:mri_items!inner(id, name, category, item_type),
+          health_check:health_checks!inner(
+            id,
+            checked_in_at,
+            checked_in_by,
+            organization_id,
+            site_id
+          )
+        `)
+        .eq('health_check.organization_id', auth.orgId)
+        .gte('health_check.checked_in_at', startDate)
+        .lte('health_check.checked_in_at', endDate)
+        .then(res => {
+          // Apply site filter in JS since nested filter on inner join can be unreliable
+          if (site_id && res.data) {
+            res.data = res.data.filter((r: any) => {
+              const hc = r.health_check as any
+              return hc?.site_id === site_id
+            })
+          }
+          return res
+        }),
+
+      // 2. MRI-sourced repair items
+      (() => {
+        let q = supabaseAdmin
+          .from('repair_items')
+          .select(`
+            id,
+            mri_result_id,
+            total_inc_vat,
+            outcome_status,
+            health_check:health_checks!inner(
+              id,
+              organization_id,
+              site_id,
+              checked_in_at
+            )
+          `)
+          .eq('source', 'mri_scan')
+          .eq('health_check.organization_id', auth.orgId)
+          .gte('health_check.checked_in_at', startDate)
+          .lte('health_check.checked_in_at', endDate)
+          .is('deleted_at', null)
+        return q.then(res => {
+          if (site_id && res.data) {
+            res.data = res.data.filter((r: any) => {
+              const hc = r.health_check as any
+              return hc?.site_id === site_id
+            })
+          }
+          return res
+        })
+      })(),
+
+      // 3. Health checks with MRI info for advisor-level tracking
+      (() => {
+        let q = supabaseAdmin
+          .from('health_checks')
+          .select(`
+            id,
+            checked_in_by,
+            checked_in_at,
+            mri_bypassed,
+            mri_items_total,
+            mri_items_completed,
+            advisor:users!health_checks_checked_in_by_fkey(id, first_name, last_name)
+          `)
+          .eq('organization_id', auth.orgId)
+          .not('checked_in_at', 'is', null)
+          .gte('checked_in_at', startDate)
+          .lte('checked_in_at', endDate)
+        if (site_id) q = q.eq('site_id', site_id)
+        return q
+      })(),
+    ])
+
+    if (scanResultsRes.error) {
+      console.error('MRI scan results query error:', scanResultsRes.error)
+      return c.json({ error: scanResultsRes.error.message }, 500)
+    }
+    if (repairItemsRes.error) {
+      console.error('MRI repair items query error:', repairItemsRes.error)
+      return c.json({ error: repairItemsRes.error.message }, 500)
+    }
+    if (healthChecksRes.error) {
+      console.error('MRI health checks query error:', healthChecksRes.error)
+      return c.json({ error: healthChecksRes.error.message }, 500)
+    }
+
+    const scanResults = scanResultsRes.data || []
+    const repairItems = repairItemsRes.data || []
+    const healthChecks = healthChecksRes.data || []
+
+    // Build a map of repair items by mri_result_id for quick lookup
+    const repairByMriResult: Record<string, { total_inc_vat: number; outcome_status: string }> = {}
+    for (const ri of repairItems) {
+      if (ri.mri_result_id) {
+        repairByMriResult[ri.mri_result_id] = {
+          total_inc_vat: Number(ri.total_inc_vat) || 0,
+          outcome_status: ri.outcome_status as string || 'incomplete',
+        }
+      }
+    }
+
+    // ---- Summary KPIs ----
+    const totalScans = new Set(scanResults.map(r => (r.health_check as any).id)).size
+    const totalItemsScanned = scanResults.length
+    let totalFlagged = 0
+    let totalRecommended = 0
+    let notApplicableCount = 0
+    let alreadyBookedCount = 0
+    let notDueYetCount = 0
+    let repairItemsCreated = 0
+    let revenueIdentified = 0
+    let revenueAuthorized = 0
+
+    // RAG distribution
+    const ragDist = { red: 0, amber: 0, green: 0, notDueYet: 0, notApplicable: 0 }
+
+    // Per-item breakdown
+    const itemMap: Record<string, {
+      mriItemId: string
+      name: string
+      category: string
+      itemType: string
+      timesScanned: number
+      flaggedRed: number
+      flaggedAmber: number
+      flaggedGreen: number
+      notApplicable: number
+      recommended: number
+      repairItems: number
+      revenueIdentified: number
+      revenueAuthorized: number
+    }> = {}
+
+    // Per-advisor metrics
+    const advisorMap: Record<string, {
+      id: string
+      name: string
+      scans: Set<string>
+      itemsScanned: number
+      flagged: number
+      naCount: number
+      revenueIdentified: number
+      revenueAuthorized: number
+    }> = {}
+
+    // Conversion funnel
+    const funnel = { scanned: 0, flagged: 0, repairCreated: 0, authorised: 0, declined: 0, deferred: 0 }
+
+    // Timeline data
+    const timelineMap: Record<string, { scans: Set<string>; flagged: number; revenueIdentified: number; revenueAuthorized: number }> = {}
+
+    // Top flagged items
+    const flaggedItemMap: Record<string, { name: string; flagCount: number; revenueIdentified: number }> = {}
+
+    for (const result of scanResults) {
+      const hc = result.health_check as unknown as { id: string; checked_in_at: string; checked_in_by: string; site_id: string }
+      const mriItem = result.mri_item as unknown as { id: string; name: string; category: string; item_type: string }
+      const isFlagged = result.rag_status === 'red' || result.rag_status === 'amber'
+      const hasRepair = !!result.repair_item_id
+      const repair = result.repair_item_id ? repairByMriResult[result.repair_item_id] : null
+      const repairValue = repair?.total_inc_vat || 0
+
+      // Summary
+      if (isFlagged) totalFlagged++
+      if (result.recommended_this_visit) totalRecommended++
+      if (result.not_applicable) notApplicableCount++
+      if (result.already_booked_this_visit) alreadyBookedCount++
+      if (result.not_due_yet) notDueYetCount++
+      if (hasRepair) {
+        repairItemsCreated++
+        revenueIdentified += repairValue
+        if (repair?.outcome_status === 'authorised') {
+          revenueAuthorized += repairValue
+        }
+      }
+
+      // RAG distribution
+      if (result.not_applicable) {
+        ragDist.notApplicable++
+      } else if (result.not_due_yet) {
+        ragDist.notDueYet++
+      } else if (result.rag_status === 'red') {
+        ragDist.red++
+      } else if (result.rag_status === 'amber') {
+        ragDist.amber++
+      } else if (result.rag_status === 'green') {
+        ragDist.green++
+      }
+
+      // Per-item breakdown
+      const itemKey = mriItem.id
+      if (!itemMap[itemKey]) {
+        itemMap[itemKey] = {
+          mriItemId: mriItem.id,
+          name: mriItem.name,
+          category: mriItem.category || '',
+          itemType: mriItem.item_type || '',
+          timesScanned: 0,
+          flaggedRed: 0,
+          flaggedAmber: 0,
+          flaggedGreen: 0,
+          notApplicable: 0,
+          recommended: 0,
+          repairItems: 0,
+          revenueIdentified: 0,
+          revenueAuthorized: 0,
+        }
+      }
+      itemMap[itemKey].timesScanned++
+      if (result.rag_status === 'red') itemMap[itemKey].flaggedRed++
+      if (result.rag_status === 'amber') itemMap[itemKey].flaggedAmber++
+      if (result.rag_status === 'green') itemMap[itemKey].flaggedGreen++
+      if (result.not_applicable) itemMap[itemKey].notApplicable++
+      if (result.recommended_this_visit) itemMap[itemKey].recommended++
+      if (hasRepair) {
+        itemMap[itemKey].repairItems++
+        itemMap[itemKey].revenueIdentified += repairValue
+        if (repair?.outcome_status === 'authorised') {
+          itemMap[itemKey].revenueAuthorized += repairValue
+        }
+      }
+
+      // Per-advisor metrics (keyed by checked_in_by)
+      if (hc.checked_in_by) {
+        if (!advisorMap[hc.checked_in_by]) {
+          advisorMap[hc.checked_in_by] = {
+            id: hc.checked_in_by,
+            name: '',
+            scans: new Set(),
+            itemsScanned: 0,
+            flagged: 0,
+            naCount: 0,
+            revenueIdentified: 0,
+            revenueAuthorized: 0,
+          }
+        }
+        advisorMap[hc.checked_in_by].scans.add(hc.id)
+        advisorMap[hc.checked_in_by].itemsScanned++
+        if (isFlagged) advisorMap[hc.checked_in_by].flagged++
+        if (result.not_applicable) advisorMap[hc.checked_in_by].naCount++
+        if (hasRepair) {
+          advisorMap[hc.checked_in_by].revenueIdentified += repairValue
+          if (repair?.outcome_status === 'authorised') {
+            advisorMap[hc.checked_in_by].revenueAuthorized += repairValue
+          }
+        }
+      }
+
+      // Conversion funnel
+      funnel.scanned++
+      if (isFlagged) {
+        funnel.flagged++
+        if (hasRepair) {
+          funnel.repairCreated++
+          if (repair?.outcome_status === 'authorised') funnel.authorised++
+          if (repair?.outcome_status === 'declined') funnel.declined++
+          if (repair?.outcome_status === 'deferred') funnel.deferred++
+        }
+      }
+
+      // Timeline
+      if (hc.checked_in_at) {
+        const date = new Date(hc.checked_in_at)
+        let periodKey: string
+        if (group_by === 'week') {
+          const weekStart = new Date(date)
+          const day = weekStart.getDay()
+          const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1)
+          weekStart.setDate(diff)
+          periodKey = weekStart.toISOString().split('T')[0]
+        } else if (group_by === 'month') {
+          periodKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+        } else {
+          periodKey = date.toISOString().split('T')[0]
+        }
+        if (!timelineMap[periodKey]) {
+          timelineMap[periodKey] = { scans: new Set(), flagged: 0, revenueIdentified: 0, revenueAuthorized: 0 }
+        }
+        timelineMap[periodKey].scans.add(hc.id)
+        if (isFlagged) timelineMap[periodKey].flagged++
+        if (hasRepair) {
+          timelineMap[periodKey].revenueIdentified += repairValue
+          if (repair?.outcome_status === 'authorised') {
+            timelineMap[periodKey].revenueAuthorized += repairValue
+          }
+        }
+      }
+
+      // Top flagged items
+      if (isFlagged) {
+        if (!flaggedItemMap[itemKey]) {
+          flaggedItemMap[itemKey] = { name: mriItem.name, flagCount: 0, revenueIdentified: 0 }
+        }
+        flaggedItemMap[itemKey].flagCount++
+        if (hasRepair) {
+          flaggedItemMap[itemKey].revenueIdentified += repairValue
+        }
+      }
+    }
+
+    // Enrich advisor metrics with names + bypass data from healthChecks query
+    const advisorBypassMap: Record<string, { bypassed: number; total: number }> = {}
+    for (const hc of healthChecks) {
+      if (!hc.checked_in_by) continue
+      const advisor = hc.advisor as unknown as { id: string; first_name: string; last_name: string } | null
+      if (advisorMap[hc.checked_in_by] && advisor) {
+        advisorMap[hc.checked_in_by].name = `${advisor.first_name} ${advisor.last_name}`
+      }
+      if (!advisorBypassMap[hc.checked_in_by]) {
+        advisorBypassMap[hc.checked_in_by] = { bypassed: 0, total: 0 }
+      }
+      advisorBypassMap[hc.checked_in_by].total++
+      if (hc.mri_bypassed) advisorBypassMap[hc.checked_in_by].bypassed++
+    }
+
+    const flagRate = totalItemsScanned > 0 ? Math.round((totalFlagged / totalItemsScanned) * 100 * 10) / 10 : 0
+    const conversionToRepairRate = totalFlagged > 0 ? Math.round((repairItemsCreated / totalFlagged) * 100 * 10) / 10 : 0
+    const captureRate = revenueIdentified > 0 ? Math.round((revenueAuthorized / revenueIdentified) * 100 * 10) / 10 : 0
+    const avgItemsPerScan = totalScans > 0 ? Math.round((totalItemsScanned / totalScans) * 10) / 10 : 0
+
+    // Build item breakdown
+    const itemBreakdown = Object.values(itemMap)
+      .map(i => ({
+        ...i,
+        flagRate: i.timesScanned > 0
+          ? Math.round(((i.flaggedRed + i.flaggedAmber) / i.timesScanned) * 100 * 10) / 10
+          : 0,
+        authRate: i.revenueIdentified > 0
+          ? Math.round((i.revenueAuthorized / i.revenueIdentified) * 100 * 10) / 10
+          : 0,
+        revenueIdentified: Math.round(i.revenueIdentified * 100) / 100,
+        revenueAuthorized: Math.round(i.revenueAuthorized * 100) / 100,
+      }))
+      .sort((a, b) => b.timesScanned - a.timesScanned)
+
+    // Build advisor metrics
+    const advisorMetrics = Object.values(advisorMap)
+      .map(a => {
+        const bypass = advisorBypassMap[a.id]
+        return {
+          id: a.id,
+          name: a.name || 'Unknown',
+          scans: a.scans.size,
+          itemsScanned: a.itemsScanned,
+          flagged: a.flagged,
+          flagRate: a.itemsScanned > 0 ? Math.round((a.flagged / a.itemsScanned) * 100 * 10) / 10 : 0,
+          naCount: a.naCount,
+          naRate: a.itemsScanned > 0 ? Math.round((a.naCount / a.itemsScanned) * 100 * 10) / 10 : 0,
+          revenueIdentified: Math.round(a.revenueIdentified * 100) / 100,
+          revenueAuthorized: Math.round(a.revenueAuthorized * 100) / 100,
+          bypassed: bypass?.bypassed || 0,
+          bypassRate: bypass && bypass.total > 0 ? Math.round((bypass.bypassed / bypass.total) * 100 * 10) / 10 : 0,
+        }
+      })
+      .sort((a, b) => b.scans - a.scans)
+
+    // Build timeline
+    const timeline = Object.entries(timelineMap)
+      .map(([period, d]) => {
+        const scanCount = d.scans.size
+        return {
+          period,
+          scans: scanCount,
+          flagged: d.flagged,
+          flagRate: scanCount > 0 ? Math.round((d.flagged / (scanCount * avgItemsPerScan || 1)) * 100 * 10) / 10 : 0,
+          revenueIdentified: Math.round(d.revenueIdentified * 100) / 100,
+          revenueAuthorized: Math.round(d.revenueAuthorized * 100) / 100,
+        }
+      })
+      .sort((a, b) => a.period.localeCompare(b.period))
+
+    // Top 10 flagged items
+    const topFlaggedItems = Object.values(flaggedItemMap)
+      .map(i => ({
+        name: i.name,
+        flagCount: i.flagCount,
+        revenueIdentified: Math.round(i.revenueIdentified * 100) / 100,
+      }))
+      .sort((a, b) => b.flagCount - a.flagCount)
+      .slice(0, 10)
+
+    return c.json({
+      period: { from: startDate, to: endDate },
+      summary: {
+        totalScans,
+        totalItemsScanned,
+        totalFlagged,
+        flagRate,
+        totalRecommended,
+        repairItemsCreated,
+        conversionToRepairRate,
+        revenueIdentified: Math.round(revenueIdentified * 100) / 100,
+        revenueAuthorized: Math.round(revenueAuthorized * 100) / 100,
+        captureRate,
+        avgItemsPerScan,
+        notApplicableCount,
+        alreadyBookedCount,
+        notDueYetCount,
+      },
+      ragDistribution: ragDist,
+      itemBreakdown,
+      advisorMetrics,
+      conversionFunnel: funnel,
+      timeline,
+      topFlaggedItems,
+    })
+  } catch (error) {
+    console.error('MRI performance report error:', error)
+    return c.json({ error: 'Failed to fetch MRI performance report' }, 500)
+  }
+})
+
 export default reports

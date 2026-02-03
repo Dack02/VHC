@@ -28,7 +28,7 @@ export async function applyServicePackageToRepairItem(
     .select(`
       id, name, organization_id,
       labour:service_package_labour(
-        labour_code_id, hours, discount_percent, is_vat_exempt, notes
+        labour_code_id, hours, discount_percent, is_vat_exempt, notes, rate
       ),
       parts:service_package_parts(
         part_number, description, quantity, supplier_id, supplier_name, cost_price, sell_price, notes
@@ -46,7 +46,7 @@ export async function applyServicePackageToRepairItem(
   let labourInserted = 0
   let partsInserted = 0
 
-  // Insert labour entries — look up current rates from labour_codes
+  // Insert labour entries — use stored rate from package, fall back to labour_codes rate
   if (pkg.labour && Array.isArray(pkg.labour) && pkg.labour.length > 0) {
     for (const l of pkg.labour as Array<Record<string, unknown>>) {
       const { data: labourCode } = await supabaseAdmin
@@ -58,7 +58,9 @@ export async function applyServicePackageToRepairItem(
 
       if (!labourCode) continue // skip if labour code no longer exists
 
-      const rate = parseFloat(labourCode.hourly_rate)
+      // Prefer stored package rate; fall back to current labour code rate for legacy packages
+      const storedRate = l.rate != null ? parseFloat(l.rate as string) : null
+      const rate = storedRate != null && !isNaN(storedRate) ? storedRate : parseFloat(labourCode.hourly_rate)
       const hours = isNaN(parseFloat(l.hours as string)) ? 1 : parseFloat(l.hours as string)
       const discountPct = parseFloat(l.discount_percent as string) || 0
       const subtotal = rate * hours

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
-import { api } from '../../lib/api'
+import { api, type PricingSettings } from '../../lib/api'
 
 interface LabourCode {
   id: string
@@ -311,6 +311,7 @@ export default function ServicePackages() {
   const [saving, setSaving] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [editingPackage, setEditingPackage] = useState<ServicePackage | null>(null)
+  const [pricingSettings, setPricingSettings] = useState<PricingSettings | null>(null)
 
   // Form state
   const [name, setName] = useState('')
@@ -327,6 +328,7 @@ export default function ServicePackages() {
       fetchLabourCodes()
       fetchSuppliers()
       fetchPartsCatalog()
+      fetchPricingSettings()
     }
   }, [organizationId])
 
@@ -382,6 +384,19 @@ export default function ServicePackages() {
       setCatalogEntries(data.parts || [])
     } catch {
       // Silently fail
+    }
+  }
+
+  const fetchPricingSettings = async () => {
+    if (!organizationId) return
+    try {
+      const data = await api<{ settings: PricingSettings }>(
+        `/api/v1/organizations/${organizationId}/pricing-settings`,
+        { token: session?.accessToken }
+      )
+      setPricingSettings(data.settings || null)
+    } catch {
+      // Silently fail - will use default 20% VAT
     }
   }
 
@@ -527,27 +542,51 @@ export default function ServicePackages() {
     setLabourEntries(labourEntries.map((l, idx) => idx === i ? { ...l, [field]: value } : l))
   }
 
+  const vatRate = pricingSettings?.vatRate ?? 20
+
   // Package total calculations
   const packageTotals = useMemo(() => {
-    const labourTotal = labourEntries.reduce((sum, l) => {
+    let labourTotal = 0
+    let labourVat = 0
+    labourEntries.forEach(l => {
       const rate = parseFloat(l.rate) || 0
       const hours = parseFloat(l.hours) || 0
       const discountPct = parseFloat(l.discountPercent) || 0
-      return sum + rate * hours * (1 - discountPct / 100)
-    }, 0)
+      const lineTotal = rate * hours * (1 - discountPct / 100)
+      labourTotal += lineTotal
+      if (!l.isVatExempt) labourVat += lineTotal * (vatRate / 100)
+    })
     const partsTotal = partsEntries.reduce((sum, p) => {
       const qty = parseFloat(p.quantity) || 0
       const sell = parseFloat(p.sellPrice) || 0
       return sum + qty * sell
     }, 0)
-    return { labourTotal, partsTotal, total: labourTotal + partsTotal }
-  }, [labourEntries, partsEntries])
+    const partsVat = partsTotal * (vatRate / 100)
+    const subtotal = labourTotal + partsTotal
+    const totalVat = labourVat + partsVat
+    const totalIncVat = subtotal + totalVat
+    return { labourTotal, partsTotal, subtotal, totalVat, totalIncVat }
+  }, [labourEntries, partsEntries, vatRate])
 
   // Parts entry helpers
   const addPart = () => setPartsEntries([...partsEntries, emptyPart()])
   const removePart = (i: number) => setPartsEntries(partsEntries.filter((_, idx) => idx !== i))
   const updatePartEntry = (i: number, updated: PackagePart) => {
     setPartsEntries(partsEntries.map((p, idx) => idx === i ? updated : p))
+  }
+
+  const calcPackageTotalIncVat = (pkg: ServicePackage) => {
+    let labourExVat = 0
+    let labourVat = 0
+    pkg.labour.forEach(l => {
+      const rate = l.rate ?? l.labourCode?.hourlyRate ?? 0
+      const lineTotal = rate * l.hours * (1 - l.discountPercent / 100)
+      labourExVat += lineTotal
+      if (!l.isVatExempt) labourVat += lineTotal * (vatRate / 100)
+    })
+    const partsExVat = pkg.parts.reduce((sum, p) => sum + p.quantity * p.sellPrice, 0)
+    const partsVat = partsExVat * (vatRate / 100)
+    return labourExVat + labourVat + partsExVat + partsVat
   }
 
   if (loading) {
@@ -587,13 +626,14 @@ export default function ServicePackages() {
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
               <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Labour</th>
               <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Parts</th>
+              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total Inc VAT</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {packages.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
                   No service packages found. Click "Add Package" to create one.
                 </td>
               </tr>
@@ -614,6 +654,13 @@ export default function ServicePackages() {
                     <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-600">
                       {pkg.parts.length > 0 ? (
                         <span>{pkg.parts.length} item{pkg.parts.length !== 1 ? 's' : ''}</span>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-gray-900">
+                      {pkg.labour.length > 0 || pkg.parts.length > 0 ? (
+                        <span>{'\u00A3'}{calcPackageTotalIncVat(pkg).toFixed(2)}</span>
                       ) : (
                         <span className="text-gray-400">-</span>
                       )}
@@ -841,9 +888,17 @@ export default function ServicePackages() {
                           <span>{'\u00A3'}{packageTotals.partsTotal.toFixed(2)}</span>
                         </div>
                       )}
+                      <div className="flex justify-between text-gray-600 pt-1 border-t border-gray-300">
+                        <span>Subtotal (ex VAT)</span>
+                        <span>{'\u00A3'}{packageTotals.subtotal.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-gray-600">
+                        <span>VAT ({vatRate}%)</span>
+                        <span>{'\u00A3'}{packageTotals.totalVat.toFixed(2)}</span>
+                      </div>
                       <div className="flex justify-between font-bold text-gray-900 pt-1 border-t border-gray-300">
-                        <span>Total</span>
-                        <span>{'\u00A3'}{packageTotals.total.toFixed(2)}</span>
+                        <span>Total Inc VAT</span>
+                        <span>{'\u00A3'}{packageTotals.totalIncVat.toFixed(2)}</span>
                       </div>
                     </div>
                   </div>

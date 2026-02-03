@@ -111,7 +111,7 @@ function getActivityStyle(type: string): { icon: React.ReactNode; bgColor: strin
           </svg>
         ),
         bgColor: 'bg-purple-500',
-        label: 'Signed Authorization'
+        label: 'Signed Authorisation'
       }
     default:
       return {

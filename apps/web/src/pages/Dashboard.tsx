@@ -971,6 +971,11 @@ export default function Dashboard() {
                         {item.bookedRepairs.length} pre-booked
                       </div>
                     )}
+                    {item.importedAt && (
+                      <div className="text-xs text-gray-400" title={`Imported: ${new Date(item.importedAt).toLocaleString()}`}>
+                        Imported {new Date(item.importedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    )}
                   </div>
                 </Link>
                 <div className="flex items-center gap-2 ml-4">

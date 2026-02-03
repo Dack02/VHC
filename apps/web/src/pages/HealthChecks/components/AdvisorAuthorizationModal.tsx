@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../../../contexts/AuthContext'
 import { api, NewRepairItem } from '../../../lib/api'
 
@@ -27,17 +27,76 @@ export function AdvisorAuthorizationModal({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [freshItems, setFreshItems] = useState<NewRepairItem[] | null>(null)
+  const [loadingItems, setLoadingItems] = useState(true)
+
+  // Fetch fresh repair items when modal opens to avoid stale data
+  useEffect(() => {
+    const fetchItems = async () => {
+      if (!session?.accessToken) {
+        setLoadingItems(false)
+        return
+      }
+      try {
+        const data = await api<{ repairItems: NewRepairItem[] }>(
+          `/api/v1/health-checks/${healthCheckId}/repair-items`,
+          { token: session.accessToken }
+        )
+        setFreshItems(data.repairItems || [])
+      } catch {
+        // Fall back to prop data on error
+        setFreshItems(null)
+      } finally {
+        setLoadingItems(false)
+      }
+    }
+    fetchItems()
+  }, [session?.accessToken, healthCheckId])
+
+  // Use fresh data if available, otherwise fall back to prop
+  const items = freshItems ?? repairItems
 
   // Only show top-level, non-deleted items
-  const visibleItems = repairItems.filter(
+  const visibleItems = items.filter(
     item => !item.parentRepairItemId && item.outcomeStatus !== 'deleted'
   )
 
-  const allDecided = visibleItems.every(item =>
-    item.outcomeStatus === 'authorised' ||
-    item.outcomeStatus === 'declined' ||
-    item.outcomeStatus === 'deferred'
-  )
+  // For groups, derive outcome from children since groups don't have outcome_status set directly
+  const isDecided = (status: string | null | undefined) =>
+    status === 'authorised' || status === 'declined' || status === 'deferred'
+
+  // Items with null outcomeStatus are green/OK items not in the authorization flow
+  const isInAuthFlow = (status: string | null | undefined) =>
+    status !== null && status !== undefined
+
+  const getEffectiveOutcome = (item: NewRepairItem): string | null => {
+    // If the item itself has an outcome, use it
+    if (isDecided(item.outcomeStatus)) return item.outcomeStatus!
+
+    // For groups, derive from children
+    if (item.isGroup && item.children && item.children.length > 0) {
+      const activeChildren = item.children.filter(c => isInAuthFlow(c.outcomeStatus))
+      if (activeChildren.length > 0 && activeChildren.every(c => isDecided(c.outcomeStatus))) {
+        if (activeChildren.some(c => c.outcomeStatus === 'authorised')) return 'authorised'
+        if (activeChildren.some(c => c.outcomeStatus === 'deferred')) return 'deferred'
+        return 'declined'
+      }
+      // Group with no children in auth flow = green group
+      if (activeChildren.length === 0) return null
+    }
+
+    return item.outcomeStatus || null
+  }
+
+  // Items need a decision only if they're in the auth flow (non-null outcomeStatus)
+  const itemsNeedingDecision = visibleItems.filter(item => {
+    const effective = getEffectiveOutcome(item)
+    // null = green/OK item, not in auth flow
+    if (effective === null) return false
+    return true
+  })
+
+  const allDecided = itemsNeedingDecision.every(item => isDecided(getEffectiveOutcome(item)))
 
   const handleSubmit = async () => {
     if (!session?.accessToken || !allDecided) return
@@ -75,6 +134,9 @@ export function AdvisorAuthorizationModal({
         return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Declined</span>
       case 'deferred':
         return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">Deferred</span>
+      case null:
+      case undefined:
+        return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-600">OK</span>
       default:
         return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">Not decided</span>
     }
@@ -85,7 +147,7 @@ export function AdvisorAuthorizationModal({
       <div className="bg-white w-full max-w-2xl shadow-xl rounded-xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-          <h2 className="text-lg font-semibold text-gray-900">Record Customer Authorization</h2>
+          <h2 className="text-lg font-semibold text-gray-900">Record Customer Authorisation</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -95,14 +157,19 @@ export function AdvisorAuthorizationModal({
 
         {/* Content - Scrollable */}
         <div className="p-6 overflow-y-auto flex-1">
-          {success ? (
+          {loadingItems ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+              <span className="ml-3 text-sm text-gray-500">Loading item decisions...</span>
+            </div>
+          ) : success ? (
             <div className="text-center py-8">
               <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <p className="text-lg font-medium text-gray-900">Authorization Recorded</p>
+              <p className="text-lg font-medium text-gray-900">Authorisation Recorded</p>
               <p className="text-gray-500 mt-1">The health check status has been updated.</p>
             </div>
           ) : (
@@ -121,14 +188,14 @@ export function AdvisorAuthorizationModal({
                   </svg>
                   <div>
                     <p className="text-sm font-medium">Not all items have been decided</p>
-                    <p className="text-sm mt-1">Close this modal and use the Authorise / Decline / Defer buttons on each repair item before recording authorization.</p>
+                    <p className="text-sm mt-1">Close this modal and use the Authorise / Decline / Defer buttons on each repair item before recording authorisation.</p>
                   </div>
                 </div>
               )}
 
-              {/* Authorization Method */}
+              {/* Authorisation Method */}
               <div className="mb-6">
-                <h3 className="text-sm font-medium text-gray-700 mb-3">How was this authorized?</h3>
+                <h3 className="text-sm font-medium text-gray-700 mb-3">How was this authorised?</h3>
                 <div className="flex gap-3">
                   {([
                     { value: 'in_person', label: 'In Person' },
@@ -164,7 +231,7 @@ export function AdvisorAuthorizationModal({
                   {visibleItems.map(item => (
                     <div key={item.id} className="px-4 py-3 flex items-center justify-between">
                       <span className="text-sm text-gray-900">{item.name}</span>
-                      {outcomeBadge(item.outcomeStatus)}
+                      {outcomeBadge(getEffectiveOutcome(item))}
                     </div>
                   ))}
                 </div>
@@ -186,7 +253,7 @@ export function AdvisorAuthorizationModal({
         </div>
 
         {/* Footer */}
-        {!success && (
+        {!success && !loadingItems && (
           <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3 flex-shrink-0">
             <button
               onClick={onClose}
@@ -199,7 +266,7 @@ export function AdvisorAuthorizationModal({
               disabled={saving || !allDecided}
               className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
             >
-              {saving ? 'Saving...' : 'Record Authorization'}
+              {saving ? 'Saving...' : 'Record Authorisation'}
             </button>
           </div>
         )}

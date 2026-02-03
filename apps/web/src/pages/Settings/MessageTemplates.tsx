@@ -62,7 +62,7 @@ const TEMPLATE_LABELS: Record<TemplateType, string> = {
   health_check_ready: 'Health Check Ready',
   reminder: 'Reminder',
   reminder_urgent: 'Urgent Reminder',
-  authorization_confirmation: 'Authorization Confirmation'
+  authorization_confirmation: 'Authorisation Confirmation'
 }
 
 const TEMPLATE_DESCRIPTIONS: Record<TemplateType, string> = {

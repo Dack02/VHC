@@ -151,7 +151,7 @@ export function PublishModal({ healthCheck, customer, onClose, onPublished, onRe
                     onClick={() => { onClose(); onRecordAuth() }}
                     className="mt-2 px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
                   >
-                    Record Authorization
+                    Record Authorisation
                   </button>
                 </div>
               )}

@@ -281,7 +281,7 @@ export default function Today() {
           <div className="text-xs text-gray-400 mt-1">{speed?.advisorSampleSize || 0} processed</div>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
-          <div className="text-sm text-gray-500 mb-1">Authorization Time</div>
+          <div className="text-sm text-gray-500 mb-1">Authorisation Time</div>
           <div className="text-3xl font-bold text-gray-900">{formatTime(speed?.avgAuthorizationMinutes ?? null)}</div>
           <div className="text-xs text-gray-400 mt-1">{speed?.authSampleSize || 0} responses</div>
         </div>

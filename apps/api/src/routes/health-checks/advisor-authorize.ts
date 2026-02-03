@@ -46,17 +46,44 @@ advisorAuthorize.post('/:id/advisor-authorize', authorize(['super_admin', 'org_a
       }, 400)
     }
 
-    // Validate all top-level, non-deleted repair items already have an outcome
+    // Fetch ALL non-deleted repair items (top-level + children) for this health check
     const { data: allItems } = await supabaseAdmin
       .from('repair_items')
-      .select('id, name, outcome_status')
+      .select('id, name, outcome_status, is_group, parent_repair_item_id')
       .eq('health_check_id', id)
       .eq('organization_id', auth.orgId)
       .is('deleted_at', null)
-      .is('parent_repair_item_id', null)
+
+    const topLevelItems = (allItems || []).filter(i => !i.parent_repair_item_id)
+    const childItems = (allItems || []).filter(i => i.parent_repair_item_id)
 
     const hasOutcome = (s: string | null) => ['authorised', 'declined', 'deferred'].includes(s || '')
-    const undecidedItems = (allItems || []).filter(i => !hasOutcome(i.outcome_status))
+    // Items with null outcome_status are green/OK items not in the authorization flow
+    const isInAuthFlow = (s: string | null) => s !== null
+
+    // For groups, derive outcome from children
+    const getEffectiveOutcome = (item: typeof topLevelItems[0]): string | null => {
+      if (hasOutcome(item.outcome_status)) return item.outcome_status
+      if (item.is_group) {
+        const children = childItems.filter(c => c.parent_repair_item_id === item.id)
+        const activeChildren = children.filter(c => isInAuthFlow(c.outcome_status))
+        if (activeChildren.length > 0 && activeChildren.every(c => hasOutcome(c.outcome_status))) {
+          if (activeChildren.some(c => c.outcome_status === 'authorised')) return 'authorised'
+          if (activeChildren.some(c => c.outcome_status === 'deferred')) return 'deferred'
+          return 'declined'
+        }
+        // Group with no children in auth flow = green group, skip it
+        if (activeChildren.length === 0) return null
+      }
+      return item.outcome_status
+    }
+
+    // Only require decisions for items actually in the authorization flow
+    const itemsInAuthFlow = topLevelItems.filter(i => {
+      const effective = getEffectiveOutcome(i)
+      return effective !== null
+    })
+    const undecidedItems = itemsInAuthFlow.filter(i => !hasOutcome(getEffectiveOutcome(i)))
 
     if (undecidedItems.length > 0) {
       return c.json({
@@ -77,9 +104,9 @@ advisorAuthorize.post('/:id/advisor-authorize', authorize(['super_admin', 'org_a
       .eq('id', id)
       .eq('organization_id', auth.orgId)
 
-    // Calculate new HC status from all item outcomes
-    const allOutcomes = (allItems || []).map(i => i.outcome_status)
-    const hasAuthorised = allOutcomes.some(s => s === 'authorised')
+    // Calculate new HC status from effective outcomes (only items in auth flow)
+    const effectiveOutcomes = itemsInAuthFlow.map(i => getEffectiveOutcome(i))
+    const hasAuthorised = effectiveOutcomes.some(s => s === 'authorised')
 
     let newStatus: string
     if (hasAuthorised) {

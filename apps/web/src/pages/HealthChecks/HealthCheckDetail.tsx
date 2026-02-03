@@ -596,7 +596,7 @@ export default function HealthCheckDetail() {
                 onClick={() => setShowAdvisorAuthModal(true)}
                 className="px-3 md:px-4 py-2 border border-indigo-300 text-indigo-700 text-sm font-medium hover:bg-indigo-50 rounded whitespace-nowrap"
               >
-                <span className="hidden md:inline">Record Authorization</span>
+                <span className="hidden md:inline">Record Authorisation</span>
                 <span className="md:hidden">Auth</span>
               </button>
             )}

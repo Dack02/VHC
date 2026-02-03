@@ -561,9 +561,9 @@ export default function CustomerPortalContent({
             <svg className="w-12 h-12 text-green-600 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <h3 className="text-lg font-bold text-green-800 mb-2">Authorization Complete</h3>
+            <h3 className="text-lg font-bold text-green-800 mb-2">Authorisation Complete</h3>
             <p className="text-green-700">
-              Thank you for authorizing the repairs. The dealership has been notified and will be in touch shortly.
+              Thank you for authorising the repairs. The dealership has been notified and will be in touch shortly.
             </p>
           </div>
         )}
@@ -758,7 +758,7 @@ function SignatureCapture({
               Saving...
             </>
           ) : (
-            'Confirm Authorization'
+            'Confirm Authorisation'
           )}
         </button>
       </div>

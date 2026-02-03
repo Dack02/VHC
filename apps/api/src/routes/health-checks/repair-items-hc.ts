@@ -303,6 +303,11 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
           createdBy: item.created_by,
           createdAt: item.created_at,
           updatedAt: item.updated_at,
+          // Outcome tracking fields
+          outcomeStatus: item.outcome_status || null,
+          outcomeSetBy: item.outcome_set_by || null,
+          outcomeSetAt: item.outcome_set_at || null,
+          outcomeSource: item.outcome_source || null,
           // Source tracking for MRI items
           source: item.source || null,
           // RAG status - from stored value (for MRI items) or will be derived from checkResults on frontend
@@ -388,6 +393,10 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
             quoteStatus: child.quote_status,
             noLabourRequired: child.no_labour_required || false,
             noPartsRequired: child.no_parts_required || false,
+            outcomeStatus: (child as Record<string, unknown>).outcome_status || null,
+            outcomeSetBy: (child as Record<string, unknown>).outcome_set_by || null,
+            outcomeSetAt: (child as Record<string, unknown>).outcome_set_at || null,
+            outcomeSource: (child as Record<string, unknown>).outcome_source || null,
             createdAt: child.created_at,
             updatedAt: child.updated_at,
             checkResults: (child.check_results as Array<Record<string, unknown>>)?.map((cr: Record<string, unknown>) => {

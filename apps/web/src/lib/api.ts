@@ -627,6 +627,10 @@ export interface RepairItemChild {
     notes: string | null
     templateItem?: { id: string; name: string }
   }>
+  outcomeStatus?: 'incomplete' | 'ready' | 'authorised' | 'deferred' | 'declined' | 'deleted' | null
+  outcomeSetBy?: string | null
+  outcomeSetAt?: string | null
+  outcomeSource?: 'manual' | 'online' | null
 }
 
 export interface NewRepairItem {

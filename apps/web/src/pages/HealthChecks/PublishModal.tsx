@@ -7,9 +7,10 @@ interface PublishModalProps {
   customer: Customer | undefined
   onClose: () => void
   onPublished: () => void
+  onRecordAuth?: () => void
 }
 
-export function PublishModal({ healthCheck, customer, onClose, onPublished }: PublishModalProps) {
+export function PublishModal({ healthCheck, customer, onClose, onPublished, onRecordAuth }: PublishModalProps) {
   const { session } = useAuth()
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -138,6 +139,22 @@ export function PublishModal({ healthCheck, customer, onClose, onPublished }: Pu
                   </label>
                 </div>
               </div>
+
+              {/* No contact info hint */}
+              {!customer?.email && !customer?.mobile && onRecordAuth && (
+                <div className="mb-6 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <p className="text-sm text-amber-800">
+                    This customer has no email or mobile number on file.
+                    You can record their authorization in person instead.
+                  </p>
+                  <button
+                    onClick={() => { onClose(); onRecordAuth() }}
+                    className="mt-2 px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                  >
+                    Record Authorization
+                  </button>
+                </div>
+              )}
 
               {/* Expiry */}
               <div className="mb-6">

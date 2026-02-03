@@ -21,6 +21,7 @@ import { AdvisorSelectionModal } from './components/AdvisorSelectionModal'
 import { WorkAuthoritySheetModal } from './components/WorkAuthoritySheetModal'
 import { CustomerEditModal } from './components/CustomerEditModal'
 import { HcDeletionModal } from './components/HcDeletionModal'
+import { AdvisorAuthorizationModal } from './components/AdvisorAuthorizationModal'
 import { InspectionTimer } from '../../components/InspectionTimer'
 
 // Hook for online/offline detection
@@ -126,6 +127,7 @@ export default function HealthCheckDetail() {
   const [showWorkAuthorityModal, setShowWorkAuthorityModal] = useState(false)
   const [showCustomerEditModal, setShowCustomerEditModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [showAdvisorAuthModal, setShowAdvisorAuthModal] = useState(false)
   const [generatingPDF, setGeneratingPDF] = useState(false)
   const [unreadSmsCount, setUnreadSmsCount] = useState(0)
   const [checkinEnabled, setCheckinEnabled] = useState(false)
@@ -501,6 +503,7 @@ export default function HealthCheckDetail() {
   const canResend = ['sent', 'expired', 'opened', 'customer_viewed', 'customer_approved', 'customer_partial', 'customer_declined'].includes(healthCheck.status)
   const isOrgAdminOrAbove = user && ['super_admin', 'org_admin'].includes(user.role)
   const canDelete = (isOrgAdminOrAbove || ['created', 'assigned', 'cancelled', 'awaiting_checkin'].includes(healthCheck.status)) && !healthCheck.deleted_at
+  const canRecordAuth = ['ready_to_send', 'sent', 'delivered', 'opened', 'partial_response', 'expired'].includes(healthCheck.status) && !healthCheck.closed_at
   const canClose = ['sent', 'expired', 'opened', 'partial_response', 'authorized', 'declined'].includes(healthCheck.status) && !healthCheck.closed_at
   const isClosed = !!healthCheck.closed_at
 
@@ -587,6 +590,15 @@ export default function HealthCheckDetail() {
                   <span className="md:hidden">{canResend ? 'Resend' : 'Send'}</span>
                 </button>
               </>
+            )}
+            {canRecordAuth && (
+              <button
+                onClick={() => setShowAdvisorAuthModal(true)}
+                className="px-3 md:px-4 py-2 border border-indigo-300 text-indigo-700 text-sm font-medium hover:bg-indigo-50 rounded whitespace-nowrap"
+              >
+                <span className="hidden md:inline">Record Authorization</span>
+                <span className="md:hidden">Auth</span>
+              </button>
             )}
             <button
               onClick={handlePrintPDF}
@@ -784,6 +796,7 @@ export default function HealthCheckDetail() {
           customer={customer}
           onClose={() => setShowPublishModal(false)}
           onPublished={fetchData}
+          onRecordAuth={() => setShowAdvisorAuthModal(true)}
         />
       )}
       {showPreviewModal && (
@@ -855,6 +868,18 @@ export default function HealthCheckDetail() {
               })
             }
             setShowCustomerEditModal(false)
+          }}
+        />
+      )}
+      {showAdvisorAuthModal && (
+        <AdvisorAuthorizationModal
+          healthCheckId={id!}
+          repairItems={newRepairItems}
+          healthCheckStatus={healthCheck.status}
+          onClose={() => setShowAdvisorAuthModal(false)}
+          onAuthorized={() => {
+            setShowAdvisorAuthModal(false)
+            fetchData()
           }}
         />
       )}

@@ -980,6 +980,11 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       amberCount: number
       greenCount: number
       revenueIdentified: number
+      totalInspectedItems: number
+      libraryOnlyCount: number
+      freeTextOnlyCount: number
+      bothCount: number
+      noReasonCount: number
     }> = {}
 
     // Time distribution buckets (minutes)
@@ -1001,6 +1006,11 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           amberCount: 0,
           greenCount: 0,
           revenueIdentified: 0,
+          totalInspectedItems: 0,
+          libraryOnlyCount: 0,
+          freeTextOnlyCount: 0,
+          bothCount: 0,
+          noReasonCount: 0,
         }
       }
 
@@ -1032,6 +1042,41 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       }
     }
 
+    // --- Reason library vs free text usage ---
+    const hcIds = (healthChecks || []).filter(hc => hc.technician_id).map(hc => hc.id)
+    // Map health_check_id → technician_id for attribution
+    const hcTechMap: Record<string, string> = {}
+    for (const hc of healthChecks || []) {
+      if (hc.technician_id) hcTechMap[hc.id] = hc.technician_id
+    }
+
+    if (hcIds.length > 0) {
+      // Fetch in batches of 500 to avoid query-string limits
+      const batchSize = 500
+      for (let i = 0; i < hcIds.length; i += batchSize) {
+        const batch = hcIds.slice(i, i + batchSize)
+        const { data: checkResults } = await supabaseAdmin
+          .from('check_results')
+          .select('id, health_check_id, checked_by, notes, custom_reason_text, rag_status, check_result_reasons(id)')
+          .in('health_check_id', batch)
+          .not('rag_status', 'is', null)
+
+        for (const cr of checkResults || []) {
+          const techId = (cr.checked_by as string | null) || hcTechMap[cr.health_check_id]
+          if (!techId || !techData[techId]) continue
+
+          const hasLibrary = Array.isArray(cr.check_result_reasons) && cr.check_result_reasons.length > 0
+          const hasFreeText = !!((cr.notes && (cr.notes as string).trim()) || (cr.custom_reason_text && (cr.custom_reason_text as string).trim()))
+
+          techData[techId].totalInspectedItems++
+          if (hasLibrary && hasFreeText) techData[techId].bothCount++
+          else if (hasLibrary) techData[techId].libraryOnlyCount++
+          else if (hasFreeText) techData[techId].freeTextOnlyCount++
+          else techData[techId].noReasonCount++
+        }
+      }
+    }
+
     // Build leaderboard
     const leaderboard = Object.values(techData)
       .map(t => ({
@@ -1047,6 +1092,17 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           ? Math.round(((t.redCount + t.amberCount) / t.assigned) * 10) / 10
           : 0,
         revenueIdentified: Math.round(t.revenueIdentified * 100) / 100,
+        totalInspectedItems: t.totalInspectedItems,
+        libraryOnlyCount: t.libraryOnlyCount,
+        freeTextOnlyCount: t.freeTextOnlyCount,
+        bothCount: t.bothCount,
+        noReasonCount: t.noReasonCount,
+        libraryUsageRate: (() => {
+          const denominator = t.libraryOnlyCount + t.freeTextOnlyCount + t.bothCount
+          return denominator > 0
+            ? Math.round(((t.libraryOnlyCount + t.bothCount) / denominator) * 1000) / 10
+            : 0
+        })(),
       }))
       .sort((a, b) => b.assigned - a.assigned)
 
@@ -1062,11 +1118,23 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       count,
     }))
 
+    // Reason usage chart data
+    const reasonUsageByTech = leaderboard
+      .filter(t => (t.libraryOnlyCount + t.freeTextOnlyCount + t.bothCount) > 0)
+      .map(t => ({
+        name: t.name,
+        libraryOnly: t.libraryOnlyCount,
+        freeTextOnly: t.freeTextOnlyCount,
+        both: t.bothCount,
+      }))
+      .sort((a, b) => (b.libraryOnly + b.both + b.freeTextOnly) - (a.libraryOnly + a.both + a.freeTextOnly))
+
     return c.json({
       period: { from: startDate, to: endDate },
       leaderboard,
       timeByTech,
       timeDistribution,
+      reasonUsageByTech,
     })
   } catch (error) {
     console.error('Technician report error:', error)

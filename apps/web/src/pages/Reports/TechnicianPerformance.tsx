@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import {
   BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
 import { useReportFilters } from './hooks/useReportFilters'
 import { useReportData } from './hooks/useReportData'
@@ -22,9 +22,16 @@ interface TechnicianData {
     avgInspectionTime: number
     avgRedAmber: number
     revenueIdentified: number
+    totalInspectedItems: number
+    libraryOnlyCount: number
+    freeTextOnlyCount: number
+    bothCount: number
+    noReasonCount: number
+    libraryUsageRate: number
   }>
   timeByTech: Array<{ name: string; avgTime: number }>
   timeDistribution: Array<{ bucket: string; count: number }>
+  reasonUsageByTech: Array<{ name: string; libraryOnly: number; freeTextOnly: number; both: number }>
 }
 
 export default function TechnicianPerformance() {
@@ -50,6 +57,13 @@ export default function TechnicianPerformance() {
     { key: 'avgTime', label: 'Avg Time', render: r => r.avgInspectionTime > 0 ? formatDuration(r.avgInspectionTime) : '-', align: 'right', sortable: true, sortValue: r => r.avgInspectionTime },
     { key: 'avgRedAmber', label: 'Avg Red/Amber', render: r => r.avgRedAmber.toFixed(1), align: 'right', sortable: true, sortValue: r => r.avgRedAmber },
     { key: 'revenue', label: 'Revenue Found', render: r => <span className="font-medium">{formatCurrency(r.revenueIdentified)}</span>, align: 'right', sortable: true, sortValue: r => r.revenueIdentified },
+    { key: 'libraryUsage', label: 'Library %', render: r => {
+      const rate = r.libraryUsageRate
+      const denominator = r.libraryOnlyCount + r.freeTextOnlyCount + r.bothCount
+      if (denominator === 0) return <span className="text-gray-400">-</span>
+      const color = rate >= 80 ? 'text-green-600' : rate >= 50 ? 'text-amber-600' : 'text-red-600'
+      return <span className={`font-medium ${color}`}>{formatPercent(rate)}</span>
+    }, align: 'right', sortable: true, sortValue: r => r.libraryUsageRate },
   ]
 
   return (
@@ -130,6 +144,24 @@ export default function TechnicianPerformance() {
               </ResponsiveContainer>
             </ChartCard>
           </div>
+
+          {/* Reason Library vs Free Text Chart */}
+          {data?.reasonUsageByTech && data.reasonUsageByTech.length > 0 && (
+            <ChartCard title="Reason Library vs Free Text Usage">
+              <ResponsiveContainer width="100%" height={Math.max(200, data.reasonUsageByTech.length * 40)}>
+                <BarChart data={data.reasonUsageByTech} layout="vertical" barCategoryGap="20%">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+                  <XAxis type="number" tick={{ fontSize: 12 }} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={120} />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="libraryOnly" name="Library Only" stackId="reasons" fill={CHART_COLORS.primary} radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="both" name="Library + Text" stackId="reasons" fill={CHART_COLORS.tertiary} />
+                  <Bar dataKey="freeTextOnly" name="Free Text Only" stackId="reasons" fill={CHART_COLORS.quaternary} radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          )}
         </>
       )}
     </div>

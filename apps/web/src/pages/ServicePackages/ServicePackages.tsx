@@ -459,7 +459,7 @@ export default function ServicePackages() {
         description: description.trim() || null,
         labour: labourEntries.map(l => ({
           labour_code_id: l.labourCodeId,
-          hours: parseFloat(l.hours) || 1,
+          hours: isNaN(parseFloat(l.hours)) ? 1 : parseFloat(l.hours),
           discount_percent: parseFloat(l.discountPercent) || 0,
           is_vat_exempt: l.isVatExempt,
           notes: l.notes.trim() || null
@@ -703,7 +703,7 @@ export default function ServicePackages() {
                               <input
                                 type="number"
                                 step="0.1"
-                                min="0.1"
+                                min="0"
                                 value={entry.hours}
                                 onChange={e => updateLabour(i, 'hours', e.target.value)}
                                 className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"

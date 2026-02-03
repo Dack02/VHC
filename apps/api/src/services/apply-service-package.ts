@@ -59,7 +59,7 @@ export async function applyServicePackageToRepairItem(
       if (!labourCode) continue // skip if labour code no longer exists
 
       const rate = parseFloat(labourCode.hourly_rate)
-      const hours = parseFloat(l.hours as string) || 1
+      const hours = isNaN(parseFloat(l.hours as string)) ? 1 : parseFloat(l.hours as string)
       const discountPct = parseFloat(l.discount_percent as string) || 0
       const subtotal = rate * hours
       const total = subtotal * (1 - discountPct / 100)

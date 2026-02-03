@@ -14,6 +14,7 @@ import deletionRouter from './deletion.js'
 import workAuthoritySheetRouter from './work-authority-sheet.js'
 import mriResultsRouter from './mri-results.js'
 import customerActivityRouter from './customer-activity.js'
+import advisorAuthorizeRouter from './advisor-authorize.js'
 
 const healthChecks = new Hono()
 
@@ -31,6 +32,7 @@ healthChecks.route('/', checkResultsRouter)         // /:id/results
 healthChecks.route('/', repairItemsHCRouter)        // /:id/repair-items/*
 healthChecks.route('/', mriResultsRouter)           // /:id/mri-results
 healthChecks.route('/', customerActivityRouter)     // /:id/customer-activity
+healthChecks.route('/', advisorAuthorizeRouter)     // /:id/advisor-authorize
 healthChecks.route('/', statusRouter)               // /:id/status, /:id/clock-in, /:id/clock-out, etc.
 healthChecks.route('/', sendCustomerRouter)         // /:id/publish
 healthChecks.route('/', deletionRouter)             // DELETE /:id, POST /:id/delete, /bulk-delete, /:id/restore

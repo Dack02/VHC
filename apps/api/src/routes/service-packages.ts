@@ -139,7 +139,7 @@ servicePackages.post('/', authorize(['super_admin', 'org_admin']), async (c) => 
       const labourRows = labour.map((l: Record<string, unknown>, i: number) => ({
         service_package_id: pkg.id,
         labour_code_id: l.labour_code_id,
-        hours: parseFloat(l.hours as string) || 1,
+        hours: isNaN(parseFloat(l.hours as string)) ? 1 : parseFloat(l.hours as string),
         discount_percent: parseFloat(l.discount_percent as string) || 0,
         is_vat_exempt: l.is_vat_exempt || false,
         notes: (l.notes as string)?.trim() || null,
@@ -241,7 +241,7 @@ servicePackages.patch('/:id', authorize(['super_admin', 'org_admin']), async (c)
         const labourRows = labour.map((l: Record<string, unknown>, i: number) => ({
           service_package_id: packageId,
           labour_code_id: l.labour_code_id,
-          hours: parseFloat(l.hours as string) || 1,
+          hours: isNaN(parseFloat(l.hours as string)) ? 1 : parseFloat(l.hours as string),
           discount_percent: parseFloat(l.discount_percent as string) || 0,
           is_vat_exempt: l.is_vat_exempt || false,
           notes: (l.notes as string)?.trim() || null,

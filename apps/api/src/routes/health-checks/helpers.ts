@@ -16,14 +16,14 @@ export const validTransitions: Record<string, string[]> = {
   awaiting_review: ['awaiting_pricing', 'ready_to_send'],
   awaiting_pricing: ['awaiting_parts', 'ready_to_send'],
   awaiting_parts: ['ready_to_send'],
-  ready_to_send: ['sent'],
-  sent: ['delivered', 'expired'],
-  delivered: ['opened', 'expired'],
+  ready_to_send: ['sent', 'authorized', 'partial_response', 'declined'],
+  sent: ['delivered', 'expired', 'authorized', 'partial_response', 'declined'],
+  delivered: ['opened', 'expired', 'authorized', 'partial_response', 'declined'],
   opened: ['partial_response', 'authorized', 'declined', 'expired'],
   partial_response: ['authorized', 'declined', 'expired'],
   authorized: ['completed'],
   declined: ['completed'],
-  expired: ['completed'],
+  expired: ['completed', 'authorized', 'partial_response', 'declined'],
   completed: [],
   cancelled: []
 }

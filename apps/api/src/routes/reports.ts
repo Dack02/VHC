@@ -60,14 +60,56 @@ reports.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
     if (technician_id) { dueDateQ = dueDateQ.eq('technician_id', technician_id); createdAtQ = createdAtQ.eq('technician_id', technician_id) }
     if (advisor_id) { dueDateQ = dueDateQ.eq('advisor_id', advisor_id); createdAtQ = createdAtQ.eq('advisor_id', advisor_id) }
 
-    const [ddRes, caRes] = await Promise.all([dueDateQ, createdAtQ])
+    // Query 3: Find HC IDs where items were authorized/actioned in the date range
+    // This captures sales from HCs booked on previous days
+    let outcomeDateQ = supabaseAdmin
+      .from('repair_items')
+      .select('health_check_id, health_check:health_checks!inner(organization_id, site_id)')
+      .gte('outcome_set_at', startDate)
+      .lt('outcome_set_at', endDate)
+      .eq('health_check.organization_id', auth.orgId)
+
+    if (site_id) outcomeDateQ = outcomeDateQ.eq('health_check.site_id', site_id)
+
+    const [ddRes, caRes, outcomeRes] = await Promise.all([dueDateQ, createdAtQ, outcomeDateQ])
     if (ddRes.error) return c.json({ error: ddRes.error.message }, 500)
     if (caRes.error) return c.json({ error: caRes.error.message }, 500)
+    if (outcomeRes.error) {
+      console.error('Financial report outcome_set_at query error:', outcomeRes.error)
+      // Non-fatal: continue without these HCs
+    }
 
     const hcMap = new Map<string, (typeof ddRes.data)[0]>()
     for (const hc of [...(ddRes.data || []), ...(caRes.data || [])]) {
       if (!hcMap.has(hc.id)) hcMap.set(hc.id, hc)
     }
+
+    // Fetch full HC data for any outcome-date HCs not already in the map
+    const outcomeHcIds = [...new Set(
+      (outcomeRes.data || []).map((r: { health_check_id: string }) => r.health_check_id)
+    )].filter(id => !hcMap.has(id))
+
+    if (outcomeHcIds.length > 0) {
+      let actionedQ = supabaseAdmin
+        .from('health_checks')
+        .select(mainSelect)
+        .in('id', outcomeHcIds)
+        .is('deleted_at', null)
+
+      if (technician_id) actionedQ = actionedQ.eq('technician_id', technician_id)
+      if (advisor_id) actionedQ = actionedQ.eq('advisor_id', advisor_id)
+
+      const { data: actionedHcs, error: actionedError } = await actionedQ
+
+      if (actionedError) {
+        console.error('Financial report actioned HC query error:', actionedError)
+      } else if (actionedHcs) {
+        for (const hc of actionedHcs) {
+          if (!hcMap.has(hc.id)) hcMap.set(hc.id, hc)
+        }
+      }
+    }
+
     const healthChecks = Array.from(hcMap.values())
 
     // Item-level auth helper
@@ -2772,7 +2814,20 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       createdAtQuery = createdAtQuery.eq('site_id', site_id)
     }
 
-    const [dueDateResult, createdAtResult] = await Promise.all([dueDateQuery, createdAtQuery])
+    // Query 3: Find HC IDs where items were authorized/actioned in the date range
+    // This captures sales from HCs booked on previous days
+    let outcomeDateQuery = supabaseAdmin
+      .from('repair_items')
+      .select('health_check_id, health_check:health_checks!inner(organization_id, site_id)')
+      .gte('outcome_set_at', startDate)
+      .lt('outcome_set_at', endDate)
+      .eq('health_check.organization_id', auth.orgId)
+
+    if (site_id) {
+      outcomeDateQuery = outcomeDateQuery.eq('health_check.site_id', site_id)
+    }
+
+    const [dueDateResult, createdAtResult, outcomeDateResult] = await Promise.all([dueDateQuery, createdAtQuery, outcomeDateQuery])
 
     if (dueDateResult.error) {
       console.error('Daily overview due_date query error:', dueDateResult.error)
@@ -2782,6 +2837,10 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       console.error('Daily overview created_at query error:', createdAtResult.error)
       return c.json({ error: createdAtResult.error.message }, 500)
     }
+    if (outcomeDateResult.error) {
+      console.error('Daily overview outcome_set_at query error:', outcomeDateResult.error)
+      // Non-fatal: continue without these HCs
+    }
 
     // Deduplicate by HC ID
     const healthCheckMap = new Map<string, (typeof dueDateResult.data)[0]>()
@@ -2790,6 +2849,30 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
         healthCheckMap.set(hc.id, hc)
       }
     }
+
+    // Fetch full HC data for any outcome-date HCs not already in the map
+    const outcomeDateHcIds = [...new Set(
+      (outcomeDateResult.data || []).map((r: { health_check_id: string }) => r.health_check_id)
+    )].filter(id => !healthCheckMap.has(id))
+
+    if (outcomeDateHcIds.length > 0) {
+      const { data: actionedHcs, error: actionedError } = await supabaseAdmin
+        .from('health_checks')
+        .select(hcSelect)
+        .in('id', outcomeDateHcIds)
+        .is('deleted_at', null)
+
+      if (actionedError) {
+        console.error('Daily overview actioned HC query error:', actionedError)
+      } else if (actionedHcs) {
+        for (const hc of actionedHcs) {
+          if (!healthCheckMap.has(hc.id)) {
+            healthCheckMap.set(hc.id, hc)
+          }
+        }
+      }
+    }
+
     const healthChecks = Array.from(healthCheckMap.values())
 
     // Helper to derive effective rag_status for a repair item

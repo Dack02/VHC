@@ -32,7 +32,7 @@ export async function calculateSiteMetrics(
     created_at,
     due_date,
     sent_at,
-    repair_items(id, rag_status, total_inc_vat, customer_approved, outcome_status, deleted_at, parent_repair_item_id)
+    repair_items(id, rag_status, total_inc_vat, customer_approved, outcome_status, deleted_at, parent_repair_item_id, source, is_group, check_results:repair_item_check_results(check_result:check_results(rag_status)))
   `
 
   // Dual-date query: HCs with due_date in range
@@ -56,16 +56,52 @@ export async function calculateSiteMetrics(
     .gte('created_at', startDate)
     .lte('created_at', endDate)
 
-  const [ddRes, caRes] = await Promise.all([dueDateQ, createdAtQ])
+  // Query 3: Find HC IDs where items were authorized/actioned in the date range
+  // This captures sales from HCs booked on previous days
+  const outcomeDateQ = supabaseAdmin
+    .from('repair_items')
+    .select('health_check_id, health_check:health_checks!inner(organization_id, site_id)')
+    .gte('outcome_set_at', startDate)
+    .lt('outcome_set_at', endDate)
+    .eq('health_check.organization_id', orgId)
+    .eq('health_check.site_id', siteId)
+
+  const [ddRes, caRes, outcomeRes] = await Promise.all([dueDateQ, createdAtQ, outcomeDateQ])
 
   if (ddRes.error) throw new Error(`Metrics query error: ${ddRes.error.message}`)
   if (caRes.error) throw new Error(`Metrics query error: ${caRes.error.message}`)
+  if (outcomeRes.error) {
+    console.error('SMS overview outcome_set_at query error:', outcomeRes.error)
+    // Non-fatal: continue without these HCs
+  }
 
   // Deduplicate
   const hcMap = new Map<string, (typeof ddRes.data)[0]>()
   for (const hc of [...(ddRes.data || []), ...(caRes.data || [])]) {
     if (!hcMap.has(hc.id)) hcMap.set(hc.id, hc)
   }
+
+  // Fetch full HC data for any outcome-date HCs not already in the map
+  const outcomeDateHcIds = [...new Set(
+    (outcomeRes.data || []).map((r: { health_check_id: string }) => r.health_check_id)
+  )].filter(id => !hcMap.has(id))
+
+  if (outcomeDateHcIds.length > 0) {
+    const { data: actionedHcs, error: actionedError } = await supabaseAdmin
+      .from('health_checks')
+      .select(mainSelect)
+      .in('id', outcomeDateHcIds)
+      .is('deleted_at', null)
+
+    if (actionedError) {
+      console.error('SMS overview actioned HC query error:', actionedError)
+    } else if (actionedHcs) {
+      for (const hc of actionedHcs) {
+        if (!hcMap.has(hc.id)) hcMap.set(hc.id, hc)
+      }
+    }
+  }
+
   const healthChecks = Array.from(hcMap.values())
 
   const totalHCs = healthChecks.length
@@ -84,24 +120,68 @@ export async function calculateSiteMetrics(
   // Sent to customer
   const sentToCustomer = healthChecks.filter(hc => hc.sent_at !== null).length
 
-  // Red identified £ - total value of all red repair items
+  // Helper to derive effective rag_status (matches reports.ts pattern)
+  function deriveRagStatus(item: any): 'red' | 'amber' | null {
+    if (item.source === 'mri_scan' && item.rag_status) {
+      return item.rag_status as 'red' | 'amber'
+    }
+    if (item.rag_status) {
+      return item.rag_status as 'red' | 'amber'
+    }
+    let derived: 'red' | 'amber' | null = null
+    for (const link of item.check_results || []) {
+      const cr = link?.check_result as { rag_status?: string } | null
+      if (cr?.rag_status === 'red') return 'red'
+      if (cr?.rag_status === 'amber') derived = 'amber'
+    }
+    return derived
+  }
+
+  const isItemAuthorised = (item: any) =>
+    item.customer_approved === true || item.outcome_status === 'authorised'
+
   let redIdentifiedValue = 0
-  // Red sold £ - total value of authorized red repair items
   let redSoldValue = 0
 
   for (const hc of healthChecks) {
     const items = hc.repair_items as any[] | null
     if (!items) continue
+
+    // Build children-by-parent map for group authorization
+    const childrenByParent = new Map<string, any[]>()
+    for (const item of items) {
+      if (item.parent_repair_item_id) {
+        const children = childrenByParent.get(item.parent_repair_item_id) || []
+        children.push(item)
+        childrenByParent.set(item.parent_repair_item_id, children)
+      }
+    }
+
     for (const item of items) {
       if (item.deleted_at) continue
       if (item.parent_repair_item_id) continue // skip children
-      if (item.rag_status !== 'red') continue
+
+      const rag = deriveRagStatus(item)
+      if (rag !== 'red') continue
 
       const value = Number(item.total_inc_vat) || 0
       redIdentifiedValue += value
 
-      if (item.customer_approved === true || item.outcome_status === 'authorised') {
-        redSoldValue += value
+      // Check authorization with group handling
+      let authorised = isItemAuthorised(item)
+      let authorisedValue = value
+
+      if (item.is_group && !authorised) {
+        const children = childrenByParent.get(item.id) || []
+        const authorisedChildren = children.filter((c: any) => !c.deleted_at && isItemAuthorised(c))
+        if (authorisedChildren.length > 0) {
+          authorised = true
+          authorisedValue = authorisedChildren.reduce((sum: number, child: any) => sum + (Number(child.total_inc_vat) || 0), 0)
+        }
+      }
+
+      if (authorised) {
+        redSoldValue += authorisedValue
       }
     }
   }

@@ -82,13 +82,30 @@ dashboard.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
       createdAtQuery = createdAtQuery.eq('advisor_id', advisor_id)
     }
 
-    const [dueDateResult, createdAtResult] = await Promise.all([dueDateQuery, createdAtQuery])
+    // Query 3: Find health check IDs where items were authorized/actioned in the date range
+    // This captures sales from health checks booked on previous days
+    let outcomeDateQuery = supabaseAdmin
+      .from('repair_items')
+      .select('health_check_id, health_check:health_checks!inner(organization_id, site_id)')
+      .gte('outcome_set_at', startDate)
+      .lt('outcome_set_at', endDate)
+      .eq('health_check.organization_id', auth.orgId)
+
+    if (site_id) {
+      outcomeDateQuery = outcomeDateQuery.eq('health_check.site_id', site_id)
+    }
+
+    const [dueDateResult, createdAtResult, outcomeDateResult] = await Promise.all([dueDateQuery, createdAtQuery, outcomeDateQuery])
 
     if (dueDateResult.error) {
       return c.json({ error: dueDateResult.error.message }, 500)
     }
     if (createdAtResult.error) {
       return c.json({ error: createdAtResult.error.message }, 500)
+    }
+    if (outcomeDateResult.error) {
+      console.error('Outcome date query error:', outcomeDateResult.error)
+      // Non-fatal: continue without these HCs
     }
 
     // Deduplicate by HC ID
@@ -98,6 +115,35 @@ dashboard.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
         healthCheckMap.set(hc.id, hc)
       }
     }
+
+    // Fetch health checks that had items actioned in the period but aren't already in the map
+    const outcomeDateHcIds = [...new Set(
+      (outcomeDateResult.data || []).map((r: { health_check_id: string }) => r.health_check_id)
+    )].filter(id => !healthCheckMap.has(id))
+
+    if (outcomeDateHcIds.length > 0) {
+      let actionedQuery = supabaseAdmin
+        .from('health_checks')
+        .select(hcSelect)
+        .in('id', outcomeDateHcIds)
+        .is('deleted_at', null)
+
+      if (technician_id) actionedQuery = actionedQuery.eq('technician_id', technician_id)
+      if (advisor_id) actionedQuery = actionedQuery.eq('advisor_id', advisor_id)
+
+      const { data: actionedHcs, error: actionedError } = await actionedQuery
+
+      if (actionedError) {
+        console.error('Actioned date range HC query error:', actionedError)
+      } else if (actionedHcs) {
+        for (const hc of actionedHcs) {
+          if (!healthCheckMap.has(hc.id)) {
+            healthCheckMap.set(hc.id, hc)
+          }
+        }
+      }
+    }
+
     const healthChecks = Array.from(healthCheckMap.values())
 
     // Calculate metrics

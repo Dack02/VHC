@@ -61,9 +61,23 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       createdAtQuery = createdAtQuery.eq('site_id', site_id)
     }
 
-    const [dueDateResult, createdAtResult] = await Promise.all([
+    // Query 3: Find health check IDs where items were authorized/actioned today
+    // This captures sales from health checks booked on previous days
+    let outcomeTodayQuery = supabaseAdmin
+      .from('repair_items')
+      .select('health_check_id, health_check:health_checks!inner(organization_id, site_id)')
+      .gte('outcome_set_at', todayISO)
+      .lt('outcome_set_at', tomorrowISO)
+      .eq('health_check.organization_id', auth.orgId)
+
+    if (site_id) {
+      outcomeTodayQuery = outcomeTodayQuery.eq('health_check.site_id', site_id)
+    }
+
+    const [dueDateResult, createdAtResult, outcomeTodayResult] = await Promise.all([
       dueDateQuery,
-      createdAtQuery
+      createdAtQuery,
+      outcomeTodayQuery
     ])
 
     if (dueDateResult.error) {
@@ -74,6 +88,10 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       console.error('Created at query error:', createdAtResult.error)
       return c.json({ error: createdAtResult.error.message }, 500)
     }
+    if (outcomeTodayResult.error) {
+      console.error('Outcome today query error:', outcomeTodayResult.error)
+      // Non-fatal: continue without these HCs
+    }
 
     // Deduplicate by ID
     const healthCheckMap = new Map<string, typeof dueDateResult.data[0]>()
@@ -82,6 +100,30 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         healthCheckMap.set(hc.id, hc)
       }
     }
+
+    // Fetch health checks that had items actioned today but aren't already in the map
+    const outcomeTodayHcIds = [...new Set(
+      (outcomeTodayResult.data || []).map((r: { health_check_id: string }) => r.health_check_id)
+    )].filter(id => !healthCheckMap.has(id))
+
+    if (outcomeTodayHcIds.length > 0) {
+      const { data: actionedTodayHcs, error: actionedError } = await supabaseAdmin
+        .from('health_checks')
+        .select(baseSelect)
+        .in('id', outcomeTodayHcIds)
+        .is('deleted_at', null)
+
+      if (actionedError) {
+        console.error('Actioned today HC query error:', actionedError)
+      } else if (actionedTodayHcs) {
+        for (const hc of actionedTodayHcs) {
+          if (!healthCheckMap.has(hc.id)) {
+            healthCheckMap.set(hc.id, hc)
+          }
+        }
+      }
+    }
+
     const healthChecks = Array.from(healthCheckMap.values())
     const healthCheckIds = healthChecks.map(hc => hc.id)
 

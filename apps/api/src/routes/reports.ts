@@ -1123,6 +1123,8 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       freeTextOnlyCount: number
       bothCount: number
       noReasonCount: number
+      totalPhotos: number
+      brakeDiscNotMeasured: number
     }> = {}
 
     // Time distribution buckets (minutes)
@@ -1149,6 +1151,8 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           freeTextOnlyCount: 0,
           bothCount: 0,
           noReasonCount: 0,
+          totalPhotos: 0,
+          brakeDiscNotMeasured: 0,
         }
       }
 
@@ -1196,13 +1200,17 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
         const batch = hcIds.slice(i, i + batchSize)
         const { data: checkResults } = await supabaseAdmin
           .from('check_results')
-          .select('id, health_check_id, checked_by, notes, custom_reason_text, rag_status, check_result_reasons(id)')
+          .select('id, health_check_id, checked_by, notes, custom_reason_text, rag_status, media, check_result_reasons(id)')
           .in('health_check_id', batch)
           .not('rag_status', 'is', null)
 
         for (const cr of checkResults || []) {
           const techId = (cr.checked_by as string | null) || hcTechMap[cr.health_check_id]
           if (!techId || !techData[techId]) continue
+
+          // Count photos
+          const mediaArr = cr.media as unknown[]
+          techData[techId].totalPhotos += Array.isArray(mediaArr) ? mediaArr.length : 0
 
           const hasLibrary = Array.isArray(cr.check_result_reasons) && cr.check_result_reasons.length > 0
           const hasFreeText = !!((cr.notes && (cr.notes as string).trim()) || (cr.custom_reason_text && (cr.custom_reason_text as string).trim()))
@@ -1212,6 +1220,39 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           else if (hasLibrary) techData[techId].libraryOnlyCount++
           else if (hasFreeText) techData[techId].freeTextOnlyCount++
           else techData[techId].noReasonCount++
+        }
+      }
+    }
+
+    // --- Brake disc "not measured" per technician ---
+    if (hcIds.length > 0) {
+      const brakeBatchSize = 500
+      for (let i = 0; i < hcIds.length; i += brakeBatchSize) {
+        const batch = hcIds.slice(i, i + brakeBatchSize)
+        const { data: brakeResults } = await supabaseAdmin
+          .from('check_results')
+          .select('health_check_id, value, template_item:template_items!inner(item_type)')
+          .in('health_check_id', batch)
+          .eq('template_item.item_type', 'brake_measurement')
+
+        for (const br of brakeResults || []) {
+          const techId = hcTechMap[br.health_check_id]
+          if (!techId || !techData[techId]) continue
+
+          const value = br.value as Record<string, unknown> | null
+          if (!value) continue
+
+          const nearside = value.nearside as Record<string, unknown> | undefined
+          const offside = value.offside as Record<string, unknown> | undefined
+
+          // Nearside: disc is null/undefined AND not marked unable to access
+          if (!nearside?.disc_unable_to_access && (nearside?.disc === null || nearside?.disc === undefined)) {
+            techData[techId].brakeDiscNotMeasured++
+          }
+          // Offside: disc is null/undefined AND not marked unable to access
+          if (!offside?.disc_unable_to_access && (offside?.disc === null || offside?.disc === undefined)) {
+            techData[techId].brakeDiscNotMeasured++
+          }
         }
       }
     }
@@ -1236,6 +1277,10 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
         freeTextOnlyCount: t.freeTextOnlyCount,
         bothCount: t.bothCount,
         noReasonCount: t.noReasonCount,
+        avgPhotos: t.completed > 0
+          ? Math.round((t.totalPhotos / t.completed) * 10) / 10
+          : 0,
+        brakeDiscNotMeasured: t.brakeDiscNotMeasured,
         libraryUsageRate: (() => {
           const denominator = t.libraryOnlyCount + t.freeTextOnlyCount + t.bothCount
           return denominator > 0
@@ -1243,7 +1288,7 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
             : 0
         })(),
       }))
-      .sort((a, b) => b.assigned - a.assigned)
+      .sort((a, b) => b.completed - a.completed)
 
     // Time by tech chart data
     const timeByTech = leaderboard

@@ -28,6 +28,8 @@ interface TechnicianData {
     bothCount: number
     noReasonCount: number
     libraryUsageRate: number
+    avgPhotos: number
+    brakeDiscNotMeasured: number
   }>
   timeByTech: Array<{ name: string; avgTime: number }>
   timeDistribution: Array<{ bucket: string; count: number }>
@@ -47,16 +49,16 @@ export default function TechnicianPerformance() {
 
   const leaderboardColumns: Column<TechnicianData['leaderboard'][0]>[] = [
     { key: 'name', label: 'Technician', render: r => <span className="font-medium text-gray-900">{r.name}</span>, sortable: true, sortValue: r => r.name },
-    { key: 'assigned', label: 'Assigned', render: r => r.assigned, align: 'right', sortable: true, sortValue: r => r.assigned },
     { key: 'completed', label: 'Completed', render: r => r.completed, align: 'right', sortable: true, sortValue: r => r.completed },
-    { key: 'completionRate', label: 'Completion %', render: r => (
-      <span className={r.completionRate >= 80 ? 'text-green-600' : r.completionRate >= 60 ? 'text-amber-600' : 'text-red-600'}>
-        {formatPercent(r.completionRate)}
-      </span>
-    ), align: 'right', sortable: true, sortValue: r => r.completionRate },
     { key: 'avgTime', label: 'Avg Time', render: r => r.avgInspectionTime > 0 ? formatDuration(r.avgInspectionTime) : '-', align: 'right', sortable: true, sortValue: r => r.avgInspectionTime },
     { key: 'avgRedAmber', label: 'Avg Red/Amber', render: r => r.avgRedAmber.toFixed(1), align: 'right', sortable: true, sortValue: r => r.avgRedAmber },
     { key: 'revenue', label: 'Revenue Found', render: r => <span className="font-medium">{formatCurrency(r.revenueIdentified)}</span>, align: 'right', sortable: true, sortValue: r => r.revenueIdentified },
+    { key: 'avgPhotos', label: 'Avg Photos', render: r => r.avgPhotos > 0 ? r.avgPhotos.toFixed(1) : <span className="text-gray-400">-</span>, align: 'right', sortable: true, sortValue: r => r.avgPhotos },
+    { key: 'brakeDiscNotMeasured', label: 'Discs Not Measured', render: r => {
+      const count = r.brakeDiscNotMeasured
+      const color = count === 0 ? 'text-green-600' : count <= 2 ? 'text-amber-600' : 'text-red-600'
+      return <span className={`font-medium ${color}`}>{count}</span>
+    }, align: 'right', sortable: true, sortValue: r => r.brakeDiscNotMeasured },
     { key: 'libraryUsage', label: 'Library %', render: r => {
       const rate = r.libraryUsageRate
       const denominator = r.libraryOnlyCount + r.freeTextOnlyCount + r.bothCount

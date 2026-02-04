@@ -1200,7 +1200,7 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
         const batch = hcIds.slice(i, i + batchSize)
         const { data: checkResults } = await supabaseAdmin
           .from('check_results')
-          .select('id, health_check_id, checked_by, notes, custom_reason_text, rag_status, media, check_result_reasons(id)')
+          .select('id, health_check_id, checked_by, notes, custom_reason_text, rag_status, result_media(id), check_result_reasons(id)')
           .in('health_check_id', batch)
           .not('rag_status', 'is', null)
 
@@ -1208,8 +1208,8 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           const techId = (cr.checked_by as string | null) || hcTechMap[cr.health_check_id]
           if (!techId || !techData[techId]) continue
 
-          // Count photos
-          const mediaArr = cr.media as unknown[]
+          // Count photos from result_media join
+          const mediaArr = (cr as Record<string, unknown>).result_media as unknown[]
           techData[techId].totalPhotos += Array.isArray(mediaArr) ? mediaArr.length : 0
 
           const hasLibrary = Array.isArray(cr.check_result_reasons) && cr.check_result_reasons.length > 0

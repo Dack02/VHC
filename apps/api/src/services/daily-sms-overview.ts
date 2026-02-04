@@ -11,9 +11,9 @@ export interface SiteMetrics {
   completedHCs: number
   completionRate: number
   sentToCustomer: number
-  totalRedIdentified: number
-  totalRedSold: number
-  redSoldPercent: number
+  redIdentifiedValue: number   // £ total of all red repair items
+  redSoldValue: number         // £ total of authorized red repair items
+  redSoldPercent: number       // redSoldValue / redIdentifiedValue * 100
 }
 
 /**
@@ -32,8 +32,7 @@ export async function calculateSiteMetrics(
     created_at,
     due_date,
     sent_at,
-    red_count,
-    repair_items(id, rag_status, customer_approved, outcome_status, deleted_at, parent_repair_item_id)
+    repair_items(id, rag_status, total_inc_vat, customer_approved, outcome_status, deleted_at, parent_repair_item_id)
   `
 
   // Dual-date query: HCs with due_date in range
@@ -85,11 +84,11 @@ export async function calculateSiteMetrics(
   // Sent to customer
   const sentToCustomer = healthChecks.filter(hc => hc.sent_at !== null).length
 
-  // Red items identified (sum of red_count from health_checks)
-  const totalRedIdentified = healthChecks.reduce((sum, hc) => sum + (hc.red_count || 0), 0)
+  // Red identified £ - total value of all red repair items
+  let redIdentifiedValue = 0
+  // Red sold £ - total value of authorized red repair items
+  let redSoldValue = 0
 
-  // Red items sold - count red repair_items that are authorized
-  let totalRedSold = 0
   for (const hc of healthChecks) {
     const items = hc.repair_items as any[] | null
     if (!items) continue
@@ -97,21 +96,25 @@ export async function calculateSiteMetrics(
       if (item.deleted_at) continue
       if (item.parent_repair_item_id) continue // skip children
       if (item.rag_status !== 'red') continue
+
+      const value = Number(item.total_inc_vat) || 0
+      redIdentifiedValue += value
+
       if (item.customer_approved === true || item.outcome_status === 'authorised') {
-        totalRedSold++
+        redSoldValue += value
       }
     }
   }
 
-  const redSoldPercent = totalRedIdentified > 0 ? Math.round((totalRedSold / totalRedIdentified) * 100) : 0
+  const redSoldPercent = redIdentifiedValue > 0 ? Math.round((redSoldValue / redIdentifiedValue) * 100) : 0
 
   return {
     totalHCs,
     completedHCs,
     completionRate,
     sentToCustomer,
-    totalRedIdentified,
-    totalRedSold,
+    redIdentifiedValue,
+    redSoldValue,
     redSoldPercent
   }
 }
@@ -130,19 +133,21 @@ export function composeSmsMessage(
   const yyyy = date.getFullYear()
   const dateStr = `${dd}/${mm}/${yyyy}`
 
+  const fmt = (v: number) => `£${v.toFixed(2)}`
+
   return [
     `VHC Daily - ${siteName}`,
     dateStr,
     '',
     'Today:',
     `Completion: ${todayMetrics.completionRate}% (${todayMetrics.completedHCs}/${todayMetrics.totalHCs})`,
-    `Sent: ${todayMetrics.sentToCustomer} | Red: ${todayMetrics.totalRedIdentified}`,
-    `Red Sold: ${todayMetrics.totalRedSold} (${todayMetrics.redSoldPercent}%)`,
+    `Sent: ${todayMetrics.sentToCustomer} | Red: ${fmt(todayMetrics.redIdentifiedValue)}`,
+    `Red Sold: ${fmt(todayMetrics.redSoldValue)} (${todayMetrics.redSoldPercent}%)`,
     '',
     'MTD:',
     `Completion: ${mtdMetrics.completionRate}% (${mtdMetrics.completedHCs}/${mtdMetrics.totalHCs})`,
-    `Sent: ${mtdMetrics.sentToCustomer} | Red: ${mtdMetrics.totalRedIdentified}`,
-    `Red Sold: ${mtdMetrics.totalRedSold} (${mtdMetrics.redSoldPercent}%)`
+    `Sent: ${mtdMetrics.sentToCustomer} | Red: ${fmt(mtdMetrics.redIdentifiedValue)}`,
+    `Red Sold: ${fmt(mtdMetrics.redSoldValue)} (${mtdMetrics.redSoldPercent}%)`
   ].join('\n')
 }
 

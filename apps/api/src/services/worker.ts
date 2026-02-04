@@ -17,7 +17,8 @@ import {
   type NotificationJob,
   type DmsImportJob,
   type DmsScheduledImportJob,
-  type DmsJob
+  type DmsJob,
+  type DailySmsOverviewJob
 } from './queue.js'
 import { runDmsImport } from '../jobs/dms-import.js'
 import { sendEmail, sendHealthCheckReadyEmail, sendReminderEmail, sendCustomerResponseNotification, sendWorkflowStatusNotification, RepairItemResponse } from './email.js'
@@ -1071,6 +1072,28 @@ async function sendWorkflowNotificationEmail(
 }
 
 /**
+ * Daily SMS Overview Worker
+ */
+const dailySmsOverviewWorker = new Worker(
+  QUEUE_NAMES.DAILY_SMS_OVERVIEW,
+  async (job: Job<DailySmsOverviewJob>) => {
+    console.log(`Processing daily SMS overview job ${job.id}: org ${job.data.organizationId}`)
+
+    const { sendDailySmsOverview } = await import('./daily-sms-overview.js')
+    await sendDailySmsOverview(job.data.organizationId)
+  },
+  { connection: redis as any }
+)
+
+dailySmsOverviewWorker.on('completed', (job) => {
+  console.log(`Daily SMS overview job ${job.id} completed`)
+})
+
+dailySmsOverviewWorker.on('failed', (job, err) => {
+  console.error(`Daily SMS overview job ${job?.id} failed:`, err.message)
+})
+
+/**
  * Graceful shutdown
  */
 async function shutdown() {
@@ -1080,7 +1103,8 @@ async function shutdown() {
     smsWorker.close(),
     notificationWorker.close(),
     reminderWorker.close(),
-    dmsImportWorker.close()
+    dmsImportWorker.close(),
+    dailySmsOverviewWorker.close()
   ])
   await redis.quit()
   process.exit(0)

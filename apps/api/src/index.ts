@@ -58,11 +58,12 @@ import servicePackages from './routes/service-packages.js'
 import twilioWebhookRoutes from './routes/webhooks/twilio.js'
 import smsConversations from './routes/sms-conversations.js'
 import messages from './routes/messages.js'
+import dailySmsOverview from './routes/daily-sms-overview.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
 import { checkRedisConnection, updateRedisStatus } from './services/queue.js'
-import { startScheduledCleanupTasks } from './services/scheduler.js'
+import { startScheduledCleanupTasks, initializeDailySmsOverviewSchedules } from './services/scheduler.js'
 
 const app = new Hono()
 
@@ -203,6 +204,9 @@ app.route('/api/v1/organizations/:orgId/parts-catalog', partsCatalog)
 // Service packages routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/service-packages', servicePackages)
 
+// Daily SMS overview routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/daily-sms-overview', dailySmsOverview)
+
 // Check-in settings and MRI items routes (nested under organizations)
 app.route('/api/v1/organizations', checkinSettings)
 
@@ -238,6 +242,10 @@ checkRedisConnection().then(async (connected) => {
     try {
       await import('./services/worker.js')
       logger.info('Queue workers started in-process')
+      // Initialize daily SMS overview schedules
+      initializeDailySmsOverviewSchedules().catch(err => {
+        logger.error('Failed to initialize daily SMS overview schedules', { error: String(err) })
+      })
     } catch (err) {
       logger.error('Failed to start queue workers', { error: String(err) })
     }

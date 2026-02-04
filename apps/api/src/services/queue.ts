@@ -65,7 +65,8 @@ export const QUEUE_NAMES = {
   REMINDERS: 'reminders',
   EMAILS: 'emails',
   SMS: 'sms',
-  DMS_IMPORT: 'dms-import'
+  DMS_IMPORT: 'dms-import',
+  DAILY_SMS_OVERVIEW: 'daily-sms-overview'
 } as const
 
 // Create queues
@@ -135,7 +136,25 @@ export const dmsImportQueue = new Queue(QUEUE_NAMES.DMS_IMPORT, {
   }
 })
 
+export const dailySmsOverviewQueue = new Queue(QUEUE_NAMES.DAILY_SMS_OVERVIEW, {
+  connection: redis as any,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: {
+      type: 'exponential',
+      delay: 5000
+    },
+    removeOnComplete: 50,
+    removeOnFail: 100
+  }
+})
+
 // Job types
+export interface DailySmsOverviewJob {
+  type: 'daily_sms_overview'
+  organizationId: string
+}
+
 export interface SendEmailJob {
   type: 'send_email'
   to: string
@@ -386,6 +405,54 @@ export async function cancelDmsSchedule(organizationId: string) {
   }
 }
 
+// Daily SMS Overview Queue Functions
+export async function queueDailySmsOverview(job: DailySmsOverviewJob) {
+  return dailySmsOverviewQueue.add('daily-sms-overview', job)
+}
+
+export async function scheduleDailySmsOverview(
+  organizationId: string,
+  hour: number,
+  minute: number
+) {
+  const jobId = `daily-sms-overview-${organizationId}`
+
+  // Remove existing repeatable job first
+  await cancelDailySmsOverviewSchedule(organizationId)
+
+  // Schedule Mon-Sat at the specified time, Europe/London timezone
+  return dailySmsOverviewQueue.add(
+    'daily-sms-overview',
+    {
+      type: 'daily_sms_overview',
+      organizationId
+    } as DailySmsOverviewJob,
+    {
+      jobId,
+      repeat: {
+        pattern: `${minute} ${hour} * * 1-6`,
+        tz: 'Europe/London'
+      }
+    }
+  )
+}
+
+export async function cancelDailySmsOverviewSchedule(organizationId: string) {
+  const jobId = `daily-sms-overview-${organizationId}`
+  const job = await dailySmsOverviewQueue.getJob(jobId)
+  if (job) {
+    await job.remove()
+  }
+
+  // Also remove any repeatable jobs for this org
+  const repeatableJobs = await dailySmsOverviewQueue.getRepeatableJobs()
+  for (const repeatJob of repeatableJobs) {
+    if (repeatJob.id === jobId || repeatJob.name === jobId) {
+      await dailySmsOverviewQueue.removeRepeatableByKey(repeatJob.key)
+    }
+  }
+}
+
 // Check Redis connection
 export async function checkRedisConnection(): Promise<boolean> {
   try {
@@ -404,5 +471,6 @@ export async function closeQueues() {
   await emailQueue.close()
   await smsQueue.close()
   await dmsImportQueue.close()
+  await dailySmsOverviewQueue.close()
   await redis.quit()
 }

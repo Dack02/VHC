@@ -2,7 +2,7 @@
  * Scheduler Service - Manages automatic reminder scheduling
  */
 
-import { scheduleReminder, cancelReminders, queueNotification } from './queue.js'
+import { scheduleReminder, cancelReminders, queueNotification, scheduleDailySmsOverview } from './queue.js'
 import { supabaseAdmin } from '../lib/supabase.js'
 
 // Default reminder schedule (can be overridden by organization settings)
@@ -248,4 +248,45 @@ export async function notifyTechnicianCompleted(
       technicianId
     }
   })
+}
+
+/**
+ * Initialize daily SMS overview schedules for all enabled organizations.
+ * Called once at server startup when Redis is available.
+ */
+export async function initializeDailySmsOverviewSchedules() {
+  try {
+    const { data: settings, error } = await supabaseAdmin
+      .from('organization_notification_settings')
+      .select('organization_id, daily_sms_overview_time')
+      .eq('daily_sms_overview_enabled', true)
+
+    if (error) {
+      console.error('[Daily SMS Overview Scheduler] Error querying settings:', error)
+      return
+    }
+
+    if (!settings || settings.length === 0) {
+      console.log('[Daily SMS Overview Scheduler] No organizations with daily SMS overview enabled')
+      return
+    }
+
+    for (const setting of settings) {
+      const timeStr = setting.daily_sms_overview_time || '18:00'
+      const [hourStr, minuteStr] = timeStr.split(':')
+      const hour = parseInt(hourStr, 10)
+      const minute = parseInt(minuteStr, 10)
+
+      try {
+        await scheduleDailySmsOverview(setting.organization_id, hour, minute)
+        console.log(`[Daily SMS Overview Scheduler] Scheduled for org ${setting.organization_id} at ${timeStr}`)
+      } catch (err) {
+        console.error(`[Daily SMS Overview Scheduler] Failed to schedule for org ${setting.organization_id}:`, err)
+      }
+    }
+
+    console.log(`[Daily SMS Overview Scheduler] Initialized ${settings.length} schedule(s)`)
+  } catch (error) {
+    console.error('[Daily SMS Overview Scheduler] Initialization error:', error)
+  }
 }

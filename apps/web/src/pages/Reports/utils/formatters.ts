@@ -25,6 +25,18 @@ export function formatDuration(minutes: number): string {
   return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`
 }
 
+export function formatDurationExtended(minutes: number): string {
+  if (minutes < 60) return `${Math.round(minutes)}m`
+  if (minutes < 1440) {
+    const hours = Math.floor(minutes / 60)
+    const mins = Math.round(minutes % 60)
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`
+  }
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.round((minutes % 1440) / 60)
+  return hours > 0 ? `${days}d ${hours}h` : `${days}d`
+}
+
 export function formatPercent(value: number, decimals = 1): string {
   return `${value.toFixed(decimals)}%`
 }

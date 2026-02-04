@@ -77,11 +77,13 @@ const QualityCompliance = lazy(() => import('./pages/Reports/QualityCompliance')
 const DeferredWork = lazy(() => import('./pages/Reports/DeferredWork'))
 const MriPerformance = lazy(() => import('./pages/Reports/MriPerformance'))
 const DailyOverview = lazy(() => import('./pages/Reports/DailyOverview'))
+const DeletedHealthChecks = lazy(() => import('./pages/Reports/DeletedHealthChecks'))
 const Today = lazy(() => import('./pages/Today'))
 const Upcoming = lazy(() => import('./pages/Upcoming'))
 const PartsCatalog = lazy(() => import('./pages/Parts/PartsCatalog'))
 const Messages = lazy(() => import('./pages/Messages/Messages'))
 const ServicePackages = lazy(() => import('./pages/ServicePackages/ServicePackages'))
+const DailySmsOverview = lazy(() => import('./pages/Settings/DailySmsOverview'))
 
 // Page loading fallback
 function PageLoader() {
@@ -147,6 +149,7 @@ function App() {
                         <Route path="/reports/deferred" element={<DeferredWork />} />
                         <Route path="/reports/mri-performance" element={<MriPerformance />} />
                         <Route path="/reports/daily-overview" element={<DailyOverview />} />
+                        <Route path="/reports/deleted-health-checks" element={<DeletedHealthChecks />} />
                         <Route path="/users" element={<Users />} />
                         <Route path="/health-checks" element={<HealthCheckList />} />
                         <Route path="/health-checks/new" element={<NewHealthCheck />} />
@@ -187,6 +190,7 @@ function App() {
                         <Route path="/settings/sites" element={<SiteManagement />} />
                         <Route path="/settings/workflow" element={<WorkflowSettings />} />
                         <Route path="/settings/mri-items" element={<MriItemsSettings />} />
+                        <Route path="/settings/daily-sms-overview" element={<DailySmsOverview />} />
                       </Route>
                     </Route>
 

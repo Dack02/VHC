@@ -3127,4 +3127,390 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
   }
 })
 
+// ─── Deleted Health Checks Report ─────────────────────────────────
+
+reports.get('/deleted-health-checks', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, group_by = 'day', site_id, deleted_by } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    // Calculate previous period for trends
+    const start = new Date(startDate)
+    const end = new Date(endDate)
+    const periodMs = end.getTime() - start.getTime()
+    const prevStart = new Date(start.getTime() - periodMs).toISOString()
+    const prevEnd = startDate
+
+    // Build deleted HCs query
+    let deletedQ = supabaseAdmin
+      .from('health_checks')
+      .select(`
+        id,
+        created_at,
+        deleted_at,
+        deletion_notes,
+        job_number,
+        hc_deletion_reason_id,
+        deletion_reason,
+        site_id,
+        deleter:users!health_checks_deleted_by_fkey(id, first_name, last_name, role),
+        hc_deletion_reasons(id, reason),
+        vehicle:vehicles(registration, make, model),
+        customer:customers(first_name, last_name),
+        site:sites(name)
+      `)
+      .eq('organization_id', auth.orgId)
+      .not('deleted_at', 'is', null)
+      .gte('deleted_at', startDate)
+      .lte('deleted_at', endDate)
+      .order('deleted_at', { ascending: false })
+
+    if (site_id) deletedQ = deletedQ.eq('site_id', site_id)
+    if (deleted_by) deletedQ = deletedQ.eq('deleted_by', deleted_by)
+
+    // Total HCs created in period (for deletion rate)
+    let totalCreatedQ = supabaseAdmin
+      .from('health_checks')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', auth.orgId)
+      .gte('created_at', startDate)
+      .lte('created_at', endDate)
+    if (site_id) totalCreatedQ = totalCreatedQ.eq('site_id', site_id)
+
+    // Previous period deleted count
+    let prevDeletedQ = supabaseAdmin
+      .from('health_checks')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', auth.orgId)
+      .not('deleted_at', 'is', null)
+      .gte('deleted_at', prevStart)
+      .lt('deleted_at', prevEnd)
+    if (site_id) prevDeletedQ = prevDeletedQ.eq('site_id', site_id)
+
+    // Previous period total created
+    let prevTotalQ = supabaseAdmin
+      .from('health_checks')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', auth.orgId)
+      .gte('created_at', prevStart)
+      .lt('created_at', prevEnd)
+    if (site_id) prevTotalQ = prevTotalQ.eq('site_id', site_id)
+
+    // Status history for deleted HCs (to find original status before deletion)
+    let statusHistQ = supabaseAdmin
+      .from('health_check_status_history')
+      .select('health_check_id, from_status, to_status, changed_at')
+      .in('to_status', ['deleted', 'cancelled'])
+      .gte('changed_at', startDate)
+      .lte('changed_at', endDate)
+
+    // Restorations count
+    let restoreQ = supabaseAdmin
+      .from('health_check_status_history')
+      .select('id', { count: 'exact', head: true })
+      .eq('from_status', 'deleted')
+      .gte('changed_at', startDate)
+      .lte('changed_at', endDate)
+
+    const [deletedRes, totalCreatedRes, prevDeletedRes, prevTotalRes, statusHistRes, restoreRes] = await Promise.all([
+      deletedQ,
+      totalCreatedQ,
+      prevDeletedQ,
+      prevTotalQ,
+      statusHistQ,
+      restoreQ,
+    ])
+
+    if (deletedRes.error) throw deletedRes.error
+
+    const deletedHCs = deletedRes.data || []
+    const totalCreated = totalCreatedRes.count || 0
+    const prevDeletedCount = prevDeletedRes.count || 0
+    const prevTotalCount = prevTotalRes.count || 0
+    const statusHistory = statusHistRes.data || []
+    const restorations = restoreRes.count || 0
+
+    // Build status history lookup (hc_id -> original status)
+    const originalStatusMap = new Map<string, string>()
+    for (const sh of statusHistory) {
+      if (sh.from_status && !originalStatusMap.has(sh.health_check_id)) {
+        originalStatusMap.set(sh.health_check_id, sh.from_status)
+      }
+    }
+
+    // KPIs
+    const totalDeleted = deletedHCs.length
+    const deletionRate = totalCreated > 0 ? (totalDeleted / totalCreated) * 100 : 0
+    const prevDeletionRate = prevTotalCount > 0 ? (prevDeletedCount / prevTotalCount) * 100 : 0
+
+    // Most common reason
+    const reasonCounts = new Map<string, number>()
+    for (const hc of deletedHCs) {
+      const reasonName = (hc.hc_deletion_reasons as any)?.reason || (hc as any).deletion_reason || 'Unknown'
+      reasonCounts.set(reasonName, (reasonCounts.get(reasonName) || 0) + 1)
+    }
+    let mostCommonReason: { name: string; count: number } | null = null
+    for (const [name, count] of reasonCounts) {
+      if (!mostCommonReason || count > mostCommonReason.count) {
+        mostCommonReason = { name, count }
+      }
+    }
+
+    // Avg time to deletion (from created_at to deleted_at)
+    let totalMinutes = 0
+    let countWithBoth = 0
+    for (const hc of deletedHCs) {
+      if (hc.created_at && hc.deleted_at) {
+        const diffMs = new Date(hc.deleted_at).getTime() - new Date(hc.created_at).getTime()
+        totalMinutes += diffMs / 60000
+        countWithBoth++
+      }
+    }
+    const avgTimeToDeletionMinutes = countWithBoth > 0 ? totalMinutes / countWithBoth : 0
+
+    // Deletions over time
+    const timeBuckets = new Map<string, number>()
+    for (const hc of deletedHCs) {
+      const d = new Date(hc.deleted_at!)
+      let key: string
+      if (group_by === 'week') {
+        const weekStart = new Date(d)
+        weekStart.setDate(d.getDate() - d.getDay())
+        key = weekStart.toISOString().split('T')[0]
+      } else if (group_by === 'month') {
+        key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+      } else {
+        key = d.toISOString().split('T')[0]
+      }
+      timeBuckets.set(key, (timeBuckets.get(key) || 0) + 1)
+    }
+    const deletionsOverTime = Array.from(timeBuckets.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([period, count]) => ({ period, count }))
+
+    // Reasons breakdown
+    const reasonsBreakdown = Array.from(reasonCounts.entries())
+      .map(([name, count]) => ({
+        name,
+        count,
+        percent: totalDeleted > 0 ? (count / totalDeleted) * 100 : 0,
+      }))
+      .sort((a, b) => b.count - a.count)
+
+    // Deletions by user
+    const userCounts = new Map<string, { id: string; name: string; count: number }>()
+    for (const hc of deletedHCs) {
+      const d = hc.deleter as any
+      if (d) {
+        const id = d.id
+        const name = `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Unknown'
+        const entry = userCounts.get(id) || { id, name, count: 0 }
+        entry.count++
+        userCounts.set(id, entry)
+      }
+    }
+    const deletionsByUser = Array.from(userCounts.values()).sort((a, b) => b.count - a.count)
+
+    // Deletions by original status
+    const statusCounts = new Map<string, number>()
+    for (const hc of deletedHCs) {
+      const origStatus = originalStatusMap.get(hc.id) || 'unknown'
+      statusCounts.set(origStatus, (statusCounts.get(origStatus) || 0) + 1)
+    }
+    const deletionsByOriginalStatus = Array.from(statusCounts.entries())
+      .map(([status, count]) => ({ status, count }))
+      .sort((a, b) => b.count - a.count)
+
+    // Deletions by site
+    const siteCounts = new Map<string, { name: string; count: number }>()
+    for (const hc of deletedHCs) {
+      const s = hc.site as any
+      const name = s?.name || 'Unknown'
+      const entry = siteCounts.get(name) || { name, count: 0 }
+      entry.count++
+      siteCounts.set(name, entry)
+    }
+    const deletionsBySite = Array.from(siteCounts.values()).sort((a, b) => b.count - a.count)
+
+    // User summary
+    const userSummaryMap = new Map<string, {
+      id: string; name: string; role: string; siteName: string;
+      totalDeleted: number; reasons: Map<string, number>; lastDeletionDate: string
+    }>()
+    for (const hc of deletedHCs) {
+      const d = hc.deleter as any
+      if (!d) continue
+      const id = d.id
+      if (!userSummaryMap.has(id)) {
+        userSummaryMap.set(id, {
+          id,
+          name: `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Unknown',
+          role: d.role || 'unknown',
+          siteName: (hc.site as any)?.name || '-',
+          totalDeleted: 0,
+          reasons: new Map(),
+          lastDeletionDate: hc.deleted_at!,
+        })
+      }
+      const entry = userSummaryMap.get(id)!
+      entry.totalDeleted++
+      const rn = (hc.hc_deletion_reasons as any)?.reason || (hc as any).deletion_reason || 'Unknown'
+      entry.reasons.set(rn, (entry.reasons.get(rn) || 0) + 1)
+      if (hc.deleted_at! > entry.lastDeletionDate) entry.lastDeletionDate = hc.deleted_at!
+    }
+    const userSummary = Array.from(userSummaryMap.values()).map(u => {
+      let topReason = 'N/A'
+      let topCount = 0
+      for (const [r, c] of u.reasons) {
+        if (c > topCount) { topReason = r; topCount = c }
+      }
+      return {
+        id: u.id,
+        name: u.name,
+        role: u.role,
+        siteName: u.siteName,
+        totalDeleted: u.totalDeleted,
+        topReason,
+        lastDeletionDate: u.lastDeletionDate,
+      }
+    }).sort((a, b) => b.totalDeleted - a.totalDeleted)
+
+    // Detailed log
+    const detailedLog = deletedHCs.map(hc => {
+      const d = hc.deleter as any
+      const v = hc.vehicle as any
+      const cu = hc.customer as any
+      return {
+        id: hc.id,
+        deletedAt: hc.deleted_at,
+        jobNumber: hc.job_number || '-',
+        vehicleReg: v?.registration || '-',
+        vehicleMakeModel: v ? `${v.make || ''} ${v.model || ''}`.trim() : '-',
+        customerName: cu ? `${cu.first_name || ''} ${cu.last_name || ''}`.trim() : '-',
+        deletedByName: d ? `${d.first_name || ''} ${d.last_name || ''}`.trim() : 'System',
+        reason: (hc.hc_deletion_reasons as any)?.reason || (hc as any).deletion_reason || '-',
+        notes: hc.deletion_notes || '-',
+        originalStatus: originalStatusMap.get(hc.id) || '-',
+      }
+    })
+
+    return c.json({
+      kpis: {
+        totalDeleted,
+        deletionRate: Math.round(deletionRate * 10) / 10,
+        mostCommonReason,
+        avgTimeToDeletionMinutes: Math.round(avgTimeToDeletionMinutes),
+        restorations,
+      },
+      previousPeriod: {
+        totalDeleted: prevDeletedCount,
+        deletionRate: Math.round(prevDeletionRate * 10) / 10,
+      },
+      deletionsOverTime,
+      reasonsBreakdown,
+      deletionsByUser,
+      deletionsByOriginalStatus,
+      deletionsBySite,
+      userSummary,
+      detailedLog,
+    })
+  } catch (error) {
+    console.error('Deleted health checks report error:', error)
+    return c.json({ error: 'Failed to generate deleted health checks report' }, 500)
+  }
+})
+
+// GET /api/v1/reports/deleted-health-checks/export
+reports.get('/deleted-health-checks/export', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id, deleted_by } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    let q = supabaseAdmin
+      .from('health_checks')
+      .select(`
+        id,
+        created_at,
+        deleted_at,
+        deletion_notes,
+        job_number,
+        deletion_reason,
+        deleter:users!health_checks_deleted_by_fkey(first_name, last_name),
+        hc_deletion_reasons(reason),
+        vehicle:vehicles(registration, make, model),
+        customer:customers(first_name, last_name)
+      `)
+      .eq('organization_id', auth.orgId)
+      .not('deleted_at', 'is', null)
+      .gte('deleted_at', startDate)
+      .lte('deleted_at', endDate)
+      .order('deleted_at', { ascending: false })
+
+    if (site_id) q = q.eq('site_id', site_id)
+    if (deleted_by) q = q.eq('deleted_by', deleted_by)
+
+    const [deletedRes, statusHistRes] = await Promise.all([
+      q,
+      supabaseAdmin
+        .from('health_check_status_history')
+        .select('health_check_id, from_status, to_status')
+        .in('to_status', ['deleted', 'cancelled'])
+        .gte('changed_at', startDate)
+        .lte('changed_at', endDate),
+    ])
+
+    if (deletedRes.error) throw deletedRes.error
+
+    const originalStatusMap = new Map<string, string>()
+    for (const sh of (statusHistRes.data || [])) {
+      if (sh.from_status && !originalStatusMap.has(sh.health_check_id)) {
+        originalStatusMap.set(sh.health_check_id, sh.from_status)
+      }
+    }
+
+    const csvHeaders = ['Date/Time', 'Job #', 'Vehicle Reg', 'Make/Model', 'Customer', 'Deleted By', 'Reason', 'Notes', 'Original Status']
+    const csvRows = (deletedRes.data || []).map(hc => {
+      const d = hc.deleter as any
+      const v = hc.vehicle as any
+      const cu = hc.customer as any
+      return [
+        hc.deleted_at ? new Date(hc.deleted_at).toLocaleString('en-GB') : '',
+        hc.job_number || '',
+        v?.registration || '',
+        v ? `${v.make || ''} ${v.model || ''}`.trim() : '',
+        cu ? `${cu.first_name || ''} ${cu.last_name || ''}`.trim() : '',
+        d ? `${d.first_name || ''} ${d.last_name || ''}`.trim() : 'System',
+        (hc.hc_deletion_reasons as any)?.reason || (hc as any).deletion_reason || '',
+        hc.deletion_notes || '',
+        originalStatusMap.get(hc.id) || '',
+      ]
+    })
+
+    const csvContent = [
+      csvHeaders.join(','),
+      ...csvRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    ].join('\n')
+
+    return new Response(csvContent, {
+      headers: {
+        'Content-Type': 'text/csv',
+        'Content-Disposition': `attachment; filename="deleted-health-checks-${new Date().toISOString().split('T')[0]}.csv"`
+      }
+    })
+  } catch (error) {
+    console.error('Deleted health checks export error:', error)
+    return c.json({ error: 'Failed to export deleted health checks' }, 500)
+  }
+})
+
 export default reports

@@ -7,13 +7,16 @@ import { supabaseAdmin } from '../lib/supabase.js'
 import { sendSms } from './sms.js'
 
 export interface SiteMetrics {
-  totalHCs: number
-  completedHCs: number
-  completionRate: number
-  sentToCustomer: number
-  redIdentifiedValue: number   // £ total of all red repair items
-  redSoldValue: number         // £ total of authorized red repair items
-  redSoldPercent: number       // redSoldValue / redIdentifiedValue * 100
+  jobsQty: number              // Total health checks
+  noShows: number              // HCs with status='no_show'
+  hcQty: number                // Completed HCs (tech_completed_at set)
+  conversionRate: number       // hcQty / (jobsQty - noShows) * 100
+  totalIdentified: number      // £ total of all repair items
+  totalSold: number            // £ total of authorized repair items
+  mriIdentified: number        // £ total of MRI scan items
+  mriSold: number              // £ total of authorized MRI items
+  redSoldPercent: number       // red sold / red identified * 100
+  amberSoldPercent: number     // amber sold / amber identified * 100
 }
 
 /**
@@ -31,7 +34,7 @@ export async function calculateSiteMetrics(
     status,
     created_at,
     due_date,
-    sent_at,
+    tech_completed_at,
     repair_items(id, rag_status, total_inc_vat, customer_approved, outcome_status, deleted_at, parent_repair_item_id, source, is_group, check_results:repair_item_check_results(check_result:check_results(rag_status)))
   `
 
@@ -104,21 +107,23 @@ export async function calculateSiteMetrics(
 
   const healthChecks = Array.from(hcMap.values())
 
-  const totalHCs = healthChecks.length
+  const jobsQty = healthChecks.length
 
-  // Completed = HCs past the inspection stage (sent, authorized, declined, closed, etc.)
-  const completionStatuses = [
-    'inspection_complete', 'pricing_pending', 'pricing_in_progress', 'pricing_complete',
-    'advisor_review', 'customer_pending', 'customer_viewed',
-    'customer_approved', 'customer_partial', 'customer_declined',
-    'work_authorized', 'work_in_progress', 'work_complete',
-    'closed', 'archived'
-  ]
-  const completedHCs = healthChecks.filter(hc => completionStatuses.includes(hc.status)).length
-  const completionRate = totalHCs > 0 ? Math.round((completedHCs / totalHCs) * 100) : 0
+  // No shows and completed HCs (using tech_completed_at, matching reports.ts)
+  let noShows = 0
+  let hcQty = 0
+  for (const hc of healthChecks) {
+    if (hc.status === 'no_show') {
+      noShows++
+    } else if (hc.tech_completed_at) {
+      hcQty++
+    }
+  }
 
-  // Sent to customer
-  const sentToCustomer = healthChecks.filter(hc => hc.sent_at !== null).length
+  const eligible = jobsQty - noShows
+  const conversionRate = eligible > 0
+    ? Math.round((hcQty / eligible) * 100 * 10) / 10
+    : 0
 
   // Helper to derive effective rag_status (matches reports.ts pattern)
   function deriveRagStatus(item: any): 'red' | 'amber' | null {
@@ -140,8 +145,14 @@ export async function calculateSiteMetrics(
   const isItemAuthorised = (item: any) =>
     item.customer_approved === true || item.outcome_status === 'authorised'
 
-  let redIdentifiedValue = 0
-  let redSoldValue = 0
+  let totalIdentified = 0
+  let totalSold = 0
+  let mriIdentified = 0
+  let mriSold = 0
+  let redIdentified = 0
+  let redSold = 0
+  let amberIdentified = 0
+  let amberSold = 0
 
   for (const hc of healthChecks) {
     const items = hc.repair_items as any[] | null
@@ -161,11 +172,11 @@ export async function calculateSiteMetrics(
       if (item.deleted_at) continue
       if (item.parent_repair_item_id) continue // skip children
 
-      const rag = deriveRagStatus(item)
-      if (rag !== 'red') continue
-
       const value = Number(item.total_inc_vat) || 0
-      redIdentifiedValue += value
+      const rag = deriveRagStatus(item)
+
+      // Totals (all items regardless of RAG)
+      totalIdentified += value
 
       // Check authorization with group handling
       let authorised = isItemAuthorised(item)
@@ -181,21 +192,50 @@ export async function calculateSiteMetrics(
       }
 
       if (authorised) {
-        redSoldValue += authorisedValue
+        totalSold += authorisedValue
+      }
+
+      // MRI tracking
+      if (item.source === 'mri_scan') {
+        mriIdentified += value
+        if (authorised) {
+          mriSold += authorisedValue
+        }
+      }
+
+      // RAG-specific tracking
+      if (rag === 'red') {
+        redIdentified += value
+        if (authorised) {
+          redSold += authorisedValue
+        }
+      } else if (rag === 'amber') {
+        amberIdentified += value
+        if (authorised) {
+          amberSold += authorisedValue
+        }
       }
     }
   }
 
-  const redSoldPercent = redIdentifiedValue > 0 ? Math.round((redSoldValue / redIdentifiedValue) * 100) : 0
+  const redSoldPercent = redIdentified > 0
+    ? Math.round((redSold / redIdentified) * 100 * 10) / 10
+    : 0
+  const amberSoldPercent = amberIdentified > 0
+    ? Math.round((amberSold / amberIdentified) * 100 * 10) / 10
+    : 0
 
   return {
-    totalHCs,
-    completedHCs,
-    completionRate,
-    sentToCustomer,
-    redIdentifiedValue,
-    redSoldValue,
-    redSoldPercent
+    jobsQty,
+    noShows,
+    hcQty,
+    conversionRate,
+    totalIdentified: Math.round(totalIdentified * 100) / 100,
+    totalSold: Math.round(totalSold * 100) / 100,
+    mriIdentified: Math.round(mriIdentified * 100) / 100,
+    mriSold: Math.round(mriSold * 100) / 100,
+    redSoldPercent,
+    amberSoldPercent
   }
 }
 
@@ -213,21 +253,25 @@ export function composeSmsMessage(
   const yyyy = date.getFullYear()
   const dateStr = `${dd}/${mm}/${yyyy}`
 
-  const fmt = (v: number) => `£${v.toFixed(2)}`
+  const fmt = (v: number) => `£${Math.round(v)}`
+
+  const metricsBlock = (m: SiteMetrics) => [
+    `Jobs: ${m.jobsQty} | NS: ${m.noShows} | HCs: ${m.hcQty}`,
+    `Conv: ${m.conversionRate}%`,
+    `Id: ${fmt(m.totalIdentified)} | Sold: ${fmt(m.totalSold)}`,
+    `MRI Id: ${fmt(m.mriIdentified)} | Sold: ${fmt(m.mriSold)}`,
+    `Red: ${m.redSoldPercent}% | Amber: ${m.amberSoldPercent}%`
+  ]
 
   return [
     `VHC Daily - ${siteName}`,
     dateStr,
     '',
     'Today:',
-    `Completion: ${todayMetrics.completionRate}% (${todayMetrics.completedHCs}/${todayMetrics.totalHCs})`,
-    `Sent: ${todayMetrics.sentToCustomer} | Red: ${fmt(todayMetrics.redIdentifiedValue)}`,
-    `Red Sold: ${fmt(todayMetrics.redSoldValue)} (${todayMetrics.redSoldPercent}%)`,
+    ...metricsBlock(todayMetrics),
     '',
     'MTD:',
-    `Completion: ${mtdMetrics.completionRate}% (${mtdMetrics.completedHCs}/${mtdMetrics.totalHCs})`,
-    `Sent: ${mtdMetrics.sentToCustomer} | Red: ${fmt(mtdMetrics.redIdentifiedValue)}`,
-    `Red Sold: ${fmt(mtdMetrics.redSoldValue)} (${mtdMetrics.redSoldPercent}%)`
+    ...metricsBlock(mtdMetrics)
   ].join('\n')
 }
 

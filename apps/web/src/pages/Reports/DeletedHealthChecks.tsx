@@ -54,7 +54,7 @@ export default function DeletedHealthChecks() {
 
   const {
     filters, queryString,
-    setDatePreset, setGroupBy, setSiteId,
+    setDatePreset, setCustomDateRange, setGroupBy, setSiteId,
   } = useReportFilters()
 
   // Build query string with deleted_by filter
@@ -141,7 +141,10 @@ export default function DeletedHealthChecks() {
           datePreset={filters.datePreset}
           groupBy={filters.groupBy}
           siteId={filters.siteId}
+          customDateFrom={filters.customFrom}
+          customDateTo={filters.customTo}
           onDatePresetChange={setDatePreset}
+          onCustomDateRange={setCustomDateRange}
           onGroupByChange={setGroupBy}
           onSiteChange={setSiteId}
         />

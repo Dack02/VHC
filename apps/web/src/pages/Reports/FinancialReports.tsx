@@ -45,7 +45,7 @@ interface FinancialData {
 export default function FinancialReports() {
   const {
     filters, queryString,
-    setDatePreset, setGroupBy, setSiteId,
+    setDatePreset, setCustomDateRange, setGroupBy, setSiteId,
   } = useReportFilters()
 
   const { data, loading, error } = useReportData<FinancialData>({
@@ -105,7 +105,10 @@ export default function FinancialReports() {
         datePreset={filters.datePreset}
         groupBy={filters.groupBy}
         siteId={filters.siteId}
+        customDateFrom={filters.customFrom}
+        customDateTo={filters.customTo}
         onDatePresetChange={setDatePreset}
+        onCustomDateRange={setCustomDateRange}
         onGroupByChange={setGroupBy}
         onSiteChange={setSiteId}
       />

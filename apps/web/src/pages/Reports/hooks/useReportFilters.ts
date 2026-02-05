@@ -12,6 +12,8 @@ export interface ReportFilters {
   siteId: string | null
   technicianId: string | null
   advisorId: string | null
+  customFrom: string
+  customTo: string
 }
 
 function getPresetDateRange(preset: DatePreset): { from: Date; to: Date } {
@@ -51,12 +53,14 @@ export function useReportFilters() {
     const technicianId = searchParams.get('technician_id') || null
     const advisorId = searchParams.get('advisor_id') || null
 
+    // Custom date values from URL (YYYY-MM-DD format)
+    const customFrom = searchParams.get('from') || ''
+    const customTo = searchParams.get('to') || ''
+
     let dateFrom: string
     let dateTo: string
 
     if (preset === 'custom') {
-      const customFrom = searchParams.get('from')
-      const customTo = searchParams.get('to')
       if (customFrom && customTo) {
         dateFrom = new Date(customFrom).toISOString()
         dateTo = new Date(customTo).toISOString()
@@ -71,7 +75,7 @@ export function useReportFilters() {
       dateTo = range.to.toISOString()
     }
 
-    return { datePreset: preset, dateFrom, dateTo, groupBy, siteId, technicianId, advisorId }
+    return { datePreset: preset, dateFrom, dateTo, groupBy, siteId, technicianId, advisorId, customFrom, customTo }
   }, [searchParams])
 
   const setFilter = useCallback((key: string, value: string | null) => {

@@ -61,7 +61,7 @@ const STATUS_LABELS: Record<string, string> = {
 export default function OperationalEfficiency() {
   const {
     filters, queryString,
-    setDatePreset, setGroupBy, setSiteId,
+    setDatePreset, setCustomDateRange, setGroupBy, setSiteId,
   } = useReportFilters()
 
   const { data, loading, error } = useReportData<OperationsData>({
@@ -129,7 +129,10 @@ export default function OperationalEfficiency() {
         datePreset={filters.datePreset}
         groupBy={filters.groupBy}
         siteId={filters.siteId}
+        customDateFrom={filters.customFrom}
+        customDateTo={filters.customTo}
         onDatePresetChange={setDatePreset}
+        onCustomDateRange={setCustomDateRange}
         onGroupByChange={setGroupBy}
         onSiteChange={setSiteId}
       />

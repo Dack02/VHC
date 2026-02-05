@@ -9,6 +9,8 @@ interface ReportFiltersBarProps {
   siteId: string | null
   technicianId?: string | null
   advisorId?: string | null
+  customDateFrom?: string
+  customDateTo?: string
   onDatePresetChange: (preset: DatePreset) => void
   onCustomDateRange?: (from: string, to: string) => void
   onGroupByChange: (groupBy: GroupBy) => void
@@ -28,7 +30,10 @@ export default function ReportFiltersBar({
   siteId,
   technicianId,
   advisorId,
+  customDateFrom,
+  customDateTo,
   onDatePresetChange,
+  onCustomDateRange,
   onGroupByChange,
   onSiteChange,
   onTechnicianChange,
@@ -40,6 +45,24 @@ export default function ReportFiltersBar({
   const [sites, setSites] = useState<SiteOption[]>([])
   const [technicians, setTechnicians] = useState<UserOption[]>([])
   const [advisors, setAdvisors] = useState<UserOption[]>([])
+
+  // Local state for pending custom date inputs
+  const [pendingFrom, setPendingFrom] = useState(customDateFrom || '')
+  const [pendingTo, setPendingTo] = useState(customDateTo || '')
+
+  // Sync local state with props when URL changes
+  useEffect(() => {
+    setPendingFrom(customDateFrom || '')
+    setPendingTo(customDateTo || '')
+  }, [customDateFrom, customDateTo])
+
+  // Clear pending dates when switching away from custom
+  useEffect(() => {
+    if (datePreset !== 'custom') {
+      setPendingFrom('')
+      setPendingTo('')
+    }
+  }, [datePreset])
 
   const hasMultiSite = user?.isOrgAdmin || user?.role === 'super_admin' || user?.role === 'org_admin'
 
@@ -79,7 +102,39 @@ export default function ReportFiltersBar({
         <option value="30d">Last 30 Days</option>
         <option value="90d">Last 90 Days</option>
         <option value="ytd">Year to Date</option>
+        <option value="custom">Custom Range</option>
       </select>
+
+      {/* Custom Date Range Inputs */}
+      {datePreset === 'custom' && onCustomDateRange && (
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={pendingFrom}
+            onChange={e => {
+              setPendingFrom(e.target.value)
+              if (e.target.value && pendingTo) {
+                onCustomDateRange(e.target.value, pendingTo)
+              }
+            }}
+            max={pendingTo || undefined}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+          <span className="text-gray-400 text-sm">to</span>
+          <input
+            type="date"
+            value={pendingTo}
+            onChange={e => {
+              setPendingTo(e.target.value)
+              if (pendingFrom && e.target.value) {
+                onCustomDateRange(pendingFrom, e.target.value)
+              }
+            }}
+            min={pendingFrom || undefined}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+      )}
 
       {/* Group By */}
       <div className="flex rounded-lg border border-gray-300 overflow-hidden">

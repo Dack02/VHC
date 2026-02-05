@@ -39,7 +39,7 @@ interface TechnicianData {
 export default function TechnicianPerformance() {
   const {
     filters, queryString,
-    setDatePreset, setGroupBy, setSiteId, setTechnicianId,
+    setDatePreset, setCustomDateRange, setGroupBy, setSiteId, setTechnicianId,
   } = useReportFilters()
 
   const { data, loading, error } = useReportData<TechnicianData>({
@@ -87,7 +87,10 @@ export default function TechnicianPerformance() {
         groupBy={filters.groupBy}
         siteId={filters.siteId}
         technicianId={filters.technicianId}
+        customDateFrom={filters.customFrom}
+        customDateTo={filters.customTo}
         onDatePresetChange={setDatePreset}
+        onCustomDateRange={setCustomDateRange}
         onGroupByChange={setGroupBy}
         onSiteChange={setSiteId}
         onTechnicianChange={setTechnicianId}

@@ -55,7 +55,7 @@ interface DeferredData {
 export default function DeferredWork() {
   const {
     filters, queryString,
-    setDatePreset, setGroupBy, setSiteId,
+    setDatePreset, setCustomDateRange, setGroupBy, setSiteId,
   } = useReportFilters()
 
   const { data, loading, error } = useReportData<DeferredData>({
@@ -118,7 +118,10 @@ export default function DeferredWork() {
         datePreset={filters.datePreset}
         groupBy={filters.groupBy}
         siteId={filters.siteId}
+        customDateFrom={filters.customFrom}
+        customDateTo={filters.customTo}
         onDatePresetChange={setDatePreset}
+        onCustomDateRange={setCustomDateRange}
         onGroupByChange={setGroupBy}
         onSiteChange={setSiteId}
       />

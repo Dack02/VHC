@@ -44,7 +44,7 @@ interface AdvisorData {
 export default function AdvisorPerformance() {
   const {
     filters, queryString,
-    setDatePreset, setGroupBy, setSiteId, setAdvisorId,
+    setDatePreset, setCustomDateRange, setGroupBy, setSiteId, setAdvisorId,
   } = useReportFilters()
 
   const { data, loading, error } = useReportData<AdvisorData>({
@@ -105,7 +105,10 @@ export default function AdvisorPerformance() {
         groupBy={filters.groupBy}
         siteId={filters.siteId}
         advisorId={filters.advisorId}
+        customDateFrom={filters.customFrom}
+        customDateTo={filters.customTo}
         onDatePresetChange={setDatePreset}
+        onCustomDateRange={setCustomDateRange}
         onGroupByChange={setGroupBy}
         onSiteChange={setSiteId}
         onAdvisorChange={setAdvisorId}

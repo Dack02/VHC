@@ -45,7 +45,7 @@ function conversionColor(rate: number): string {
 export default function DailyOverview() {
   const {
     filters, queryString,
-    setDatePreset, setGroupBy, setSiteId,
+    setDatePreset, setCustomDateRange, setGroupBy, setSiteId,
   } = useReportFilters()
 
   const { data, loading, error } = useReportData<DailyOverviewData>({
@@ -82,7 +82,10 @@ export default function DailyOverview() {
         datePreset={filters.datePreset}
         groupBy={filters.groupBy}
         siteId={filters.siteId}
+        customDateFrom={filters.customFrom}
+        customDateTo={filters.customTo}
         onDatePresetChange={setDatePreset}
+        onCustomDateRange={setCustomDateRange}
         onGroupByChange={setGroupBy}
         onSiteChange={setSiteId}
       />

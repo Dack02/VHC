@@ -33,7 +33,7 @@ interface CustomerData {
 export default function CustomerInsights() {
   const {
     filters, queryString,
-    setDatePreset, setGroupBy, setSiteId,
+    setDatePreset, setCustomDateRange, setGroupBy, setSiteId,
   } = useReportFilters()
 
   const { data, loading, error } = useReportData<CustomerData>({
@@ -67,7 +67,10 @@ export default function CustomerInsights() {
         datePreset={filters.datePreset}
         groupBy={filters.groupBy}
         siteId={filters.siteId}
+        customDateFrom={filters.customFrom}
+        customDateTo={filters.customTo}
         onDatePresetChange={setDatePreset}
+        onCustomDateRange={setCustomDateRange}
         onGroupByChange={setGroupBy}
         onSiteChange={setSiteId}
       />

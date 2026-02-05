@@ -75,7 +75,7 @@ export default function QualityCompliance() {
   const token = session?.accessToken
   const {
     filters, queryString,
-    setDatePreset, setGroupBy, setSiteId,
+    setDatePreset, setCustomDateRange, setGroupBy, setSiteId,
   } = useReportFilters()
 
   const [brakeDiscData, setBrakeDiscData] = useState<BrakeDiscData | null>(null)
@@ -189,7 +189,10 @@ export default function QualityCompliance() {
         datePreset={filters.datePreset}
         groupBy={filters.groupBy}
         siteId={filters.siteId}
+        customDateFrom={filters.customFrom}
+        customDateTo={filters.customTo}
         onDatePresetChange={setDatePreset}
+        onCustomDateRange={setCustomDateRange}
         onGroupByChange={setGroupBy}
         onSiteChange={setSiteId}
       />

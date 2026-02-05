@@ -235,8 +235,8 @@ export default function DashboardLayout() {
   )
 
   // Sidebar width classes
-  const sidebarWidth = isCollapsed ? 'w-16' : 'w-64'
-  const mainMargin = isCollapsed ? 'md:ml-16' : 'md:ml-64'
+  const sidebarWidth = isCollapsed ? 'w-16' : 'w-52'
+  const mainMargin = isCollapsed ? 'md:ml-16' : 'md:ml-52'
 
   return (
     <div className="min-h-screen bg-gray-50">

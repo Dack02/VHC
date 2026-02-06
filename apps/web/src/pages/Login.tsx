@@ -77,7 +77,7 @@ export default function Login() {
             <img
               src="/ollo-inspect-logo.png"
               alt="Ollo Inspect"
-              className="h-16 mx-auto mb-4"
+              className="h-24 mx-auto mb-4"
             />
             <p className="text-gray-600">Sign in to your account</p>
           </div>

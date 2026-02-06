@@ -2787,6 +2787,7 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       created_at,
       due_date,
       tech_completed_at,
+      sent_at,
       repair_items(id, total_inc_vat, outcome_status, customer_approved, source, deleted_at, rag_status, is_group, parent_repair_item_id, check_results:repair_item_check_results(check_result:check_results(rag_status)))
     `
 
@@ -2904,6 +2905,7 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       jobsQty: number
       noShows: number
       hcQty: number
+      sentQty: number
       totalIdentified: number
       totalSold: number
       mriIdentified: number
@@ -2926,6 +2928,7 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
           jobsQty: 0,
           noShows: 0,
           hcQty: 0,
+          sentQty: 0,
           totalIdentified: 0,
           totalSold: 0,
           mriIdentified: 0,
@@ -2944,6 +2947,9 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
         day.noShows++
       } else if (hc.tech_completed_at) {
         day.hcQty++
+        if (hc.sent_at) {
+          day.sentQty++
+        }
       }
 
       // Aggregate repair items with group handling
@@ -3012,12 +3018,16 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
         const conversionRate = eligible > 0
           ? Math.round((d.hcQty / eligible) * 100 * 10) / 10
           : 0
+        const sendRate = d.hcQty > 0
+          ? Math.round((d.sentQty / d.hcQty) * 100 * 10) / 10
+          : 0
         return {
           date,
           jobsQty: d.jobsQty,
           noShows: d.noShows,
           hcQty: d.hcQty,
           conversionRate,
+          sendRate,
           totalIdentified: Math.round(d.totalIdentified * 100) / 100,
           totalSold: Math.round(d.totalSold * 100) / 100,
           mriIdentified: Math.round(d.mriIdentified * 100) / 100,
@@ -3045,15 +3055,16 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       { jobsQty: 0, noShows: 0, hcQty: 0, totalIdentified: 0, totalSold: 0, mriIdentified: 0, mriSold: 0 }
     )
 
-    // Calculate RAG totals from raw dayMap (need un-rounded values for accurate %)
+    // Calculate RAG totals and sentQty from raw dayMap (need un-rounded values for accurate %)
     const ragTotals = Object.values(dayMap).reduce(
       (acc, d) => ({
         redIdentified: acc.redIdentified + d.redIdentified,
         redSold: acc.redSold + d.redSold,
         amberIdentified: acc.amberIdentified + d.amberIdentified,
         amberSold: acc.amberSold + d.amberSold,
+        sentQty: acc.sentQty + d.sentQty,
       }),
-      { redIdentified: 0, redSold: 0, amberIdentified: 0, amberSold: 0 }
+      { redIdentified: 0, redSold: 0, amberIdentified: 0, amberSold: 0, sentQty: 0 }
     )
 
     const totalEligible = totalsRaw.jobsQty - totalsRaw.noShows
@@ -3061,6 +3072,9 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       ...totalsRaw,
       conversionRate: totalEligible > 0
         ? Math.round((totalsRaw.hcQty / totalEligible) * 100 * 10) / 10
+        : 0,
+      sendRate: totalsRaw.hcQty > 0
+        ? Math.round((ragTotals.sentQty / totalsRaw.hcQty) * 100 * 10) / 10
         : 0,
       totalIdentified: Math.round(totalsRaw.totalIdentified * 100) / 100,
       totalSold: Math.round(totalsRaw.totalSold * 100) / 100,
@@ -3103,6 +3117,7 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
       created_at,
       due_date,
       tech_completed_at,
+      sent_at,
       repair_items(id, total_inc_vat, outcome_status, customer_approved, source, deleted_at, rag_status, is_group, parent_repair_item_id, check_results:repair_item_check_results(check_result:check_results(rag_status)))
     `
 
@@ -3161,7 +3176,7 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
 
     // Group by day (same logic as main endpoint)
     const dayMap: Record<string, {
-      jobsQty: number; noShows: number; hcQty: number
+      jobsQty: number; noShows: number; hcQty: number; sentQty: number
       totalIdentified: number; totalSold: number; mriIdentified: number; mriSold: number
       redIdentified: number; redSold: number; amberIdentified: number; amberSold: number
     }> = {}
@@ -3171,7 +3186,7 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
         ? hc.due_date.split('T')[0]
         : new Date(hc.created_at).toISOString().split('T')[0]
       if (!dayMap[dateKey]) {
-        dayMap[dateKey] = { jobsQty: 0, noShows: 0, hcQty: 0, totalIdentified: 0, totalSold: 0, mriIdentified: 0, mriSold: 0, redIdentified: 0, redSold: 0, amberIdentified: 0, amberSold: 0 }
+        dayMap[dateKey] = { jobsQty: 0, noShows: 0, hcQty: 0, sentQty: 0, totalIdentified: 0, totalSold: 0, mriIdentified: 0, mriSold: 0, redIdentified: 0, redSold: 0, amberIdentified: 0, amberSold: 0 }
       }
       const day = dayMap[dateKey]
       day.jobsQty++
@@ -3179,6 +3194,9 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
         day.noShows++
       } else if (hc.tech_completed_at) {
         day.hcQty++
+        if (hc.sent_at) {
+          day.sentQty++
+        }
       }
       const items = hc.repair_items as any[] | null
 
@@ -3227,15 +3245,16 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
       }
     }
 
-    const csvHeaders = ['Date', 'Jobs', 'No Shows', 'HCs', 'Conversion %', 'Identified', 'Sold', 'MRI Identified', 'MRI Sold', '% Red Sold', '% Amber Sold']
+    const csvHeaders = ['Date', 'Jobs', 'No Shows', 'HCs', 'Conversion %', 'Send %', 'Identified', 'Sold', 'MRI Identified', 'MRI Sold', '% Red Sold', '% Amber Sold']
     const csvRows = Object.entries(dayMap)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, d]) => {
         const eligible = d.jobsQty - d.noShows
         const conv = eligible > 0 ? ((d.hcQty / eligible) * 100).toFixed(1) : '0.0'
+        const sendPct = d.hcQty > 0 ? ((d.sentQty / d.hcQty) * 100).toFixed(1) : '0.0'
         const redPct = d.redIdentified > 0 ? ((d.redSold / d.redIdentified) * 100).toFixed(1) : '0.0'
         const amberPct = d.amberIdentified > 0 ? ((d.amberSold / d.amberIdentified) * 100).toFixed(1) : '0.0'
-        return [date, d.jobsQty, d.noShows, d.hcQty, `${conv}%`, d.totalIdentified.toFixed(2), d.totalSold.toFixed(2), d.mriIdentified.toFixed(2), d.mriSold.toFixed(2), `${redPct}%`, `${amberPct}%`]
+        return [date, d.jobsQty, d.noShows, d.hcQty, `${conv}%`, `${sendPct}%`, d.totalIdentified.toFixed(2), d.totalSold.toFixed(2), d.mriIdentified.toFixed(2), d.mriSold.toFixed(2), `${redPct}%`, `${amberPct}%`]
       })
 
     const csvContent = [

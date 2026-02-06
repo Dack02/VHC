@@ -11,6 +11,7 @@ interface DailyOverviewDay {
   noShows: number
   hcQty: number
   conversionRate: number
+  sendRate: number
   totalIdentified: number
   totalSold: number
   mriIdentified: number
@@ -27,6 +28,7 @@ interface DailyOverviewData {
     noShows: number
     hcQty: number
     conversionRate: number
+    sendRate: number
     totalIdentified: number
     totalSold: number
     mriIdentified: number
@@ -109,6 +111,7 @@ export default function DailyOverview() {
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">No Show</th>
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">HCs</th>
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">Conv%</th>
+                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">Send%</th>
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">Identified</th>
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">Sold</th>
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">MRI Id.</th>
@@ -132,6 +135,9 @@ export default function DailyOverview() {
                     <td className={`px-3 py-2.5 text-right font-medium ${conversionColor(day.conversionRate)}`}>
                       {formatPercent(day.conversionRate)}
                     </td>
+                    <td className={`px-3 py-2.5 text-right font-medium ${day.sendRate >= 80 ? 'text-green-600' : day.sendRate >= 60 ? 'text-amber-600' : 'text-blue-600'}`}>
+                      {formatPercent(day.sendRate)}
+                    </td>
                     <td className="px-3 py-2.5 text-right text-gray-700">{formatCurrency(day.totalIdentified)}</td>
                     <td className="px-3 py-2.5 text-right text-green-600 font-medium">{formatCurrency(day.totalSold)}</td>
                     <td className="px-3 py-2.5 text-right text-gray-700">{formatCurrency(day.mriIdentified)}</td>
@@ -146,7 +152,7 @@ export default function DailyOverview() {
                 ))}
                 {(!data?.days || data.days.length === 0) && (
                   <tr>
-                    <td colSpan={11} className="px-3 py-8 text-center text-gray-400">
+                    <td colSpan={12} className="px-3 py-8 text-center text-gray-400">
                       No data for the selected period
                     </td>
                   </tr>
@@ -161,6 +167,9 @@ export default function DailyOverview() {
                     <td className="px-3 py-3 text-right text-gray-900">{formatNumber(t.hcQty)}</td>
                     <td className={`px-3 py-3 text-right ${conversionColor(t.conversionRate)}`}>
                       {formatPercent(t.conversionRate)}
+                    </td>
+                    <td className={`px-3 py-3 text-right ${t.sendRate >= 80 ? 'text-green-600' : t.sendRate >= 60 ? 'text-amber-600' : 'text-blue-600'}`}>
+                      {formatPercent(t.sendRate)}
                     </td>
                     <td className="px-3 py-3 text-right text-gray-900">{formatCurrency(t.totalIdentified)}</td>
                     <td className="px-3 py-3 text-right text-green-600">{formatCurrency(t.totalSold)}</td>

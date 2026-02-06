@@ -74,8 +74,12 @@ export default function Login() {
       <div className="w-full max-w-md">
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-8">
           <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-gray-900">Vehicle Health Check</h1>
-            <p className="text-gray-600 mt-2">Sign in to your account</p>
+            <img
+              src="/ollo-inspect-logo.png"
+              alt="Ollo Inspect"
+              className="h-16 mx-auto mb-4"
+            />
+            <p className="text-gray-600">Sign in to your account</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">

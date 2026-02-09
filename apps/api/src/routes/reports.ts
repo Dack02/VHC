@@ -1649,9 +1649,10 @@ reports.get('/customers', authorize(['super_admin', 'org_admin', 'site_admin', '
         status,
         sent_at,
         first_opened_at,
+        authorization_method,
         customer_id,
         customer:customers(id, first_name, last_name),
-        repair_items(total_inc_vat, outcome_status, declined_reason:declined_reasons(reason))
+        repair_items(total_inc_vat, outcome_status, outcome_source, customer_approved_at, deleted_at, parent_repair_item_id, declined_reason:declined_reasons(reason))
       `)
       .eq('organization_id', auth.orgId)
       .gte('created_at', startDate)
@@ -1668,9 +1669,29 @@ reports.get('/customers', authorize(['super_admin', 'org_admin', 'site_admin', '
 
     let reportsSent = 0
     let reportsOpened = 0
+    let reportsResponded = 0
+    let reportsSigned = 0
     const openTimes: number[] = []
     const declinedReasons: Record<string, { reason: string; count: number; value: number }> = {}
     const customerCounts: Record<string, number> = {}
+
+    // Authorization channel accumulators
+    let onlineAuthCount = 0, onlineAuthValue = 0
+    let manualAuthCount = 0, manualAuthValue = 0
+    const manualBreakdown: Record<string, { count: number; value: number }> = {
+      in_person: { count: 0, value: 0 },
+      phone: { count: 0, value: 0 },
+      not_sent: { count: 0, value: 0 },
+    }
+
+    // Approval rate accumulators
+    let totalItemsSent = 0
+    let totalItemsApproved = 0
+    let onlineApprovedValue = 0
+    let manualApprovedValue = 0
+
+    // Time to authorize (online items)
+    const authorizeTimes: number[] = []
 
     // Response by day of week
     const byDayOfWeek = [0, 0, 0, 0, 0, 0, 0] // Sun-Sat
@@ -1692,26 +1713,79 @@ reports.get('/customers', authorize(['super_admin', 'org_admin', 'site_admin', '
       }
 
       // Response time (sent to any status change beyond sent)
-      if (hc.sent_at && ['authorized', 'completed', 'declined', 'customer_approved', 'customer_partial', 'customer_declined'].includes(hc.status)) {
+      const respondedStatuses = ['authorized', 'completed', 'declined', 'customer_approved', 'customer_partial', 'customer_declined']
+      if (hc.sent_at && respondedStatuses.includes(hc.status)) {
         const day = new Date(hc.sent_at).getDay()
         byDayOfWeek[day]++
+        reportsResponded++
       }
 
-      // Declined reasons from repair items
+      // Signed = any HC that reached a final authorization state
+      const signedStatuses = ['customer_approved', 'customer_partial', 'work_authorized', 'work_in_progress', 'work_complete', 'closed', 'archived']
+      if (hc.sent_at && signedStatuses.includes(hc.status)) {
+        reportsSigned++
+      }
+
+      // Process repair items
       const items = hc.repair_items as unknown as Array<{
         total_inc_vat?: number
         outcome_status?: string
+        outcome_source?: string | null
+        customer_approved_at?: string | null
+        deleted_at?: string | null
+        parent_repair_item_id?: string | null
         declined_reason?: { reason: string } | null
       }> | null
 
       for (const item of items || []) {
+        // Skip child items and deleted items
+        if (item.parent_repair_item_id || item.deleted_at) continue
+
+        const val = Number(item.total_inc_vat) || 0
+
+        // Count items on sent HCs for approval rate
+        if (hc.sent_at) {
+          totalItemsSent++
+          if (item.outcome_status === 'authorised') {
+            totalItemsApproved++
+          }
+        }
+
+        // Authorization channel
+        if (item.outcome_status === 'authorised') {
+          if (item.outcome_source === 'online') {
+            onlineAuthCount++
+            onlineAuthValue += val
+            onlineApprovedValue += val
+            // Time to authorize for online items
+            if (hc.sent_at && item.customer_approved_at) {
+              const sentTime = new Date(hc.sent_at).getTime()
+              const approvedTime = new Date(item.customer_approved_at).getTime()
+              const hours = (approvedTime - sentTime) / 3600000
+              if (hours >= 0) authorizeTimes.push(hours)
+            }
+          } else if (item.outcome_source === 'manual') {
+            manualAuthCount++
+            manualAuthValue += val
+            manualApprovedValue += val
+            const method = (hc as any).authorization_method || 'not_sent'
+            if (manualBreakdown[method]) {
+              manualBreakdown[method].count++
+              manualBreakdown[method].value += val
+            } else {
+              manualBreakdown[method] = { count: 1, value: val }
+            }
+          }
+        }
+
+        // Declined reasons
         if (item.outcome_status === 'declined' && item.declined_reason) {
           const reason = (item.declined_reason as any)?.reason || 'No reason given'
           if (!declinedReasons[reason]) {
             declinedReasons[reason] = { reason, count: 0, value: 0 }
           }
           declinedReasons[reason].count++
-          declinedReasons[reason].value += Number(item.total_inc_vat) || 0
+          declinedReasons[reason].value += val
         }
       }
     }
@@ -1731,6 +1805,16 @@ reports.get('/customers', authorize(['super_admin', 'org_admin', 'site_admin', '
       { bucket: '>7d', count: openTimes.filter(t => t >= 168).length },
     ]
 
+    // Time to authorize distribution
+    const authorizeDistribution = [
+      { bucket: '<1hr', count: authorizeTimes.filter(t => t < 1).length },
+      { bucket: '1-4hr', count: authorizeTimes.filter(t => t >= 1 && t < 4).length },
+      { bucket: '4-24hr', count: authorizeTimes.filter(t => t >= 4 && t < 24).length },
+      { bucket: '1-3d', count: authorizeTimes.filter(t => t >= 24 && t < 72).length },
+      { bucket: '3-7d', count: authorizeTimes.filter(t => t >= 72 && t < 168).length },
+      { bucket: '>7d', count: authorizeTimes.filter(t => t >= 168).length },
+    ]
+
     // Approval by day of week
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
     const approvalByDay = dayNames.map((name, i) => ({ day: name, count: byDayOfWeek[i] }))
@@ -1746,6 +1830,69 @@ reports.get('/customers', authorize(['super_admin', 'org_admin', 'site_admin', '
         ...r,
         value: Math.round(r.value * 100) / 100,
       }))
+
+    // Authorization channel metrics
+    const totalAuth = onlineAuthCount + manualAuthCount
+    const authorizationChannel = {
+      online: { count: onlineAuthCount, value: Math.round(onlineAuthValue * 100) / 100 },
+      manual: { count: manualAuthCount, value: Math.round(manualAuthValue * 100) / 100 },
+      onlinePercent: totalAuth > 0 ? Math.round((onlineAuthCount / totalAuth) * 100 * 10) / 10 : 0,
+      manualBreakdown: Object.fromEntries(
+        Object.entries(manualBreakdown).map(([k, v]) => [k, { count: v.count, value: Math.round(v.value * 100) / 100 }])
+      ),
+    }
+
+    // Approval rate
+    const approvalRate = {
+      totalItemsSent,
+      totalItemsApproved,
+      rate: totalItemsSent > 0 ? Math.round((totalItemsApproved / totalItemsSent) * 100 * 10) / 10 : 0,
+      avgValueOnline: onlineAuthCount > 0 ? Math.round((onlineApprovedValue / onlineAuthCount) * 100) / 100 : 0,
+      avgValueManual: manualAuthCount > 0 ? Math.round((manualApprovedValue / manualAuthCount) * 100) / 100 : 0,
+    }
+
+    // Time to authorize
+    const avgAuthHours = authorizeTimes.length > 0
+      ? Math.round(authorizeTimes.reduce((a, b) => a + b, 0) / authorizeTimes.length * 10) / 10
+      : 0
+    const timeToAuthorize = {
+      avgHours: avgAuthHours,
+      distribution: authorizeDistribution,
+    }
+
+    // Device breakdown from customer_activities
+    const healthCheckIds = (healthChecks || []).filter(hc => hc.sent_at).map(hc => hc.id)
+    let deviceBreakdown: Record<string, number> = { mobile: 0, tablet: 0, desktop: 0 }
+    if (healthCheckIds.length > 0) {
+      const { data: activities } = await supabaseAdmin
+        .from('customer_activities')
+        .select('device_type')
+        .in('health_check_id', healthCheckIds)
+        .eq('activity_type', 'viewed')
+
+      if (activities) {
+        const total = activities.length
+        let mobile = 0, tablet = 0, desktop = 0
+        for (const a of activities) {
+          if (a.device_type === 'mobile') mobile++
+          else if (a.device_type === 'tablet') tablet++
+          else desktop++
+        }
+        deviceBreakdown = {
+          mobile: total > 0 ? Math.round((mobile / total) * 100 * 10) / 10 : 0,
+          tablet: total > 0 ? Math.round((tablet / total) * 100 * 10) / 10 : 0,
+          desktop: total > 0 ? Math.round((desktop / total) * 100 * 10) / 10 : 0,
+        }
+      }
+    }
+
+    // Engagement funnel
+    const engagementFunnel = {
+      sent: reportsSent,
+      opened: reportsOpened,
+      responded: reportsResponded,
+      signed: reportsSigned,
+    }
 
     return c.json({
       period: { from: startDate, to: endDate },
@@ -1763,6 +1910,11 @@ reports.get('/customers', authorize(['super_admin', 'org_admin', 'site_admin', '
         repeat: repeatCustomers,
         repeatRate: totalCustomers > 0 ? Math.round((repeatCustomers / totalCustomers) * 100 * 10) / 10 : 0,
       },
+      authorizationChannel,
+      approvalRate,
+      timeToAuthorize,
+      deviceBreakdown,
+      engagementFunnel,
     })
   } catch (error) {
     console.error('Customer report error:', error)

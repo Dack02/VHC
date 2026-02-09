@@ -60,7 +60,9 @@ export async function applyServicePackageToRepairItem(
 
       // Prefer stored package rate; fall back to current labour code rate for legacy packages
       const storedRate = l.rate != null ? parseFloat(l.rate as string) : null
-      const rate = storedRate != null && !isNaN(storedRate) ? storedRate : parseFloat(labourCode.hourly_rate)
+      const rate = storedRate != null && !isNaN(storedRate) && storedRate > 0
+        ? storedRate
+        : parseFloat(labourCode.hourly_rate)
       const hours = isNaN(parseFloat(l.hours as string)) ? 1 : parseFloat(l.hours as string)
       const discountPct = parseFloat(l.discount_percent as string) || 0
       const subtotal = rate * hours

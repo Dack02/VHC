@@ -103,7 +103,7 @@ export function ServicePackageApplyModal({
 
   const calculateLabourTotal = (labour: LabourEntry[]) => {
     return labour.reduce((sum, l) => {
-      const rate = l.rate ?? l.labourCode?.hourlyRate
+      const rate = l.rate || l.labourCode?.hourlyRate
       if (rate == null) return sum
       const subtotal = rate * l.hours
       return sum + subtotal * (1 - l.discountPercent / 100)
@@ -233,11 +233,9 @@ export function ServicePackageApplyModal({
                         </div>
 
                         {/* Estimated total */}
-                        {estimatedTotal > 0 && (
-                          <span className="text-sm font-bold text-gray-900 flex-shrink-0">
-                            {'\u00A3'}{estimatedTotal.toFixed(2)}
-                          </span>
-                        )}
+                        <span className="text-sm font-bold text-gray-900 flex-shrink-0">
+                          {'\u00A3'}{estimatedTotal.toFixed(2)}
+                        </span>
 
                         {/* Apply button */}
                         <button
@@ -278,7 +276,7 @@ export function ServicePackageApplyModal({
                                       </span>
                                       <span className="text-gray-700 font-medium">
                                         {(() => {
-                                          const rate = l.rate ?? l.labourCode?.hourlyRate
+                                          const rate = l.rate || l.labourCode?.hourlyRate
                                           return rate != null ? `\u00A3${(rate * l.hours * (1 - l.discountPercent / 100)).toFixed(2)}` : '-'
                                         })()}
                                       </span>
@@ -308,12 +306,10 @@ export function ServicePackageApplyModal({
                             )}
 
                             {/* Total */}
-                            {estimatedTotal > 0 && (
-                              <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
-                                <span className="text-sm font-medium text-gray-500">Estimated Total</span>
-                                <span className="text-sm font-bold text-gray-900">{'\u00A3'}{estimatedTotal.toFixed(2)}</span>
-                              </div>
-                            )}
+                            <div className="pt-2 border-t border-gray-200 flex items-center justify-between">
+                              <span className="text-sm font-medium text-gray-500">Estimated Total</span>
+                              <span className="text-sm font-bold text-gray-900">{'\u00A3'}{estimatedTotal.toFixed(2)}</span>
+                            </div>
                           </div>
                         </div>
                       )}

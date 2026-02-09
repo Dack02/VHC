@@ -80,7 +80,7 @@ export default function CustomerPortalContent({
   }, [data?.newRepairItems])
 
   const handleApproveNewRepairItem = async (repairItemId: string) => {
-    if (previewMode || savingNewRepairItem || !onApproveItem) return
+    if (isReadOnly || savingNewRepairItem || !onApproveItem) return
     setSavingNewRepairItem(repairItemId)
     try {
       await onApproveItem(repairItemId, selectedOptions[repairItemId] || null)
@@ -90,7 +90,7 @@ export default function CustomerPortalContent({
   }
 
   const handleDeclineNewRepairItem = async (repairItemId: string) => {
-    if (previewMode || savingNewRepairItem || !onDeclineItem) return
+    if (isReadOnly || savingNewRepairItem || !onDeclineItem) return
     setSavingNewRepairItem(repairItemId)
     try {
       await onDeclineItem(repairItemId)
@@ -100,7 +100,7 @@ export default function CustomerPortalContent({
   }
 
   const handleApproveAllNewRepairItems = async () => {
-    if (previewMode || approvingAll || !onApproveAll) return
+    if (isReadOnly || approvingAll || !onApproveAll) return
     setApprovingAll(true)
     try {
       const selections = (data?.newRepairItems || [])
@@ -116,7 +116,7 @@ export default function CustomerPortalContent({
   }
 
   const handleDeclineAllNewRepairItems = async () => {
-    if (previewMode || decliningAll || !onDeclineAll) return
+    if (isReadOnly || decliningAll || !onDeclineAll) return
     setDecliningAll(true)
     try {
       await onDeclineAll()
@@ -126,7 +126,7 @@ export default function CustomerPortalContent({
   }
 
   const handleSelectOption = (repairItemId: string, optionId: string) => {
-    if (previewMode) return
+    if (isReadOnly) return
     setSelectedOptions(prev => ({
       ...prev,
       [repairItemId]: optionId
@@ -146,12 +146,16 @@ export default function CustomerPortalContent({
   }
 
   const handleSignComplete = async (signatureData: string) => {
-    if (previewMode || !onSign) return
+    if (isReadOnly || !onSign) return
     await onSign(signatureData)
     setSignatureSubmitted(true)
   }
 
   const { healthCheck, vehicle, customer, site, checkResults, newRepairItems, hasNewRepairItems } = data
+
+  // Check if health check is in a terminal state (completed/cancelled)
+  const isCompleted = healthCheck.status === 'completed' || healthCheck.status === 'cancelled'
+  const isReadOnly = previewMode || isCompleted
 
   // Get all photos from check results
   const allPhotos = useMemo(() =>
@@ -203,6 +207,13 @@ export default function CustomerPortalContent({
       {previewMode && (
         <div className="text-center text-sm text-gray-500 bg-yellow-50 p-2 border border-yellow-200">
           This is how the customer will see their health check report
+        </div>
+      )}
+
+      {/* Completed Banner */}
+      {isCompleted && !previewMode && (
+        <div className="text-center text-sm text-gray-700 bg-blue-50 p-3 border-b border-blue-200">
+          This health check has been completed. You can review the details below but no further changes can be made.
         </div>
       )}
 
@@ -296,7 +307,7 @@ export default function CustomerPortalContent({
                     item={item}
                     selectedOptionId={selectedOptions[item.id]}
                     saving={savingNewRepairItem === item.id}
-                    disabled={previewMode}
+                    disabled={isReadOnly}
                     onSelectOption={(optionId) => handleSelectOption(item.id, optionId)}
                     onApprove={() => handleApproveNewRepairItem(item.id)}
                     onDecline={() => handleDeclineNewRepairItem(item.id)}
@@ -333,7 +344,7 @@ export default function CustomerPortalContent({
                     item={item}
                     selectedOptionId={selectedOptions[item.id]}
                     saving={savingNewRepairItem === item.id}
-                    disabled={previewMode}
+                    disabled={isReadOnly}
                     onSelectOption={(optionId) => handleSelectOption(item.id, optionId)}
                     onApprove={() => handleApproveNewRepairItem(item.id)}
                     onDecline={() => handleDeclineNewRepairItem(item.id)}
@@ -345,13 +356,13 @@ export default function CustomerPortalContent({
         )}
 
         {/* Approve All / Decline All Section */}
-        {pendingNewItems.length > 1 && (
+        {pendingNewItems.length > 1 && !isCompleted && (
           <div className="bg-white shadow-sm border border-gray-200 p-4">
             <div className="flex gap-3">
               <button
                 onClick={handleApproveAllNewRepairItems}
-                disabled={previewMode || approvingAll || decliningAll}
-                className={`flex-1 py-2 bg-green-600 text-white font-medium text-sm hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2 ${previewMode ? 'cursor-not-allowed' : ''}`}
+                disabled={isReadOnly || approvingAll || decliningAll}
+                className={`flex-1 py-2 bg-green-600 text-white font-medium text-sm hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2 ${isReadOnly ? 'cursor-not-allowed' : ''}`}
               >
                 {approvingAll ? (
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -366,8 +377,8 @@ export default function CustomerPortalContent({
               </button>
               <button
                 onClick={handleDeclineAllNewRepairItems}
-                disabled={previewMode || approvingAll || decliningAll}
-                className={`flex-1 py-2 bg-gray-200 text-gray-700 font-medium text-sm hover:bg-gray-300 disabled:opacity-50 flex items-center justify-center gap-2 ${previewMode ? 'cursor-not-allowed' : ''}`}
+                disabled={isReadOnly || approvingAll || decliningAll}
+                className={`flex-1 py-2 bg-gray-200 text-gray-700 font-medium text-sm hover:bg-gray-300 disabled:opacity-50 flex items-center justify-center gap-2 ${isReadOnly ? 'cursor-not-allowed' : ''}`}
               >
                 {decliningAll ? (
                   <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" />
@@ -501,7 +512,7 @@ export default function CustomerPortalContent({
         )}
 
         {/* Summary & Signature - New repair items */}
-        {hasNewApprovedItems && allNewActioned && hasNewRepairItems && !signatureSubmitted && !previewMode && (
+        {hasNewApprovedItems && allNewActioned && hasNewRepairItems && !signatureSubmitted && !isReadOnly && (
           <div className="bg-white shadow-sm border border-gray-200">
             <div className="p-4 border-b border-gray-200">
               <h3 className="font-semibold text-gray-900 mb-3">Final Summary</h3>
@@ -556,7 +567,7 @@ export default function CustomerPortalContent({
         )}
 
         {/* Signature Complete */}
-        {signatureSubmitted && !previewMode && (
+        {signatureSubmitted && !isReadOnly && (
           <div className="bg-green-50 border-2 border-green-200 p-6 text-center">
             <svg className="w-12 h-12 text-green-600 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />

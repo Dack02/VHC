@@ -7,7 +7,7 @@
 
 type DamageSeverity = 'advisory' | 'urgent'
 
-interface TyreReading {
+export interface TyreReading {
   outer: number | null
   middle: number | null
   inner: number | null
@@ -34,7 +34,7 @@ interface TyreDetailsNew {
 }
 
 // Normalized details for display
-interface TyreDetails {
+export interface TyreDetails {
   manufacturer?: string
   size?: string
   speed_rating?: string
@@ -43,13 +43,13 @@ interface TyreDetails {
 }
 
 // Damage info
-interface DamageInfo {
+export interface DamageInfo {
   type: string
   severity?: DamageSeverity
 }
 
 // Can be legacy format (nested tread/details) or new format (flat depth readings)
-interface TyreData {
+export interface TyreData {
   // Legacy nested format
   tread?: TyreReading
   details?: TyreDetailsLegacy | TyreDetailsNew
@@ -80,7 +80,7 @@ interface TyreDisplayProps {
 const LEGAL_LIMIT = 1.6 // UK legal minimum tread depth in mm
 
 // Normalize details from new camelCase format to legacy snake_case format
-function normalizeDetails(data: TyreDetailsLegacy | TyreDetailsNew | TyreData | null): TyreDetails | null {
+export function normalizeDetails(data: TyreDetailsLegacy | TyreDetailsNew | TyreData | null): TyreDetails | null {
   if (!data) return null
 
   const newFormat = data as TyreDetailsNew
@@ -120,7 +120,7 @@ function normalizeDetails(data: TyreDetailsLegacy | TyreDetailsNew | TyreData | 
 }
 
 // Normalize tread readings from various formats
-function normalizeTread(data: TyreData | null): TyreReading | null {
+export function normalizeTread(data: TyreData | null): TyreReading | null {
   if (!data) return null
 
   // Check for nested tread object (legacy format)
@@ -141,7 +141,7 @@ function normalizeTread(data: TyreData | null): TyreReading | null {
 }
 
 // Extract damage info from data
-function getDamageInfo(data: TyreData | null): DamageInfo | null {
+export function getDamageInfo(data: TyreData | null): DamageInfo | null {
   if (!data) return null
   if (!data.damage || data.damage === 'None') return null
 
@@ -322,7 +322,7 @@ function getReadingColor(value: number | null | undefined): string {
  * - New from TyreDetailsInput: { front_left, front_right, rear_left, rear_right }
  * - Single tyre (flat depth data): { outer, middle, inner, damage }
  */
-interface TyreSetData {
+export interface TyreSetData {
   // Legacy position names
   os_front?: TyreData | null
   ns_front?: TyreData | null
@@ -354,7 +354,7 @@ interface TyreSetDisplayProps {
 // front_right = O/S Front (offside/driver side in UK)
 // rear_left = N/S Rear
 // rear_right = O/S Rear
-function getNormalisedTyreData(data: TyreSetData): {
+export function getNormalisedTyreData(data: TyreSetData): {
   ns_front: TyreData | null
   os_front: TyreData | null
   ns_rear: TyreData | null

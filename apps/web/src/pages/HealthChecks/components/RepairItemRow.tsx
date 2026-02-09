@@ -229,6 +229,56 @@ export const RepairItemRow = React.memo(function RepairItemRow({
     }
   }
 
+  const toggleNoLabourRequired = async () => {
+    if (!session?.accessToken) return
+    const isSettingFlag = !item.no_labour_required
+
+    // Optimistic update
+    setItem(prev => ({ ...prev, no_labour_required: isSettingFlag }))
+    setSaving(true)
+    setSavingField('no_labour')
+    setError(null)
+
+    try {
+      await api(`/api/v1/repair-items/${item.id}/no-labour-required`, {
+        method: isSettingFlag ? 'POST' : 'DELETE',
+        token: session.accessToken
+      })
+      onUpdate()
+    } catch (err) {
+      setItem(initialItem)
+      setError(err instanceof Error ? err.message : 'Failed to update')
+    } finally {
+      setSaving(false)
+      setSavingField(null)
+    }
+  }
+
+  const toggleNoPartsRequired = async () => {
+    if (!session?.accessToken) return
+    const isSettingFlag = !item.no_parts_required
+
+    // Optimistic update
+    setItem(prev => ({ ...prev, no_parts_required: isSettingFlag }))
+    setSaving(true)
+    setSavingField('no_parts')
+    setError(null)
+
+    try {
+      await api(`/api/v1/repair-items/${item.id}/no-parts-required`, {
+        method: isSettingFlag ? 'POST' : 'DELETE',
+        token: session.accessToken
+      })
+      onUpdate()
+    } catch (err) {
+      setItem(initialItem)
+      setError(err instanceof Error ? err.message : 'Failed to update')
+    } finally {
+      setSaving(false)
+      setSavingField(null)
+    }
+  }
+
   const formatCurrency = (amount: number) => `£${amount.toFixed(2)}`
 
   // AI description generation
@@ -410,6 +460,16 @@ export const RepairItemRow = React.memo(function RepairItemRow({
                   {selectedOption && ' (selected)'}
                 </button>
               )}
+              {item.no_labour_required && (
+                <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded-lg">
+                  No Labour
+                </span>
+              )}
+              {item.no_parts_required && (
+                <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded-lg">
+                  No Parts
+                </span>
+              )}
             </div>
             {item.description && !expanded && (
               <div className="text-sm text-gray-500 truncate">{item.description}</div>
@@ -470,7 +530,12 @@ export const RepairItemRow = React.memo(function RepairItemRow({
             <>
               {/* Parts price */}
               <div className="w-20 text-right">
-                {savingField === 'parts_cost' ? (
+                {item.no_parts_required ? (
+                  <div>
+                    <span className="text-sm text-gray-400 line-through">{formatCurrency(item.parts_cost || 0)}</span>
+                    <span className="ml-1 text-xs font-medium text-green-600">N/A</span>
+                  </div>
+                ) : savingField === 'parts_cost' ? (
                   <div className="flex justify-end"><LoadingSpinner /></div>
                 ) : editingField === 'parts_cost' ? (
                   <input
@@ -497,7 +562,12 @@ export const RepairItemRow = React.memo(function RepairItemRow({
 
               {/* Labour price */}
               <div className="w-20 text-right">
-                {savingField === 'labor_cost' ? (
+                {item.no_labour_required ? (
+                  <div>
+                    <span className="text-sm text-gray-400 line-through">{formatCurrency(item.labor_cost || 0)}</span>
+                    <span className="ml-1 text-xs font-medium text-green-600">N/A</span>
+                  </div>
+                ) : savingField === 'labor_cost' ? (
                   <div className="flex justify-end"><LoadingSpinner /></div>
                 ) : editingField === 'labor_cost' ? (
                   <input
@@ -589,7 +659,14 @@ export const RepairItemRow = React.memo(function RepairItemRow({
 
           {/* Actions Menu - only for parent items */}
           {!item.parent_repair_item_id && onApplyServicePackage && (
-            <RepairItemActionsMenu onApplyServicePackage={onApplyServicePackage} />
+            <RepairItemActionsMenu
+              onApplyServicePackage={onApplyServicePackage}
+              noLabourRequired={item.no_labour_required}
+              noPartsRequired={item.no_parts_required}
+              onToggleNoLabourRequired={toggleNoLabourRequired}
+              onToggleNoPartsRequired={toggleNoPartsRequired}
+              hasOptions={hasOptions}
+            />
           )}
         </div>
 
@@ -633,6 +710,16 @@ export const RepairItemRow = React.memo(function RepairItemRow({
                     {item.options!.length} OPTION{item.options!.length !== 1 ? 'S' : ''}
                     {selectedOption && ' (selected)'}
                   </button>
+                )}
+                {item.no_labour_required && (
+                  <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded-lg">
+                    No Labour
+                  </span>
+                )}
+                {item.no_parts_required && (
+                  <span className="inline-flex items-center px-1.5 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded-lg">
+                    No Parts
+                  </span>
                 )}
               </div>
               {item.description && !expanded && (
@@ -698,7 +785,12 @@ export const RepairItemRow = React.memo(function RepairItemRow({
                 <>
                   {/* Parts */}
                   <div className="text-center">
-                    {savingField === 'parts_cost' ? (
+                    {item.no_parts_required ? (
+                      <div>
+                        <span className="text-sm text-gray-400 line-through">{formatCurrency(item.parts_cost || 0)}</span>
+                        <span className="ml-1 text-xs font-medium text-green-600">N/A</span>
+                      </div>
+                    ) : savingField === 'parts_cost' ? (
                       <div className="flex justify-center"><LoadingSpinner /></div>
                     ) : editingField === 'parts_cost' ? (
                       <input
@@ -724,7 +816,12 @@ export const RepairItemRow = React.memo(function RepairItemRow({
 
                   {/* Labour */}
                   <div className="text-center">
-                    {savingField === 'labor_cost' ? (
+                    {item.no_labour_required ? (
+                      <div>
+                        <span className="text-sm text-gray-400 line-through">{formatCurrency(item.labor_cost || 0)}</span>
+                        <span className="ml-1 text-xs font-medium text-green-600">N/A</span>
+                      </div>
+                    ) : savingField === 'labor_cost' ? (
                       <div className="flex justify-center"><LoadingSpinner /></div>
                     ) : editingField === 'labor_cost' ? (
                       <input
@@ -815,7 +912,14 @@ export const RepairItemRow = React.memo(function RepairItemRow({
 
             {/* Actions Menu - only for parent items */}
             {!item.parent_repair_item_id && onApplyServicePackage && (
-              <RepairItemActionsMenu onApplyServicePackage={onApplyServicePackage} />
+              <RepairItemActionsMenu
+                onApplyServicePackage={onApplyServicePackage}
+                noLabourRequired={item.no_labour_required}
+                noPartsRequired={item.no_parts_required}
+                onToggleNoLabourRequired={toggleNoLabourRequired}
+                onToggleNoPartsRequired={toggleNoPartsRequired}
+                hasOptions={hasOptions}
+              />
             )}
           </div>
         </div>

@@ -45,7 +45,7 @@ interface AxleMeasurement {
 }
 
 // Can be legacy format with front/rear, or new single-axle format
-interface BrakeData {
+export interface BrakeData {
   front?: AxleMeasurementLegacy | AxleMeasurementNew
   rear?: AxleMeasurementLegacy | AxleMeasurementNew
   // New format fields (single axle data without front/rear wrapper)
@@ -71,7 +71,7 @@ const PAD_RED_THRESHOLD = 3    // mm - below this is red (urgent)
 const PAD_AMBER_THRESHOLD = 5  // mm - below this is amber (advisory)
 
 // Convert new format to normalized format
-function normalizeAxleData(data: AxleMeasurementLegacy | AxleMeasurementNew | BrakeData): AxleMeasurement | null {
+export function normalizeAxleData(data: AxleMeasurementLegacy | AxleMeasurementNew | BrakeData): AxleMeasurement | null {
   if (!data) return null
 
   // Check for new nested format (nearside/offside objects)

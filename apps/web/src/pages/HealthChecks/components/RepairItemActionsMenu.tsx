@@ -3,9 +3,21 @@ import { createPortal } from 'react-dom'
 
 interface RepairItemActionsMenuProps {
   onApplyServicePackage: () => void
+  noLabourRequired?: boolean
+  noPartsRequired?: boolean
+  onToggleNoLabourRequired?: () => void
+  onToggleNoPartsRequired?: () => void
+  hasOptions?: boolean
 }
 
-export function RepairItemActionsMenu({ onApplyServicePackage }: RepairItemActionsMenuProps) {
+export function RepairItemActionsMenu({
+  onApplyServicePackage,
+  noLabourRequired,
+  noPartsRequired,
+  onToggleNoLabourRequired,
+  onToggleNoPartsRequired,
+  hasOptions
+}: RepairItemActionsMenuProps) {
   const [showDropdown, setShowDropdown] = useState(false)
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 })
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -77,6 +89,48 @@ export function RepairItemActionsMenu({ onApplyServicePackage }: RepairItemActio
             </svg>
             Apply Service Package
           </button>
+
+          {!hasOptions && (onToggleNoLabourRequired || onToggleNoPartsRequired) && (
+            <>
+              <div className="border-t border-gray-200 my-1" />
+
+              {onToggleNoLabourRequired && (
+                <button
+                  onClick={() => handleAction(onToggleNoLabourRequired)}
+                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  {noLabourRequired ? (
+                    <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                  )}
+                  {noLabourRequired ? 'Undo No Labour Required' : 'No Labour Required'}
+                </button>
+              )}
+
+              {onToggleNoPartsRequired && (
+                <button
+                  onClick={() => handleAction(onToggleNoPartsRequired)}
+                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  {noPartsRequired ? (
+                    <svg className="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                  )}
+                  {noPartsRequired ? 'Undo No Parts Required' : 'No Parts Required'}
+                </button>
+              )}
+            </>
+          )}
         </div>,
         document.body
       )}

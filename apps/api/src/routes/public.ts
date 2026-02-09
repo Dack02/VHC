@@ -11,6 +11,9 @@ import { sendAuthorizationConfirmationSms } from '../services/sms.js'
 
 const publicRoutes = new Hono()
 
+// Terminal statuses where customer actions should be rejected
+const TERMINAL_STATUSES = ['completed', 'cancelled']
+
 // Helper to build storage URL from path
 function getStorageUrl(storagePath: string): string {
   const supabaseUrl = process.env.SUPABASE_URL
@@ -95,7 +98,7 @@ publicRoutes.get('/vhc/:token', async (c) => {
     customer_last_viewed_at: new Date().toISOString()
   }
 
-  if (isFirstView) {
+  if (isFirstView && !TERMINAL_STATUSES.includes(healthCheck.status)) {
     updateData.first_opened_at = new Date().toISOString()
     updateData.status = 'opened'
   }
@@ -705,6 +708,11 @@ publicRoutes.post('/vhc/:token/repair-items/:repairItemId/approve', async (c) =>
     return c.json({ error: 'Link has expired' }, 410)
   }
 
+  // Reject actions on completed/cancelled health checks
+  if (TERMINAL_STATUSES.includes(healthCheck.status)) {
+    return c.json({ error: 'This health check has been closed and can no longer be modified' }, 403)
+  }
+
   // Verify repair item belongs to this health check (using new repair_items table)
   const { data: repairItem, error: riError } = await supabaseAdmin
     .from('repair_items')
@@ -819,6 +827,11 @@ publicRoutes.post('/vhc/:token/repair-items/:repairItemId/decline', async (c) =>
     return c.json({ error: 'Link has expired' }, 410)
   }
 
+  // Reject actions on completed/cancelled health checks
+  if (TERMINAL_STATUSES.includes(healthCheck.status)) {
+    return c.json({ error: 'This health check has been closed and can no longer be modified' }, 403)
+  }
+
   // Verify repair item belongs to this health check
   const { data: repairItem, error: riError } = await supabaseAdmin
     .from('repair_items')
@@ -904,6 +917,11 @@ publicRoutes.post('/vhc/:token/repair-items/sign', async (c) => {
     return c.json({ error: 'Link has expired' }, 410)
   }
 
+  // Reject actions on completed/cancelled health checks
+  if (TERMINAL_STATUSES.includes(healthCheck.status)) {
+    return c.json({ error: 'This health check has been closed and can no longer be modified' }, 403)
+  }
+
   // Get client info
   const rawIp = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || c.req.header('x-real-ip')
   const ipAddress = rawIp && /^[\d.:a-fA-F]+$/.test(rawIp) ? rawIp : null
@@ -972,6 +990,11 @@ publicRoutes.post('/vhc/:token/repair-items/approve-all', async (c) => {
   // Check expiry
   if (healthCheck.token_expires_at && new Date(healthCheck.token_expires_at) < new Date()) {
     return c.json({ error: 'Link has expired' }, 410)
+  }
+
+  // Reject actions on completed/cancelled health checks
+  if (TERMINAL_STATUSES.includes(healthCheck.status)) {
+    return c.json({ error: 'This health check has been closed and can no longer be modified' }, 403)
   }
 
   // Get all pending repair items
@@ -1072,6 +1095,11 @@ publicRoutes.post('/vhc/:token/repair-items/decline-all', async (c) => {
   // Check expiry
   if (healthCheck.token_expires_at && new Date(healthCheck.token_expires_at) < new Date()) {
     return c.json({ error: 'Link has expired' }, 410)
+  }
+
+  // Reject actions on completed/cancelled health checks
+  if (TERMINAL_STATUSES.includes(healthCheck.status)) {
+    return c.json({ error: 'This health check has been closed and can no longer be modified' }, 403)
   }
 
   // Decline all pending repair items
@@ -1295,11 +1323,14 @@ async function updateHealthCheckStatusForNewRepairItems(healthCheckId: string, s
     // Get health check current state
     const { data: healthCheck } = await supabaseAdmin
       .from('health_checks')
-      .select('first_response_at')
+      .select('status, first_response_at')
       .eq('id', healthCheckId)
       .single()
 
     if (!healthCheck) return
+
+    // Never overwrite terminal statuses
+    if (TERMINAL_STATUSES.includes(healthCheck.status)) return
 
     // Get all new repair items for this health check
     const { data: repairItems } = await supabaseAdmin

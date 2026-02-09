@@ -13,6 +13,7 @@ import { MriTab } from './tabs/MriTab'
 import { MriScanSection } from './components/MriScanSection'
 import { CustomerActivityTab } from './tabs/CustomerActivityTab'
 import { SmsTab } from './tabs/SmsTab'
+import { TyresAndBrakesTab, computeTyresBrakesTabInfo } from './tabs/TyresAndBrakesTab'
 import { PublishModal } from './PublishModal'
 import { CustomerPreviewModal } from './CustomerPreviewModal'
 import { HealthCheckTabContent } from './components/HealthCheckTabContent'
@@ -88,7 +89,7 @@ const statusColors: Record<string, string> = {
   no_show: 'bg-red-100 text-red-700'
 }
 
-type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'labour' | 'parts' | 'photos' | 'timeline' | 'activity' | 'sms'
+type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'tyres-brakes' | 'labour' | 'parts' | 'photos' | 'timeline' | 'activity' | 'sms'
 
 export default function HealthCheckDetail() {
   const { id } = useParams<{ id: string }>()
@@ -98,7 +99,7 @@ export default function HealthCheckDetail() {
   const isOnline = useOnlineStatus()
 
   // Get initial tab from URL query parameter
-  const validTabs: Tab[] = ['summary', 'checkin', 'mri', 'health-check', 'labour', 'parts', 'photos', 'timeline', 'activity', 'sms']
+  const validTabs: Tab[] = ['summary', 'checkin', 'mri', 'health-check', 'tyres-brakes', 'labour', 'parts', 'photos', 'timeline', 'activity', 'sms']
   const urlTab = searchParams.get('tab') as Tab | null
   const initialTab: Tab = urlTab && validTabs.includes(urlTab) ? urlTab : 'health-check'
 
@@ -486,6 +487,17 @@ export default function HealthCheckDetail() {
     // Show MRI tab when check-in is enabled (for viewing MRI scan results)
     ...(checkinEnabled ? [{ id: 'mri' as Tab, label: 'MRI Scan' }] : []),
     { id: 'health-check', label: 'Health Check' },
+    // Show Tyres & Brakes tab when tyre/brake results exist
+    ...(() => {
+      const tbInfo = computeTyresBrakesTabInfo(results)
+      if (!tbInfo.hasData) return []
+      return [{
+        id: 'tyres-brakes' as Tab,
+        label: 'Tyres & Brakes',
+        badge: tbInfo.attentionCount > 0 ? tbInfo.attentionCount : undefined,
+        badgeColor: (tbInfo.hasRed ? 'red' : 'gray') as 'red' | 'gray',
+      }]
+    })(),
     { id: 'labour', label: 'Labour' },
     { id: 'parts', label: 'Parts' },
     { id: 'photos', label: 'Photos', badge: summary?.media_count },
@@ -755,6 +767,9 @@ export default function HealthCheckDetail() {
             repairItems={repairItems}
             onUpdate={silentRefresh}
           />
+        )}
+        {activeTab === 'tyres-brakes' && (
+          <TyresAndBrakesTab results={results} />
         )}
         {activeTab === 'labour' && (
           <LabourTab

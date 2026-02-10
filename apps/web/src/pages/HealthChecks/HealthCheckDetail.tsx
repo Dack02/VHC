@@ -381,6 +381,32 @@ export default function HealthCheckDetail() {
     navigate('/health-checks')
   }
 
+  const handleMarkArrived = async () => {
+    if (!session?.accessToken || !id) return
+    try {
+      await api(`/api/v1/health-checks/${id}/mark-arrived`, {
+        method: 'POST',
+        token: session.accessToken
+      })
+      await fetchData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to mark vehicle as arrived')
+    }
+  }
+
+  const handleMarkNoShow = async () => {
+    if (!session?.accessToken || !id) return
+    try {
+      await api(`/api/v1/health-checks/${id}/mark-no-show`, {
+        method: 'POST',
+        token: session.accessToken
+      })
+      await fetchData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to mark vehicle as no-show')
+    }
+  }
+
   const handlePrintPDF = async () => {
     if (!session?.accessToken || !id) return
 
@@ -516,6 +542,7 @@ export default function HealthCheckDetail() {
   const isOrgAdminOrAbove = user && ['super_admin', 'org_admin'].includes(user.role)
   const canDelete = (isOrgAdminOrAbove || ['created', 'assigned', 'cancelled', 'awaiting_checkin'].includes(healthCheck.status)) && !healthCheck.deleted_at
   const canRecordAuth = ['tech_completed', 'ready_to_send', 'sent', 'delivered', 'opened', 'partial_response', 'expired'].includes(healthCheck.status) && !healthCheck.closed_at
+  const canMarkArrived = healthCheck.status === 'awaiting_arrival'
   const canClose = ['authorized', 'declined', 'expired'].includes(healthCheck.status) && !healthCheck.closed_at
   const isClosed = !!healthCheck.closed_at
 
@@ -537,6 +564,23 @@ export default function HealthCheckDetail() {
           </div>
 
           <div className="flex items-center gap-2 md:gap-3 overflow-x-auto">
+            {canMarkArrived && (
+              <>
+                <button
+                  onClick={handleMarkArrived}
+                  className="px-3 md:px-4 py-2 bg-green-600 text-white text-sm font-medium hover:bg-green-700 rounded whitespace-nowrap"
+                >
+                  <span className="hidden md:inline">Mark Arrived</span>
+                  <span className="md:hidden">Arrived</span>
+                </button>
+                <button
+                  onClick={handleMarkNoShow}
+                  className="px-3 md:px-4 py-2 bg-gray-500 text-white text-sm font-medium hover:bg-gray-600 rounded whitespace-nowrap"
+                >
+                  No Show
+                </button>
+              </>
+            )}
             {canSendClean && (
               <>
                 <button

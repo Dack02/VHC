@@ -22,6 +22,46 @@ export const redis = new IORedis(redisUrl, {
   maxRetriesPerRequest: null // Required for BullMQ
 })
 
+// Reactive Redis status tracking via ioredis events
+let lastRedisErrorLog = 0
+const REDIS_ERROR_LOG_INTERVAL_MS = 60_000 // Throttle error logs to once per 60s
+
+redis.on('connect', () => {
+  console.log('[Redis] Connecting...')
+})
+
+redis.on('ready', () => {
+  console.log('[Redis] Connected and ready')
+  updateRedisStatus(true)
+})
+
+redis.on('close', () => {
+  console.log('[Redis] Connection closed')
+  updateRedisStatus(false)
+})
+
+redis.on('end', () => {
+  console.log('[Redis] Connection ended (no more reconnects)')
+  updateRedisStatus(false)
+})
+
+redis.on('error', (err) => {
+  updateRedisStatus(false)
+  const now = Date.now()
+  if (now - lastRedisErrorLog >= REDIS_ERROR_LOG_INTERVAL_MS) {
+    lastRedisErrorLog = now
+    console.error('[Redis] Connection error:', err.message)
+  }
+})
+
+redis.on('reconnecting', (timeToReconnect?: number) => {
+  const now = Date.now()
+  if (now - lastRedisErrorLog >= REDIS_ERROR_LOG_INTERVAL_MS) {
+    lastRedisErrorLog = now
+    console.log(`[Redis] Reconnecting${timeToReconnect ? ` in ${timeToReconnect}ms` : ''}...`)
+  }
+})
+
 // Redis pub/sub for cross-process WebSocket communication
 // Worker publishes events, API server subscribes and emits via WebSocket
 export const PUBSUB_CHANNELS = {
@@ -453,13 +493,18 @@ export async function cancelDailySmsOverviewSchedule(organizationId: string) {
   }
 }
 
-// Check Redis connection
+// Check Redis connection (with timeout to prevent hanging when Redis is unreachable)
 export async function checkRedisConnection(): Promise<boolean> {
   try {
-    await redis.ping()
-    return true
+    const result = await Promise.race([
+      redis.ping(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Redis ping timed out after 3s')), 3000)
+      )
+    ])
+    return result === 'PONG'
   } catch (error) {
-    console.error('Redis connection failed:', error)
+    console.error('Redis connection check failed:', (error as Error).message)
     return false
   }
 }

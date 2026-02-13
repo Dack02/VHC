@@ -16,7 +16,7 @@ import {
   queueDmsImport,
   scheduleDmsImport,
   cancelDmsSchedule,
-  checkRedisConnection
+  isRedisConnected
 } from '../services/queue.js'
 
 // Default import hours (6am, 10am, 2pm, 8pm UK time)
@@ -206,7 +206,7 @@ dmsSettings.patch('/settings', requireOrgAdmin(), async (c) => {
     if (body.autoImportEnabled !== undefined || body.auto_import_enabled !== undefined ||
         body.importScheduleHours || body.import_schedule_hours ||
         body.importScheduleDays || body.import_schedule_days) {
-      const redisAvailable = await checkRedisConnection()
+      const redisAvailable = isRedisConnected()
 
       if (redisAvailable) {
         // Cancel existing schedule
@@ -579,7 +579,7 @@ dmsSettings.delete('/settings/credentials', requireOrgAdmin(), async (c) => {
 
   try {
     // Cancel any scheduled imports
-    const redisAvailable = await checkRedisConnection()
+    const redisAvailable = isRedisConnected()
     if (redisAvailable) {
       await cancelDmsSchedule(organizationId)
     }
@@ -665,7 +665,7 @@ dmsSettings.post('/import', async (c) => {
     }
 
     // Check if Redis is available for queueing
-    const redisAvailable = await checkRedisConnection()
+    const redisAvailable = isRedisConnected()
 
     if (redisAvailable && !body.sync) {
       // Queue the import job

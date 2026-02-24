@@ -39,6 +39,9 @@ items.get('/template-items/search', authorize(['super_admin', 'org_admin', 'site
       query = query.ilike('name', `%${q}%`)
     }
 
+    // Only return active items
+    query = query.eq('is_active', true)
+
     const { data: results, error } = await query
       .order('name', { ascending: true })
       .limit(showAll ? 500 : 50)
@@ -361,9 +364,10 @@ items.delete('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admi
       return c.json({ error: 'Item not found' }, 404)
     }
 
+    // Soft-delete: set is_active = false to preserve check_results references
     const { error } = await supabaseAdmin
       .from('template_items')
-      .delete()
+      .update({ is_active: false })
       .eq('id', itemId)
 
     if (error) {

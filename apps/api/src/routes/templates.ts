@@ -124,6 +124,7 @@ templates.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'serv
         description: section.description,
         sortOrder: section.sort_order,
         items: ((section.items as Record<string, unknown>[]) || [])
+          .filter((item: Record<string, unknown>) => item.is_active !== false)
           .sort((a: Record<string, unknown>, b: Record<string, unknown>) => (a.sort_order as number) - (b.sort_order as number))
           .map((item: Record<string, unknown>) => ({
             id: item.id,
@@ -304,8 +305,8 @@ templates.post('/:id/duplicate', authorize(['super_admin', 'org_admin', 'site_ad
 
       if (sectionError) continue
 
-      // Clone items for this section
-      const items = section.items || []
+      // Clone active items for this section
+      const items = (section.items || []).filter((i: Record<string, unknown>) => i.is_active !== false)
       for (const item of items) {
         await supabaseAdmin
           .from('template_items')

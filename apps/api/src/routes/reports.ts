@@ -1245,6 +1245,7 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           .select('id, health_check_id, checked_by, notes, custom_reason_text, rag_status, result_media(id), check_result_reasons(id)')
           .in('health_check_id', batch)
           .not('rag_status', 'is', null)
+          .limit(50000)
 
         for (const cr of checkResults || []) {
           const techId = (cr.checked_by as string | null) || hcTechMap[cr.health_check_id]
@@ -1266,8 +1267,10 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       }
     }
 
-    // --- Brake disc "not measured" per technician ---
+    // --- Brake disc "not measured" per technician (count of health checks with any unmeasured disc) ---
     if (hcIds.length > 0) {
+      // Track which health checks have at least one unmeasured disc per technician
+      const hcsWithUnmeasuredDisc: Record<string, Set<string>> = {}
       const brakeBatchSize = 500
       for (let i = 0; i < hcIds.length; i += brakeBatchSize) {
         const batch = hcIds.slice(i, i + brakeBatchSize)
@@ -1287,15 +1290,19 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           const nearside = value.nearside as Record<string, unknown> | undefined
           const offside = value.offside as Record<string, unknown> | undefined
 
-          // Nearside: disc is null/undefined AND not marked unable to access
-          if (!nearside?.disc_unable_to_access && (nearside?.disc === null || nearside?.disc === undefined)) {
-            techData[techId].brakeDiscNotMeasured++
-          }
-          // Offside: disc is null/undefined AND not marked unable to access
-          if (!offside?.disc_unable_to_access && (offside?.disc === null || offside?.disc === undefined)) {
-            techData[techId].brakeDiscNotMeasured++
+          const hasUnmeasured =
+            (!nearside?.disc_unable_to_access && (nearside?.disc === null || nearside?.disc === undefined)) ||
+            (!offside?.disc_unable_to_access && (offside?.disc === null || offside?.disc === undefined))
+
+          if (hasUnmeasured) {
+            if (!hcsWithUnmeasuredDisc[techId]) hcsWithUnmeasuredDisc[techId] = new Set()
+            hcsWithUnmeasuredDisc[techId].add(br.health_check_id)
           }
         }
+      }
+      // Set count of unique health checks with unmeasured discs
+      for (const [techId, hcSet] of Object.entries(hcsWithUnmeasuredDisc)) {
+        if (techData[techId]) techData[techId].brakeDiscNotMeasured = hcSet.size
       }
     }
 

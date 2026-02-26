@@ -904,6 +904,9 @@ reports.get('/financial', authorize(['super_admin', 'org_admin', 'site_admin', '
         is_group,
         parent_repair_item_id,
         created_at,
+        source,
+        rag_status,
+        check_results:repair_item_check_results(check_result:check_results(rag_status)),
         health_check:health_checks!inner(
           id,
           status,
@@ -935,6 +938,55 @@ reports.get('/financial', authorize(['super_admin', 'org_admin', 'site_admin', '
     const isFinItemAuth = (item: any) =>
       item.customer_approved === true || item.outcome_status === 'authorised'
 
+    // Helper to derive effective rag_status for a repair item
+    function deriveRagStatus(item: any): 'red' | 'amber' | null {
+      if (item.source === 'mri_scan' && item.rag_status) {
+        return item.rag_status as 'red' | 'amber'
+      }
+      if (item.rag_status) {
+        return item.rag_status as 'red' | 'amber'
+      }
+      let derived: 'red' | 'amber' | null = null
+      for (const link of item.check_results || []) {
+        const cr = link?.check_result as { rag_status?: string } | null
+        if (cr?.rag_status === 'red') return 'red'
+        if (cr?.rag_status === 'amber') derived = 'amber'
+      }
+      return derived
+    }
+
+    // Helper to build overview object from accumulators
+    function buildOverview(
+      identified: number, authorized: number, declined: number, deferred: number,
+      labour: number, parts: number,
+    ) {
+      const captureRate = identified > 0 ? Math.round((authorized / identified) * 100 * 10) / 10 : 0
+      return {
+        totalIdentified: Math.round(identified * 100) / 100,
+        totalAuthorized: Math.round(authorized * 100) / 100,
+        totalDeclined: Math.round(declined * 100) / 100,
+        totalDeferred: Math.round(deferred * 100) / 100,
+        captureRate,
+        labourTotal: Math.round(labour * 100) / 100,
+        partsTotal: Math.round(parts * 100) / 100,
+        labourPercent: (labour + parts) > 0
+          ? Math.round((labour / (labour + parts)) * 100 * 10) / 10
+          : 0,
+      }
+    }
+
+    // Helper to build sorted top items from aggregates
+    function buildTopItems(agg: Record<string, { name: string; count: number; totalValue: number; authorizedCount: number }>) {
+      return Object.values(agg)
+        .map(i => ({
+          ...i,
+          avgValue: i.count > 0 ? Math.round(i.totalValue / i.count * 100) / 100 : 0,
+          authRate: i.count > 0 ? Math.round((i.authorizedCount / i.count) * 100 * 10) / 10 : 0,
+        }))
+        .sort((a, b) => b.totalValue - a.totalValue)
+        .slice(0, 20)
+    }
+
     // Build children-by-parent map for group authorization
     const finChildrenByParent = new Map<string, any[]>()
     for (const item of items || []) {
@@ -952,6 +1004,16 @@ reports.get('/financial', authorize(['super_admin', 'org_admin', 'site_admin', '
     let totalDeferred = 0
     let totalLabour = 0
     let totalParts = 0
+
+    // Red accumulators
+    let redTotalIdentified = 0, redTotalAuthorized = 0, redTotalDeclined = 0, redTotalDeferred = 0, redTotalLabour = 0, redTotalParts = 0
+    const redItemAggregates: Record<string, { name: string; count: number; totalValue: number; authorizedCount: number }> = {}
+    const redRevenueByPeriod: Record<string, { period: string; identified: number; authorized: number; declined: number }> = {}
+
+    // Amber accumulators
+    let amberTotalIdentified = 0, amberTotalAuthorized = 0, amberTotalDeclined = 0, amberTotalDeferred = 0, amberTotalLabour = 0, amberTotalParts = 0
+    const amberItemAggregates: Record<string, { name: string; count: number; totalValue: number; authorizedCount: number }> = {}
+    const amberRevenueByPeriod: Record<string, { period: string; identified: number; authorized: number; declined: number }> = {}
 
     // Top items tracking
     const itemAggregates: Record<string, { name: string; count: number; totalValue: number; authorizedCount: number }> = {}
@@ -1046,40 +1108,61 @@ reports.get('/financial', authorize(['super_admin', 'org_admin', 'site_admin', '
       revenueByPeriod[periodKey].identified += value
       if (authorised) revenueByPeriod[periodKey].authorized += authValue
       if (!authorised && item.outcome_status === 'declined') revenueByPeriod[periodKey].declined += value
+
+      // RAG breakdown accumulation
+      const rag = deriveRagStatus(item)
+      if (rag === 'red' || rag === 'amber') {
+        const isRed = rag === 'red'
+        if (isRed) {
+          redTotalIdentified += value; redTotalLabour += labour; redTotalParts += parts
+        } else {
+          amberTotalIdentified += value; amberTotalLabour += labour; amberTotalParts += parts
+        }
+
+        if (authorised) {
+          if (isRed) redTotalAuthorized += authValue; else amberTotalAuthorized += authValue
+        } else if (item.outcome_status === 'declined') {
+          if (isRed) redTotalDeclined += value; else amberTotalDeclined += value
+        } else if (item.outcome_status === 'deferred') {
+          if (isRed) redTotalDeferred += value; else amberTotalDeferred += value
+        }
+
+        // RAG item aggregates
+        const ragAgg = isRed ? redItemAggregates : amberItemAggregates
+        if (!ragAgg[name]) {
+          ragAgg[name] = { name, count: 0, totalValue: 0, authorizedCount: 0 }
+        }
+        ragAgg[name].count++
+        ragAgg[name].totalValue += value
+        if (authorised) ragAgg[name].authorizedCount++
+
+        // RAG revenue by period
+        const ragPeriod = isRed ? redRevenueByPeriod : amberRevenueByPeriod
+        if (!ragPeriod[periodKey]) {
+          ragPeriod[periodKey] = { period: periodKey, identified: 0, authorized: 0, declined: 0 }
+        }
+        ragPeriod[periodKey].identified += value
+        if (authorised) ragPeriod[periodKey].authorized += authValue
+        if (!authorised && item.outcome_status === 'declined') ragPeriod[periodKey].declined += value
+      }
     }
 
-    const topItems = Object.values(itemAggregates)
-      .map(i => ({
-        ...i,
-        avgValue: i.count > 0 ? Math.round(i.totalValue / i.count * 100) / 100 : 0,
-        authRate: i.count > 0 ? Math.round((i.authorizedCount / i.count) * 100 * 10) / 10 : 0,
-      }))
-      .sort((a, b) => b.totalValue - a.totalValue)
-      .slice(0, 20)
-
-    const captureRate = totalIdentified > 0
-      ? Math.round((totalAuthorized / totalIdentified) * 100 * 10) / 10
-      : 0
+    const topItems = buildTopItems(itemAggregates)
 
     const revenueTimeline = Object.values(revenueByPeriod).sort((a, b) => a.period.localeCompare(b.period))
 
     return c.json({
       period: { from: startDate, to: endDate },
-      overview: {
-        totalIdentified: Math.round(totalIdentified * 100) / 100,
-        totalAuthorized: Math.round(totalAuthorized * 100) / 100,
-        totalDeclined: Math.round(totalDeclined * 100) / 100,
-        totalDeferred: Math.round(totalDeferred * 100) / 100,
-        captureRate,
-        labourTotal: Math.round(totalLabour * 100) / 100,
-        partsTotal: Math.round(totalParts * 100) / 100,
-        labourPercent: (totalLabour + totalParts) > 0
-          ? Math.round((totalLabour / (totalLabour + totalParts)) * 100 * 10) / 10
-          : 0,
-      },
+      overview: buildOverview(totalIdentified, totalAuthorized, totalDeclined, totalDeferred, totalLabour, totalParts),
       revenueTimeline,
       topItems,
       priceOverrides: priceOverrides.slice(0, 50),
+      redOverview: buildOverview(redTotalIdentified, redTotalAuthorized, redTotalDeclined, redTotalDeferred, redTotalLabour, redTotalParts),
+      amberOverview: buildOverview(amberTotalIdentified, amberTotalAuthorized, amberTotalDeclined, amberTotalDeferred, amberTotalLabour, amberTotalParts),
+      redRevenueTimeline: Object.values(redRevenueByPeriod).sort((a, b) => a.period.localeCompare(b.period)),
+      amberRevenueTimeline: Object.values(amberRevenueByPeriod).sort((a, b) => a.period.localeCompare(b.period)),
+      redTopItems: buildTopItems(redItemAggregates),
+      amberTopItems: buildTopItems(amberItemAggregates),
     })
   } catch (error) {
     console.error('Financial report error:', error)

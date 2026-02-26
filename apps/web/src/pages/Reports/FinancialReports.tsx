@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AreaChart, Area, PieChart, Pie, Cell,
@@ -12,27 +13,35 @@ import ReportFiltersBar from './components/ReportFiltersBar'
 import { formatCurrency, formatPercent, formatDate } from './utils/formatters'
 import { CHART_COLORS } from './utils/colors'
 
+interface OverviewData {
+  totalIdentified: number
+  totalAuthorized: number
+  totalDeclined: number
+  totalDeferred: number
+  captureRate: number
+  labourTotal: number
+  partsTotal: number
+  labourPercent: number
+}
+
+interface TimelineEntry {
+  period: string; identified: number; authorized: number; declined: number
+}
+
+interface TopItemEntry {
+  name: string
+  count: number
+  totalValue: number
+  avgValue: number
+  authorizedCount: number
+  authRate: number
+}
+
 interface FinancialData {
   period: { from: string; to: string }
-  overview: {
-    totalIdentified: number
-    totalAuthorized: number
-    totalDeclined: number
-    totalDeferred: number
-    captureRate: number
-    labourTotal: number
-    partsTotal: number
-    labourPercent: number
-  }
-  revenueTimeline: Array<{ period: string; identified: number; authorized: number; declined: number }>
-  topItems: Array<{
-    name: string
-    count: number
-    totalValue: number
-    avgValue: number
-    authorizedCount: number
-    authRate: number
-  }>
+  overview: OverviewData
+  revenueTimeline: TimelineEntry[]
+  topItems: TopItemEntry[]
   priceOverrides: Array<{
     name: string
     originalTotal: number
@@ -40,6 +49,12 @@ interface FinancialData {
     reason: string | null
     advisorName: string
   }>
+  redOverview: OverviewData
+  amberOverview: OverviewData
+  redRevenueTimeline: TimelineEntry[]
+  amberRevenueTimeline: TimelineEntry[]
+  redTopItems: TopItemEntry[]
+  amberTopItems: TopItemEntry[]
 }
 
 export default function FinancialReports() {
@@ -53,7 +68,19 @@ export default function FinancialReports() {
     queryString,
   })
 
-  const o = data?.overview
+  const [ragFilter, setRagFilter] = useState<'all' | 'red' | 'amber'>('all')
+
+  const o = ragFilter === 'red' ? data?.redOverview
+    : ragFilter === 'amber' ? data?.amberOverview
+    : data?.overview
+
+  const activeTimeline = ragFilter === 'red' ? data?.redRevenueTimeline
+    : ragFilter === 'amber' ? data?.amberRevenueTimeline
+    : data?.revenueTimeline
+
+  const activeTopItems = ragFilter === 'red' ? data?.redTopItems
+    : ragFilter === 'amber' ? data?.amberTopItems
+    : data?.topItems
 
   const pieData = o ? [
     { name: 'Labour', value: o.labourTotal },
@@ -62,12 +89,12 @@ export default function FinancialReports() {
 
   const pieColors = [CHART_COLORS.primary, CHART_COLORS.tertiary]
 
-  const chartData = data?.revenueTimeline.map(d => ({
+  const chartData = (activeTimeline || []).map(d => ({
     ...d,
     label: formatDate(d.period),
-  })) || []
+  }))
 
-  const topItemColumns: Column<FinancialData['topItems'][0]>[] = [
+  const topItemColumns: Column<TopItemEntry>[] = [
     { key: 'name', label: 'Item', render: r => <span className="font-medium text-gray-900">{r.name}</span>, sortable: true, sortValue: r => r.name },
     { key: 'count', label: 'Count', render: r => r.count, align: 'right', sortable: true, sortValue: r => r.count },
     { key: 'avgValue', label: 'Avg Value', render: r => formatCurrency(r.avgValue), align: 'right', sortable: true, sortValue: r => r.avgValue },
@@ -112,6 +139,30 @@ export default function FinancialReports() {
         onGroupByChange={setGroupBy}
         onSiteChange={setSiteId}
       />
+
+      {/* RAG Filter Toggle */}
+      <div className="flex items-center gap-3">
+        <span className="text-sm text-gray-500 font-medium">Work Type:</span>
+        <div className="flex rounded-lg border border-gray-300 overflow-hidden">
+          {([
+            { key: 'all', label: 'All', activeClass: 'bg-primary text-white' },
+            { key: 'red', label: 'Red', activeClass: 'bg-red-500 text-white' },
+            { key: 'amber', label: 'Amber', activeClass: 'bg-amber-500 text-white' },
+          ] as const).map(opt => (
+            <button
+              key={opt.key}
+              onClick={() => setRagFilter(opt.key)}
+              className={`px-3 py-2 text-sm ${
+                ragFilter === opt.key
+                  ? opt.activeClass
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm">{error}</div>
@@ -181,7 +232,7 @@ export default function FinancialReports() {
             </div>
             <DataTable
               columns={topItemColumns}
-              data={data?.topItems || []}
+              data={activeTopItems || []}
               rowKey={r => r.name}
               pageSize={15}
               emptyMessage="No repair item data available"

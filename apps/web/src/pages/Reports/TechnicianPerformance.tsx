@@ -22,6 +22,7 @@ interface TechnicianData {
     avgInspectionTime: number
     avgRedAmber: number
     revenueIdentified: number
+    revenueSold: number
     totalInspectedItems: number
     libraryOnlyCount: number
     freeTextOnlyCount: number
@@ -53,6 +54,7 @@ export default function TechnicianPerformance() {
     { key: 'avgTime', label: 'Avg Time', render: r => r.avgInspectionTime > 0 ? formatDuration(r.avgInspectionTime) : '-', align: 'right', sortable: true, sortValue: r => r.avgInspectionTime },
     { key: 'avgRedAmber', label: 'Avg Red/Amber', render: r => r.avgRedAmber.toFixed(1), align: 'right', sortable: true, sortValue: r => r.avgRedAmber },
     { key: 'revenue', label: 'Revenue Found', render: r => <span className="font-medium">{formatCurrency(r.revenueIdentified)}</span>, align: 'right', sortable: true, sortValue: r => r.revenueIdentified },
+    { key: 'revenueSold', label: 'Revenue Sold', render: r => <span className="font-medium">{formatCurrency(r.revenueSold)}</span>, align: 'right', sortable: true, sortValue: r => r.revenueSold },
     { key: 'avgPhotos', label: 'Avg Photos', render: r => r.avgPhotos > 0 ? r.avgPhotos.toFixed(1) : <span className="text-gray-400">-</span>, align: 'right', sortable: true, sortValue: r => r.avgPhotos },
     { key: 'brakeDiscNotMeasured', label: 'Discs Not Measured', render: r => {
       const count = r.brakeDiscNotMeasured

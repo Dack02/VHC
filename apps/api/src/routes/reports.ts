@@ -1114,7 +1114,7 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       amber_count,
       red_count,
       technician:users!health_checks_technician_id_fkey(id, first_name, last_name),
-      repair_items(total_inc_vat, outcome_status, deleted_at, parent_repair_item_id)
+      repair_items(id, total_inc_vat, outcome_status, deleted_at, parent_repair_item_id, customer_approved, is_group)
     `
 
     let techDdQ = supabaseAdmin
@@ -1160,6 +1160,7 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       amberCount: number
       greenCount: number
       revenueIdentified: number
+      revenueSold: number
       totalInspectedItems: number
       libraryOnlyCount: number
       freeTextOnlyCount: number
@@ -1188,6 +1189,7 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           amberCount: 0,
           greenCount: 0,
           revenueIdentified: 0,
+          revenueSold: 0,
           totalInspectedItems: 0,
           libraryOnlyCount: 0,
           freeTextOnlyCount: 0,
@@ -1203,10 +1205,43 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       techData[key].amberCount += hc.amber_count || 0
       techData[key].greenCount += hc.green_count || 0
 
-      // Revenue identified — top-level non-deleted items only
-      const items = hc.repair_items as Array<{ total_inc_vat?: number; outcome_status?: string; deleted_at?: string | null; parent_repair_item_id?: string | null }> | null
-      const topLevelActive = items?.filter(i => !i.deleted_at && !i.parent_repair_item_id) || []
+      // Revenue identified & sold — top-level non-deleted items only
+      const items = hc.repair_items as Array<{ id?: string; total_inc_vat?: number; outcome_status?: string; deleted_at?: string | null; parent_repair_item_id?: string | null; customer_approved?: boolean; is_group?: boolean }> | null
+      const activeItems = items?.filter(i => !i.deleted_at) || []
+      const topLevelActive = activeItems.filter(i => !i.parent_repair_item_id)
       techData[key].revenueIdentified += topLevelActive.reduce((s, i) => s + (Number(i.total_inc_vat) || 0), 0)
+
+      // Revenue sold — same auth logic as financial reports
+      const isItemAuth = (item: { customer_approved?: boolean; outcome_status?: string }) =>
+        item.customer_approved === true || item.outcome_status === 'authorised'
+
+      const childrenByParent = new Map<string, typeof activeItems>()
+      for (const item of activeItems) {
+        if (item.parent_repair_item_id) {
+          const children = childrenByParent.get(item.parent_repair_item_id) || []
+          children.push(item)
+          childrenByParent.set(item.parent_repair_item_id, children)
+        }
+      }
+
+      for (const item of topLevelActive) {
+        const value = Number(item.total_inc_vat) || 0
+        let authorised = isItemAuth(item)
+        let authValue = value
+
+        if (item.is_group && !authorised) {
+          const children = childrenByParent.get(item.id!) || []
+          const authChildren = children.filter(c => isItemAuth(c))
+          if (authChildren.length > 0) {
+            authorised = true
+            authValue = authChildren.reduce((s, c) => s + (Number(c.total_inc_vat) || 0), 0)
+          }
+        }
+
+        if (authorised) {
+          techData[key].revenueSold += authValue
+        }
+      }
 
       // Inspection time calculation
       if (hc.tech_started_at && hc.tech_completed_at) {
@@ -1236,33 +1271,44 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
     }
 
     if (hcIds.length > 0) {
-      // Fetch in batches of 500 to avoid query-string limits
+      // Fetch check_results in batches, paginating within each batch to overcome Supabase 1000-row limit
       const batchSize = 500
       for (let i = 0; i < hcIds.length; i += batchSize) {
         const batch = hcIds.slice(i, i + batchSize)
-        const { data: checkResults } = await supabaseAdmin
-          .from('check_results')
-          .select('id, health_check_id, checked_by, notes, custom_reason_text, rag_status, result_media(id), check_result_reasons(id)')
-          .in('health_check_id', batch)
-          .not('rag_status', 'is', null)
-          .limit(50000)
+        const pageSize = 1000
+        let offset = 0
+        let hasMore = true
 
-        for (const cr of checkResults || []) {
-          const techId = (cr.checked_by as string | null) || hcTechMap[cr.health_check_id]
-          if (!techId || !techData[techId]) continue
+        while (hasMore) {
+          const { data: checkResults } = await supabaseAdmin
+            .from('check_results')
+            .select('id, health_check_id, checked_by, notes, custom_reason_text, rag_status, result_media(id), check_result_reasons(id)')
+            .in('health_check_id', batch)
+            .not('rag_status', 'is', null)
+            .range(offset, offset + pageSize - 1)
 
-          // Count photos from result_media join
-          const mediaArr = (cr as Record<string, unknown>).result_media as unknown[]
-          techData[techId].totalPhotos += Array.isArray(mediaArr) ? mediaArr.length : 0
+          const results = checkResults || []
 
-          const hasLibrary = Array.isArray(cr.check_result_reasons) && cr.check_result_reasons.length > 0
-          const hasFreeText = !!((cr.notes && (cr.notes as string).trim()) || (cr.custom_reason_text && (cr.custom_reason_text as string).trim()))
+          for (const cr of results) {
+            const techId = (cr.checked_by as string | null) || hcTechMap[cr.health_check_id]
+            if (!techId || !techData[techId]) continue
 
-          techData[techId].totalInspectedItems++
-          if (hasLibrary && hasFreeText) techData[techId].bothCount++
-          else if (hasLibrary) techData[techId].libraryOnlyCount++
-          else if (hasFreeText) techData[techId].freeTextOnlyCount++
-          else techData[techId].noReasonCount++
+            // Count photos from result_media join
+            const mediaArr = (cr as Record<string, unknown>).result_media as unknown[]
+            techData[techId].totalPhotos += Array.isArray(mediaArr) ? mediaArr.length : 0
+
+            const hasLibrary = Array.isArray(cr.check_result_reasons) && cr.check_result_reasons.length > 0
+            const hasFreeText = !!((cr.notes && (cr.notes as string).trim()) || (cr.custom_reason_text && (cr.custom_reason_text as string).trim()))
+
+            techData[techId].totalInspectedItems++
+            if (hasLibrary && hasFreeText) techData[techId].bothCount++
+            else if (hasLibrary) techData[techId].libraryOnlyCount++
+            else if (hasFreeText) techData[techId].freeTextOnlyCount++
+            else techData[techId].noReasonCount++
+          }
+
+          hasMore = results.length === pageSize
+          offset += pageSize
         }
       }
     }
@@ -1321,6 +1367,7 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           ? Math.round(((t.redCount + t.amberCount) / t.assigned) * 10) / 10
           : 0,
         revenueIdentified: Math.round(t.revenueIdentified * 100) / 100,
+        revenueSold: Math.round(t.revenueSold * 100) / 100,
         totalInspectedItems: t.totalInspectedItems,
         libraryOnlyCount: t.libraryOnlyCount,
         freeTextOnlyCount: t.freeTextOnlyCount,

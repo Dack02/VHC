@@ -320,17 +320,32 @@ export async function sendDailySmsOverview(organizationId: string): Promise<void
     recipientsBySite.get(key)!.push(r)
   }
 
-  // 4. Calculate date ranges
+  // 4. Calculate date ranges in Europe/London timezone
+  // This correctly handles BST (UTC+1) vs GMT (UTC+0)
   const now = new Date()
-  // Today: start of day to end of day (in London time)
-  const todayStart = new Date(now)
-  todayStart.setHours(0, 0, 0, 0)
-  const todayEnd = new Date(now)
-  todayEnd.setHours(23, 59, 59, 999)
 
-  // MTD: first of current month to now
-  const mtdStart = new Date(now.getFullYear(), now.getMonth(), 1)
-  mtdStart.setHours(0, 0, 0, 0)
+  // Get London's UTC offset in ms for a given date
+  function londonOffsetMs(date: Date): number {
+    const utcStr = date.toLocaleString('en-US', { timeZone: 'UTC' })
+    const londonStr = date.toLocaleString('en-US', { timeZone: 'Europe/London' })
+    return new Date(londonStr).getTime() - new Date(utcStr).getTime()
+  }
+
+  // Get today's date string in London timezone (YYYY-MM-DD)
+  const londonDateStr = now.toLocaleDateString('en-CA', { timeZone: 'Europe/London' })
+  const [londonYear, londonMonthStr] = londonDateStr.split('-')
+
+  // Today's start/end in UTC (adjusted for London offset)
+  const offsetMs = londonOffsetMs(now)
+  const todayMidnightUTC = new Date(`${londonDateStr}T00:00:00.000Z`)
+  const todayStart = new Date(todayMidnightUTC.getTime() - offsetMs)
+  const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1)
+
+  // MTD: first of current month in London, converted to UTC
+  const mtdDateStr = `${londonYear}-${londonMonthStr}-01`
+  const mtdMidnightUTC = new Date(`${mtdDateStr}T00:00:00.000Z`)
+  const mtdOffsetMs = londonOffsetMs(mtdMidnightUTC)
+  const mtdStart = new Date(mtdMidnightUTC.getTime() - mtdOffsetMs)
 
   const todayStartStr = todayStart.toISOString()
   const todayEndStr = todayEnd.toISOString()

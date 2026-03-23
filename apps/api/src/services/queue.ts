@@ -30,9 +30,23 @@ redis.on('connect', () => {
   console.log('[Redis] Connecting...')
 })
 
+let redisReadyCount = 0
+
 redis.on('ready', () => {
+  redisReadyCount++
   console.log('[Redis] Connected and ready')
   updateRedisStatus(true)
+
+  // On reconnection (not initial connect), re-initialize scheduled jobs
+  // because BullMQ repeatable job configs are lost when Redis restarts
+  if (redisReadyCount > 1) {
+    console.log('[Redis] Reconnected - re-initializing scheduled jobs')
+    import('./scheduler.js').then(({ initializeDailySmsOverviewSchedules }) => {
+      initializeDailySmsOverviewSchedules().catch(err => {
+        console.error('[Redis] Failed to re-initialize SMS schedules on reconnect:', err)
+      })
+    })
+  }
 })
 
 redis.on('close', () => {

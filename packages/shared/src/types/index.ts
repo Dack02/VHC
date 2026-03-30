@@ -352,3 +352,65 @@ export interface ScheduledJob {
   payload: Record<string, unknown>
   createdAt: Date
 }
+
+// T-Card Workshop Board types
+
+export type TCardColumnType = 'due_in' | 'technician' | 'completed'
+export type TCardPriority = 'normal' | 'high' | 'urgent'
+
+export interface TCardStatus {
+  id: string
+  organizationId: string
+  name: string
+  colour: string
+  icon?: string
+  sortOrder: number
+  isActive: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface TCardBoardConfig {
+  id: string
+  organizationId: string
+  siteId: string
+  defaultTechHours: number
+  showCompletedColumn: boolean
+  autoCompleteStatuses: string[]
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface TCardColumn {
+  id: string
+  organizationId: string
+  siteId: string
+  technicianId: string
+  sortOrder: number
+  availableHours: number
+  isVisible: boolean
+  createdAt: Date
+}
+
+export interface TCardAssignment {
+  id: string
+  organizationId: string
+  healthCheckId: string
+  columnType: TCardColumnType
+  technicianId?: string
+  sortPosition: number
+  tcardStatusId?: string
+  priority: TCardPriority
+  boardDate: string
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface TCardNote {
+  id: string
+  organizationId: string
+  healthCheckId: string
+  userId: string
+  content: string
+  createdAt: Date
+}

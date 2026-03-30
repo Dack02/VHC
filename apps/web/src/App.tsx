@@ -84,6 +84,9 @@ const PartsCatalog = lazy(() => import('./pages/Parts/PartsCatalog'))
 const Messages = lazy(() => import('./pages/Messages/Messages'))
 const ServicePackages = lazy(() => import('./pages/ServicePackages/ServicePackages'))
 const DailySmsOverview = lazy(() => import('./pages/Settings/DailySmsOverview'))
+const WorkshopBoard = lazy(() => import('./pages/WorkshopBoard/WorkshopBoard'))
+const TCardStatuses = lazy(() => import('./pages/Settings/TCardStatuses'))
+const TCardBoardSettings = lazy(() => import('./pages/Settings/TCardBoardSettings'))
 
 // Page loading fallback
 function PageLoader() {
@@ -160,6 +163,7 @@ function App() {
                         <Route path="/parts" element={<PartsCatalog />} />
                         <Route path="/templates" element={<TemplateList />} />
                         <Route path="/templates/:id" element={<TemplateBuilder />} />
+                        <Route path="/workshop-board" element={<WorkshopBoard />} />
                         <Route path="/service-packages" element={<ServicePackages />} />
                         <Route path="/settings" element={<SettingsHub />} />
                         <Route path="/settings/tyre-manufacturers" element={<TyreManufacturers />} />
@@ -191,6 +195,8 @@ function App() {
                         <Route path="/settings/workflow" element={<WorkflowSettings />} />
                         <Route path="/settings/mri-items" element={<MriItemsSettings />} />
                         <Route path="/settings/daily-sms-overview" element={<DailySmsOverview />} />
+                        <Route path="/settings/tcard-statuses" element={<TCardStatuses />} />
+                        <Route path="/settings/tcard-board" element={<TCardBoardSettings />} />
                       </Route>
                     </Route>
 

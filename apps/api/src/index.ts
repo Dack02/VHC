@@ -59,6 +59,7 @@ import twilioWebhookRoutes from './routes/webhooks/twilio.js'
 import smsConversations from './routes/sms-conversations.js'
 import messages from './routes/messages.js'
 import dailySmsOverview from './routes/daily-sms-overview.js'
+import tcard from './routes/tcard/index.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
@@ -209,6 +210,9 @@ app.route('/api/v1/organizations/:orgId/daily-sms-overview', dailySmsOverview)
 
 // Check-in settings and MRI items routes (nested under organizations)
 app.route('/api/v1/organizations', checkinSettings)
+
+// T-Card Workshop Board routes
+app.route('/api/v1/tcard', tcard)
 
 // Pricing calculator routes
 app.route('/api/v1/pricing', pricing)

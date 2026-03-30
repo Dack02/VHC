@@ -28,6 +28,13 @@ export const WS_EVENTS = {
   SMS_RECEIVED: 'sms:received',
   SMS_SENT: 'sms:sent',
 
+  // T-Card Workshop Board
+  TCARD_CARD_MOVED: 'tcard:card_moved',
+  TCARD_STATUS_CHANGED: 'tcard:status_changed',
+  TCARD_NOTE_ADDED: 'tcard:note_added',
+  TCARD_COLUMN_UPDATED: 'tcard:column_updated',
+  TCARD_CARD_UPDATED: 'tcard:card_updated',
+
   // Client -> Server
   JOIN_SITE: 'join_site',
   LEAVE_SITE: 'leave_site',

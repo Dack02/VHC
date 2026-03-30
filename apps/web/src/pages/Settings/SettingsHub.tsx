@@ -301,6 +301,31 @@ export default function SettingsHub() {
     }
   ]
 
+  const workshopBoardCards: SettingsCard[] = [
+    {
+      to: '/settings/tcard-statuses',
+      title: 'Job Statuses',
+      description: 'Configure workshop board job statuses and colours',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/tcard-board',
+      title: 'Board Settings',
+      description: 'Default technician hours and board display preferences',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+  ]
+
   const systemCards: SettingsCard[] = [
     {
       to: '/settings/integrations',
@@ -363,6 +388,9 @@ export default function SettingsHub() {
   const visibleGeneral = generalCards.filter(card =>
     card.roles.includes(userRole) && (card.condition === undefined || card.condition)
   )
+  const visibleWorkshopBoard = workshopBoardCards.filter(card =>
+    card.roles.includes(userRole) && (card.condition === undefined || card.condition)
+  )
   const visibleSystem = systemCards.filter(card =>
     card.roles.includes(userRole) && (card.condition === undefined || card.condition)
   )
@@ -395,6 +423,29 @@ export default function SettingsHub() {
                       {card.badge}
                     </span>
                   )}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {visibleWorkshopBoard.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-lg font-semibold text-gray-800 mb-4">Workshop Board</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {visibleWorkshopBoard.map(card => (
+              <Link
+                key={card.to}
+                to={card.to}
+                className="block bg-white border border-gray-200 rounded-xl p-5 hover:border-primary hover:shadow-sm transition-all"
+              >
+                <div className="flex items-start space-x-4">
+                  <div className="flex-shrink-0 text-gray-400">{card.icon}</div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-semibold text-gray-900">{card.title}</h3>
+                    <p className="text-xs text-gray-500 mt-1">{card.description}</p>
+                  </div>
                 </div>
               </Link>
             ))}

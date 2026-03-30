@@ -159,7 +159,10 @@ auth.post('/logout', authMiddleware, async (c) => {
     const token = authHeader?.substring(7)
 
     if (token) {
-      await supabaseAdmin.auth.admin.signOut(token)
+      // Use 'local' scope to only revoke THIS session, not all sessions for the user.
+      // Using 'global' (the default) would invalidate sessions across all apps
+      // (e.g., logging out of admin portal would kill the main app session).
+      await supabaseAdmin.auth.admin.signOut(token, 'local')
     }
 
     return c.json({ message: 'Logged out successfully' })

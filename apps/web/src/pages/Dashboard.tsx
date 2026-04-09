@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useSocket, WS_EVENTS } from '../contexts/SocketContext'
 import { api } from '../lib/api'
 import DmsImportModal from './DmsImportModal'
+import { HcDeletionModal } from './HealthChecks/components/HcDeletionModal'
 
 interface DashboardMetrics {
   totalToday: number
@@ -143,6 +144,7 @@ export default function Dashboard() {
   const [liveUpdate, setLiveUpdate] = useState<string | null>(null)
   const [dmsEnabled, setDmsEnabled] = useState(false)
   const [showDmsModal, setShowDmsModal] = useState(false)
+  const [deleteItem, setDeleteItem] = useState<AwaitingArrivalItem | null>(null)
   const [monthlyKpis, setMonthlyKpis] = useState<MonthlyKpiData | null>(null)
   const [todayKpis, setTodayKpis] = useState<TodayRagBreakdown | null>(null)
 
@@ -416,6 +418,24 @@ export default function Dashboard() {
       console.error('Failed to mark no-show:', err)
       setError(err instanceof Error ? err.message : 'Failed to mark vehicle as no-show')
     }
+  }
+
+  // Admin check for delete button visibility
+  const isAdmin = user?.role === 'super_admin' || user?.role === 'org_admin' || user?.role === 'site_admin'
+
+  // Delete a health check from the awaiting arrival list
+  const handleDeleteHealthCheck = async (hcDeletionReasonId: string, notes: string) => {
+    if (!token || !deleteItem) return
+    await api(`/api/v1/health-checks/${deleteItem.id}/delete`, {
+      method: 'POST',
+      token,
+      body: { hcDeletionReasonId, notes: notes || undefined }
+    })
+    setDeleteItem(null)
+    fetchAwaitingArrival()
+    fetchDashboard()
+    setLiveUpdate('Health check deleted')
+    setTimeout(() => setLiveUpdate(null), 3000)
   }
 
   if (loading && !data) {
@@ -1040,6 +1060,17 @@ export default function Dashboard() {
                   >
                     No Show
                   </button>
+                  {isAdmin && (
+                    <button
+                      onClick={() => setDeleteItem(item)}
+                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Delete health check"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -1059,6 +1090,14 @@ export default function Dashboard() {
           token={token}
         />
       )}
+
+      {/* Delete Health Check Modal (admin only) */}
+      <HcDeletionModal
+        isOpen={!!deleteItem}
+        vehicleRegistration={deleteItem?.registration}
+        onClose={() => setDeleteItem(null)}
+        onConfirm={handleDeleteHealthCheck}
+      />
     </div>
   )
 }

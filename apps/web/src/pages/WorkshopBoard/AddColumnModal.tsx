@@ -7,6 +7,7 @@ import type { BoardColumnDef } from './types'
 interface AddColumnModalProps {
   siteId: string
   existingColumns: BoardColumnDef[]
+  initialTab?: 'technician' | 'queue'
   onClose: () => void
   onAdded: () => void
 }
@@ -26,10 +27,10 @@ interface OrgUser {
 
 const QUEUE_COLOURS = ['#6B7280', '#F59E0B', '#3B82F6', '#10B981', '#8B5CF6', '#EC4899', '#06B6D4', '#EF4444']
 
-export default function AddColumnModal({ siteId, existingColumns, onClose, onAdded }: AddColumnModalProps) {
+export default function AddColumnModal({ siteId, existingColumns, initialTab, onClose, onAdded }: AddColumnModalProps) {
   const { session } = useAuth()
   const toast = useToast()
-  const [tab, setTab] = useState<'technician' | 'queue'>('technician')
+  const [tab, setTab] = useState<'technician' | 'queue'>(initialTab || 'technician')
   const [technicians, setTechnicians] = useState<OrgUser[]>([])
   const [loadingTechs, setLoadingTechs] = useState(true)
   const [selectedTechId, setSelectedTechId] = useState('')

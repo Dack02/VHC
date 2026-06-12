@@ -42,6 +42,7 @@ const HC_CARD_SELECT = `
   jobsheet_number, jobsheet_status, job_number, booked_repairs,
   mileage_in, key_location, checkin_notes, advisor_notes,
   red_count, amber_count, green_count, tech_started_at, tech_completed_at,
+  total_tech_time_minutes,
   vehicle:vehicles(id, registration, make, model, year, color),
   customer:customers(id, first_name, last_name, mobile),
   technician:users!health_checks_technician_id_fkey(id, first_name, last_name),
@@ -302,6 +303,8 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
         workshopStatusId: (meta?.workshop_status_id as string) ?? null,
         priority: (meta?.priority as string) ?? 'normal',
         estimatedHours,
+        plannedStartAt: (meta?.planned_start_at as string) ?? null,
+        totalTechTimeMinutes: (hc.total_tech_time_minutes as number) ?? 0,
         workCompletedAt: (meta?.work_completed_at as string) ?? hc.completed_at ?? null,
         promiseTime: hc.promise_time,
         dueDate: hc.due_date,
@@ -341,7 +344,11 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
       siteId,
       date,
       config: {
-        defaultTechHours: configRes.data ? Number(configRes.data.default_tech_hours) : 8.0
+        defaultTechHours: configRes.data ? Number(configRes.data.default_tech_hours) : 8.0,
+        dayStartTime: (configRes.data?.day_start_time as string)?.slice(0, 5) || '08:00',
+        dayEndTime: (configRes.data?.day_end_time as string)?.slice(0, 5) || '17:30',
+        lunchStartTime: (configRes.data?.lunch_start_time as string)?.slice(0, 5) || null,
+        lunchEndTime: (configRes.data?.lunch_end_time as string)?.slice(0, 5) || null
       },
       statuses: (statusesRes.data || []).map(s => ({
         id: s.id,
@@ -416,12 +423,14 @@ workshopBoard.post('/cards/:healthCheckId/move', authorize([...ALL_ROLES]), asyn
     const { healthCheckId } = c.req.param()
     const body = await c.req.json()
     const { target, columnId, sortPosition } = body as {
-      target: 'checked_in' | 'technician' | 'queue' | 'work_complete'
+      // 'workshop' = clear manual placement, return to derived position
+      // (tech column / checked in) WITHOUT changing the assigned technician
+      target: 'checked_in' | 'technician' | 'queue' | 'work_complete' | 'workshop'
       columnId?: string
       sortPosition?: number
     }
 
-    if (!['checked_in', 'technician', 'queue', 'work_complete'].includes(target)) {
+    if (!['checked_in', 'technician', 'queue', 'work_complete', 'workshop'].includes(target)) {
       return c.json({ error: 'Invalid move target' }, 400)
     }
 
@@ -463,6 +472,19 @@ workshopBoard.post('/cards/:healthCheckId/move', authorize([...ALL_ROLES]), asyn
       }
     }
 
+    if (target === 'workshop') {
+      await upsertWorkshopCard(auth.orgId, healthCheckId, {
+        placed_by: auth.user.id,
+        ...(typeof sortPosition === 'number' ? { sort_position: sortPosition } : {}),
+        placement: 'auto',
+        queue_column_id: null,
+        work_completed_at: null,
+        work_completed_by: null
+      })
+      emitBoardUpdated(hc.site_id, 'card_moved', healthCheckId)
+      return c.json({ success: true })
+    }
+
     const now = new Date().toISOString()
     const cardFields: Record<string, unknown> = { placed_by: auth.user.id }
     if (typeof sortPosition === 'number') cardFields.sort_position = sortPosition
@@ -471,12 +493,14 @@ workshopBoard.post('/cards/:healthCheckId/move', authorize([...ALL_ROLES]), asyn
       if (hc.status === 'awaiting_checkin') {
         return c.json({ error: 'Vehicle must complete check-in before assignment', code: 'CHECKIN_REQUIRED' }, 400)
       }
-      if (hc.status === 'awaiting_arrival') {
-        return c.json({ error: 'Mark the vehicle as arrived before assigning a technician', code: 'NOT_ARRIVED' }, 400)
-      }
 
       const technicianId = targetColumn!.technician_id!
-      const newStatus = hc.status === 'created' ? 'assigned' : hc.status
+
+      // Forward planning: a not-yet-arrived booking can be pre-allocated to a
+      // technician (timeline planning for tomorrow) without changing status -
+      // it stays in Due In until it is marked arrived.
+      const isPreAllocation = hc.status === 'awaiting_arrival'
+      const newStatus = isPreAllocation ? hc.status : hc.status === 'created' ? 'assigned' : hc.status
 
       const { error: updateError } = await supabaseAdmin
         .from('health_checks')
@@ -625,6 +649,21 @@ workshopBoard.patch('/cards/:healthCheckId', authorize([...ALL_ROLES]), async (c
     if ('sortPosition' in body && typeof body.sortPosition === 'number') {
       fields.sort_position = body.sortPosition
     }
+    if ('plannedStartAt' in body) {
+      // Re-planning the day is a controller action, not a technician one
+      if (auth.user.role === 'technician') {
+        return c.json({ error: 'Technicians cannot change planned times' }, 403)
+      }
+      if (body.plannedStartAt !== null) {
+        const planned = new Date(body.plannedStartAt)
+        if (Number.isNaN(planned.getTime())) {
+          return c.json({ error: 'Invalid plannedStartAt' }, 400)
+        }
+        fields.planned_start_at = planned.toISOString()
+      } else {
+        fields.planned_start_at = null
+      }
+    }
 
     if (Object.keys(fields).length === 0) {
       return c.json({ error: 'No valid fields to update' }, 400)
@@ -640,7 +679,8 @@ workshopBoard.patch('/cards/:healthCheckId', authorize([...ALL_ROLES]), async (c
         workshopStatusId: card.workshop_status_id,
         priority: card.priority,
         estimatedHours: card.estimated_hours != null ? Number(card.estimated_hours) : null,
-        sortPosition: card.sort_position
+        sortPosition: card.sort_position,
+        plannedStartAt: card.planned_start_at ?? null
       }
     })
   } catch (error) {
@@ -1108,29 +1148,66 @@ workshopBoard.patch('/config', authorize([...ADMIN_ROLES]), async (c) => {
     if (!siteId) return c.json({ error: 'No site available' }, 400)
 
     const body = await c.req.json()
-    const hours = Number(body.defaultTechHours)
-    if (Number.isNaN(hours) || hours <= 0 || hours > 24) {
-      return c.json({ error: 'defaultTechHours must be between 0 and 24' }, 400)
+    const upsertFields: Record<string, unknown> = {
+      organization_id: auth.orgId,
+      site_id: siteId,
+      updated_at: new Date().toISOString()
+    }
+
+    if ('defaultTechHours' in body) {
+      const hours = Number(body.defaultTechHours)
+      if (Number.isNaN(hours) || hours <= 0 || hours > 24) {
+        return c.json({ error: 'defaultTechHours must be between 0 and 24' }, 400)
+      }
+      upsertFields.default_tech_hours = hours
+    }
+
+    const isHHMM = (v: unknown) => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v)
+    if ('dayStartTime' in body) {
+      if (!isHHMM(body.dayStartTime)) return c.json({ error: 'dayStartTime must be HH:MM' }, 400)
+      upsertFields.day_start_time = body.dayStartTime
+    }
+    if ('dayEndTime' in body) {
+      if (!isHHMM(body.dayEndTime)) return c.json({ error: 'dayEndTime must be HH:MM' }, 400)
+      upsertFields.day_end_time = body.dayEndTime
+    }
+    if ('lunchStartTime' in body) {
+      if (body.lunchStartTime !== null && !isHHMM(body.lunchStartTime)) {
+        return c.json({ error: 'lunchStartTime must be HH:MM or null' }, 400)
+      }
+      upsertFields.lunch_start_time = body.lunchStartTime
+    }
+    if ('lunchEndTime' in body) {
+      if (body.lunchEndTime !== null && !isHHMM(body.lunchEndTime)) {
+        return c.json({ error: 'lunchEndTime must be HH:MM or null' }, 400)
+      }
+      upsertFields.lunch_end_time = body.lunchEndTime
+    }
+
+    const dayStart = (upsertFields.day_start_time as string) ?? undefined
+    const dayEnd = (upsertFields.day_end_time as string) ?? undefined
+    if (dayStart && dayEnd && dayStart >= dayEnd) {
+      return c.json({ error: 'Day start must be before day end' }, 400)
     }
 
     const { data: config, error } = await supabaseAdmin
       .from('workshop_board_config')
-      .upsert(
-        {
-          organization_id: auth.orgId,
-          site_id: siteId,
-          default_tech_hours: hours,
-          updated_at: new Date().toISOString()
-        },
-        { onConflict: 'organization_id,site_id' }
-      )
+      .upsert(upsertFields, { onConflict: 'organization_id,site_id' })
       .select()
       .single()
 
     if (error) return c.json({ error: error.message }, 500)
 
     emitBoardUpdated(siteId, 'config_updated')
-    return c.json({ config: { defaultTechHours: Number(config.default_tech_hours) } })
+    return c.json({
+      config: {
+        defaultTechHours: Number(config.default_tech_hours),
+        dayStartTime: (config.day_start_time as string)?.slice(0, 5) || '08:00',
+        dayEndTime: (config.day_end_time as string)?.slice(0, 5) || '17:30',
+        lunchStartTime: (config.lunch_start_time as string)?.slice(0, 5) || null,
+        lunchEndTime: (config.lunch_end_time as string)?.slice(0, 5) || null
+      }
+    })
   } catch (error) {
     console.error('Update workshop board config error:', error)
     return c.json({ error: 'Failed to update board config' }, 500)

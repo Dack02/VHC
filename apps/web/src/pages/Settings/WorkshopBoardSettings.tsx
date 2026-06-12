@@ -18,7 +18,13 @@ interface BoardColumnRow {
 
 interface BoardResponse {
   siteId: string
-  config: { defaultTechHours: number }
+  config: {
+    defaultTechHours: number
+    dayStartTime: string
+    dayEndTime: string
+    lunchStartTime: string | null
+    lunchEndTime: string | null
+  }
   columns: BoardColumnRow[]
 }
 
@@ -28,6 +34,10 @@ export default function WorkshopBoardSettings() {
   const [columns, setColumns] = useState<BoardColumnRow[]>([])
   const [siteId, setSiteId] = useState<string | null>(null)
   const [defaultHours, setDefaultHours] = useState('8')
+  const [dayStart, setDayStart] = useState('08:00')
+  const [dayEnd, setDayEnd] = useState('17:30')
+  const [lunchStart, setLunchStart] = useState('')
+  const [lunchEnd, setLunchEnd] = useState('')
   const [loading, setLoading] = useState(true)
   const [savingConfig, setSavingConfig] = useState(false)
 
@@ -42,6 +52,10 @@ export default function WorkshopBoardSettings() {
       setColumns(data.columns)
       setSiteId(data.siteId)
       setDefaultHours(String(data.config.defaultTechHours))
+      setDayStart(data.config.dayStartTime)
+      setDayEnd(data.config.dayEndTime)
+      setLunchStart(data.config.lunchStartTime || '')
+      setLunchEnd(data.config.lunchEndTime || '')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load board settings')
     } finally {
@@ -61,14 +75,28 @@ export default function WorkshopBoardSettings() {
       toast.error('Default hours must be between 0 and 24')
       return
     }
+    if (dayStart >= dayEnd) {
+      toast.error('Day start must be before day end')
+      return
+    }
+    if ((lunchStart && !lunchEnd) || (!lunchStart && lunchEnd)) {
+      toast.error('Set both lunch times, or neither')
+      return
+    }
     setSavingConfig(true)
     try {
       await api(`/api/v1/workshop-board/config?siteId=${siteId}`, {
         method: 'PATCH',
         token,
-        body: { defaultTechHours: hours }
+        body: {
+          defaultTechHours: hours,
+          dayStartTime: dayStart,
+          dayEndTime: dayEnd,
+          lunchStartTime: lunchStart || null,
+          lunchEndTime: lunchEnd || null
+        }
       })
-      toast.success('Board settings saved')
+      toast.success('Planner settings saved')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save settings')
     } finally {
@@ -129,9 +157,9 @@ export default function WorkshopBoardSettings() {
     <div className="max-w-3xl mx-auto">
       <div className="mb-6">
         <Link to="/settings" className="text-sm text-gray-500 hover:text-gray-700">← Settings</Link>
-        <h1 className="text-2xl font-bold text-gray-900 mt-2">Workshop Board</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mt-2">Workshop Planner</h1>
         <p className="text-gray-600 mt-1">
-          Columns and defaults for this site's board ({user?.site?.name || 'your site'}). Statuses are managed in{' '}
+          Working day, columns and capacity for this site's board ({user?.site?.name || 'your site'}). Statuses are managed in{' '}
           <Link to="/settings/workshop-statuses" className="text-primary hover:underline">Workshop Statuses</Link>.
         </p>
       </div>
@@ -142,14 +170,48 @@ export default function WorkshopBoardSettings() {
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Defaults */}
+          {/* Working day + capacity defaults */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
-            <h2 className="text-sm font-semibold text-gray-800 mb-3">Capacity defaults</h2>
-            <div className="flex items-end gap-3">
+            <h2 className="text-sm font-semibold text-gray-800 mb-3">Working day & capacity</h2>
+            <div className="flex flex-wrap items-end gap-4">
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">
-                  Default technician hours per day
-                </label>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Day starts</label>
+                <input
+                  type="time"
+                  value={dayStart}
+                  onChange={e => setDayStart(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Day ends</label>
+                <input
+                  type="time"
+                  value={dayEnd}
+                  onChange={e => setDayEnd(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Lunch from (optional)</label>
+                <input
+                  type="time"
+                  value={lunchStart}
+                  onChange={e => setLunchStart(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Lunch to</label>
+                <input
+                  type="time"
+                  value={lunchEnd}
+                  onChange={e => setLunchEnd(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Default tech hours/day</label>
                 <input
                   type="number"
                   step="0.5"
@@ -157,7 +219,7 @@ export default function WorkshopBoardSettings() {
                   max="24"
                   value={defaultHours}
                   onChange={e => setDefaultHours(e.target.value)}
-                  className="w-32 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  className="w-28 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
               <button
@@ -169,7 +231,7 @@ export default function WorkshopBoardSettings() {
               </button>
             </div>
             <p className="text-xs text-gray-400 mt-2">
-              Used as the starting capacity when a technician column is added. Each column's hours can be adjusted below.
+              The day start/end set the timeline's bounds; lunch shows as a shaded band. Default hours seed new technician columns — each column's hours can be adjusted below.
             </p>
           </div>
 

@@ -391,6 +391,7 @@ export interface WorkshopCard {
   workshopStatusId?: string
   priority: WorkshopCardPriority
   estimatedHours?: number
+  plannedStartAt?: Date
   workCompletedAt?: Date
   workCompletedBy?: string
   placedBy?: string
@@ -412,6 +413,10 @@ export interface WorkshopBoardConfig {
   organizationId: string
   siteId: string
   defaultTechHours: number
+  dayStartTime: string
+  dayEndTime: string
+  lunchStartTime?: string
+  lunchEndTime?: string
   createdAt: Date
   updatedAt: Date
 }

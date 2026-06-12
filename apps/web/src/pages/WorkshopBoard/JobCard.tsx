@@ -9,6 +9,10 @@ interface JobCardProps {
   now: Date
   draggable: boolean
   tvMode?: boolean
+  /** Show the assigned technician as a chip (Job Status view) */
+  showTechChip?: boolean
+  /** Name of the queue the card is parked in (Technician view) */
+  queueChipName?: string | null
   onClick: () => void
 }
 
@@ -31,19 +35,32 @@ export function promiseCountdown(card: BoardCard, now: Date): {
   const target = new Date(promise)
   const diffMins = Math.round((target.getTime() - now.getTime()) / 60000)
   const timeStr = target.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  const dateStr = target.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  const isToday = target.toDateString() === now.toDateString()
+
+  // Midnight promise times from the DMS mean "this date", not a real deadline
+  const isDateOnly = target.getHours() === 0 && target.getMinutes() === 0
+  if (isDateOnly) {
+    if (isToday) return { label: 'Due today', tone: 'warning' }
+    if (target.getTime() < now.getTime()) return { label: `Due ${dateStr}`, tone: 'overdue' }
+    return { label: `Due ${dateStr}`, tone: 'ok' }
+  }
 
   if (diffMins < 0) {
+    // Beyond a day late, an elapsed counter is just noise - show the date
+    if (diffMins < -1440) return { label: `Due ${dateStr}`, tone: 'overdue' }
     const overdue = Math.abs(diffMins)
     const overdueStr = overdue >= 60 ? `${Math.floor(overdue / 60)}h ${overdue % 60}m` : `${overdue}m`
     return { label: `${timeStr} · ${overdueStr} late`, tone: 'overdue' }
   }
+  if (!isToday) return { label: `${dateStr} ${timeStr}`, tone: 'ok' }
   if (diffMins <= 60) {
     return { label: `${timeStr} · ${diffMins}m left`, tone: 'warning' }
   }
   return { label: timeStr, tone: 'ok' }
 }
 
-export default function JobCard({ card, statuses, now, draggable, tvMode, onClick }: JobCardProps) {
+export default function JobCard({ card, statuses, now, draggable, tvMode, showTechChip, queueChipName, onClick }: JobCardProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: card.healthCheckId,
     disabled: !draggable
@@ -172,6 +189,16 @@ export default function JobCard({ card, statuses, now, draggable, tvMode, onClic
         <span className={`px-1.5 py-0.5 rounded-full ${smallScale} font-medium ${STAGE_TONE_CLASSES[stage.tone]}`}>
           {stage.label}
         </span>
+        {showTechChip && card.technician && (
+          <span className={`px-1.5 py-0.5 rounded-full ${smallScale} font-medium bg-gray-700 text-white`}>
+            🔧 {card.technician.first_name} {card.technician.last_name.charAt(0)}
+          </span>
+        )}
+        {queueChipName && (
+          <span className={`px-1.5 py-0.5 rounded-full ${smallScale} font-medium bg-gray-200 text-gray-700`}>
+            In: {queueChipName}
+          </span>
+        )}
         {workshopStatus && (
           <span
             className={`px-1.5 py-0.5 rounded-full ${smallScale} font-medium text-white`}

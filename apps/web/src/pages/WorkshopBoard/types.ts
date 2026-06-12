@@ -47,6 +47,8 @@ export interface BoardCard {
   workshopStatusId: string | null
   priority: CardPriority
   estimatedHours: number | null
+  plannedStartAt: string | null
+  totalTechTimeMinutes: number
   workCompletedAt: string | null
   promiseTime: string | null
   dueDate: string | null
@@ -75,13 +77,36 @@ export interface BoardCard {
   notesCount: number
 }
 
+export interface BoardConfig {
+  defaultTechHours: number
+  dayStartTime: string
+  dayEndTime: string
+  lunchStartTime: string | null
+  lunchEndTime: string | null
+}
+
 export interface BoardData {
   siteId: string
   date: string
-  config: { defaultTechHours: number }
+  config: BoardConfig
   statuses: BoardStatus[]
   columns: BoardColumnDef[]
   cards: BoardCard[]
+}
+
+// Minutes since midnight for an HH:MM string
+export function timeToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number)
+  return h * 60 + m
+}
+
+// Actual minutes worked on a job, live (closed entries + open clock-in)
+export function actualWorkedMinutes(card: BoardCard, now: Date): number {
+  let minutes = card.totalTechTimeMinutes || 0
+  if (card.isClockedOn && card.clockedOnSince) {
+    minutes += Math.max(0, (now.getTime() - new Date(card.clockedOnSince).getTime()) / 60000)
+  }
+  return minutes
 }
 
 export interface WorkshopNoteEntry {

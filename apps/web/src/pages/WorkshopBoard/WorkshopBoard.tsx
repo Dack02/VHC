@@ -9,8 +9,13 @@ import BoardColumn, { cardsAllocatedHours } from './BoardColumn'
 import JobCard, { promiseCountdown } from './JobCard'
 import CardDetailPanel from './CardDetailPanel'
 import AddColumnModal from './AddColumnModal'
+import TimelineView from './TimelineView'
 
-type FixedColumnId = 'due_in' | 'checked_in' | 'work_complete'
+type BoardView = 'status' | 'tech'
+type TechMode = 'cards' | 'timeline'
+
+const VIEW_KEY = 'vhc-board-view'
+const TECH_MODE_KEY = 'vhc-board-tech-mode'
 
 function dateForOffset(offset: number): string {
   const d = new Date()
@@ -18,15 +23,27 @@ function dateForOffset(offset: number): string {
   return d.toISOString().split('T')[0]
 }
 
+interface ViewColumn {
+  key: string
+  title: string
+  subtitle?: string
+  accent?: string | null
+  capacity?: { allocated: number; available: number } | null
+  isClockedOn?: boolean
+  droppable: boolean
+  cards: BoardCard[]
+}
+
 export default function WorkshopBoard() {
-  const { user } = useAuth()
-  const { session } = useAuth()
+  const { user, session } = useAuth()
   const toast = useToast()
   const now = useNow(30000)
 
   const [date, setDate] = useState(() => dateForOffset(0))
   const { board, setBoard, loading, error, refresh } = useBoardData(date)
 
+  const [view, setView] = useState<BoardView>(() => (localStorage.getItem(VIEW_KEY) as BoardView) || 'status')
+  const [techMode, setTechMode] = useState<TechMode>(() => (localStorage.getItem(TECH_MODE_KEY) as TechMode) || 'cards')
   const [search, setSearch] = useState('')
   const [advisorFilter, setAdvisorFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -43,6 +60,16 @@ export default function WorkshopBoard() {
 
   const role = user?.role || 'technician'
   const canDrag = ['super_admin', 'org_admin', 'site_admin', 'service_advisor'].includes(role)
+  const isTimeline = view === 'tech' && techMode === 'timeline'
+
+  const switchView = (v: BoardView) => {
+    setView(v)
+    localStorage.setItem(VIEW_KEY, v)
+  }
+  const switchTechMode = (m: TechMode) => {
+    setTechMode(m)
+    localStorage.setItem(TECH_MODE_KEY, m)
+  }
 
   // ---- Filtering ----------------------------------------------------------
   const filteredCards = useMemo(() => {
@@ -66,26 +93,90 @@ export default function WorkshopBoard() {
     })
   }, [board, search, advisorFilter, statusFilter, waitingOnly])
 
-  const cardsByColumn = useMemo(() => {
-    const map = new Map<string, BoardCard[]>()
-    for (const card of filteredCards) {
-      const key = card.position === 'column' && card.columnId ? card.columnId : card.position
-      if (!map.has(key)) map.set(key, [])
-      map.get(key)!.push(card)
+  const queueNameById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const col of board?.columns || []) {
+      if (col.columnType === 'queue') map.set(col.id, col.name)
     }
-    for (const [key, cards] of map) map.set(key, sortCards(cards))
     return map
-  }, [filteredCards])
+  }, [board?.columns])
+
+  const techColumnByUserId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const col of board?.columns || []) {
+      if (col.columnType === 'technician' && col.technicianId) map.set(col.technicianId, col.id)
+    }
+    return map
+  }, [board?.columns])
+
+  // ---- View column assembly ----------------------------------------------
+  const viewColumns: ViewColumn[] = useMemo(() => {
+    if (!board) return []
+    const visible = board.columns.filter(c => c.isVisible)
+    const queueCols = visible.filter(c => c.columnType === 'queue')
+    const techCols = visible.filter(c => c.columnType === 'technician')
+
+    const buckets = new Map<string, BoardCard[]>()
+    const push = (key: string, card: BoardCard) => {
+      if (!buckets.has(key)) buckets.set(key, [])
+      buckets.get(key)!.push(card)
+    }
+
+    if (view === 'status') {
+      // Due In → Checked In → In Workshop → queue columns → Work Complete
+      for (const card of filteredCards) {
+        if (card.position === 'due_in') push('due_in', card)
+        else if (card.position === 'work_complete') push('work_complete', card)
+        else if (card.position === 'column' && card.columnId && queueNameById.has(card.columnId)) push(card.columnId, card)
+        else if (card.technician) push('in_workshop', card)
+        else push('checked_in', card)
+      }
+      return [
+        { key: 'due_in', title: 'Due In', subtitle: date === dateForOffset(0) ? 'Expected today' : `Expected ${date}`, droppable: false, cards: buckets.get('due_in') || [] },
+        { key: 'checked_in', title: 'Checked In', subtitle: 'Awaiting allocation', droppable: false, cards: buckets.get('checked_in') || [] },
+        { key: 'in_workshop', title: 'In Workshop', subtitle: 'With technicians', droppable: canDrag, cards: buckets.get('in_workshop') || [] },
+        ...queueCols.map(col => ({
+          key: col.id,
+          title: col.name,
+          accent: col.colour,
+          droppable: canDrag,
+          cards: buckets.get(col.id) || []
+        })),
+        { key: 'work_complete', title: 'Work Complete', subtitle: `Completed ${date === dateForOffset(0) ? 'today' : date}`, droppable: canDrag, cards: buckets.get('work_complete') || [] }
+      ]
+    }
+
+    // Technician view (cards): Checked In → tech columns → Work Complete.
+    // A job parked in a queue stays visible in its technician's column.
+    for (const card of filteredCards) {
+      if (card.position === 'due_in') continue
+      if (card.position === 'work_complete') push('work_complete', card)
+      else if (card.technician && techColumnByUserId.has(card.technician.id)) push(techColumnByUserId.get(card.technician.id)!, card)
+      else push('checked_in', card)
+    }
+    return [
+      { key: 'checked_in', title: 'Checked In', subtitle: 'Awaiting allocation', droppable: canDrag, cards: buckets.get('checked_in') || [] },
+      ...techCols.map(col => {
+        const cards = buckets.get(col.id) || []
+        return {
+          key: col.id,
+          title: col.name,
+          capacity: { allocated: cardsAllocatedHours(cards), available: col.availableHours },
+          isClockedOn: cards.some(c => c.isClockedOn),
+          droppable: canDrag,
+          cards
+        }
+      }),
+      { key: 'work_complete', title: 'Work Complete', subtitle: `Completed ${date === dateForOffset(0) ? 'today' : date}`, droppable: canDrag, cards: buckets.get('work_complete') || [] }
+    ]
+  }, [board, filteredCards, view, queueNameById, techColumnByUserId, canDrag, date])
 
   const advisors = useMemo(() => {
     if (!board) return []
     const seen = new Map<string, { id: string; name: string }>()
     for (const card of board.cards) {
       if (card.advisor && !seen.has(card.advisor.id)) {
-        seen.set(card.advisor.id, {
-          id: card.advisor.id,
-          name: `${card.advisor.first_name} ${card.advisor.last_name}`
-        })
+        seen.set(card.advisor.id, { id: card.advisor.id, name: `${card.advisor.first_name} ${card.advisor.last_name}` })
       }
     }
     return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name))
@@ -94,23 +185,23 @@ export default function WorkshopBoard() {
   // ---- Header stats -------------------------------------------------------
   const stats = useMemo(() => {
     if (!board) return null
-    const techColumns = board.columns.filter(c => c.columnType === 'technician' && c.isVisible)
+    const techCols = board.columns.filter(c => c.columnType === 'technician' && c.isVisible)
     let allocated = 0
     let available = 0
-    for (const col of techColumns) {
-      allocated += cardsAllocatedHours(cardsByColumn.get(col.id) || [])
+    for (const col of techCols) {
+      const techCards = board.cards.filter(c =>
+        c.position !== 'work_complete' && c.position !== 'due_in' && c.technician?.id === col.technicianId
+      )
+      allocated += cardsAllocatedHours(techCards)
       available += col.availableHours
     }
     const active = board.cards.filter(c => c.position !== 'work_complete' && c.position !== 'due_in')
     const waiters = active.filter(c => c.customerWaiting).length
-    const overdue = active.filter(c => {
-      const cd = promiseCountdown(c, now)
-      return cd?.tone === 'overdue'
-    }).length
+    const overdue = active.filter(c => promiseCountdown(c, now)?.tone === 'overdue').length
     return { allocated, available, waiters, overdue, onSite: active.length }
-  }, [board, cardsByColumn, now])
+  }, [board, now])
 
-  // ---- Drag and drop ------------------------------------------------------
+  // ---- Drag and drop (kanban views) ---------------------------------------
   const handleDragStart = (event: DragStartEvent) => {
     recentDragRef.current = true
     const card = board?.cards.find(c => c.healthCheckId === event.active.id)
@@ -132,43 +223,52 @@ export default function WorkshopBoard() {
     if (!card) return
 
     const overId = over.id as string
-    const currentKey = card.position === 'column' && card.columnId ? card.columnId : card.position
-    if (overId === currentKey) return
 
-    let target: 'checked_in' | 'technician' | 'queue' | 'work_complete'
+    let target: 'checked_in' | 'technician' | 'queue' | 'work_complete' | 'workshop'
     let columnId: string | undefined
-    if (overId === 'checked_in' || overId === 'work_complete') {
-      target = overId
-    } else if (overId === 'due_in') {
-      return // Due In is derived - nothing can be dragged into it
+
+    if (view === 'status') {
+      if (overId === 'work_complete') target = 'work_complete'
+      else if (overId === 'in_workshop') target = 'workshop'
+      else if (queueNameById.has(overId)) {
+        target = 'queue'
+        columnId = overId
+      } else return
     } else {
-      const column = board.columns.find(c => c.id === overId)
-      if (!column) return
-      target = column.columnType === 'technician' ? 'technician' : 'queue'
-      columnId = column.id
+      if (overId === 'work_complete') target = 'work_complete'
+      else if (overId === 'checked_in') target = 'checked_in'
+      else {
+        const column = board.columns.find(c => c.id === overId && c.columnType === 'technician')
+        if (!column) return
+        target = 'technician'
+        columnId = column.id
+      }
     }
 
-    // Optimistic move
+    // Optimistic update
     const previous = board
     const optimistic: BoardData = {
       ...board,
-      cards: board.cards.map(c =>
-        c.healthCheckId === card.healthCheckId
-          ? {
-              ...c,
-              position: target === 'technician' || target === 'queue' ? 'column' : target,
-              columnId: columnId ?? null,
-              ...(target === 'technician' && columnId
-                ? (() => {
-                    const col = board.columns.find(x => x.id === columnId)
-                    return col?.technician
-                      ? { technician: { id: col.technician.id, first_name: col.technician.first_name, last_name: col.technician.last_name } }
-                      : {}
-                  })()
-                : {})
-            }
-          : c
-      )
+      cards: board.cards.map(c => {
+        if (c.healthCheckId !== card.healthCheckId) return c
+        if (target === 'queue') return { ...c, position: 'column', columnId: columnId! }
+        if (target === 'work_complete') return { ...c, position: 'work_complete', columnId: null }
+        if (target === 'checked_in') return { ...c, position: 'checked_in', columnId: null, technician: null }
+        if (target === 'technician') {
+          const col = board.columns.find(x => x.id === columnId)
+          return {
+            ...c,
+            position: 'column',
+            columnId: columnId!,
+            technician: col?.technician ? { id: col.technician.id, first_name: col.technician.first_name, last_name: col.technician.last_name } : c.technician
+          }
+        }
+        // workshop: back to derived tech column / checked in
+        const techColId = c.technician ? techColumnByUserId.get(c.technician.id) : undefined
+        return techColId
+          ? { ...c, position: 'column', columnId: techColId }
+          : { ...c, position: 'checked_in', columnId: null }
+      })
     }
     setBoard(optimistic)
 
@@ -204,15 +304,30 @@ export default function WorkshopBoard() {
     )
   }
 
-  const selectedCard = selectedCardId
-    ? board?.cards.find(c => c.healthCheckId === selectedCardId) || null
-    : null
+  const selectedCard = selectedCardId ? board?.cards.find(c => c.healthCheckId === selectedCardId) || null : null
 
   const dateOptions = [
     { label: 'Today', value: dateForOffset(0) },
     { label: 'Tomorrow', value: dateForOffset(1) },
     { label: dateForOffset(2).slice(5), value: dateForOffset(2) }
   ]
+
+  const viewSwitcher = (
+    <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+      <button
+        onClick={() => switchView('status')}
+        className={`px-3 py-1.5 text-sm font-medium rounded-md ${view === 'status' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}
+      >
+        Job Status
+      </button>
+      <button
+        onClick={() => switchView('tech')}
+        className={`px-3 py-1.5 text-sm font-medium rounded-md ${view === 'tech' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}
+      >
+        Technicians
+      </button>
+    </div>
+  )
 
   return (
     <div
@@ -223,7 +338,7 @@ export default function WorkshopBoard() {
       {/* Header / toolbar */}
       {tvMode ? (
         <div className="flex items-center justify-between mb-4 text-white">
-          <h1 className="text-2xl font-bold">{user?.site?.name || 'Workshop'} — Workshop Board</h1>
+          <h1 className="text-2xl font-bold">{user?.site?.name || 'Workshop'} — {view === 'status' ? 'Job Status' : 'Technicians'}</h1>
           <div className="flex items-center gap-6">
             {stats && (
               <span className="text-lg text-gray-300">
@@ -238,9 +353,30 @@ export default function WorkshopBoard() {
       ) : (
         <div className="mb-4 space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Workshop Board</h1>
-              <p className="text-sm text-gray-500">Live view of every job in the workshop</p>
+            <div className="flex items-center gap-4">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Workshop Board</h1>
+                <p className="text-sm text-gray-500">Live view of every job in the workshop</p>
+              </div>
+              {viewSwitcher}
+              {view === 'tech' && (
+                <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+                  <button
+                    onClick={() => switchTechMode('cards')}
+                    className={`px-2.5 py-1.5 text-sm font-medium rounded-md ${techMode === 'cards' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}
+                    title="Card columns"
+                  >
+                    ▦ Cards
+                  </button>
+                  <button
+                    onClick={() => switchTechMode('timeline')}
+                    className={`px-2.5 py-1.5 text-sm font-medium rounded-md ${techMode === 'timeline' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}
+                    title="Day planner timeline"
+                  >
+                    ☰ Timeline
+                  </button>
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-2">
               {canDrag && (
@@ -292,9 +428,7 @@ export default function WorkshopBoard() {
                 <button
                   key={opt.value}
                   onClick={() => setDate(opt.value)}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md ${
-                    date === opt.value ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'
-                  }`}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md ${date === opt.value ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}
                 >
                   {opt.label}
                 </button>
@@ -338,7 +472,7 @@ export default function WorkshopBoard() {
         </div>
       )}
 
-      {/* Board */}
+      {/* Board body */}
       {loading && !board ? (
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
@@ -351,125 +485,69 @@ export default function WorkshopBoard() {
           </button>
         </div>
       ) : board ? (
-        <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-          <div className="flex-1 flex gap-3 overflow-x-auto pb-4 items-stretch min-h-0">
-            {/* Due In */}
-            <BoardColumn
-              id={'due_in' as FixedColumnId}
-              title="Due In"
-              subtitle={date === dateForOffset(0) ? 'Expected today' : `Expected ${date}`}
-              count={(cardsByColumn.get('due_in') || []).length}
-              droppable={false}
-              tvMode={tvMode}
-            >
-              {(cardsByColumn.get('due_in') || []).map(card => (
-                <JobCard
-                  key={card.healthCheckId}
-                  card={card}
-                  statuses={board.statuses}
-                  now={now}
-                  draggable={false}
-                  tvMode={tvMode}
-                  onClick={() => openCard(card.healthCheckId)}
-                />
-              ))}
-            </BoardColumn>
-
-            {/* Checked In */}
-            <BoardColumn
-              id={'checked_in' as FixedColumnId}
-              title="Checked In"
-              subtitle="Awaiting allocation"
-              count={(cardsByColumn.get('checked_in') || []).length}
-              droppable={canDrag}
-              tvMode={tvMode}
-            >
-              {(cardsByColumn.get('checked_in') || []).map(card => (
-                <JobCard
-                  key={card.healthCheckId}
-                  card={card}
-                  statuses={board.statuses}
-                  now={now}
-                  draggable={canDrag}
-                  tvMode={tvMode}
-                  onClick={() => openCard(card.healthCheckId)}
-                />
-              ))}
-            </BoardColumn>
-
-            {/* Technician + queue columns */}
-            {board.columns.filter(c => c.isVisible).map(column => {
-              const columnCards = cardsByColumn.get(column.id) || []
-              const isTech = column.columnType === 'technician'
-              return (
+        isTimeline ? (
+          <TimelineView
+            board={board}
+            cards={filteredCards}
+            date={date}
+            now={now}
+            canDrag={canDrag}
+            onOpenCard={setSelectedCardId}
+            refresh={refresh}
+          />
+        ) : (
+          <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+            <div className="flex-1 flex gap-3 overflow-x-auto pb-4 items-stretch min-h-0">
+              {viewColumns.map(col => (
                 <BoardColumn
-                  key={column.id}
-                  id={column.id}
-                  title={column.name}
-                  accentColour={isTech ? null : column.colour}
-                  capacity={
-                    isTech
-                      ? { allocated: cardsAllocatedHours(columnCards), available: column.availableHours }
-                      : null
-                  }
-                  isClockedOn={isTech ? columnCards.some(c => c.isClockedOn) : undefined}
-                  count={columnCards.length}
-                  droppable={canDrag}
+                  key={col.key}
+                  id={col.key}
+                  title={col.title}
+                  subtitle={col.subtitle}
+                  accentColour={col.accent}
+                  capacity={col.capacity}
+                  isClockedOn={col.isClockedOn}
+                  count={col.cards.length}
+                  droppable={col.droppable}
                   tvMode={tvMode}
                 >
-                  {columnCards.map(card => (
+                  {sortCards(col.cards).map(card => (
                     <JobCard
                       key={card.healthCheckId}
                       card={card}
                       statuses={board.statuses}
                       now={now}
-                      draggable={canDrag}
+                      draggable={canDrag && card.position !== 'due_in'}
                       tvMode={tvMode}
+                      showTechChip={view === 'status'}
+                      queueChipName={
+                        view === 'tech' && card.position === 'column' && card.columnId
+                          ? queueNameById.get(card.columnId) || null
+                          : null
+                      }
                       onClick={() => openCard(card.healthCheckId)}
                     />
                   ))}
                 </BoardColumn>
-              )
-            })}
-
-            {/* Work Complete */}
-            <BoardColumn
-              id={'work_complete' as FixedColumnId}
-              title="Work Complete"
-              subtitle={`Completed ${date === dateForOffset(0) ? 'today' : date}`}
-              count={(cardsByColumn.get('work_complete') || []).length}
-              droppable={canDrag}
-              tvMode={tvMode}
-            >
-              {(cardsByColumn.get('work_complete') || []).map(card => (
-                <JobCard
-                  key={card.healthCheckId}
-                  card={card}
-                  statuses={board.statuses}
-                  now={now}
-                  draggable={canDrag}
-                  tvMode={tvMode}
-                  onClick={() => openCard(card.healthCheckId)}
-                />
               ))}
-            </BoardColumn>
-          </div>
+            </div>
 
-          <DragOverlay>
-            {activeDragCard && (
-              <div className="rotate-2 opacity-95 w-64">
-                <JobCard
-                  card={activeDragCard}
-                  statuses={board.statuses}
-                  now={now}
-                  draggable={false}
-                  tvMode={tvMode}
-                  onClick={() => {}}
-                />
-              </div>
-            )}
-          </DragOverlay>
-        </DndContext>
+            <DragOverlay>
+              {activeDragCard && (
+                <div className="rotate-2 opacity-95 w-64">
+                  <JobCard
+                    card={activeDragCard}
+                    statuses={board.statuses}
+                    now={now}
+                    draggable={false}
+                    tvMode={tvMode}
+                    onClick={() => {}}
+                  />
+                </div>
+              )}
+            </DragOverlay>
+          </DndContext>
+        )
       ) : null}
 
       {/* Slide-out detail */}
@@ -487,6 +565,7 @@ export default function WorkshopBoard() {
         <AddColumnModal
           siteId={board.siteId}
           existingColumns={board.columns}
+          initialTab={view === 'status' ? 'queue' : 'technician'}
           onClose={() => setShowAddColumn(false)}
           onAdded={() => refresh(true)}
         />

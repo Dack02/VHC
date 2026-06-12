@@ -157,7 +157,43 @@ Completed-today section shown greyed at the bottom.
 | Add/remove/reorder columns | service_advisor |
 | Manage statuses, board config | site_admin |
 
-## 8. Future ideas (not in v1)
+## 8. Views & Workshop Planner (v1.1 — June 2026)
+
+The board page now has two views (segmented switcher, persisted per user):
+
+- **Job Status view** — operational kanban without tech columns: Due In →
+  Checked In → **In Workshop** (with a tech, not parked) → *queue columns*
+  (fluid, admin-managed) → Work Complete. Tech shown as a chip; statuses
+  remain coloured flags + a page filter (kept out of columns deliberately —
+  many statuses would explode the board sideways).
+- **Technician view** — Checked In → tech columns → Work Complete, with a
+  **Cards / Timeline** toggle. Jobs parked in a queue stay visible in their
+  tech's column with an "In: Valeting" chip.
+
+**Timeline (Workshop Planner)** — explicit time slots, Garage Hive/Pinewood
+style: vertical day axis (site working hours, default 08:00–17:30, optional
+shaded lunch band — all in Settings → Workshop Planner), 15-minute snap,
+blocks sized by labour hours (`workshop_cards.estimated_hours`, DMS
+booked-repairs fallback, 1 h default marked "?"). Drag from the unscheduled
+side tray (grouped Unassigned / Assigned-no-time) onto a tech lane to plan —
+dropping on a different tech also reassigns; drag back to the tray to
+unschedule; resize the bottom edge to re-estimate (0.25 h snap). Red **now
+line** with auto-scroll on today. **Actuals from clocking**: block fill tracks
+worked time live; past the estimate it grows a red striped "+X h over"
+extension and the lane header flags ⚠ overrun. In-progress blocks are locked
+(no drag/resize). Due In bookings can be pre-allocated to a tech for forward
+planning (dashed border, status untouched until arrival). Overlapping blocks
+split the lane side-by-side; jobs ending past closing get a "past close" tail.
+
+Data: `workshop_cards.planned_start_at` + working-day fields on
+`workshop_board_config` (migration `20260612200000`). New move target
+`'workshop'` returns a card to its derived position without unassigning.
+
+Display fix: midnight promise/due times are date-only ("Due today" / red
+"Due 5 Feb"), and anything >24 h overdue shows the date instead of an
+elapsed-hours counter.
+
+## 9. Future ideas (not in v1)
 
 - Manual within-column ordering via drag (API already supports `sortPosition`)
 - Clocked time vs estimated hours on cards (efficiency at a glance)

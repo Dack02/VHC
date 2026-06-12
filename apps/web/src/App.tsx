@@ -84,6 +84,9 @@ const PartsCatalog = lazy(() => import('./pages/Parts/PartsCatalog'))
 const Messages = lazy(() => import('./pages/Messages/Messages'))
 const ServicePackages = lazy(() => import('./pages/ServicePackages/ServicePackages'))
 const DailySmsOverview = lazy(() => import('./pages/Settings/DailySmsOverview'))
+const WorkshopBoard = lazy(() => import('./pages/WorkshopBoard/WorkshopBoard'))
+const WorkshopStatuses = lazy(() => import('./pages/Settings/WorkshopStatuses'))
+const WorkshopBoardSettings = lazy(() => import('./pages/Settings/WorkshopBoardSettings'))
 
 // Page loading fallback
 function PageLoader() {
@@ -151,6 +154,7 @@ function App() {
                         <Route path="/reports/daily-overview" element={<DailyOverview />} />
                         <Route path="/reports/deleted-health-checks" element={<DeletedHealthChecks />} />
                         <Route path="/users" element={<Users />} />
+                        <Route path="/workshop-board" element={<WorkshopBoard />} />
                         <Route path="/health-checks" element={<HealthCheckList />} />
                         <Route path="/health-checks/new" element={<NewHealthCheck />} />
                         <Route path="/health-checks/:id" element={<HealthCheckDetail />} />
@@ -191,6 +195,8 @@ function App() {
                         <Route path="/settings/workflow" element={<WorkflowSettings />} />
                         <Route path="/settings/mri-items" element={<MriItemsSettings />} />
                         <Route path="/settings/daily-sms-overview" element={<DailySmsOverview />} />
+                        <Route path="/settings/workshop-statuses" element={<WorkshopStatuses />} />
+                        <Route path="/settings/workshop-board" element={<WorkshopBoardSettings />} />
                       </Route>
                     </Route>
 

@@ -59,6 +59,7 @@ import twilioWebhookRoutes from './routes/webhooks/twilio.js'
 import smsConversations from './routes/sms-conversations.js'
 import messages from './routes/messages.js'
 import dailySmsOverview from './routes/daily-sms-overview.js'
+import workshopBoard from './routes/workshop-board.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
@@ -133,6 +134,7 @@ app.route('/api/v1', items)
 app.route('/api/v1/health-checks', healthChecks)
 app.route('/api/v1', smsConversations)
 app.route('/api/v1/messages', messages)
+app.route('/api/v1/workshop-board', workshopBoard)
 app.route('/api/v1', results)
 app.route('/api/v1', repairItems)
 app.route('/api/v1', media)

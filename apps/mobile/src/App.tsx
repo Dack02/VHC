@@ -8,6 +8,7 @@ import { Login } from './pages/Login'
 import { JobList } from './pages/JobList'
 
 const PreCheck = lazy(() => import('./pages/PreCheck').then(m => ({ default: m.PreCheck })))
+const MyBoard = lazy(() => import('./pages/MyBoard').then(m => ({ default: m.MyBoard })))
 const Inspection = lazy(() => import('./pages/Inspection').then(m => ({ default: m.Inspection })))
 const Summary = lazy(() => import('./pages/Summary').then(m => ({ default: m.Summary })))
 
@@ -52,6 +53,12 @@ function AppRoutes() {
           path="/"
           element={
             session && user ? <JobList /> : <Navigate to="/login" replace />
+          }
+        />
+        <Route
+          path="/board"
+          element={
+            session && user ? <MyBoard /> : <Navigate to="/login" replace />
           }
         />
         <Route

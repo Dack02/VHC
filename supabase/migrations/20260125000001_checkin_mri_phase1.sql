@@ -46,7 +46,8 @@ ALTER TABLE health_checks
 
 COMMENT ON COLUMN health_checks.checkin_notes_visible_to_tech IS 'Whether check-in notes are visible to the assigned technician';
 
--- Create index for faster queries on awaiting_checkin status
-CREATE INDEX IF NOT EXISTS idx_health_checks_awaiting_checkin
-  ON health_checks(arrived_at)
-  WHERE status = 'awaiting_checkin';
+-- NOTE: the partial index on status = 'awaiting_checkin' originally created
+-- here was moved to 20260612090001_checkin_awaiting_index.sql. Postgres cannot
+-- use an enum value added in the same transaction, which made this migration
+-- fail on fresh local bootstraps (it had already been applied in dev/prod, so
+-- this edit is inert there).

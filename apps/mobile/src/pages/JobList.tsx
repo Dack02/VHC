@@ -131,6 +131,12 @@ export function JobList() {
               <Badge variant="amber" size="sm">Offline</Badge>
             )}
             <button
+              onClick={() => navigate('/board')}
+              className="text-sm text-blue-200 underline"
+            >
+              Board
+            </button>
+            <button
               onClick={signOut}
               className="text-sm text-blue-200 underline"
             >

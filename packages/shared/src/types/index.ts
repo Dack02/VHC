@@ -338,6 +338,84 @@ export interface StaffNotification {
   createdAt: Date
 }
 
+// ============================================================================
+// Workshop Management Board
+// ============================================================================
+
+export type WorkshopColumnType = 'technician' | 'queue'
+
+// 'auto' = position derived from the health check (status / technician).
+// 'queue' / 'work_complete' are manual placements that override derivation.
+export type WorkshopPlacement = 'auto' | 'queue' | 'work_complete'
+
+export type WorkshopCardPriority = 'normal' | 'high' | 'urgent'
+
+// Resolved board position of a card (computed server-side)
+export type WorkshopBoardPosition = 'due_in' | 'checked_in' | 'column' | 'work_complete'
+
+export interface WorkshopStatus {
+  id: string
+  organizationId: string
+  name: string
+  colour: string
+  icon?: string
+  smsMessage?: string
+  sortOrder: number
+  isActive: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface WorkshopColumn {
+  id: string
+  organizationId: string
+  siteId: string
+  columnType: WorkshopColumnType
+  technicianId?: string
+  name?: string
+  colour?: string
+  availableHours: number
+  sortOrder: number
+  isVisible: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface WorkshopCard {
+  id: string
+  organizationId: string
+  healthCheckId: string
+  placement: WorkshopPlacement
+  queueColumnId?: string
+  sortPosition: number
+  workshopStatusId?: string
+  priority: WorkshopCardPriority
+  estimatedHours?: number
+  workCompletedAt?: Date
+  workCompletedBy?: string
+  placedBy?: string
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface WorkshopNote {
+  id: string
+  organizationId: string
+  healthCheckId: string
+  userId: string
+  content: string
+  createdAt: Date
+}
+
+export interface WorkshopBoardConfig {
+  id: string
+  organizationId: string
+  siteId: string
+  defaultTechHours: number
+  createdAt: Date
+  updatedAt: Date
+}
+
 // Scheduled Job
 export interface ScheduledJob {
   id: string

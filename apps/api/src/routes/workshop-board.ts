@@ -730,9 +730,10 @@ workshopBoard.get('/cards/:healthCheckId/notes', authorize([...ALL_ROLES]), asyn
 
     const { data: notes, error } = await supabaseAdmin
       .from('workshop_notes')
-      .select('id, content, created_at, user:users(id, first_name, last_name, role)')
+      .select('id, content, is_pinned, created_at, user:users(id, first_name, last_name, role)')
       .eq('organization_id', auth.orgId)
       .eq('health_check_id', healthCheckId)
+      .order('is_pinned', { ascending: false })
       .order('created_at', { ascending: false })
 
     if (error) return c.json({ error: error.message }, 500)
@@ -741,6 +742,7 @@ workshopBoard.get('/cards/:healthCheckId/notes', authorize([...ALL_ROLES]), asyn
       notes: (notes || []).map(n => ({
         id: n.id,
         content: n.content,
+        isPinned: n.is_pinned === true,
         createdAt: n.created_at,
         user: n.user
       }))
@@ -772,7 +774,7 @@ workshopBoard.post('/cards/:healthCheckId/notes', authorize([...ALL_ROLES]), asy
         user_id: auth.user.id,
         content
       })
-      .select('id, content, created_at')
+      .select('id, content, is_pinned, created_at')
       .single()
 
     if (error) return c.json({ error: error.message }, 500)
@@ -783,17 +785,91 @@ workshopBoard.post('/cards/:healthCheckId/notes', authorize([...ALL_ROLES]), asy
       note: {
         id: note.id,
         content: note.content,
+        isPinned: note.is_pinned === true,
         createdAt: note.created_at,
         user: {
           id: auth.user.id,
           first_name: auth.user.firstName,
-          last_name: auth.user.lastName
+          last_name: auth.user.lastName,
+          role: auth.user.role
         }
       }
     }, 201)
   } catch (error) {
     console.error('Add workshop note error:', error)
     return c.json({ error: 'Failed to add note' }, 500)
+  }
+})
+
+// PATCH /cards/:healthCheckId/notes/:noteId - Pin or unpin a note
+workshopBoard.patch('/cards/:healthCheckId/notes/:noteId', authorize([...ALL_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { healthCheckId, noteId } = c.req.param()
+    const body = await c.req.json()
+
+    if (typeof body.isPinned !== 'boolean') {
+      return c.json({ error: 'isPinned must be a boolean' }, 400)
+    }
+
+    const hc = await getHealthCheckForBoard(healthCheckId, auth.orgId)
+    if (!hc) return c.json({ error: 'Health check not found' }, 404)
+
+    const { data: note, error } = await supabaseAdmin
+      .from('workshop_notes')
+      .update({ is_pinned: body.isPinned })
+      .eq('id', noteId)
+      .eq('organization_id', auth.orgId)
+      .eq('health_check_id', healthCheckId)
+      .select('id, is_pinned')
+      .single()
+
+    if (error || !note) return c.json({ error: 'Note not found' }, 404)
+
+    emitBoardUpdated(hc.site_id, 'note_updated', healthCheckId)
+    return c.json({ success: true, note: { id: note.id, isPinned: note.is_pinned === true } })
+  } catch (error) {
+    console.error('Pin workshop note error:', error)
+    return c.json({ error: 'Failed to update note' }, 500)
+  }
+})
+
+// DELETE /cards/:healthCheckId/notes/:noteId - Author removes own note; admins any
+workshopBoard.delete('/cards/:healthCheckId/notes/:noteId', authorize([...ALL_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { healthCheckId, noteId } = c.req.param()
+
+    const hc = await getHealthCheckForBoard(healthCheckId, auth.orgId)
+    if (!hc) return c.json({ error: 'Health check not found' }, 404)
+
+    const { data: note } = await supabaseAdmin
+      .from('workshop_notes')
+      .select('id, user_id')
+      .eq('id', noteId)
+      .eq('organization_id', auth.orgId)
+      .eq('health_check_id', healthCheckId)
+      .single()
+    if (!note) return c.json({ error: 'Note not found' }, 404)
+
+    const isAdmin = (ADMIN_ROLES as readonly string[]).includes(auth.user.role)
+    if (note.user_id !== auth.user.id && !isAdmin) {
+      return c.json({ error: 'You can only delete your own notes' }, 403)
+    }
+
+    const { error } = await supabaseAdmin
+      .from('workshop_notes')
+      .delete()
+      .eq('id', noteId)
+      .eq('organization_id', auth.orgId)
+
+    if (error) return c.json({ error: error.message }, 500)
+
+    emitBoardUpdated(hc.site_id, 'note_deleted', healthCheckId)
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Delete workshop note error:', error)
+    return c.json({ error: 'Failed to delete note' }, 500)
   }
 })
 

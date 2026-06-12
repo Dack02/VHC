@@ -1,13 +1,21 @@
 import { ReactNode } from 'react'
 import { useDroppable } from '@dnd-kit/core'
-import type { BoardCard } from './types'
+
+// A technician's day: completed work stays booked (finishing a job consumes
+// hours, it doesn't free them), and pre-allocated Due In bookings count too.
+interface ColumnCapacity {
+  done: number
+  active: number
+  dueIn: number
+  available: number
+}
 
 interface BoardColumnProps {
   id: string
   title: string
   subtitle?: string
   accentColour?: string | null
-  capacity?: { allocated: number; available: number } | null
+  capacity?: ColumnCapacity | null
   count: number
   isClockedOn?: boolean
   tvMode?: boolean
@@ -29,12 +37,17 @@ export default function BoardColumn({
 }: BoardColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id, disabled: !droppable })
 
+  const booked = capacity ? capacity.done + capacity.active + capacity.dueIn : 0
   const loadPercent = capacity && capacity.available > 0
-    ? Math.round((capacity.allocated / capacity.available) * 100)
+    ? Math.round((booked / capacity.available) * 100)
     : null
 
   const barColour =
     loadPercent == null ? '' : loadPercent > 100 ? 'bg-rag-red' : loadPercent >= 80 ? 'bg-rag-amber' : 'bg-rag-green'
+
+  // Bar fills with the day's booked hours: faded = done, solid = still to do
+  const barWidth = Math.min(loadPercent ?? 0, 100)
+  const doneWidth = booked > 0 && capacity ? (capacity.done / booked) * barWidth : 0
 
   return (
     <div
@@ -69,10 +82,18 @@ export default function BoardColumn({
         )}
 
         {capacity && (
-          <div className="mt-1.5">
+          <div
+            className="mt-1.5"
+            title={`${capacity.done.toFixed(1)}h done · ${capacity.active.toFixed(1)}h to do${
+              capacity.dueIn > 0 ? ` · ${capacity.dueIn.toFixed(1)}h due in` : ''
+            } · ${capacity.available.toFixed(1)}h day`}
+          >
             <div className="flex items-center justify-between mb-0.5">
               <span className={`${tvMode ? 'text-sm' : 'text-xs'} text-gray-500`}>
-                {capacity.allocated.toFixed(1)} / {capacity.available.toFixed(1)} hrs
+                {booked.toFixed(1)} / {capacity.available.toFixed(1)} hrs
+                {capacity.done > 0 && (
+                  <span className="text-gray-400"> · {capacity.done.toFixed(1)} done</span>
+                )}
               </span>
               {loadPercent != null && (
                 <span className={`${tvMode ? 'text-sm' : 'text-xs'} font-medium ${
@@ -82,11 +103,9 @@ export default function BoardColumn({
                 </span>
               )}
             </div>
-            <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full ${barColour}`}
-                style={{ width: `${Math.min(loadPercent ?? 0, 100)}%` }}
-              />
+            <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden flex">
+              <div className={`h-full ${barColour} opacity-40`} style={{ width: `${doneWidth}%` }} />
+              <div className={`h-full ${barColour}`} style={{ width: `${barWidth - doneWidth}%` }} />
             </div>
           </div>
         )}
@@ -103,8 +122,4 @@ export default function BoardColumn({
       </div>
     </div>
   )
-}
-
-export function cardsAllocatedHours(cards: BoardCard[]): number {
-  return cards.reduce((sum, card) => sum + (card.estimatedHours ?? 0), 0)
 }

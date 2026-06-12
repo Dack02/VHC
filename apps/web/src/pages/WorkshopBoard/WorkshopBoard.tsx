@@ -5,7 +5,7 @@ import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
 import { useBoardData, useNow } from './useBoardData'
 import { sortCards, type BoardCard, type BoardData } from './types'
-import BoardColumn, { cardsAllocatedHours } from './BoardColumn'
+import BoardColumn from './BoardColumn'
 import JobCard, { promiseCountdown } from './JobCard'
 import CardDetailPanel from './CardDetailPanel'
 import AddColumnModal from './AddColumnModal'
@@ -28,11 +28,13 @@ interface ViewColumn {
   title: string
   subtitle?: string
   accent?: string | null
-  capacity?: { allocated: number; available: number } | null
+  capacity?: { done: number; active: number; dueIn: number; available: number } | null
   isClockedOn?: boolean
   droppable: boolean
   cards: BoardCard[]
 }
+
+const EMPTY_LOAD = { done: 0, active: 0, dueIn: 0 }
 
 export default function WorkshopBoard() {
   const { user, session } = useAuth()
@@ -109,6 +111,26 @@ export default function WorkshopBoard() {
     return map
   }, [board?.columns])
 
+  // Per-technician load for the selected date. Computed from the full card
+  // set (not the filtered view) so the bar always reflects the tech's real
+  // day: completed jobs stay counted - finishing a job consumes the day's
+  // hours rather than freeing them - and pre-allocated Due In bookings count
+  // towards the day they're expected.
+  const techLoadByUserId = useMemo(() => {
+    const map = new Map<string, { done: number; active: number; dueIn: number }>()
+    for (const card of board?.cards || []) {
+      const techId = card.technician?.id
+      if (!techId) continue
+      const hours = card.estimatedHours ?? 0
+      const load = map.get(techId) || { done: 0, active: 0, dueIn: 0 }
+      if (card.position === 'work_complete') load.done += hours
+      else if (card.position === 'due_in') load.dueIn += hours
+      else load.active += hours
+      map.set(techId, load)
+    }
+    return map
+  }, [board?.cards])
+
   // ---- View column assembly ----------------------------------------------
   const viewColumns: ViewColumn[] = useMemo(() => {
     if (!board) return []
@@ -158,10 +180,11 @@ export default function WorkshopBoard() {
       { key: 'checked_in', title: 'Checked In', subtitle: 'Awaiting allocation', droppable: canDrag, cards: buckets.get('checked_in') || [] },
       ...techCols.map(col => {
         const cards = buckets.get(col.id) || []
+        const load = (col.technicianId && techLoadByUserId.get(col.technicianId)) || EMPTY_LOAD
         return {
           key: col.id,
           title: col.name,
-          capacity: { allocated: cardsAllocatedHours(cards), available: col.availableHours },
+          capacity: { ...load, available: col.availableHours },
           isClockedOn: cards.some(c => c.isClockedOn),
           droppable: canDrag,
           cards
@@ -169,7 +192,7 @@ export default function WorkshopBoard() {
       }),
       { key: 'work_complete', title: 'Work Complete', subtitle: `Completed ${date === dateForOffset(0) ? 'today' : date}`, droppable: canDrag, cards: buckets.get('work_complete') || [] }
     ]
-  }, [board, filteredCards, view, queueNameById, techColumnByUserId, canDrag, date])
+  }, [board, filteredCards, view, queueNameById, techColumnByUserId, techLoadByUserId, canDrag, date])
 
   const advisors = useMemo(() => {
     if (!board) return []
@@ -186,20 +209,20 @@ export default function WorkshopBoard() {
   const stats = useMemo(() => {
     if (!board) return null
     const techCols = board.columns.filter(c => c.columnType === 'technician' && c.isVisible)
-    let allocated = 0
+    let booked = 0
+    let done = 0
     let available = 0
     for (const col of techCols) {
-      const techCards = board.cards.filter(c =>
-        c.position !== 'work_complete' && c.position !== 'due_in' && c.technician?.id === col.technicianId
-      )
-      allocated += cardsAllocatedHours(techCards)
+      const load = (col.technicianId && techLoadByUserId.get(col.technicianId)) || EMPTY_LOAD
+      booked += load.done + load.active + load.dueIn
+      done += load.done
       available += col.availableHours
     }
     const active = board.cards.filter(c => c.position !== 'work_complete' && c.position !== 'due_in')
     const waiters = active.filter(c => c.customerWaiting).length
     const overdue = active.filter(c => promiseCountdown(c, now)?.tone === 'overdue').length
-    return { allocated, available, waiters, overdue, onSite: active.length }
-  }, [board, now])
+    return { booked, done, available, waiters, overdue, onSite: active.length }
+  }, [board, techLoadByUserId, now])
 
   // ---- Drag and drop (kanban views) ---------------------------------------
   const handleDragStart = (event: DragStartEvent) => {
@@ -404,10 +427,10 @@ export default function WorkshopBoard() {
                 <div className="text-xs text-gray-400">On site</div>
                 <div className="text-lg font-bold text-gray-900">{stats.onSite}</div>
               </div>
-              <div className="bg-white border border-gray-200 rounded-xl px-4 py-2.5">
+              <div className="bg-white border border-gray-200 rounded-xl px-4 py-2.5" title="Estimated hours booked across technicians today, including completed work">
                 <div className="text-xs text-gray-400">Workshop loading</div>
                 <div className="text-lg font-bold text-gray-900">
-                  {stats.allocated.toFixed(1)}<span className="text-sm font-normal text-gray-400"> / {stats.available.toFixed(1)} hrs</span>
+                  {stats.booked.toFixed(1)}<span className="text-sm font-normal text-gray-400"> / {stats.available.toFixed(1)} hrs{stats.done > 0 ? ` · ${stats.done.toFixed(1)} done` : ''}</span>
                 </div>
               </div>
               <div className={`border rounded-xl px-4 py-2.5 ${stats.waiters > 0 ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}`}>

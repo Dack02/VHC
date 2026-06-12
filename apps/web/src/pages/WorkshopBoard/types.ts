@@ -36,6 +36,8 @@ export interface BoardNotePreview {
   content: string
   createdAt: string
   user: { id: string; first_name: string; last_name: string } | null
+  /** True while the note is flagged for advisor attention and not yet actioned */
+  advisorAttention?: boolean
 }
 
 export interface BoardCard {
@@ -109,13 +111,6 @@ export function actualWorkedMinutes(card: BoardCard, now: Date): number {
   return minutes
 }
 
-export interface WorkshopNoteEntry {
-  id: string
-  content: string
-  createdAt: string
-  user: { id: string; first_name: string; last_name: string; role?: string } | null
-}
-
 // Friendly pipeline stage chip derived from the health check status
 export function pipelineStage(status: string): { label: string; tone: 'grey' | 'blue' | 'amber' | 'green' | 'red' | 'indigo' } {
   switch (status) {
@@ -156,10 +151,13 @@ export function renderSmsTemplate(
     .replace(/\{org_name\}/g, orgName)
 }
 
-// Sort cards within a column: waiters first, then priority, promise time, age
+// Sort cards within a column. Manually ordered cards (sortPosition > 0, set
+// by drag-to-reorder) come first in their dragged order - the tech works top
+// to bottom. Cards never manually placed follow, auto-sorted: waiters first,
+// then priority, promise time, age.
 export function sortCards(cards: BoardCard[]): BoardCard[] {
   const priorityWeight: Record<CardPriority, number> = { urgent: 0, high: 1, normal: 2 }
-  return [...cards].sort((a, b) => {
+  const autoCompare = (a: BoardCard, b: BoardCard): number => {
     if (a.customerWaiting !== b.customerWaiting) return a.customerWaiting ? -1 : 1
     const pw = priorityWeight[a.priority] - priorityWeight[b.priority]
     if (pw !== 0) return pw
@@ -168,5 +166,12 @@ export function sortCards(cards: BoardCard[]): BoardCard[] {
     if (aPromise && bPromise && aPromise !== bPromise) return aPromise < bPromise ? -1 : 1
     if (!!aPromise !== !!bPromise) return aPromise ? -1 : 1
     return a.createdAt < b.createdAt ? -1 : 1
+  }
+  return [...cards].sort((a, b) => {
+    const aOrdered = a.sortPosition > 0
+    const bOrdered = b.sortPosition > 0
+    if (aOrdered !== bOrdered) return aOrdered ? -1 : 1
+    if (aOrdered && bOrdered && a.sortPosition !== b.sortPosition) return a.sortPosition - b.sortPosition
+    return autoCompare(a, b)
   })
 }

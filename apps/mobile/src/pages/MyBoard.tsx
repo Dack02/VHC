@@ -35,7 +35,7 @@ interface BoardCard {
   customer: { first_name: string; last_name: string } | null
   technician: { id: string } | null
   advisor: { first_name: string; last_name: string } | null
-  latestNote: { content: string } | null
+  latestNote: { content: string; advisorAttention?: boolean } | null
 }
 
 interface BoardData {
@@ -57,6 +57,7 @@ export function MyBoard() {
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [noteDraft, setNoteDraft] = useState('')
+  const [noteAttention, setNoteAttention] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const token = session?.access_token
@@ -130,10 +131,11 @@ export function MyBoard() {
       await api(`/api/v1/workshop-board/cards/${card.healthCheckId}/notes`, {
         method: 'POST',
         token,
-        body: JSON.stringify({ content: noteDraft.trim() })
+        body: JSON.stringify({ content: noteDraft.trim(), advisorAttention: noteAttention })
       })
-      toast.success('Note added')
+      toast.success(noteAttention ? 'Note added - flagged for advisor attention' : 'Note added')
       setNoteDraft('')
+      setNoteAttention(false)
       fetchBoard()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to add note')
@@ -210,7 +212,9 @@ export function MyBoard() {
           </div>
 
           {card.latestNote && (
-            <p className="text-xs text-gray-500 mt-1.5 truncate">📝 {card.latestNote.content}</p>
+            <p className={`text-xs mt-1.5 truncate ${card.latestNote.advisorAttention ? 'text-red-600 font-medium' : 'text-gray-500'}`}>
+              {card.latestNote.advisorAttention ? '⚠' : '📝'} {card.latestNote.content}
+            </p>
           )}
         </div>
 
@@ -269,18 +273,35 @@ export function MyBoard() {
             )}
 
             {/* Note */}
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={noteDraft}
-                onChange={e => setNoteDraft(e.target.value)}
-                maxLength={500}
-                placeholder="Add a note for the advisor…"
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-              <Button size="sm" onClick={() => addNote(card)} disabled={busy || !noteDraft.trim()}>
-                Add
-              </Button>
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={noteDraft}
+                  onChange={e => setNoteDraft(e.target.value)}
+                  maxLength={500}
+                  placeholder="Add a note for the advisor…"
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <Button size="sm" onClick={() => addNote(card)} disabled={busy || !noteDraft.trim()}>
+                  Add
+                </Button>
+              </div>
+              <label
+                className={`flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-lg border select-none ${
+                  noteAttention
+                    ? 'bg-red-50 border-red-300 text-red-700'
+                    : 'border-gray-200 text-gray-500'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={noteAttention}
+                  onChange={e => setNoteAttention(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                />
+                ⚠ Advisor attention — stays red until an advisor confirms
+              </label>
             </div>
 
             {/* Work complete */}

@@ -220,7 +220,7 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
             .in('health_check_id', hcIds),
           supabaseAdmin
             .from('workshop_notes')
-            .select('id, health_check_id, content, created_at, user:users(id, first_name, last_name)')
+            .select('id, health_check_id, content, advisor_attention, actioned_at, created_at, user:users!workshop_notes_user_id_fkey(id, first_name, last_name)')
             .eq('organization_id', auth.orgId)
             .in('health_check_id', hcIds)
             .order('created_at', { ascending: false })
@@ -333,7 +333,8 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
           ? {
               content: latestNote.content,
               createdAt: latestNote.created_at,
-              user: latestNote.user
+              user: latestNote.user,
+              advisorAttention: latestNote.advisor_attention === true && !latestNote.actioned_at
             }
           : null,
         notesCount: noteCountByHc.get(hc.id) || 0
@@ -720,6 +721,123 @@ workshopBoard.post('/cards/reorder', authorize([...ADVISOR_ROLES]), async (c) =>
 // Notes
 // ============================================================================
 
+// Site scope for the cross-job notes views: explicit ?siteId= (must belong to
+// the org), else the user's own site, else org-wide (e.g. org admins with no
+// site assignment). Unlike the board, no site is not an error here.
+async function resolveNotesSiteId(c: any): Promise<{ siteId: string | null } | null> {
+  const auth = c.get('auth')
+  const requested = c.req.query('siteId')
+  if (requested) {
+    const { data: site } = await supabaseAdmin
+      .from('sites')
+      .select('id')
+      .eq('id', requested)
+      .eq('organization_id', auth.orgId)
+      .single()
+    return site ? { siteId: site.id } : null
+  }
+  return { siteId: auth.user.siteId ?? null }
+}
+
+// GET /notes - Cross-job notes list (Notes page)
+// view=unactioned (default) | actioned | all
+workshopBoard.get('/notes', authorize([...ALL_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const scope = await resolveNotesSiteId(c)
+    if (!scope) return c.json({ error: 'Site not found' }, 404)
+
+    const view = c.req.query('view') || 'unactioned'
+    if (!['unactioned', 'actioned', 'all'].includes(view)) {
+      return c.json({ error: 'view must be unactioned, actioned or all' }, 400)
+    }
+
+    let query = supabaseAdmin
+      .from('workshop_notes')
+      .select(`
+        id, content, is_pinned, advisor_attention, actioned_at, created_at, health_check_id,
+        user:users!workshop_notes_user_id_fkey(id, first_name, last_name, role),
+        actioned_by_user:users!workshop_notes_actioned_by_fkey(id, first_name, last_name),
+        health_check:health_checks!inner(
+          id, site_id, status, jobsheet_number, job_number,
+          vehicle:vehicles(registration, make, model),
+          customer:customers(first_name, last_name)
+        )
+      `)
+      .eq('organization_id', auth.orgId)
+      .order('created_at', { ascending: false })
+      .limit(view === 'all' ? 150 : 200)
+
+    if (scope.siteId) query = query.eq('health_check.site_id', scope.siteId)
+    if (view === 'unactioned') {
+      query = query.eq('advisor_attention', true).is('actioned_at', null)
+    } else if (view === 'actioned') {
+      query = query.eq('advisor_attention', true).not('actioned_at', 'is', null)
+    }
+
+    const { data: notes, error } = await query
+    if (error) return c.json({ error: error.message }, 500)
+
+    return c.json({
+      siteId: scope.siteId,
+      view,
+      notes: (notes || []).map(n => {
+        // Supabase types to-one embeds as arrays - normalise either shape
+        const hcRaw = n.health_check as unknown
+        const hc = (Array.isArray(hcRaw) ? hcRaw[0] : hcRaw) as Record<string, unknown> | null
+        return {
+          id: n.id,
+          content: n.content,
+          isPinned: n.is_pinned === true,
+          advisorAttention: n.advisor_attention === true,
+          actionedAt: n.actioned_at,
+          actionedBy: n.actioned_by_user,
+          createdAt: n.created_at,
+          user: n.user,
+          healthCheckId: n.health_check_id,
+          healthCheck: hc
+            ? {
+                status: hc.status,
+                jobsheetNumber: hc.jobsheet_number || hc.job_number || null,
+                vehicle: hc.vehicle,
+                customer: hc.customer
+              }
+            : null
+        }
+      })
+    })
+  } catch (error) {
+    console.error('Get workshop notes list error:', error)
+    return c.json({ error: 'Failed to load notes' }, 500)
+  }
+})
+
+// GET /notes/attention-count - Unactioned attention notes (nav badge)
+workshopBoard.get('/notes/attention-count', authorize([...ALL_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const scope = await resolveNotesSiteId(c)
+    if (!scope) return c.json({ error: 'Site not found' }, 404)
+
+    let query = supabaseAdmin
+      .from('workshop_notes')
+      .select('id, health_check:health_checks!inner(site_id)', { count: 'exact', head: true })
+      .eq('organization_id', auth.orgId)
+      .eq('advisor_attention', true)
+      .is('actioned_at', null)
+
+    if (scope.siteId) query = query.eq('health_check.site_id', scope.siteId)
+
+    const { count, error } = await query
+    if (error) return c.json({ error: error.message }, 500)
+
+    return c.json({ count: count || 0 })
+  } catch (error) {
+    console.error('Get attention count error:', error)
+    return c.json({ error: 'Failed to load attention count' }, 500)
+  }
+})
+
 workshopBoard.get('/cards/:healthCheckId/notes', authorize([...ALL_ROLES]), async (c) => {
   try {
     const auth = c.get('auth')
@@ -730,7 +848,11 @@ workshopBoard.get('/cards/:healthCheckId/notes', authorize([...ALL_ROLES]), asyn
 
     const { data: notes, error } = await supabaseAdmin
       .from('workshop_notes')
-      .select('id, content, is_pinned, created_at, user:users(id, first_name, last_name, role)')
+      .select(`
+        id, content, is_pinned, advisor_attention, actioned_at, created_at,
+        user:users!workshop_notes_user_id_fkey(id, first_name, last_name, role),
+        actioned_by_user:users!workshop_notes_actioned_by_fkey(id, first_name, last_name)
+      `)
       .eq('organization_id', auth.orgId)
       .eq('health_check_id', healthCheckId)
       .order('is_pinned', { ascending: false })
@@ -743,6 +865,9 @@ workshopBoard.get('/cards/:healthCheckId/notes', authorize([...ALL_ROLES]), asyn
         id: n.id,
         content: n.content,
         isPinned: n.is_pinned === true,
+        advisorAttention: n.advisor_attention === true,
+        actionedAt: n.actioned_at,
+        actionedBy: n.actioned_by_user,
         createdAt: n.created_at,
         user: n.user
       }))
@@ -772,9 +897,10 @@ workshopBoard.post('/cards/:healthCheckId/notes', authorize([...ALL_ROLES]), asy
         organization_id: auth.orgId,
         health_check_id: healthCheckId,
         user_id: auth.user.id,
-        content
+        content,
+        advisor_attention: body.advisorAttention === true
       })
-      .select('id, content, is_pinned, created_at')
+      .select('id, content, is_pinned, advisor_attention, actioned_at, created_at')
       .single()
 
     if (error) return c.json({ error: error.message }, 500)
@@ -786,6 +912,9 @@ workshopBoard.post('/cards/:healthCheckId/notes', authorize([...ALL_ROLES]), asy
         id: note.id,
         content: note.content,
         isPinned: note.is_pinned === true,
+        advisorAttention: note.advisor_attention === true,
+        actionedAt: note.actioned_at,
+        actionedBy: null,
         createdAt: note.created_at,
         user: {
           id: auth.user.id,
@@ -801,15 +930,32 @@ workshopBoard.post('/cards/:healthCheckId/notes', authorize([...ALL_ROLES]), asy
   }
 })
 
-// PATCH /cards/:healthCheckId/notes/:noteId - Pin or unpin a note
+// PATCH /cards/:healthCheckId/notes/:noteId - Pin/unpin or action an attention note
 workshopBoard.patch('/cards/:healthCheckId/notes/:noteId', authorize([...ALL_ROLES]), async (c) => {
   try {
     const auth = c.get('auth')
     const { healthCheckId, noteId } = c.req.param()
     const body = await c.req.json()
 
-    if (typeof body.isPinned !== 'boolean') {
-      return c.json({ error: 'isPinned must be a boolean' }, 400)
+    const fields: Record<string, unknown> = {}
+    if ('isPinned' in body) {
+      if (typeof body.isPinned !== 'boolean') {
+        return c.json({ error: 'isPinned must be a boolean' }, 400)
+      }
+      fields.is_pinned = body.isPinned
+    }
+    // Confirm (or undo) that an advisor-attention note has been seen.
+    // Deliberately open to all roles - the goal is that nothing stays red
+    // unnoticed, not gatekeeping who clears it.
+    if ('actioned' in body) {
+      if (typeof body.actioned !== 'boolean') {
+        return c.json({ error: 'actioned must be a boolean' }, 400)
+      }
+      fields.actioned_at = body.actioned ? new Date().toISOString() : null
+      fields.actioned_by = body.actioned ? auth.user.id : null
+    }
+    if (Object.keys(fields).length === 0) {
+      return c.json({ error: 'No valid fields to update' }, 400)
     }
 
     const hc = await getHealthCheckForBoard(healthCheckId, auth.orgId)
@@ -817,19 +963,27 @@ workshopBoard.patch('/cards/:healthCheckId/notes/:noteId', authorize([...ALL_ROL
 
     const { data: note, error } = await supabaseAdmin
       .from('workshop_notes')
-      .update({ is_pinned: body.isPinned })
+      .update(fields)
       .eq('id', noteId)
       .eq('organization_id', auth.orgId)
       .eq('health_check_id', healthCheckId)
-      .select('id, is_pinned')
+      .select('id, is_pinned, advisor_attention, actioned_at')
       .single()
 
     if (error || !note) return c.json({ error: 'Note not found' }, 404)
 
     emitBoardUpdated(hc.site_id, 'note_updated', healthCheckId)
-    return c.json({ success: true, note: { id: note.id, isPinned: note.is_pinned === true } })
+    return c.json({
+      success: true,
+      note: {
+        id: note.id,
+        isPinned: note.is_pinned === true,
+        advisorAttention: note.advisor_attention === true,
+        actionedAt: note.actioned_at
+      }
+    })
   } catch (error) {
-    console.error('Pin workshop note error:', error)
+    console.error('Update workshop note error:', error)
     return c.json({ error: 'Failed to update note' }, 500)
   }
 })

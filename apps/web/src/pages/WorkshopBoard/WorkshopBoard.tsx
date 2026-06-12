@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useCallback } from 'react'
-import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core'
+import { DndContext, DragOverlay, PointerSensor, closestCorners, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core'
+import { SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
@@ -7,7 +8,7 @@ import { useBoardData, useNow } from './useBoardData'
 import { sortCards, type BoardCard, type BoardData } from './types'
 import BoardColumn from './BoardColumn'
 import JobCard, { promiseCountdown } from './JobCard'
-import CardDetailPanel from './CardDetailPanel'
+import JobDetailModal from './JobDetailModal'
 import AddColumnModal from './AddColumnModal'
 import TimelineView from './TimelineView'
 
@@ -154,17 +155,17 @@ export default function WorkshopBoard() {
         else push('checked_in', card)
       }
       return [
-        { key: 'due_in', title: 'Due In', subtitle: date === dateForOffset(0) ? 'Expected today' : `Expected ${date}`, droppable: false, cards: buckets.get('due_in') || [] },
-        { key: 'checked_in', title: 'Checked In', subtitle: 'Awaiting allocation', droppable: false, cards: buckets.get('checked_in') || [] },
-        { key: 'in_workshop', title: 'In Workshop', subtitle: 'With technicians', droppable: canDrag, cards: buckets.get('in_workshop') || [] },
+        { key: 'due_in', title: 'Due In', subtitle: date === dateForOffset(0) ? 'Expected today' : `Expected ${date}`, droppable: false, cards: sortCards(buckets.get('due_in') || []) },
+        { key: 'checked_in', title: 'Checked In', subtitle: 'Awaiting allocation', droppable: false, cards: sortCards(buckets.get('checked_in') || []) },
+        { key: 'in_workshop', title: 'In Workshop', subtitle: 'With technicians', droppable: canDrag, cards: sortCards(buckets.get('in_workshop') || []) },
         ...queueCols.map(col => ({
           key: col.id,
           title: col.name,
           accent: col.colour,
           droppable: canDrag,
-          cards: buckets.get(col.id) || []
+          cards: sortCards(buckets.get(col.id) || [])
         })),
-        { key: 'work_complete', title: 'Work Complete', subtitle: `Completed ${date === dateForOffset(0) ? 'today' : date}`, droppable: canDrag, cards: buckets.get('work_complete') || [] }
+        { key: 'work_complete', title: 'Work Complete', subtitle: `Completed ${date === dateForOffset(0) ? 'today' : date}`, droppable: canDrag, cards: sortCards(buckets.get('work_complete') || []) }
       ]
     }
 
@@ -177,9 +178,9 @@ export default function WorkshopBoard() {
       else push('checked_in', card)
     }
     return [
-      { key: 'checked_in', title: 'Checked In', subtitle: 'Awaiting allocation', droppable: canDrag, cards: buckets.get('checked_in') || [] },
+      { key: 'checked_in', title: 'Checked In', subtitle: 'Awaiting allocation', droppable: canDrag, cards: sortCards(buckets.get('checked_in') || []) },
       ...techCols.map(col => {
-        const cards = buckets.get(col.id) || []
+        const cards = sortCards(buckets.get(col.id) || [])
         const load = (col.technicianId && techLoadByUserId.get(col.technicianId)) || EMPTY_LOAD
         return {
           key: col.id,
@@ -190,7 +191,7 @@ export default function WorkshopBoard() {
           cards
         }
       }),
-      { key: 'work_complete', title: 'Work Complete', subtitle: `Completed ${date === dateForOffset(0) ? 'today' : date}`, droppable: canDrag, cards: buckets.get('work_complete') || [] }
+      { key: 'work_complete', title: 'Work Complete', subtitle: `Completed ${date === dateForOffset(0) ? 'today' : date}`, droppable: canDrag, cards: sortCards(buckets.get('work_complete') || []) }
     ]
   }, [board, filteredCards, view, queueNameById, techColumnByUserId, techLoadByUserId, canDrag, date])
 
@@ -246,41 +247,98 @@ export default function WorkshopBoard() {
     if (!card) return
 
     const overId = over.id as string
+    // The drop target is either another card (sortable) or a column body
+    const overCard = overId !== card.healthCheckId ? board.cards.find(c => c.healthCheckId === overId) || null : null
+    const sourceCol = viewColumns.find(vc => vc.cards.some(c => c.healthCheckId === card.healthCheckId))
+    const targetCol = overCard
+      ? viewColumns.find(vc => vc.cards.some(c => c.healthCheckId === overCard.healthCheckId))
+      : viewColumns.find(vc => vc.key === overId)
+    if (!sourceCol || !targetCol) return
+
+    // Dropped onto a card in the same column: set the manual work order
+    if (overCard && targetCol.key === sourceCol.key) {
+      const oldIndex = sourceCol.cards.findIndex(c => c.healthCheckId === card.healthCheckId)
+      const newIndex = sourceCol.cards.findIndex(c => c.healthCheckId === overCard.healthCheckId)
+      if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return
+      const positions = arrayMove(sourceCol.cards, oldIndex, newIndex)
+        .map((c, i) => ({ healthCheckId: c.healthCheckId, sortPosition: (i + 1) * 10 }))
+
+      const previous = board
+      const posById = new Map(positions.map(p => [p.healthCheckId, p.sortPosition]))
+      setBoard({
+        ...board,
+        cards: board.cards.map(c =>
+          posById.has(c.healthCheckId) ? { ...c, sortPosition: posById.get(c.healthCheckId)! } : c
+        )
+      })
+      try {
+        await api('/api/v1/workshop-board/cards/reorder', {
+          method: 'POST',
+          token: session.accessToken,
+          body: { positions }
+        })
+      } catch (err) {
+        setBoard(previous)
+        toast.error(err instanceof Error ? err.message : 'Could not reorder jobs')
+      }
+      return
+    }
+
+    if (!targetCol.droppable) return
+    if (targetCol.key === sourceCol.key && !overCard && card.position !== 'column') return
 
     let target: 'checked_in' | 'technician' | 'queue' | 'work_complete' | 'workshop'
     let columnId: string | undefined
 
     if (view === 'status') {
-      if (overId === 'work_complete') target = 'work_complete'
-      else if (overId === 'in_workshop') target = 'workshop'
-      else if (queueNameById.has(overId)) {
+      if (targetCol.key === 'work_complete') target = 'work_complete'
+      else if (targetCol.key === 'in_workshop') target = 'workshop'
+      else if (queueNameById.has(targetCol.key)) {
         target = 'queue'
-        columnId = overId
+        columnId = targetCol.key
       } else return
     } else {
-      if (overId === 'work_complete') target = 'work_complete'
-      else if (overId === 'checked_in') target = 'checked_in'
+      if (targetCol.key === 'work_complete') target = 'work_complete'
+      else if (targetCol.key === 'checked_in') target = 'checked_in'
       else {
-        const column = board.columns.find(c => c.id === overId && c.columnType === 'technician')
+        const column = board.columns.find(c => c.id === targetCol.key && c.columnType === 'technician')
         if (!column) return
         target = 'technician'
         columnId = column.id
       }
     }
 
-    // Optimistic update
+    // Dropped onto a card in another column: land exactly there, renumbering
+    // the target column. Dropped onto the column body: clear any manual
+    // position so the auto rules (waiters, priority, promise time) place it.
+    let movedPosition = 0
+    let positions: Array<{ healthCheckId: string; sortPosition: number }> = []
+    if (overCard) {
+      const insertIndex = targetCol.cards.findIndex(c => c.healthCheckId === overCard.healthCheckId)
+      const newOrder = targetCol.cards.filter(c => c.healthCheckId !== card.healthCheckId)
+      newOrder.splice(insertIndex < 0 ? newOrder.length : insertIndex, 0, card)
+      positions = newOrder.map((c, i) => ({ healthCheckId: c.healthCheckId, sortPosition: (i + 1) * 10 }))
+      movedPosition = positions.find(p => p.healthCheckId === card.healthCheckId)!.sortPosition
+    }
+    const posById = new Map(positions.map(p => [p.healthCheckId, p.sortPosition]))
+
+    // Optimistic update: placement + order
     const previous = board
     const optimistic: BoardData = {
       ...board,
       cards: board.cards.map(c => {
-        if (c.healthCheckId !== card.healthCheckId) return c
-        if (target === 'queue') return { ...c, position: 'column', columnId: columnId! }
-        if (target === 'work_complete') return { ...c, position: 'work_complete', columnId: null }
-        if (target === 'checked_in') return { ...c, position: 'checked_in', columnId: null, technician: null }
+        const sortPosition = posById.get(c.healthCheckId) ?? (c.healthCheckId === card.healthCheckId ? 0 : c.sortPosition)
+        if (c.healthCheckId !== card.healthCheckId) {
+          return sortPosition !== c.sortPosition ? { ...c, sortPosition } : c
+        }
+        if (target === 'queue') return { ...c, sortPosition, position: 'column', columnId: columnId! }
+        if (target === 'work_complete') return { ...c, sortPosition, position: 'work_complete', columnId: null }
+        if (target === 'checked_in') return { ...c, sortPosition, position: 'checked_in', columnId: null, technician: null }
         if (target === 'technician') {
           const col = board.columns.find(x => x.id === columnId)
           return {
             ...c,
+            sortPosition,
             position: 'column',
             columnId: columnId!,
             technician: col?.technician ? { id: col.technician.id, first_name: col.technician.first_name, last_name: col.technician.last_name } : c.technician
@@ -289,8 +347,8 @@ export default function WorkshopBoard() {
         // workshop: back to derived tech column / checked in
         const techColId = c.technician ? techColumnByUserId.get(c.technician.id) : undefined
         return techColId
-          ? { ...c, position: 'column', columnId: techColId }
-          : { ...c, position: 'checked_in', columnId: null }
+          ? { ...c, sortPosition, position: 'column', columnId: techColId }
+          : { ...c, sortPosition, position: 'checked_in', columnId: null }
       })
     }
     setBoard(optimistic)
@@ -299,8 +357,17 @@ export default function WorkshopBoard() {
       await api(`/api/v1/workshop-board/cards/${card.healthCheckId}/move`, {
         method: 'POST',
         token: session.accessToken,
-        body: { target, columnId }
+        body: { target, columnId, sortPosition: movedPosition }
       })
+      // Renumber the rest of the target column so the drop slot sticks
+      const neighbourPositions = positions.filter(p => p.healthCheckId !== card.healthCheckId)
+      if (neighbourPositions.length > 0) {
+        await api('/api/v1/workshop-board/cards/reorder', {
+          method: 'POST',
+          token: session.accessToken,
+          body: { positions: neighbourPositions }
+        })
+      }
     } catch (err) {
       setBoard(previous)
       toast.error(err instanceof Error ? err.message : 'Could not move card')
@@ -519,7 +586,7 @@ export default function WorkshopBoard() {
             refresh={refresh}
           />
         ) : (
-          <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+          <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
             <div className="flex-1 flex gap-3 overflow-x-auto pb-4 items-stretch min-h-0">
               {viewColumns.map(col => (
                 <BoardColumn
@@ -534,23 +601,25 @@ export default function WorkshopBoard() {
                   droppable={col.droppable}
                   tvMode={tvMode}
                 >
-                  {sortCards(col.cards).map(card => (
-                    <JobCard
-                      key={card.healthCheckId}
-                      card={card}
-                      statuses={board.statuses}
-                      now={now}
-                      draggable={canDrag && card.position !== 'due_in'}
-                      tvMode={tvMode}
-                      showTechChip={view === 'status'}
-                      queueChipName={
-                        view === 'tech' && card.position === 'column' && card.columnId
-                          ? queueNameById.get(card.columnId) || null
-                          : null
-                      }
-                      onClick={() => openCard(card.healthCheckId)}
-                    />
-                  ))}
+                  <SortableContext items={col.cards.map(c => c.healthCheckId)} strategy={verticalListSortingStrategy}>
+                    {col.cards.map(card => (
+                      <JobCard
+                        key={card.healthCheckId}
+                        card={card}
+                        statuses={board.statuses}
+                        now={now}
+                        draggable={canDrag && card.position !== 'due_in'}
+                        tvMode={tvMode}
+                        showTechChip={view === 'status'}
+                        queueChipName={
+                          view === 'tech' && card.position === 'column' && card.columnId
+                            ? queueNameById.get(card.columnId) || null
+                            : null
+                        }
+                        onClick={() => openCard(card.healthCheckId)}
+                      />
+                    ))}
+                  </SortableContext>
                 </BoardColumn>
               ))}
             </div>
@@ -573,11 +642,13 @@ export default function WorkshopBoard() {
         )
       ) : null}
 
-      {/* Slide-out detail */}
+      {/* Job detail modal */}
       {selectedCard && board && (
-        <CardDetailPanel
+        <JobDetailModal
           card={selectedCard}
           statuses={board.statuses}
+          columns={board.columns}
+          boardDate={board.date}
           onClose={() => setSelectedCardId(null)}
           onChanged={() => refresh(true)}
         />

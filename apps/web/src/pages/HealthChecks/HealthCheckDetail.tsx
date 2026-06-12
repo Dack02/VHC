@@ -24,6 +24,7 @@ import { CustomerEditModal } from './components/CustomerEditModal'
 import { HcDeletionModal } from './components/HcDeletionModal'
 import { AdvisorAuthorizationModal } from './components/AdvisorAuthorizationModal'
 import { InspectionTimer } from '../../components/InspectionTimer'
+import WorkshopNotesPanel from '../../components/WorkshopNotesPanel'
 
 // Hook for online/offline detection
 function useOnlineStatus() {
@@ -89,7 +90,7 @@ const statusColors: Record<string, string> = {
   no_show: 'bg-red-100 text-red-700'
 }
 
-type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'tyres-brakes' | 'labour' | 'parts' | 'photos' | 'timeline' | 'activity' | 'sms'
+type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'tyres-brakes' | 'labour' | 'parts' | 'photos' | 'timeline' | 'notes' | 'activity' | 'sms'
 
 export default function HealthCheckDetail() {
   const { id } = useParams<{ id: string }>()
@@ -99,7 +100,7 @@ export default function HealthCheckDetail() {
   const isOnline = useOnlineStatus()
 
   // Get initial tab from URL query parameter
-  const validTabs: Tab[] = ['summary', 'checkin', 'mri', 'health-check', 'tyres-brakes', 'labour', 'parts', 'photos', 'timeline', 'activity', 'sms']
+  const validTabs: Tab[] = ['summary', 'checkin', 'mri', 'health-check', 'tyres-brakes', 'labour', 'parts', 'photos', 'timeline', 'notes', 'activity', 'sms']
   const urlTab = searchParams.get('tab') as Tab | null
   const initialTab: Tab = urlTab && validTabs.includes(urlTab) ? urlTab : 'health-check'
 
@@ -131,6 +132,7 @@ export default function HealthCheckDetail() {
   const [showAdvisorAuthModal, setShowAdvisorAuthModal] = useState(false)
   const [generatingPDF, setGeneratingPDF] = useState(false)
   const [unreadSmsCount, setUnreadSmsCount] = useState(0)
+  const [workshopNotesCount, setWorkshopNotesCount] = useState(0)
   const [checkinEnabled, setCheckinEnabled] = useState(false)
   const [timerData, setTimerData] = useState<{
     total_closed_minutes: number
@@ -166,7 +168,7 @@ export default function HealthCheckDetail() {
       setSummary(hcData.summary || null)
 
       // Run remaining calls in parallel - they only depend on hcData
-      const [templateResult, timelineResult, timeEntriesResult, checkinResult, repairItemsResult, smsUnreadResult] =
+      const [templateResult, timelineResult, timeEntriesResult, checkinResult, repairItemsResult, smsUnreadResult, workshopNotesResult] =
         await Promise.allSettled([
           // Template sections
           hcData.healthCheck.template_id
@@ -209,6 +211,11 @@ export default function HealthCheckDetail() {
           // Unread SMS count
           api<{ count: number }>(
             `/api/v1/health-checks/${id}/sms-messages/unread-count`,
+            { token: session.accessToken }
+          ),
+          // Workshop notes (count for the Notes tab badge)
+          api<{ notes: unknown[] }>(
+            `/api/v1/workshop-board/cards/${id}/notes`,
             { token: session.accessToken }
           )
         ])
@@ -312,6 +319,11 @@ export default function HealthCheckDetail() {
       // Process SMS unread count result
       if (smsUnreadResult.status === 'fulfilled') {
         setUnreadSmsCount(smsUnreadResult.value?.count || 0)
+      }
+
+      // Process workshop notes count result
+      if (workshopNotesResult.status === 'fulfilled') {
+        setWorkshopNotesCount(workshopNotesResult.value?.notes?.length || 0)
       }
 
       // Reset retry count on success
@@ -528,6 +540,7 @@ export default function HealthCheckDetail() {
     { id: 'parts', label: 'Parts' },
     { id: 'photos', label: 'Photos', badge: summary?.media_count },
     { id: 'timeline', label: 'Timeline' },
+    { id: 'notes' as Tab, label: 'Notes', badge: workshopNotesCount > 0 ? workshopNotesCount : undefined, badgeColor: 'gray' },
     { id: 'activity', label: 'Customer Activity' },
     { id: 'sms' as Tab, label: 'SMS', badge: unreadSmsCount > 0 ? unreadSmsCount : undefined, badgeColor: 'red' }
   ]
@@ -836,6 +849,15 @@ export default function HealthCheckDetail() {
         )}
         {activeTab === 'timeline' && (
           <TimelineTab timeline={timeline} />
+        )}
+        {activeTab === 'notes' && (
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 max-w-2xl">
+            <h3 className="font-medium text-gray-900 mb-3">Workshop notes</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Shared with the workshop board — anything added here shows on the job's card.
+            </p>
+            <WorkshopNotesPanel healthCheckId={id!} onCountChange={setWorkshopNotesCount} />
+          </div>
         )}
         {activeTab === 'activity' && (
           <CustomerActivityTab healthCheckId={id!} />

@@ -1,4 +1,4 @@
-import { useDraggable } from '@dnd-kit/core'
+import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { BoardCard, BoardStatus } from './types'
 import { pipelineStage } from './types'
@@ -61,7 +61,9 @@ export function promiseCountdown(card: BoardCard, now: Date): {
 }
 
 export default function JobCard({ card, statuses, now, draggable, tvMode, showTechChip, queueChipName, onClick }: JobCardProps) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  // Sortable rather than plain draggable: cards can be dropped onto each
+  // other to set the tech's top-to-bottom work order, not just onto columns
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.healthCheckId,
     disabled: !draggable
   })
@@ -86,6 +88,7 @@ export default function JobCard({ card, statuses, now, draggable, tvMode, showTe
       ref={setNodeRef}
       style={{
         transform: CSS.Translate.toString(transform),
+        transition,
         borderLeftColor: borderColour,
         borderLeftWidth: borderColour ? 4 : undefined,
         opacity: isDragging ? 0.4 : 1
@@ -209,8 +212,8 @@ export default function JobCard({ card, statuses, now, draggable, tvMode, showTe
         )}
       </div>
 
-      {/* RAG summary once inspection has produced results */}
-      {(card.ragCounts.red > 0 || card.ragCounts.amber > 0 || card.ragCounts.green > 0) && (
+      {/* Red/amber findings once inspection has produced results */}
+      {(card.ragCounts.red > 0 || card.ragCounts.amber > 0) && (
         <div className={`flex items-center gap-2.5 mt-1.5 ${smallScale}`}>
           <span className="flex items-center gap-1 text-gray-600">
             <span className="w-2 h-2 rounded-full bg-rag-red inline-block" />
@@ -220,19 +223,25 @@ export default function JobCard({ card, statuses, now, draggable, tvMode, showTe
             <span className="w-2 h-2 rounded-full bg-rag-amber inline-block" />
             {card.ragCounts.amber}
           </span>
-          <span className="flex items-center gap-1 text-gray-600">
-            <span className="w-2 h-2 rounded-full bg-rag-green inline-block" />
-            {card.ragCounts.green}
-          </span>
         </div>
       )}
 
-      {/* Latest note */}
+      {/* Latest note - red while it needs advisor attention */}
       {card.latestNote && (
-        <div className={`mt-1.5 ${smallScale} text-gray-500 truncate flex items-center gap-1`}>
-          <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-          </svg>
+        <div
+          className={`mt-1.5 ${smallScale} truncate flex items-center gap-1 ${
+            card.latestNote.advisorAttention ? 'text-red-600 font-medium' : 'text-gray-500'
+          }`}
+        >
+          {card.latestNote.advisorAttention ? (
+            <svg className="w-3 h-3 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 2L1 21h22L12 2zm0 6l1 7h-2l1-7zm0 11.5a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5z" />
+            </svg>
+          ) : (
+            <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+          )}
           <span className="truncate">{card.latestNote.content}</span>
           {card.notesCount > 1 && <span className="text-gray-400 flex-shrink-0">+{card.notesCount - 1}</span>}
         </div>

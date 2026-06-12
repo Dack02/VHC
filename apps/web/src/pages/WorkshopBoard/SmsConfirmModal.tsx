@@ -8,15 +8,16 @@ interface SmsConfirmModalProps {
   customerName: string
   customerMobile: string | null
   initialMessage: string
-  statusName: string
+  /** Status that triggered the SMS; omit for an ad-hoc composed message */
+  statusName?: string | null
   onClose: () => void
   onSent: () => void
 }
 
 /**
- * Confirmation popup shown before any status-triggered SMS is sent.
- * Nothing is ever sent automatically - the advisor reviews (and can edit)
- * the message, then explicitly confirms.
+ * Confirmation popup shown before any SMS is sent (status-triggered or
+ * composed ad-hoc). Nothing is ever sent automatically - the advisor
+ * reviews (and can edit) the message, then explicitly confirms.
  */
 export default function SmsConfirmModal({
   healthCheckId,
@@ -66,7 +67,10 @@ export default function SmsConfirmModal({
           <div>
             <h3 className="text-base font-semibold text-gray-900">Send SMS to customer?</h3>
             <p className="text-sm text-gray-500 mt-0.5">
-              Status set to <span className="font-medium">{statusName}</span>. Review the message before sending to{' '}
+              {statusName && (
+                <>Status set to <span className="font-medium">{statusName}</span>. </>
+              )}
+              Review the message before sending to{' '}
               <span className="font-medium">{customerName}</span>
               {customerMobile ? ` (${customerMobile})` : ''}.
             </p>

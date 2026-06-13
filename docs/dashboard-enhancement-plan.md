@@ -1,6 +1,6 @@
 # Dashboard Enhancement Plan & KPI Audit
 
-**Date:** 2026-06-12
+**Date:** 2026-06-12 · **Status: IMPLEMENTED** (same day — all 3 phases; see `docs/metrics-glossary.md` for the resulting KPI definitions)
 **Scope:** `apps/web/src/pages/Dashboard.tsx`, `apps/api/src/routes/dashboard.ts`, `apps/api/src/routes/dashboard-today.ts`, related report endpoints.
 
 ---

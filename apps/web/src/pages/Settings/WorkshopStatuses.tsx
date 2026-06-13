@@ -99,6 +99,18 @@ export default function WorkshopStatuses() {
     }
   }
 
+  const handleDelete = async (status: WorkshopStatusRow) => {
+    if (!token) return
+    if (!window.confirm(`Delete "${status.name}"? Any cards currently flagged with it will have the flag cleared. This can't be undone.`)) return
+    try {
+      await api(`/api/v1/workshop-board/statuses/${status.id}`, { method: 'DELETE', token })
+      toast.success('Status deleted')
+      fetchStatuses()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete status')
+    }
+  }
+
   const handleMove = async (index: number, direction: -1 | 1) => {
     if (!token) return
     const target = index + direction
@@ -185,6 +197,12 @@ export default function WorkshopStatuses() {
                 }`}
               >
                 {status.isActive ? 'Active' : 'Inactive'}
+              </button>
+              <button
+                onClick={() => handleDelete(status)}
+                className="text-sm text-red-600 hover:underline"
+              >
+                Delete
               </button>
             </div>
           ))}

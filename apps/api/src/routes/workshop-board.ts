@@ -1345,20 +1345,22 @@ workshopBoard.delete('/statuses/:id', authorize([...ADMIN_ROLES]), async (c) => 
     const auth = c.get('auth')
     const { id } = c.req.param()
 
-    // Soft delete - clears it from cards but keeps history intact
-    const { error } = await supabaseAdmin
-      .from('workshop_statuses')
-      .update({ is_active: false, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .eq('organization_id', auth.orgId)
-
-    if (error) return c.json({ error: error.message }, 500)
-
+    // Clear the status off any cards first so the foreign key can't block the
+    // delete, then remove the status row permanently. (To hide a status without
+    // deleting it, toggle it inactive via PATCH instead.)
     await supabaseAdmin
       .from('workshop_cards')
       .update({ workshop_status_id: null, updated_at: new Date().toISOString() })
       .eq('organization_id', auth.orgId)
       .eq('workshop_status_id', id)
+
+    const { error } = await supabaseAdmin
+      .from('workshop_statuses')
+      .delete()
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+
+    if (error) return c.json({ error: error.message }, 500)
 
     return c.json({ success: true })
   } catch (error) {

@@ -1,19 +1,37 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import {
+  statusGroups,
+  getSummaryMetrics,
+  getBoardState,
+  getQueues,
+  getTechnicianWorkload,
+  getMonthlyKpis,
+  getTodayRag,
+  type DashboardFilters
+} from '../services/dashboard-service.js'
 
 const dashboard = new Hono()
 
 dashboard.use('*', authMiddleware)
 
-// Status groups for board columns
-// Note: 'awaiting_arrival' is handled separately in Dashboard (not part of main kanban flow)
-const statusGroups = {
-  technician: ['created', 'assigned', 'in_progress', 'paused'],
-  tech_done: ['tech_completed', 'awaiting_review', 'awaiting_pricing', 'awaiting_parts'],
-  advisor: ['ready_to_send'],
-  customer: ['sent', 'delivered', 'opened', 'partial_response'],
-  actioned: ['authorized', 'declined', 'completed', 'expired', 'cancelled', 'no_show']
+function filtersFromQuery(orgId: string, query: Record<string, string | undefined>): DashboardFilters {
+  return {
+    orgId,
+    siteId: query.site_id || undefined,
+    technicianId: query.technician_id || undefined,
+    advisorId: query.advisor_id || undefined
+  }
+}
+
+function defaultPeriod(dateFrom?: string, dateTo?: string): { startDate: string; endDate: string } {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return {
+    startDate: dateFrom || today.toISOString(),
+    endDate: dateTo || new Date(today.getTime() + 24 * 60 * 60 * 1000).toISOString()
+  }
 }
 
 // Valid transitions for drag-drop
@@ -35,268 +53,60 @@ const validDragTransitions: Record<string, string[]> = {
 dashboard.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {
     const auth = c.get('auth')
-    const { date_from, date_to, technician_id, advisor_id, site_id } = c.req.query()
+    const query = c.req.query()
+    const filters = filtersFromQuery(auth.orgId, query)
+    const { startDate, endDate } = defaultPeriod(query.date_from, query.date_to)
 
-    // Build base filters
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const todayISO = today.toISOString()
-    const tomorrowISO = new Date(today.getTime() + 24 * 60 * 60 * 1000).toISOString()
-
-    // Date range filter (default: today)
-    const startDate = date_from || todayISO
-    const endDate = date_to || tomorrowISO
-
-    // Get all health checks for the period using dual-date approach
-    // (due_date range + created_at when due_date IS NULL — matches Today page logic)
-    const hcSelect = 'id, status, created_at, sent_at, first_opened_at, technician_id, advisor_id, promised_at'
-
-    let dueDateQuery = supabaseAdmin
-      .from('health_checks')
-      .select(hcSelect)
-      .eq('organization_id', auth.orgId)
-      .is('deleted_at', null)
-      .gte('due_date', startDate)
-      .lt('due_date', endDate)
-
-    let createdAtQuery = supabaseAdmin
-      .from('health_checks')
-      .select(hcSelect)
-      .eq('organization_id', auth.orgId)
-      .is('deleted_at', null)
-      .is('due_date', null)
-      .gte('created_at', startDate)
-      .lt('created_at', endDate)
-
-    // Apply optional filters
-    if (site_id) {
-      dueDateQuery = dueDateQuery.eq('site_id', site_id)
-      createdAtQuery = createdAtQuery.eq('site_id', site_id)
-    }
-    if (technician_id) {
-      dueDateQuery = dueDateQuery.eq('technician_id', technician_id)
-      createdAtQuery = createdAtQuery.eq('technician_id', technician_id)
-    }
-    if (advisor_id) {
-      dueDateQuery = dueDateQuery.eq('advisor_id', advisor_id)
-      createdAtQuery = createdAtQuery.eq('advisor_id', advisor_id)
-    }
-
-    // Query 3: Find health check IDs where items were authorized/actioned in the date range
-    // This captures sales from health checks booked on previous days
-    let outcomeDateQuery = supabaseAdmin
-      .from('repair_items')
-      .select('health_check_id, health_check:health_checks!inner(organization_id, site_id)')
-      .gte('outcome_set_at', startDate)
-      .lt('outcome_set_at', endDate)
-      .eq('health_check.organization_id', auth.orgId)
-
-    if (site_id) {
-      outcomeDateQuery = outcomeDateQuery.eq('health_check.site_id', site_id)
-    }
-
-    const [dueDateResult, createdAtResult, outcomeDateResult] = await Promise.all([dueDateQuery, createdAtQuery, outcomeDateQuery])
-
-    if (dueDateResult.error) {
-      return c.json({ error: dueDateResult.error.message }, 500)
-    }
-    if (createdAtResult.error) {
-      return c.json({ error: createdAtResult.error.message }, 500)
-    }
-    if (outcomeDateResult.error) {
-      console.error('Outcome date query error:', outcomeDateResult.error)
-      // Non-fatal: continue without these HCs
-    }
-
-    // Deduplicate by HC ID
-    const healthCheckMap = new Map<string, (typeof dueDateResult.data)[0]>()
-    for (const hc of [...(dueDateResult.data || []), ...(createdAtResult.data || [])]) {
-      if (!healthCheckMap.has(hc.id)) {
-        healthCheckMap.set(hc.id, hc)
-      }
-    }
-
-    // Fetch health checks that had items actioned in the period but aren't already in the map
-    const outcomeDateHcIds = [...new Set(
-      (outcomeDateResult.data || []).map((r: { health_check_id: string }) => r.health_check_id)
-    )].filter(id => !healthCheckMap.has(id))
-
-    if (outcomeDateHcIds.length > 0) {
-      let actionedQuery = supabaseAdmin
-        .from('health_checks')
-        .select(hcSelect)
-        .in('id', outcomeDateHcIds)
-        .is('deleted_at', null)
-
-      if (technician_id) actionedQuery = actionedQuery.eq('technician_id', technician_id)
-      if (advisor_id) actionedQuery = actionedQuery.eq('advisor_id', advisor_id)
-
-      const { data: actionedHcs, error: actionedError } = await actionedQuery
-
-      if (actionedError) {
-        console.error('Actioned date range HC query error:', actionedError)
-      } else if (actionedHcs) {
-        for (const hc of actionedHcs) {
-          if (!healthCheckMap.has(hc.id)) {
-            healthCheckMap.set(hc.id, hc)
-          }
-        }
-      }
-    }
-
-    const healthChecks = Array.from(healthCheckMap.values())
-
-    // Calculate metrics
-    const totalToday = healthChecks?.length || 0
-    const completedToday = healthChecks?.filter(hc => ['completed', 'authorized', 'declined'].includes(hc.status)).length || 0
-
-    // Status counts (for period)
-    const statusCounts: Record<string, number> = {}
-    healthChecks?.forEach(hc => {
-      statusCounts[hc.status] = (statusCounts[hc.status] || 0) + 1
-    })
-
-    // Column counts for board - get ALL active health checks regardless of date
-    // This shows current workflow state, not just today's created items
-    let activeQuery = supabaseAdmin
-      .from('health_checks')
-      .select('id, status')
-      .eq('organization_id', auth.orgId)
-      .is('deleted_at', null) // Exclude soft-deleted records
-      .not('status', 'in', '(completed,cancelled,expired)')
-
-    if (site_id) activeQuery = activeQuery.eq('site_id', site_id)
-    if (technician_id) activeQuery = activeQuery.eq('technician_id', technician_id)
-    if (advisor_id) activeQuery = activeQuery.eq('advisor_id', advisor_id)
-
-    const { data: activeHealthChecks } = await activeQuery
-
-    const columnCounts = {
-      technician: activeHealthChecks?.filter(hc => statusGroups.technician.includes(hc.status)).length || 0,
-      tech_done: activeHealthChecks?.filter(hc => statusGroups.tech_done.includes(hc.status)).length || 0,
-      advisor: activeHealthChecks?.filter(hc => statusGroups.advisor.includes(hc.status)).length || 0,
-      customer: activeHealthChecks?.filter(hc => statusGroups.customer.includes(hc.status)).length || 0,
-      actioned: activeHealthChecks?.filter(hc => statusGroups.actioned.includes(hc.status)).length || 0
-    }
-
-    // Calculate average response time (sent to first_opened)
-    const responseTimes = healthChecks?.filter(hc => hc.sent_at && hc.first_opened_at)
-      .map(hc => new Date(hc.first_opened_at).getTime() - new Date(hc.sent_at).getTime()) || []
-    const avgResponseTimeMs = responseTimes.length > 0
-      ? responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length
-      : 0
-
-    // Fetch repair item totals for value metrics
-    const healthCheckIds = healthChecks?.map(hc => hc.id) || []
-    let repairTotals: Record<string, number> = {}
-    let authorizedTotals: Record<string, number> = {}
-    let declinedTotals: Record<string, number> = {}
-
-    if (healthCheckIds.length > 0) {
-      const { data: repairData } = await supabaseAdmin
-        .from('repair_items')
-        .select('id, health_check_id, total_inc_vat, parent_repair_item_id, deleted_at, customer_approved, outcome_status, is_group')
-        .in('health_check_id', healthCheckIds)
-        .is('deleted_at', null)
-
-      const isItemAuthorised = (item: { customer_approved: boolean | null; outcome_status: string | null }) =>
-        item.customer_approved === true || item.outcome_status === 'authorised'
-
-      // Build children-by-parent map for group authorization
-      const childrenByParent = new Map<string, typeof repairData>()
-      repairData?.forEach(item => {
-        if (item.parent_repair_item_id) {
-          const children = childrenByParent.get(item.parent_repair_item_id) || []
-          children.push(item)
-          childrenByParent.set(item.parent_repair_item_id, children)
-        }
-      })
-
-      repairData?.forEach(item => {
-        // Only count top-level items to avoid double-counting
-        if (item.parent_repair_item_id) return
-
-        const value = parseFloat(String(item.total_inc_vat)) || 0
-        repairTotals[item.health_check_id] = (repairTotals[item.health_check_id] || 0) + value
-
-        // Check authorization: direct check on item, or check children for groups
-        let isAuthorised = isItemAuthorised(item)
-        let authorizedValue = value
-
-        if (item.is_group && !isAuthorised) {
-          const children = childrenByParent.get(item.id) || []
-          const authorizedChildren = children.filter(c => !c.deleted_at && isItemAuthorised(c))
-          if (authorizedChildren.length > 0) {
-            isAuthorised = true
-            authorizedValue = authorizedChildren.reduce((sum, child) => sum + (parseFloat(String(child.total_inc_vat)) || 0), 0)
-          }
-        }
-
-        if (isAuthorised) {
-          authorizedTotals[item.health_check_id] = (authorizedTotals[item.health_check_id] || 0) + authorizedValue
-        }
-        if (item.outcome_status === 'declined') {
-          declinedTotals[item.health_check_id] = (declinedTotals[item.health_check_id] || 0) + value
-        }
-      })
-    }
-
-    // Value metrics - use item-level customer_approved for accuracy
-    const totalValueSent = healthChecks?.filter(hc => hc.sent_at).reduce((sum, hc) => sum + (repairTotals[hc.id] || 0), 0) || 0
-    const totalValueAuthorized = Object.values(authorizedTotals).reduce((sum, val) => sum + val, 0)
-    const totalValueDeclined = Object.values(declinedTotals).reduce((sum, val) => sum + val, 0)
-
-    // Conversion rate - count HCs that have at least one approved item
-    const sentCount = healthChecks?.filter(hc => hc.sent_at).length || 0
-    const authorizedCount = Object.keys(authorizedTotals).length
-    const conversionRate = sentCount > 0 ? (authorizedCount / sentCount) * 100 : 0
-
-    // Get overdue items (past promise time and not completed)
-    const now = new Date().toISOString()
-    const { data: overdueItems } = await supabaseAdmin
-      .from('health_checks')
-      .select('id')
-      .eq('organization_id', auth.orgId)
-      .is('deleted_at', null) // Exclude soft-deleted records
-      .not('status', 'in', '(completed,cancelled,expired)')
-      .lt('promised_at', now)
-      .not('promised_at', 'is', null)
-
-    // Get items with expiring links (within 24 hours)
-    const in24Hours = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-    const { data: expiringLinks } = await supabaseAdmin
-      .from('health_checks')
-      .select('id')
-      .eq('organization_id', auth.orgId)
-      .is('deleted_at', null) // Exclude soft-deleted records
-      .in('status', ['sent', 'delivered', 'opened', 'partial_response'])
-      .lt('token_expires_at', in24Hours)
-      .gt('token_expires_at', now)
+    const [summary, boardState] = await Promise.all([
+      getSummaryMetrics(filters, startDate, endDate),
+      getBoardState(filters)
+    ])
 
     return c.json({
-      metrics: {
-        totalToday,
-        completedToday,
-        conversionRate: Math.round(conversionRate * 10) / 10,
-        avgResponseTimeMinutes: Math.round(avgResponseTimeMs / (1000 * 60)),
-        totalValueSent,
-        totalValueAuthorized,
-        totalValueDeclined
-      },
-      statusCounts,
-      columnCounts,
-      alerts: {
-        overdueCount: overdueItems?.length || 0,
-        expiringLinksCount: expiringLinks?.length || 0
-      },
-      period: {
-        from: startDate,
-        to: endDate
-      }
+      metrics: summary.metrics,
+      statusCounts: summary.statusCounts,
+      columnCounts: boardState.columnCounts,
+      alerts: boardState.alerts,
+      period: summary.period
     })
   } catch (error) {
     console.error('Dashboard metrics error:', error)
     return c.json({ error: 'Failed to fetch dashboard metrics' }, 500)
+  }
+})
+
+// GET /api/v1/dashboard/overview - Everything the dashboard page needs in one round-trip
+dashboard.get('/overview', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const query = c.req.query()
+    const filters = filtersFromQuery(auth.orgId, query)
+    const { startDate, endDate } = defaultPeriod(query.date_from, query.date_to)
+
+    const [summary, boardState, queues, technicians, monthlyKpis, todayRag] = await Promise.all([
+      getSummaryMetrics(filters, startDate, endDate),
+      getBoardState(filters),
+      getQueues(filters),
+      getTechnicianWorkload(filters),
+      getMonthlyKpis(filters),
+      getTodayRag(filters)
+    ])
+
+    return c.json({
+      metrics: summary.metrics,
+      statusCounts: summary.statusCounts,
+      period: summary.period,
+      columnCounts: boardState.columnCounts,
+      alerts: boardState.alerts,
+      queues,
+      technicians: technicians.technicians,
+      techniciansSummary: technicians.summary,
+      monthlyKpis,
+      todayRag
+    })
+  } catch (error) {
+    console.error('Dashboard overview error:', error)
+    return c.json({ error: 'Failed to fetch dashboard overview' }, 500)
   }
 })
 
@@ -411,6 +221,7 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
           parent_repair_item_id,
           selected_option_id,
           mri_result_id,
+          rag_status,
           check_results:repair_item_check_results(
             check_result:check_results(rag_status)
           )
@@ -497,11 +308,14 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         const isChild = !!item.parent_repair_item_id
         const isGroup = item.is_group === true
 
-        // Derive RAG status from linked check_results (red > amber > green)
-        // Supabase returns nested relations as arrays
-        let derivedRagStatus: string | null = null
+        // Derive RAG status: the item's own rag_status (MRI / manual items) wins,
+        // then fall back to linked check_results (inspection items). red > amber > green.
+        let derivedRagStatus: string | null =
+          ['red', 'amber', 'green'].includes((item as { rag_status?: string }).rag_status || '')
+            ? (item as { rag_status?: string }).rag_status!
+            : null
         const checkResultLinks = item.check_results as unknown as Array<{ check_result: { rag_status: string } | { rag_status: string }[] | null }> | null
-        if (checkResultLinks && Array.isArray(checkResultLinks)) {
+        if (!derivedRagStatus && checkResultLinks && Array.isArray(checkResultLinks)) {
           for (const link of checkResultLinks) {
             // Handle both single object and array returns from Supabase
             const checkResult = Array.isArray(link?.check_result) ? link.check_result[0] : link?.check_result
@@ -831,103 +645,8 @@ dashboard.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin
     const auth = c.get('auth')
     const { site_id } = c.req.query()
 
-    // Get all technicians in the org
-    let techQuery = supabaseAdmin
-      .from('users')
-      .select('id, first_name, last_name, site_id')
-      .eq('organization_id', auth.orgId)
-      .eq('role', 'technician')
-      .eq('is_active', true)
-
-    if (site_id) techQuery = techQuery.eq('site_id', site_id)
-
-    const { data: technicians, error: techError } = await techQuery
-
-    if (techError) {
-      return c.json({ error: techError.message }, 500)
-    }
-
-    // Get today's date range
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const todayISO = today.toISOString()
-
-    // Get workload data for each technician
-    const workloadData = await Promise.all(technicians?.map(async (tech) => {
-      // Get current job (in_progress status)
-      const { data: currentJob } = await supabaseAdmin
-        .from('health_checks')
-        .select(`
-          id,
-          status,
-          created_at,
-          vehicle:vehicles(registration, make, model)
-        `)
-        .eq('organization_id', auth.orgId)
-        .eq('technician_id', tech.id)
-        .eq('status', 'in_progress')
-        .is('deleted_at', null) // Exclude soft-deleted records
-        .single()
-
-      // Get current time entry (clocked in)
-      const { data: currentTimeEntry } = await supabaseAdmin
-        .from('technician_time_entries')
-        .select('id, clock_in_at')
-        .eq('technician_id', tech.id)
-        .is('clock_out_at', null)
-        .single()
-
-      // Get queue count (assigned but not started)
-      const { count: queueCount } = await supabaseAdmin
-        .from('health_checks')
-        .select('id', { count: 'exact' })
-        .eq('organization_id', auth.orgId)
-        .eq('technician_id', tech.id)
-        .eq('status', 'assigned')
-        .is('deleted_at', null) // Exclude soft-deleted records
-
-      // Get today's completed count
-      const { count: completedToday } = await supabaseAdmin
-        .from('health_checks')
-        .select('id', { count: 'exact' })
-        .eq('organization_id', auth.orgId)
-        .eq('technician_id', tech.id)
-        .is('deleted_at', null) // Exclude soft-deleted records
-        .in('status', ['tech_completed', 'awaiting_review', 'awaiting_pricing', 'awaiting_parts', 'ready_to_send', 'sent', 'delivered', 'opened', 'partial_response', 'authorized', 'declined', 'completed'])
-        .gte('updated_at', todayISO)
-
-      // Calculate time elapsed on current job
-      let timeElapsedMinutes = 0
-      if (currentTimeEntry?.clock_in_at) {
-        timeElapsedMinutes = Math.round((Date.now() - new Date(currentTimeEntry.clock_in_at).getTime()) / (1000 * 60))
-      }
-
-      return {
-        id: tech.id,
-        firstName: tech.first_name,
-        lastName: tech.last_name,
-        siteId: tech.site_id,
-        status: currentJob ? 'working' : (currentTimeEntry ? 'available' : 'idle'),
-        currentJob: currentJob ? {
-          id: currentJob.id,
-          vehicle: currentJob.vehicle,
-          timeElapsedMinutes
-        } : null,
-        queueCount: queueCount || 0,
-        completedToday: completedToday || 0,
-        isClockedIn: !!currentTimeEntry
-      }
-    }) || [])
-
-    return c.json({
-      technicians: workloadData,
-      summary: {
-        total: workloadData.length,
-        working: workloadData.filter(t => t.status === 'working').length,
-        available: workloadData.filter(t => t.status === 'available').length,
-        idle: workloadData.filter(t => t.status === 'idle').length
-      }
-    })
+    const workload = await getTechnicianWorkload({ orgId: auth.orgId, siteId: site_id || undefined })
+    return c.json(workload)
   } catch (error) {
     console.error('Technician workload error:', error)
     return c.json({ error: 'Failed to fetch technician workload' }, 500)
@@ -940,19 +659,8 @@ dashboard.get('/activity', authorize(['super_admin', 'org_admin', 'site_admin', 
     const auth = c.get('auth')
     const { limit = '20', offset = '0' } = c.req.query()
 
-    // Get recent status changes from health_check_status_history
-    // First get health check IDs for this org
-    const { data: orgHealthChecks } = await supabaseAdmin
-      .from('health_checks')
-      .select('id')
-      .eq('organization_id', auth.orgId)
-
-    const healthCheckIds = orgHealthChecks?.map(hc => hc.id) || []
-
-    if (healthCheckIds.length === 0) {
-      return c.json({ activities: [], total: 0, limit: parseInt(limit), offset: parseInt(offset) })
-    }
-
+    // Get recent status changes, scoped to the org via an inner join
+    // (avoids fetching every HC id in the org first)
     const { data: activities, error, count } = await supabaseAdmin
       .from('health_check_status_history')
       .select(`
@@ -961,15 +669,16 @@ dashboard.get('/activity', authorize(['super_admin', 'org_admin', 'site_admin', 
         to_status,
         changed_at,
         changed_by,
-        health_check:health_checks(
+        health_check:health_checks!inner(
           id,
+          organization_id,
           vehicle:vehicles(registration, make, model),
           technician:users!health_checks_technician_id_fkey(first_name, last_name),
           advisor:users!health_checks_advisor_id_fkey(first_name, last_name)
         ),
         user:users!health_check_status_history_changed_by_fkey(first_name, last_name, role)
       `, { count: 'exact' })
-      .in('health_check_id', healthCheckIds)
+      .eq('health_check.organization_id', auth.orgId)
       .order('changed_at', { ascending: false })
       .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1)
 
@@ -1082,74 +791,8 @@ dashboard.get('/queues', authorize(['super_admin', 'org_admin', 'site_admin', 's
     const auth = c.get('auth')
     const { site_id } = c.req.query()
 
-    let baseQuery = supabaseAdmin
-      .from('health_checks')
-      .select(`
-        id,
-        status,
-        promised_at,
-        token_expires_at,
-        created_at,
-        vehicle:vehicles(registration, make, model),
-        customer:customers(first_name, last_name),
-        technician:users!health_checks_technician_id_fkey(first_name, last_name),
-        advisor:users!health_checks_advisor_id_fkey(first_name, last_name)
-      `)
-      .eq('organization_id', auth.orgId)
-      .is('deleted_at', null) // Exclude soft-deleted records
-      .not('status', 'in', '(completed,cancelled,expired)')
-
-    if (site_id) baseQuery = baseQuery.eq('site_id', site_id)
-
-    const { data: healthChecks, error } = await baseQuery
-
-    if (error) {
-      return c.json({ error: error.message }, 500)
-    }
-
-    const now = new Date()
-    const in24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000)
-
-    // Categorize into queues
-    const needsAttention = healthChecks?.filter(hc => {
-      const isOverdue = hc.promised_at && new Date(hc.promised_at) < now
-      const isExpiring = hc.token_expires_at && new Date(hc.token_expires_at) < in24Hours && new Date(hc.token_expires_at) > now
-      return isOverdue || isExpiring
-    }).map(hc => ({
-      ...hc,
-      alertType: hc.promised_at && new Date(hc.promised_at) < now ? 'overdue' : 'expiring'
-    })) || []
-
-    const technicianQueue = healthChecks?.filter(hc =>
-      statusGroups.technician.includes(hc.status)
-    ) || []
-
-    const advisorQueue = healthChecks?.filter(hc =>
-      statusGroups.tech_done.includes(hc.status) || statusGroups.advisor.includes(hc.status)
-    ) || []
-
-    const customerQueue = healthChecks?.filter(hc =>
-      statusGroups.customer.includes(hc.status)
-    ) || []
-
-    return c.json({
-      needsAttention: {
-        items: needsAttention.slice(0, 10),
-        total: needsAttention.length
-      },
-      technicianQueue: {
-        items: technicianQueue.slice(0, 10),
-        total: technicianQueue.length
-      },
-      advisorQueue: {
-        items: advisorQueue.slice(0, 10),
-        total: advisorQueue.length
-      },
-      customerQueue: {
-        items: customerQueue.slice(0, 10),
-        total: customerQueue.length
-      }
-    })
+    const queues = await getQueues({ orgId: auth.orgId, siteId: site_id || undefined })
+    return c.json(queues)
   } catch (error) {
     console.error('Queues error:', error)
     return c.json({ error: 'Failed to fetch queues' }, 500)
@@ -1162,283 +805,8 @@ dashboard.get('/monthly-kpis', authorize(['super_admin', 'org_admin', 'site_admi
     const auth = c.get('auth')
     const { site_id } = c.req.query()
 
-    const now = new Date()
-    // Current month: 1st of this month to now
-    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-    const currentMonthEnd = now
-
-    // Previous month: 1st to last day of previous month
-    const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-    const previousMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999)
-
-    // Days elapsed in current month (at least 1)
-    const currentDaysElapsed = Math.max(1, now.getDate())
-    // Total days in previous month
-    const previousMonthDays = new Date(now.getFullYear(), now.getMonth(), 0).getDate()
-
-    // Completed statuses (post-tech-completed)
-    const completedStatuses = [
-      'tech_completed', 'awaiting_review', 'awaiting_pricing', 'awaiting_parts',
-      'ready_to_send', 'sent', 'delivered', 'opened', 'partial_response',
-      'authorized', 'declined', 'completed', 'expired', 'cancelled'
-    ]
-
-    // Fetch health checks for both months
-    const buildHcQuery = (start: Date, end: Date) => {
-      let q = supabaseAdmin
-        .from('health_checks')
-        .select('id, status, advisor_id, created_at')
-        .eq('organization_id', auth.orgId)
-        .is('deleted_at', null)
-        .gte('created_at', start.toISOString())
-        .lte('created_at', end.toISOString())
-      if (site_id) q = q.eq('site_id', site_id)
-      return q
-    }
-
-    const [currentHcRes, previousHcRes] = await Promise.all([
-      buildHcQuery(currentMonthStart, currentMonthEnd),
-      buildHcQuery(previousMonthStart, previousMonthEnd)
-    ])
-
-    if (currentHcRes.error) throw currentHcRes.error
-    if (previousHcRes.error) throw previousHcRes.error
-
-    const currentHcs = currentHcRes.data || []
-    const previousHcs = previousHcRes.data || []
-
-    const allHcIds = [...currentHcs.map(h => h.id), ...previousHcs.map(h => h.id)]
-
-    // Fetch repair items for all health checks (with RAG derivation)
-    let repairData: any[] = []
-    let optionTotalsMap: Record<string, { labour_total: any; parts_total: any; total_inc_vat: any }> = {}
-
-    if (allHcIds.length > 0) {
-      const { data: items, error: repairError } = await supabaseAdmin
-        .from('repair_items')
-        .select(`
-          id,
-          health_check_id,
-          labour_total,
-          parts_total,
-          total_inc_vat,
-          deleted_at,
-          customer_approved,
-          is_group,
-          parent_repair_item_id,
-          selected_option_id,
-          check_results:repair_item_check_results(
-            check_result:check_results(rag_status)
-          )
-        `)
-        .in('health_check_id', allHcIds)
-
-      if (repairError) {
-        console.error('Error fetching repair items for monthly KPIs:', repairError)
-      }
-      repairData = items || []
-
-      // Fetch selected option totals (price options feature)
-      const selectedOptionIds = repairData
-        .map(item => item.selected_option_id)
-        .filter((id: string | null): id is string => !!id)
-
-      if (selectedOptionIds.length > 0) {
-        const { data: optionData } = await supabaseAdmin
-          .from('repair_options')
-          .select('id, labour_total, parts_total, total_inc_vat')
-          .in('id', selectedOptionIds)
-
-        if (optionData) {
-          for (const opt of optionData) {
-            optionTotalsMap[opt.id] = opt
-          }
-        }
-      }
-    }
-
-    const VAT_RATE = 0.20
-
-    // Process repair items into per-HC aggregations
-    type HcAgg = {
-      identified_total: number
-      authorised_total: number
-      red_identified: number
-      red_authorised: number
-    }
-    const aggByHc: Record<string, HcAgg> = {}
-
-    for (const item of repairData) {
-      const isChild = !!item.parent_repair_item_id
-      const isDeleted = !!item.deleted_at
-      const isAuthorised = item.customer_approved === true
-
-      // Only count top-level, non-deleted items
-      if (isChild) continue
-
-      // Resolve price from selected option or item itself
-      const selectedOpt = item.selected_option_id ? optionTotalsMap[item.selected_option_id] : null
-      const srcTotalIncVat = selectedOpt?.total_inc_vat ?? item.total_inc_vat
-      const srcLabourTotal = selectedOpt?.labour_total ?? item.labour_total
-      const srcPartsTotal = selectedOpt?.parts_total ?? item.parts_total
-
-      let totalIncVat = parseFloat(String(srcTotalIncVat ?? 0)) || 0
-      if (totalIncVat === 0) {
-        const labourTotal = parseFloat(String(srcLabourTotal ?? 0)) || 0
-        const partsTotal = parseFloat(String(srcPartsTotal ?? 0)) || 0
-        if (labourTotal > 0 || partsTotal > 0) {
-          const subtotal = labourTotal + partsTotal
-          totalIncVat = subtotal + subtotal * VAT_RATE
-        }
-      }
-
-      // Derive RAG status
-      let derivedRagStatus: string | null = null
-      const checkResultLinks = item.check_results as unknown as Array<{ check_result: { rag_status: string } | { rag_status: string }[] | null }> | null
-      if (checkResultLinks && Array.isArray(checkResultLinks)) {
-        for (const link of checkResultLinks) {
-          const checkResult = Array.isArray(link?.check_result) ? link.check_result[0] : link?.check_result
-          const ragStatus = checkResult?.rag_status
-          if (ragStatus === 'red') { derivedRagStatus = 'red'; break }
-          else if (ragStatus === 'amber' && derivedRagStatus !== 'red') derivedRagStatus = 'amber'
-          else if (ragStatus === 'green' && !derivedRagStatus) derivedRagStatus = 'green'
-        }
-      }
-
-      if (!aggByHc[item.health_check_id]) {
-        aggByHc[item.health_check_id] = { identified_total: 0, authorised_total: 0, red_identified: 0, red_authorised: 0 }
-      }
-      const agg = aggByHc[item.health_check_id]
-
-      if (!isDeleted) {
-        agg.identified_total += totalIncVat
-        if (derivedRagStatus === 'red') agg.red_identified++
-      }
-      if (isAuthorised) {
-        agg.authorised_total += totalIncVat
-        if (derivedRagStatus === 'red') agg.red_authorised++
-      }
-    }
-
-    // Compute KPIs for a month
-    function computeKpis(hcs: typeof currentHcs, daysInPeriod: number) {
-      const hcCount = hcs.length
-      const completedCount = hcs.filter(h => completedStatuses.includes(h.status)).length
-
-      let totalRedIdentified = 0
-      let totalRedAuthorised = 0
-      let totalIdentifiedValue = 0
-      let totalAuthorisedValue = 0
-
-      for (const hc of hcs) {
-        const agg = aggByHc[hc.id]
-        if (agg) {
-          totalRedIdentified += agg.red_identified
-          totalRedAuthorised += agg.red_authorised
-          totalIdentifiedValue += agg.identified_total
-          totalAuthorisedValue += agg.authorised_total
-        }
-      }
-
-      const redSoldPct = totalRedIdentified > 0 ? (totalRedAuthorised / totalRedIdentified) * 100 : null
-      const avgIdentified = hcCount > 0 ? totalIdentifiedValue / hcCount : null
-      const avgSold = hcCount > 0 ? totalAuthorisedValue / hcCount : null
-      const avgPerDay = completedCount / daysInPeriod
-
-      // Advisor of the month: group by advisor_id
-      const advisorStats: Record<string, { advisorId: string; hcCount: number; redIdentified: number; redAuthorised: number; totalAuthorised: number }> = {}
-      for (const hc of hcs) {
-        if (!hc.advisor_id) continue
-        if (!advisorStats[hc.advisor_id]) {
-          advisorStats[hc.advisor_id] = { advisorId: hc.advisor_id, hcCount: 0, redIdentified: 0, redAuthorised: 0, totalAuthorised: 0 }
-        }
-        const stat = advisorStats[hc.advisor_id]
-        stat.hcCount++
-        const agg = aggByHc[hc.id]
-        if (agg) {
-          stat.redIdentified += agg.red_identified
-          stat.redAuthorised += agg.red_authorised
-          stat.totalAuthorised += agg.authorised_total
-        }
-      }
-
-      // Find top advisor (minimum 5 HCs)
-      let topAdvisor: { advisorId: string; redSoldPct: number; totalSold: number; score: number } | null = null
-      const qualifiedAdvisors = Object.values(advisorStats).filter(a => a.hcCount >= 5)
-      if (qualifiedAdvisors.length > 0) {
-        // Normalize: find max total authorised for normalization
-        const maxTotalAuthorised = Math.max(...qualifiedAdvisors.map(a => a.totalAuthorised), 1)
-        for (const a of qualifiedAdvisors) {
-          const rsPct = a.redIdentified > 0 ? (a.redAuthorised / a.redIdentified) * 100 : 0
-          const normalizedSold = a.totalAuthorised / maxTotalAuthorised
-          const score = (rsPct * 0.6) + (normalizedSold * 100 * 0.4)
-          if (!topAdvisor || score > topAdvisor.score) {
-            topAdvisor = { advisorId: a.advisorId, redSoldPct: rsPct, totalSold: a.totalAuthorised, score }
-          }
-        }
-      }
-
-      return {
-        hcCount,
-        completedCount,
-        redSoldPct: redSoldPct !== null ? Math.round(redSoldPct * 10) / 10 : null,
-        avgIdentified: avgIdentified !== null ? Math.round(avgIdentified * 100) / 100 : null,
-        avgSold: avgSold !== null ? Math.round(avgSold * 100) / 100 : null,
-        avgPerDay: Math.round(avgPerDay * 10) / 10,
-        topAdvisor
-      }
-    }
-
-    const currentKpis = computeKpis(currentHcs, currentDaysElapsed)
-    const previousKpis = computeKpis(previousHcs, previousMonthDays)
-
-    // Fetch advisor names for top advisors
-    const advisorIds = [currentKpis.topAdvisor?.advisorId, previousKpis.topAdvisor?.advisorId].filter((id): id is string => !!id)
-    let advisorNames: Record<string, string> = {}
-    if (advisorIds.length > 0) {
-      const { data: advisors } = await supabaseAdmin
-        .from('users')
-        .select('id, first_name, last_name')
-        .in('id', advisorIds)
-      if (advisors) {
-        for (const a of advisors) {
-          advisorNames[a.id] = `${a.first_name} ${a.last_name}`
-        }
-      }
-    }
-
-    // Compute deltas
-    const delta = (curr: number | null, prev: number | null) => {
-      if (curr === null || prev === null) return null
-      return Math.round((curr - prev) * 10) / 10
-    }
-
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-
-    return c.json({
-      currentMonth: {
-        label: `${monthNames[now.getMonth()]} ${now.getFullYear()}`,
-        ...currentKpis,
-        topAdvisor: currentKpis.topAdvisor ? {
-          ...currentKpis.topAdvisor,
-          name: advisorNames[currentKpis.topAdvisor.advisorId] || 'Unknown'
-        } : null
-      },
-      previousMonth: {
-        label: `${monthNames[previousMonthStart.getMonth()]} ${previousMonthStart.getFullYear()}`,
-        ...previousKpis,
-        topAdvisor: previousKpis.topAdvisor ? {
-          ...previousKpis.topAdvisor,
-          name: advisorNames[previousKpis.topAdvisor.advisorId] || 'Unknown'
-        } : null
-      },
-      deltas: {
-        redSoldPct: delta(currentKpis.redSoldPct, previousKpis.redSoldPct),
-        avgIdentified: delta(currentKpis.avgIdentified, previousKpis.avgIdentified),
-        avgSold: delta(currentKpis.avgSold, previousKpis.avgSold),
-        avgPerDay: delta(currentKpis.avgPerDay, previousKpis.avgPerDay)
-      }
-    })
+    const monthlyKpis = await getMonthlyKpis({ orgId: auth.orgId, siteId: site_id || undefined })
+    return c.json(monthlyKpis)
   } catch (error) {
     console.error('Monthly KPIs error:', error)
     return c.json({ error: 'Failed to fetch monthly KPIs' }, 500)

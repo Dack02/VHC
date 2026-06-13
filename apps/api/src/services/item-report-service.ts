@@ -42,6 +42,15 @@ export interface ItemTrendPoint {
   flagged: number
 }
 
+/** Revenue split out for a single RAG band (red or amber). */
+export interface RagBreakdown {
+  identified: number
+  sold: number
+  declined: number
+  deferred: number
+  conversionValuePct: number | null
+}
+
 export interface ItemRow {
   item: string
   inspected: number
@@ -55,6 +64,13 @@ export interface ItemRow {
   deferred: number
   conversionValuePct: number | null
   approvalPct: number | null
+  /**
+   * Revenue split by the RAG of the finding that triggered it. A repair is
+   * attributed to red or amber by the worst linked finding for THIS item; the
+   * two need not sum to the combined `identified` (a repair linked only to a
+   * green finding lands in neither band).
+   */
+  byRag: { red: RagBreakdown; amber: RagBreakdown }
   trend: ItemTrendPoint[]
 }
 
@@ -70,6 +86,8 @@ export interface ItemSummaryTotals {
   deferred: number
   conversionValuePct: number | null
   approvalPct: number | null
+  /** Whole-business revenue split, de-duplicated: each repair classified once by its worst linked RAG. */
+  byRag: { red: RagBreakdown; amber: RagBreakdown }
 }
 
 export interface ItemListResponse {
@@ -90,6 +108,7 @@ export interface ItemDetailResponse {
   revenue: {
     identified: number; sold: number; declined: number; deferred: number
     conversionValuePct: number | null; approvalPct: number | null
+    byRag: { red: RagBreakdown; amber: RagBreakdown }
   }
   trend: ItemTrendPoint[]
   topReasons: Array<{
@@ -151,20 +170,47 @@ class DisplayNamePicker {
 }
 
 type TemplateItemRef = { id: string; name: string }
+type EffRag = 'red' | 'amber' | 'green'
+const RAG_RANK: Record<EffRag, number> = { red: 3, amber: 2, green: 1 }
+const asEffRag = (s: unknown): EffRag | null =>
+  s === 'red' || s === 'amber' || s === 'green' ? s : null
 
-/** Distinct inspection-item refs (id + name) linked to a repair item, optionally scoped to a template. */
-function linkedItemRefs(item: RepairItemWithLinks, allowedItemIds: Set<string> | null): TemplateItemRef[] {
-  const byNorm = new Map<string, TemplateItemRef>()
+/** An inspection-item ref plus the worst RAG of this repair's findings for that item. */
+interface RaggedRef extends TemplateItemRef { rag: EffRag | null }
+
+/**
+ * Distinct inspection-item refs linked to a repair item (optionally scoped to a
+ * template), each carrying the WORST rag_status among the findings that link this
+ * repair to that item — so revenue can be split red vs amber by what triggered it.
+ */
+function linkedItemRefsWithRag(item: RepairItemWithLinks, allowedItemIds: Set<string> | null): RaggedRef[] {
+  const byNorm = new Map<string, RaggedRef>()
   for (const link of item.item_links || []) {
     const cr = unwrapRef(link?.check_result as unknown)
     if (!cr || typeof cr !== 'object') continue
-    const ti = unwrapRef((cr as { template_item?: unknown }).template_item)
-    const ref = ti as TemplateItemRef | null
+    const crObj = cr as { rag_status?: unknown; template_item?: unknown }
+    const ref = unwrapRef(crObj.template_item) as TemplateItemRef | null
     if (!ref || !ref.name) continue
     if (allowedItemIds && !allowedItemIds.has(ref.id)) continue
-    byNorm.set(normalizeName(ref.name), ref)
+    const norm = normalizeName(ref.name)
+    const rag = asEffRag(crObj.rag_status)
+    const existing = byNorm.get(norm)
+    if (!existing) {
+      byNorm.set(norm, { id: ref.id, name: ref.name, rag })
+    } else if (rag && (existing.rag == null || RAG_RANK[rag] > RAG_RANK[existing.rag])) {
+      existing.rag = rag
+    }
   }
   return [...byNorm.values()]
+}
+
+/** Worst rag across a repair's linked refs — classifies the repair as a whole (for the de-duplicated summary). */
+function worstRag(refs: RaggedRef[]): EffRag | null {
+  let worst: EffRag | null = null
+  for (const r of refs) {
+    if (r.rag && (worst == null || RAG_RANK[r.rag] > RAG_RANK[worst])) worst = r.rag
+  }
+  return worst
 }
 
 /** HC effective date for trend bucketing: due_date if set, else created_at. */
@@ -214,10 +260,36 @@ async function resolveUserNames(ids: string[]): Promise<Map<string, string>> {
 // ---------------------------------------------------------------------------
 
 interface UsageTally { inspected: number; red: number; amber: number; green: number }
-interface RevTally { identified: number; sold: number; declined: number; deferred: number; identifiedCount: number; soldCount: number }
+interface RevSub { identified: number; sold: number; declined: number; deferred: number }
+interface RevTally {
+  identified: number; sold: number; declined: number; deferred: number; identifiedCount: number; soldCount: number
+  red: RevSub; amber: RevSub
+}
 
 function emptyUsage(): UsageTally { return { inspected: 0, red: 0, amber: 0, green: 0 } }
-function emptyRev(): RevTally { return { identified: 0, sold: 0, declined: 0, deferred: 0, identifiedCount: 0, soldCount: 0 } }
+function emptyRevSub(): RevSub { return { identified: 0, sold: 0, declined: 0, deferred: 0 } }
+function emptyRev(): RevTally {
+  return { identified: 0, sold: 0, declined: 0, deferred: 0, identifiedCount: 0, soldCount: 0, red: emptyRevSub(), amber: emptyRevSub() }
+}
+
+/** Fold a repair's outcome into a red/amber sub-bucket (mirrors the combined accumulation). */
+function addToSub(sub: RevSub, value: number, authorised: boolean, authValue: number, outcome: string | null | undefined) {
+  sub.identified += value
+  if (authorised) sub.sold += authValue
+  else if (outcome === 'declined') sub.declined += value
+  else if (outcome === 'deferred') sub.deferred += value
+}
+
+/** Round a sub-bucket into the API's RagBreakdown shape (+ value conversion %). */
+function ragBreakdown(s: RevSub): RagBreakdown {
+  return {
+    identified: round2(s.identified),
+    sold: round2(s.sold),
+    declined: round2(s.declined),
+    deferred: round2(s.deferred),
+    conversionValuePct: pct(s.sold, s.identified)
+  }
+}
 
 /**
  * Per-item red/amber/green counts for a set of health checks, grouped by
@@ -327,6 +399,7 @@ export async function buildItemList(
 
   // --- Revenue pass: repair_items -> linked findings -> item name ---
   let totIdentified = 0, totSold = 0, totDeclined = 0, totDeferred = 0, totIdentifiedCount = 0, totSoldCount = 0
+  const sumRed = emptyRevSub(), sumAmber = emptyRevSub()
   const unmapped = { identified: 0, sold: 0, declined: 0, deferred: 0 }
 
   if (hcIds.length) {
@@ -343,14 +416,15 @@ export async function buildItemList(
 
       // Attribution is by junction link (repair -> check_result -> template_item),
       // not by `source`: inspection-derived repairs carry source=null in practice,
-      // while MRI/manual items simply have no finding links.
-      const refs = linkedItemRefs(item, allowedItemIds)
+      // while MRI/manual items simply have no finding links. Each ref carries the
+      // worst RAG of the findings linking this repair to that item.
+      const refs = linkedItemRefsWithRag(item, allowedItemIds)
 
       if (refs.length === 0) {
         // No in-scope inspection link → unmapped (MRI / manual / unlinked). With a
         // template filter on, a repair linked only to OTHER templates' items is out
         // of scope — skip it rather than dumping it into unmapped.
-        const outOfScope = allowedItemIds ? linkedItemRefs(item, null).length > 0 : false
+        const outOfScope = allowedItemIds ? linkedItemRefsWithRag(item, null).length > 0 : false
         if (!outOfScope) {
           unmapped.identified += value
           if (authorised) unmapped.sold += authValue
@@ -367,6 +441,11 @@ export async function buildItemList(
       else if (outcome === 'declined') totDeclined += value
       else if (outcome === 'deferred') totDeferred += value
 
+      // Summary red/amber: classify the whole repair once, by its worst linked RAG.
+      const repairRag = worstRag(refs)
+      if (repairRag === 'red') addToSub(sumRed, value, authorised, authValue, outcome)
+      else if (repairRag === 'amber') addToSub(sumAmber, value, authorised, authValue, outcome)
+
       const d = hcDateById.get(item.health_check_id)
       const period = d ? bucketKey(d, opts.groupBy) : null
 
@@ -380,6 +459,9 @@ export async function buildItemList(
         if (authorised) { r.sold += authValue; r.soldCount++ }
         else if (outcome === 'declined') r.declined += value
         else if (outcome === 'deferred') r.deferred += value
+        // Per-item red/amber: by this link's worst RAG for this item.
+        if (ref.rag === 'red') addToSub(r.red, value, authorised, authValue, outcome)
+        else if (ref.rag === 'amber') addToSub(r.amber, value, authorised, authValue, outcome)
         revByName.set(norm, r)
 
         if (period) {
@@ -415,6 +497,7 @@ export async function buildItemList(
       deferred: round2(r.deferred),
       conversionValuePct: pct(r.sold, r.identified),
       approvalPct: pct(r.soldCount, r.identifiedCount),
+      byRag: { red: ragBreakdown(r.red), amber: ragBreakdown(r.amber) },
       trend
     })
   }
@@ -439,7 +522,8 @@ export async function buildItemList(
         declined: round2(totDeclined),
         deferred: round2(totDeferred),
         conversionValuePct: pct(totSold, totIdentified),
-        approvalPct: pct(totSoldCount, totIdentifiedCount)
+        approvalPct: pct(totSoldCount, totIdentifiedCount),
+        byRag: { red: ragBreakdown(sumRed), amber: ragBreakdown(sumAmber) }
       },
       unmapped: {
         identified: round2(unmapped.identified),
@@ -596,7 +680,7 @@ export async function buildItemDetail(
     .slice(0, 15)
 
   // --- Revenue / advisor / deferred / trend pass ---
-  const revenue = { identified: 0, sold: 0, declined: 0, deferred: 0, identifiedCount: 0, soldCount: 0 }
+  const revenue = { identified: 0, sold: 0, declined: 0, deferred: 0, identifiedCount: 0, soldCount: 0, red: emptyRevSub(), amber: emptyRevSub() }
   const advisorStats = new Map<string, { identified: number; sold: number; soldCount: number; identifiedCount: number }>()
   const deferredRaw: Array<{ repairItemId: string; healthCheckId: string; value: number; deferredUntil: string | null; deferredNotes: string | null }> = []
 
@@ -606,8 +690,9 @@ export async function buildItemDetail(
 
     for (const it of items) {
       if (it.deleted_at || it.parent_repair_item_id) continue
-      const refs = linkedItemRefs(it, allowedItemIds)
-      if (!refs.some(r => normalizeName(r.name) === targetNorm)) continue
+      const refs = linkedItemRefsWithRag(it, allowedItemIds)
+      const targetRef = refs.find(r => normalizeName(r.name) === targetNorm)
+      if (!targetRef) continue
 
       const value = calcItemTotal(it, optionTotalsMap)
       const { authorised, authValue } = resolveAuthorisation(it, childrenByParent, optionTotalsMap)
@@ -627,6 +712,10 @@ export async function buildItemDetail(
           deferredNotes: it.deferred_notes ?? null
         })
       }
+
+      // Split this item's revenue by the RAG that triggered it (red sells same-day).
+      if (targetRef.rag === 'red') addToSub(revenue.red, value, authorised, authValue, outcome)
+      else if (targetRef.rag === 'amber') addToSub(revenue.amber, value, authorised, authValue, outcome)
 
       const advisorId = hcAdvisorById.get(it.health_check_id) ?? null
       if (advisorId) {
@@ -695,7 +784,8 @@ export async function buildItemDetail(
       declined: round2(revenue.declined),
       deferred: round2(revenue.deferred),
       conversionValuePct: pct(revenue.sold, revenue.identified),
-      approvalPct: pct(revenue.soldCount, revenue.identifiedCount)
+      approvalPct: pct(revenue.soldCount, revenue.identifiedCount),
+      byRag: { red: ragBreakdown(revenue.red), amber: ragBreakdown(revenue.amber) }
     },
     trend: [...trendMap.values()]
       .map(p => ({ ...p, identified: round2(p.identified), sold: round2(p.sold) }))

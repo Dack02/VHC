@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { getNextWorkingDays } from '../lib/date-utils.js'
+import { chunkIds } from '../services/hc-period-service.js'
 
 const dashboardUpcoming = new Hono()
 
@@ -61,11 +62,16 @@ dashboardUpcoming.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 
 
     const healthCheckIds = healthChecks.map(hc => hc.id)
 
-    // Query MRI scan results for these health checks
-    const { data: mriResults } = await supabaseAdmin
-      .from('mri_scan_results')
-      .select('health_check_id, completed_at')
-      .in('health_check_id', healthCheckIds)
+    // Query MRI scan results for these health checks (chunked by HC id)
+    const mriResults = (await Promise.all(
+      chunkIds(healthCheckIds, 100).map(async chunk => {
+        const { data } = await supabaseAdmin
+          .from('mri_scan_results')
+          .select('health_check_id, completed_at')
+          .in('health_check_id', chunk)
+        return data || []
+      })
+    )).flat()
 
     // Query MRI items count for the org (total expected per HC)
     const { count: totalMriItems } = await supabaseAdmin

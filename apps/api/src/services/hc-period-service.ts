@@ -96,22 +96,25 @@ export async function fetchPeriodHcSet(
   ].filter(id => !healthCheckMap.has(id))
 
   if (outcomeDateHcIds.length > 0) {
-    let actionedQuery = supabaseAdmin
-      .from('health_checks')
-      .select(select)
-      .in('id', outcomeDateHcIds)
-      .is('deleted_at', null)
+    // Chunk the id list: a busy period's actioned-HC set can overflow a single .in() URL.
+    for (const idChunk of chunkIds(outcomeDateHcIds)) {
+      let actionedQuery = supabaseAdmin
+        .from('health_checks')
+        .select(select)
+        .in('id', idChunk)
+        .is('deleted_at', null)
 
-    if (filters.technicianId) actionedQuery = actionedQuery.eq('technician_id', filters.technicianId)
-    if (filters.advisorId) actionedQuery = actionedQuery.eq('advisor_id', filters.advisorId)
+      if (filters.technicianId) actionedQuery = actionedQuery.eq('technician_id', filters.technicianId)
+      if (filters.advisorId) actionedQuery = actionedQuery.eq('advisor_id', filters.advisorId)
 
-    const { data: actionedHcs, error: actionedError } = await actionedQuery
-    if (actionedError) {
-      console.error('Actioned date range HC query error:', actionedError)
-    } else {
-      for (const hc of (actionedHcs || []) as unknown as Record<string, unknown>[]) {
-        if (!healthCheckMap.has(hc.id as string)) {
-          healthCheckMap.set(hc.id as string, hc)
+      const { data: actionedHcs, error: actionedError } = await actionedQuery
+      if (actionedError) {
+        console.error('Actioned date range HC query error:', actionedError)
+      } else {
+        for (const hc of (actionedHcs || []) as unknown as Record<string, unknown>[]) {
+          if (!healthCheckMap.has(hc.id as string)) {
+            healthCheckMap.set(hc.id as string, hc)
+          }
         }
       }
     }

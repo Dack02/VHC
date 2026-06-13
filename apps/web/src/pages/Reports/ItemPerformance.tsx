@@ -17,6 +17,11 @@ import { CHART_COLORS, RAG_COLORS } from './utils/colors'
 // --- API response types (mirror apps/api/src/services/item-report-service.ts) ---
 interface ItemTrendPoint { period: string; identified: number; sold: number; flagged: number }
 
+interface RagBreakdown {
+  identified: number; sold: number; declined: number; deferred: number
+  conversionValuePct: number | null
+}
+
 interface ItemRow {
   item: string
   inspected: number
@@ -30,6 +35,7 @@ interface ItemRow {
   deferred: number
   conversionValuePct: number | null
   approvalPct: number | null
+  byRag: { red: RagBreakdown; amber: RagBreakdown }
   trend: ItemTrendPoint[]
 }
 
@@ -37,6 +43,7 @@ interface ItemSummaryTotals {
   inspected: number; red: number; amber: number; flagged: number; flagRate: number | null
   identified: number; sold: number; declined: number; deferred: number
   conversionValuePct: number | null; approvalPct: number | null
+  byRag: { red: RagBreakdown; amber: RagBreakdown }
 }
 
 interface ItemListResponse {
@@ -56,6 +63,7 @@ interface ItemDetailResponse {
   revenue: {
     identified: number; sold: number; declined: number; deferred: number
     conversionValuePct: number | null; approvalPct: number | null
+    byRag: { red: RagBreakdown; amber: RagBreakdown }
   }
   trend: ItemTrendPoint[]
   topReasons: Array<{
@@ -78,6 +86,15 @@ interface TemplateOpt { id: string; name: string }
 
 const pctOrDash = (v: number | null) => (v == null ? '—' : formatPercent(v))
 const moneyOrDash = (v: number) => (v ? formatCurrency(v) : '—')
+
+/** Sales-conversion colour scale (red work should sell same-day, so the bar is demanding). */
+const convColor = (v: number | null) =>
+  v == null ? 'text-gray-300' : v >= 70 ? 'text-green-600' : v >= 40 ? 'text-amber-600' : 'text-red-600'
+
+/** A conversion-% table cell, colour-coded; `strong` for the headline (red) column. */
+function ConvCell({ value, strong }: { value: number | null; strong?: boolean }) {
+  return <span className={`${convColor(value)} ${strong ? 'font-semibold' : ''}`}>{pctOrDash(value)}</span>
+}
 
 /** Tiny inline SVG sparkline (no chart lib overhead per row). */
 function Sparkline({ values, color = CHART_COLORS.primary }: { values: number[]; color?: string }) {
@@ -109,7 +126,7 @@ export default function ItemPerformance() {
   const token = session?.accessToken
 
   const [templateId, setTemplateId] = useState('')
-  const [ragFilter, setRagFilter] = useState<'all' | 'red' | 'amber'>('all')
+  const [lens, setLens] = useState<'all' | 'red' | 'amber'>('all')
   const [search, setSearch] = useState('')
   const [templates, setTemplates] = useState<TemplateOpt[]>([])
 
@@ -132,17 +149,28 @@ export default function ItemPerformance() {
       .catch(() => {})
   }, [token])
 
-  // RAG + search filters are applied client-side (summary stays whole-business)
+  // The RAG lens (all/red/amber) narrows the rows to items flagged that colour AND
+  // re-sorts by that band's identified £; the money columns below also switch to it.
+  // Search filters by name. Summary cards stay whole-business. All client-side — no refetch.
   const rows = useMemo(() => {
     let r = data?.items ?? []
-    if (ragFilter === 'red') r = r.filter(i => i.red > 0)
-    else if (ragFilter === 'amber') r = r.filter(i => i.amber > 0)
+    if (lens === 'red') r = r.filter(i => i.red > 0)
+    else if (lens === 'amber') r = r.filter(i => i.amber > 0)
     if (search.trim()) {
       const q = search.trim().toLowerCase()
       r = r.filter(i => i.item.toLowerCase().includes(q))
     }
-    return r
-  }, [data, ragFilter, search])
+    const sortVal = (i: ItemRow) =>
+      lens === 'red' ? i.byRag.red.identified : lens === 'amber' ? i.byRag.amber.identified : i.identified
+    return [...r].sort((a, b) => sortVal(b) - sortVal(a))
+  }, [data, lens, search])
+
+  // Per-row money view for the active lens (combined / red-only / amber-only).
+  const lensLabel = lens === 'red' ? 'Red ' : lens === 'amber' ? 'Amber ' : ''
+  const lensView = (r: ItemRow): RagBreakdown =>
+    lens === 'red' ? r.byRag.red
+      : lens === 'amber' ? r.byRag.amber
+      : { identified: r.identified, sold: r.sold, declined: r.declined, deferred: r.deferred, conversionValuePct: r.conversionValuePct }
 
   const totals = data?.summary.totals
   const unmapped = data?.summary.unmapped
@@ -170,12 +198,20 @@ export default function ItemPerformance() {
   }, [fullQuery, token])
 
   const exportCsv = () => {
-    const header = ['Item', 'Inspected', 'Red', 'Amber', 'Flagged', 'Flag Rate %', 'Identified', 'Sold', 'Declined', 'Deferred', 'Conversion %', 'Approval %']
+    const header = [
+      'Item', 'Inspected', 'Red', 'Amber', 'Flagged', 'Flag Rate %',
+      'Identified', 'Sold', 'Conversion %',
+      'Red Identified', 'Red Sold', 'Red Conv %',
+      'Amber Identified', 'Amber Sold', 'Amber Conv %',
+      'Declined', 'Deferred', 'Approval %',
+    ]
     const lines = rows.map(r => [
       `"${r.item.replace(/"/g, '""')}"`,
       r.inspected, r.red, r.amber, r.flagged, r.flagRate ?? '',
-      r.identified, r.sold, r.declined, r.deferred,
-      r.conversionValuePct ?? '', r.approvalPct ?? '',
+      r.identified, r.sold, r.conversionValuePct ?? '',
+      r.byRag.red.identified, r.byRag.red.sold, r.byRag.red.conversionValuePct ?? '',
+      r.byRag.amber.identified, r.byRag.amber.sold, r.byRag.amber.conversionValuePct ?? '',
+      r.declined, r.deferred, r.approvalPct ?? '',
     ].join(','))
     const csv = [header.join(','), ...lines].join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
@@ -215,26 +251,24 @@ export default function ItemPerformance() {
       render: r => <span className="text-gray-500">{pctOrDash(r.flagRate)}</span>,
     },
     {
-      key: 'identified', label: 'Identified', align: 'right', sortable: true, sortValue: r => r.identified,
-      render: r => moneyOrDash(r.identified),
+      key: 'identified', label: `${lensLabel}Identified`, align: 'right', sortable: true, sortValue: r => lensView(r).identified,
+      render: r => moneyOrDash(lensView(r).identified),
     },
     {
-      key: 'sold', label: 'Sold', align: 'right', sortable: true, sortValue: r => r.sold,
-      render: r => <span className="font-medium text-gray-900">{moneyOrDash(r.sold)}</span>,
+      key: 'sold', label: `${lensLabel}Sold`, align: 'right', sortable: true, sortValue: r => lensView(r).sold,
+      render: r => <span className="font-medium text-gray-900">{moneyOrDash(lensView(r).sold)}</span>,
     },
     {
-      key: 'conversionValuePct', label: 'Conv.', align: 'right', sortable: true, sortValue: r => r.conversionValuePct ?? -1,
-      render: r => (
-        <span className={r.conversionValuePct == null ? 'text-gray-300'
-          : r.conversionValuePct >= 50 ? 'text-green-600'
-          : r.conversionValuePct >= 30 ? 'text-amber-600' : 'text-red-600'}>
-          {pctOrDash(r.conversionValuePct)}
-        </span>
-      ),
+      key: 'redConv', label: 'Red conv.', align: 'right', sortable: true, sortValue: r => r.byRag.red.conversionValuePct ?? -1,
+      render: r => <ConvCell value={r.byRag.red.conversionValuePct} strong />,
     },
     {
-      key: 'missed', label: 'Missed', align: 'right', sortable: true, sortValue: r => r.declined + r.deferred,
-      render: r => <span className="text-gray-500">{moneyOrDash(r.declined + r.deferred)}</span>,
+      key: 'amberConv', label: 'Amber conv.', align: 'right', sortable: true, sortValue: r => r.byRag.amber.conversionValuePct ?? -1,
+      render: r => <ConvCell value={r.byRag.amber.conversionValuePct} />,
+    },
+    {
+      key: 'missed', label: `${lensLabel}Missed`, align: 'right', sortable: true, sortValue: r => lensView(r).declined + lensView(r).deferred,
+      render: r => <span className="text-gray-500">{moneyOrDash(lensView(r).declined + lensView(r).deferred)}</span>,
     },
     {
       key: 'trend', label: 'Identified trend', align: 'right',
@@ -293,18 +327,23 @@ export default function ItemPerformance() {
               {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           )}
-          <div className="flex rounded-lg border border-gray-300 overflow-hidden">
-            {(['all', 'red', 'amber'] as const).map(g => (
-              <button
-                key={g}
-                onClick={() => setRagFilter(g)}
-                className={`px-3 py-2 text-sm capitalize ${
-                  ragFilter === g ? 'bg-primary text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                {g === 'all' ? 'All' : g}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-gray-500">View</span>
+            <div className="flex rounded-lg border border-gray-300 overflow-hidden">
+              {(['all', 'red', 'amber'] as const).map(g => (
+                <button
+                  key={g}
+                  onClick={() => setLens(g)}
+                  className={`px-3 py-2 text-sm capitalize ${
+                    lens === g
+                      ? g === 'red' ? 'bg-rag-red text-white' : g === 'amber' ? 'bg-rag-amber text-white' : 'bg-primary text-white'
+                      : 'bg-white text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  {g === 'all' ? 'All' : g}
+                </button>
+              ))}
+            </div>
           </div>
           <input
             type="search"
@@ -326,12 +365,14 @@ export default function ItemPerformance() {
       {!loading && data && (
         <>
           {/* Summary cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard label="Items flagged" value={formatNumber(data.summary.itemCount)} />
             <StatCard label="Concerns (red + amber)" value={formatNumber(totals?.flagged ?? 0)} />
             <StatCard label="Identified" value={formatCurrency(totals?.identified ?? 0)} />
             <StatCard label="Sold" value={formatCurrency(totals?.sold ?? 0)} valueClassName="text-green-600" />
-            <StatCard label="Conversion" value={pctOrDash(totals?.conversionValuePct ?? null)} />
+            <StatCard label="Red conversion" value={pctOrDash(totals?.byRag.red.conversionValuePct ?? null)} valueClassName={convColor(totals?.byRag.red.conversionValuePct ?? null)} />
+            <StatCard label="Amber conversion" value={pctOrDash(totals?.byRag.amber.conversionValuePct ?? null)} valueClassName={convColor(totals?.byRag.amber.conversionValuePct ?? null)} />
+            <StatCard label="Conversion (all)" value={pctOrDash(totals?.conversionValuePct ?? null)} />
             <StatCard label="Missed (declined + deferred)" value={formatCurrency(missed)} valueClassName="text-red-600" />
           </div>
 
@@ -407,11 +448,13 @@ function ItemDetailDrawer({
         {!loading && detail && (
           <div className="p-6 space-y-5">
             {/* Usage + revenue mini-stats */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <MiniStat label="Flagged" value={formatNumber(detail.usage.flagged)} sub={`${detail.usage.red} red · ${detail.usage.amber} amber`} />
               <MiniStat label="Flag rate" value={pctOrDash(detail.usage.flagRate)} sub={`of ${formatNumber(detail.usage.inspected)} inspected`} />
               <MiniStat label="Identified" value={formatCurrency(detail.revenue.identified)} sub={`${pctOrDash(detail.revenue.conversionValuePct)} converted`} />
               <MiniStat label="Sold" value={formatCurrency(detail.revenue.sold)} sub={`${formatCurrency(detail.revenue.declined + detail.revenue.deferred)} missed`} valueClass="text-green-600" />
+              <MiniStat label="Red conversion" value={pctOrDash(detail.revenue.byRag.red.conversionValuePct)} sub={`${formatCurrency(detail.revenue.byRag.red.sold)} of ${formatCurrency(detail.revenue.byRag.red.identified)}`} valueClass={convColor(detail.revenue.byRag.red.conversionValuePct)} />
+              <MiniStat label="Amber conversion" value={pctOrDash(detail.revenue.byRag.amber.conversionValuePct)} sub={`${formatCurrency(detail.revenue.byRag.amber.sold)} of ${formatCurrency(detail.revenue.byRag.amber.identified)}`} valueClass={convColor(detail.revenue.byRag.amber.conversionValuePct)} />
             </div>
 
             {/* Trend */}

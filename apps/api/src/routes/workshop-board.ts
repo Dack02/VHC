@@ -4,12 +4,16 @@
  * Kanban board: Due In → Checked In → technician columns → custom queue
  * columns → Work Complete.
  *
- * Position model ("auto with manual override"):
- * - Due In / Checked In / technician columns are derived live from
- *   health_checks (status, technician_id), so cards move themselves as the
- *   VHC pipeline progresses.
- * - workshop_cards stores board metadata (workshop status, priority,
- *   estimated hours) and manual placements ('queue' / 'work_complete').
+ * Two independent state axes:
+ * - health_checks.job_state is the workshop lifecycle (due_in -> arrived ->
+ *   in_workshop -> work_complete -> collected) and decides the board column.
+ *   The early transitions are automatic (arrival, assignment, clock-on); work
+ *   complete / collected are deliberate. Maintained by the job_state trigger
+ *   (see migration 20260613130000_workshop_job_state.sql).
+ * - health_checks.status stays the VHC (inspection + quote) pipeline, shown as
+ *   a badge on the card - a job can stay in the workshop after the VHC is done.
+ * - workshop_cards stores board metadata (workshop status, priority, estimated
+ *   hours) and the queue "park" overlay (placement 'queue').
  */
 
 import { Hono } from 'hono'
@@ -17,6 +21,7 @@ import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { emitToSite, WS_EVENTS } from '../services/websocket.js'
 import { createNotification } from './notifications.js'
+import { chunkIds } from '../services/hc-period-service.js'
 
 const workshopBoard = new Hono()
 
@@ -26,17 +31,13 @@ const ADMIN_ROLES = ['super_admin', 'org_admin', 'site_admin'] as const
 const ADVISOR_ROLES = [...ADMIN_ROLES, 'service_advisor'] as const
 const ALL_ROLES = [...ADVISOR_ROLES, 'technician'] as const
 
-// Health check statuses that keep a card on the active board (vehicle on site,
-// work not finished). awaiting_arrival = Due In; completed = Work Complete.
-const WIP_STATUSES = [
-  'awaiting_checkin', 'created', 'assigned', 'in_progress', 'paused',
-  'tech_completed', 'awaiting_review', 'awaiting_pricing', 'awaiting_parts',
-  'ready_to_send', 'sent', 'delivered', 'opened', 'partial_response',
-  'authorized', 'declined', 'expired'
-]
+// The board groups cards by job_state (the workshop lifecycle), not by the VHC
+// pipeline status. due_in -> arrived -> in_workshop -> work_complete; collected
+// jobs have left the active board.
+const ACTIVE_JOB_STATES = ['arrived', 'in_workshop']
 
 const HC_CARD_SELECT = `
-  id, status, site_id, technician_id, advisor_id,
+  id, status, job_state, site_id, technician_id, advisor_id,
   promise_time, due_date, arrived_at, completed_at, created_at,
   customer_waiting, loan_car_required, is_internal,
   jobsheet_number, jobsheet_status, job_number, booked_repairs,
@@ -142,12 +143,11 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return c.json({ error: 'Invalid date - expected YYYY-MM-DD' }, 400)
     }
-    const dayStart = `${date}T00:00:00`
     const dayEnd = `${date}T23:59:59`
 
     await ensureStatusesSeeded(auth.orgId)
 
-    const [columnsRes, configRes, statusesRes, dueInRes, wipRes, completedRes] = await Promise.all([
+    const [columnsRes, configRes, statusesRes, dueInRes, activeRes, workCompleteRes] = await Promise.all([
       supabaseAdmin
         .from('workshop_columns')
         .select(`
@@ -174,30 +174,29 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
         .select(HC_CARD_SELECT)
         .eq('organization_id', auth.orgId)
         .eq('site_id', siteId)
-        .eq('status', 'awaiting_arrival')
+        .eq('job_state', 'due_in')
         .lte('due_date', dayEnd)
         .is('deleted_at', null),
-      // Active WIP: everything on site that isn't finished
+      // Active: on site, in the workshop flow (Checked In + technician columns)
       supabaseAdmin
         .from('health_checks')
         .select(HC_CARD_SELECT)
         .eq('organization_id', auth.orgId)
         .eq('site_id', siteId)
-        .in('status', WIP_STATUSES)
+        .in('job_state', ACTIVE_JOB_STATES)
         .is('deleted_at', null),
-      // Completed on the selected date
+      // Work complete: physically done, awaiting collection (not date-scoped -
+      // these stay on the board until collected so a finished car never vanishes)
       supabaseAdmin
         .from('health_checks')
         .select(HC_CARD_SELECT)
         .eq('organization_id', auth.orgId)
         .eq('site_id', siteId)
-        .eq('status', 'completed')
-        .gte('completed_at', dayStart)
-        .lte('completed_at', dayEnd)
+        .eq('job_state', 'work_complete')
         .is('deleted_at', null),
     ])
 
-    const queryError = dueInRes.error || wipRes.error || completedRes.error || columnsRes.error
+    const queryError = dueInRes.error || activeRes.error || workCompleteRes.error || columnsRes.error
     if (queryError) {
       console.error('Workshop board query error:', queryError)
       return c.json({ error: queryError.message }, 500)
@@ -205,33 +204,45 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
 
     const healthChecks = [
       ...(dueInRes.data || []),
-      ...(wipRes.data || []),
-      ...(completedRes.data || [])
+      ...(activeRes.data || []),
+      ...(workCompleteRes.data || [])
     ]
     const hcIds = healthChecks.map(hc => hc.id)
 
-    // Card metadata, latest notes, live clocked-on state
-    const [cardsRes, notesRes, timeEntriesRes] = hcIds.length
-      ? await Promise.all([
-          supabaseAdmin
-            .from('workshop_cards')
-            .select('*')
-            .eq('organization_id', auth.orgId)
-            .in('health_check_id', hcIds),
-          supabaseAdmin
-            .from('workshop_notes')
-            .select('id, health_check_id, content, advisor_attention, actioned_at, created_at, user:users!workshop_notes_user_id_fkey(id, first_name, last_name)')
-            .eq('organization_id', auth.orgId)
-            .in('health_check_id', hcIds)
-            .order('created_at', { ascending: false })
-            .limit(300),
-          supabaseAdmin
-            .from('technician_time_entries')
-            .select('health_check_id, technician_id, clock_in_at')
-            .in('health_check_id', hcIds)
-            .is('clock_out_at', null),
-        ])
-      : [{ data: [] }, { data: [] }, { data: [] }]
+    // Card metadata, latest notes, live clocked-on state. Chunk by HC id so a
+    // busy board's WIP set can't overflow a single .in() URL. Each HC lives in
+    // exactly one chunk, so the per-chunk note order/limit still yields the
+    // correct "latest note per HC" below.
+    const cardsData: Record<string, unknown>[] = []
+    const notesData: Record<string, unknown>[] = []
+    const timeEntriesData: Record<string, unknown>[] = []
+    for (const idChunk of chunkIds(hcIds, 100)) {
+      const [cards, notes, times] = await Promise.all([
+        supabaseAdmin
+          .from('workshop_cards')
+          .select('*')
+          .eq('organization_id', auth.orgId)
+          .in('health_check_id', idChunk),
+        supabaseAdmin
+          .from('workshop_notes')
+          .select('id, health_check_id, content, advisor_attention, actioned_at, created_at, user:users!workshop_notes_user_id_fkey(id, first_name, last_name)')
+          .eq('organization_id', auth.orgId)
+          .in('health_check_id', idChunk)
+          .order('created_at', { ascending: false })
+          .limit(300),
+        supabaseAdmin
+          .from('technician_time_entries')
+          .select('health_check_id, technician_id, clock_in_at')
+          .in('health_check_id', idChunk)
+          .is('clock_out_at', null),
+      ])
+      if (cards.data) cardsData.push(...cards.data as Record<string, unknown>[])
+      if (notes.data) notesData.push(...notes.data as Record<string, unknown>[])
+      if (times.data) timeEntriesData.push(...times.data as Record<string, unknown>[])
+    }
+    const cardsRes = { data: cardsData }
+    const notesRes = { data: notesData }
+    const timeEntriesRes = { data: timeEntriesData }
 
     const cardMetaByHc = new Map<string, Record<string, unknown>>()
     for (const card of cardsRes.data || []) {
@@ -255,12 +266,8 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
       col.column_type === 'queue' ||
       (col.technician as { is_active?: boolean } | null)?.is_active !== false
     )
-    const techColumnByUserId = new Map<string, string>()
     const queueColumnIds = new Set<string>()
     for (const col of columns) {
-      if (col.column_type === 'technician' && col.technician_id) {
-        techColumnByUserId.set(col.technician_id as string, col.id as string)
-      }
       if (col.column_type === 'queue') queueColumnIds.add(col.id as string)
     }
 
@@ -268,10 +275,15 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
       const meta = cardMetaByHc.get(hc.id) || null
       const latestNote = latestNoteByHc.get(hc.id) || null
 
-      // Resolve board position: manual placement first, then derive
+      // Resolve board position from job_state (the workshop lifecycle). A queue
+      // "park" is an overlay on an otherwise in-workshop/arrived job; technician
+      // columns are derived from technician_id in the front-end views.
+      const jobState = (hc.job_state as string) || 'arrived'
       let position: string = 'checked_in'
       let columnId: string | null = null
-      if (meta?.placement === 'work_complete' || hc.status === 'completed') {
+      if (jobState === 'due_in') {
+        position = 'due_in'
+      } else if (jobState === 'work_complete') {
         position = 'work_complete'
       } else if (
         meta?.placement === 'queue' &&
@@ -280,11 +292,8 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
       ) {
         position = 'column'
         columnId = meta.queue_column_id as string
-      } else if (hc.status === 'awaiting_arrival') {
-        position = 'due_in'
-      } else if (hc.technician_id && techColumnByUserId.has(hc.technician_id)) {
-        position = 'column'
-        columnId = techColumnByUserId.get(hc.technician_id)!
+      } else if (jobState === 'in_workshop') {
+        position = 'in_workshop'
       }
 
       const estimatedHours =
@@ -299,6 +308,7 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
         position,
         columnId,
         status: hc.status,
+        jobState: hc.job_state ?? 'arrived',
         sortPosition: (meta?.sort_position as number) ?? 0,
         workshopStatusId: (meta?.workshop_status_id as string) ?? null,
         priority: (meta?.priority as string) ?? 'normal',
@@ -388,7 +398,7 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
 async function getHealthCheckForBoard(healthCheckId: string, orgId: string) {
   const { data } = await supabaseAdmin
     .from('health_checks')
-    .select('id, status, site_id, technician_id, organization_id')
+    .select('id, status, job_state, site_id, technician_id, organization_id')
     .eq('id', healthCheckId)
     .eq('organization_id', orgId)
     .single()
@@ -473,7 +483,18 @@ workshopBoard.post('/cards/:healthCheckId/move', authorize([...ALL_ROLES]), asyn
       }
     }
 
+    const now = new Date().toISOString()
+
     if (target === 'workshop') {
+      // Back onto the live workshop flow: un-park from any queue and reopen if
+      // it had been marked complete. A job with a technician is in_workshop.
+      if (['due_in', 'work_complete', 'collected'].includes(hc.job_state)) {
+        await supabaseAdmin
+          .from('health_checks')
+          .update({ job_state: hc.technician_id ? 'in_workshop' : 'arrived', updated_at: now })
+          .eq('id', healthCheckId)
+          .eq('organization_id', auth.orgId)
+      }
       await upsertWorkshopCard(auth.orgId, healthCheckId, {
         placed_by: auth.user.id,
         ...(typeof sortPosition === 'number' ? { sort_position: sortPosition } : {}),
@@ -486,7 +507,6 @@ workshopBoard.post('/cards/:healthCheckId/move', authorize([...ALL_ROLES]), asyn
       return c.json({ success: true })
     }
 
-    const now = new Date().toISOString()
     const cardFields: Record<string, unknown> = { placed_by: auth.user.id }
     if (typeof sortPosition === 'number') cardFields.sort_position = sortPosition
 
@@ -508,6 +528,8 @@ workshopBoard.post('/cards/:healthCheckId/move', authorize([...ALL_ROLES]), asyn
         .update({
           technician_id: technicianId,
           status: newStatus,
+          // Pre-allocated bookings wait in Due In; a real assignment is in_workshop
+          job_state: isPreAllocation ? 'due_in' : 'in_workshop',
           ...(newStatus === 'assigned' && hc.status === 'created' ? { assigned_at: now } : {}),
           updated_at: now
         })
@@ -557,9 +579,15 @@ workshopBoard.post('/cards/:healthCheckId/move', authorize([...ALL_ROLES]), asyn
         work_completed_by: null
       })
     } else if (target === 'work_complete') {
+      // Physical work done - a workshop decision, independent of the VHC stage.
+      await supabaseAdmin
+        .from('health_checks')
+        .update({ job_state: 'work_complete', updated_at: now })
+        .eq('id', healthCheckId)
+        .eq('organization_id', auth.orgId)
       await upsertWorkshopCard(auth.orgId, healthCheckId, {
         ...cardFields,
-        placement: 'work_complete',
+        placement: 'auto',
         queue_column_id: null,
         work_completed_at: now,
         work_completed_by: auth.user.id
@@ -569,25 +597,23 @@ workshopBoard.post('/cards/:healthCheckId/move', authorize([...ALL_ROLES]), asyn
       if (!['created', 'assigned', 'awaiting_checkin'].includes(hc.status)) {
         return c.json({ error: `Cannot return a job with status '${hc.status}' to Checked In` }, 400)
       }
-      if (hc.technician_id) {
-        const newStatus = hc.status === 'assigned' ? 'created' : hc.status
-        const { error: updateError } = await supabaseAdmin
-          .from('health_checks')
-          .update({ technician_id: null, status: newStatus, updated_at: now })
-          .eq('id', healthCheckId)
-          .eq('organization_id', auth.orgId)
-        if (updateError) return c.json({ error: updateError.message }, 500)
+      const newStatus = hc.technician_id && hc.status === 'assigned' ? 'created' : hc.status
+      const { error: updateError } = await supabaseAdmin
+        .from('health_checks')
+        .update({ technician_id: null, status: newStatus, job_state: 'arrived', updated_at: now })
+        .eq('id', healthCheckId)
+        .eq('organization_id', auth.orgId)
+      if (updateError) return c.json({ error: updateError.message }, 500)
 
-        if (newStatus !== hc.status) {
-          await supabaseAdmin.from('health_check_status_history').insert({
-            health_check_id: healthCheckId,
-            from_status: hc.status,
-            to_status: newStatus,
-            changed_by: auth.user.id,
-            change_source: 'user',
-            notes: 'Unassigned via workshop board'
-          })
-        }
+      if (newStatus !== hc.status) {
+        await supabaseAdmin.from('health_check_status_history').insert({
+          health_check_id: healthCheckId,
+          from_status: hc.status,
+          to_status: newStatus,
+          changed_by: auth.user.id,
+          change_source: 'user',
+          notes: 'Unassigned via workshop board'
+        })
       }
       await upsertWorkshopCard(auth.orgId, healthCheckId, {
         ...cardFields,
@@ -666,23 +692,50 @@ workshopBoard.patch('/cards/:healthCheckId', authorize([...ALL_ROLES]), async (c
       }
     }
 
-    if (Object.keys(fields).length === 0) {
+    // Job state (the workshop lifecycle) lives on health_checks, not the card.
+    let jobStateChanged = false
+    if ('jobState' in body) {
+      const validStates = ['due_in', 'arrived', 'in_workshop', 'work_complete', 'collected']
+      if (!validStates.includes(body.jobState)) {
+        return c.json({ error: 'Invalid job state' }, 400)
+      }
+      await supabaseAdmin
+        .from('health_checks')
+        .update({ job_state: body.jobState, updated_at: new Date().toISOString() })
+        .eq('id', healthCheckId)
+        .eq('organization_id', auth.orgId)
+      // Stamp / clear the completion time used for the card's "Day N" ageing
+      if (body.jobState === 'work_complete') {
+        fields.work_completed_at = new Date().toISOString()
+        fields.work_completed_by = auth.user.id
+      } else if (['due_in', 'arrived', 'in_workshop'].includes(body.jobState)) {
+        fields.work_completed_at = null
+        fields.work_completed_by = null
+      }
+      jobStateChanged = true
+    }
+
+    if (Object.keys(fields).length === 0 && !jobStateChanged) {
       return c.json({ error: 'No valid fields to update' }, 400)
     }
 
-    const card = await upsertWorkshopCard(auth.orgId, healthCheckId, fields)
+    const card = Object.keys(fields).length
+      ? await upsertWorkshopCard(auth.orgId, healthCheckId, fields)
+      : null
     emitBoardUpdated(hc.site_id, 'card_updated', healthCheckId)
 
     return c.json({
       success: true,
-      card: {
-        healthCheckId,
-        workshopStatusId: card.workshop_status_id,
-        priority: card.priority,
-        estimatedHours: card.estimated_hours != null ? Number(card.estimated_hours) : null,
-        sortPosition: card.sort_position,
-        plannedStartAt: card.planned_start_at ?? null
-      }
+      card: card
+        ? {
+            healthCheckId,
+            workshopStatusId: card.workshop_status_id,
+            priority: card.priority,
+            estimatedHours: card.estimated_hours != null ? Number(card.estimated_hours) : null,
+            sortPosition: card.sort_position,
+            plannedStartAt: card.planned_start_at ?? null
+          }
+        : { healthCheckId }
     })
   } catch (error) {
     console.error('Update workshop card error:', error)

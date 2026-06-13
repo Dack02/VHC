@@ -1,7 +1,11 @@
 // Workshop board API payload types
 
-export type BoardPosition = 'due_in' | 'checked_in' | 'column' | 'work_complete'
+export type BoardPosition = 'due_in' | 'checked_in' | 'in_workshop' | 'column' | 'work_complete'
 export type CardPriority = 'normal' | 'high' | 'urgent'
+
+// The workshop lifecycle axis - independent of the VHC pipeline (`status`).
+// Drives which board column a card sits in.
+export type JobState = 'due_in' | 'arrived' | 'in_workshop' | 'work_complete' | 'collected'
 
 export interface BoardStatus {
   id: string
@@ -45,6 +49,7 @@ export interface BoardCard {
   position: BoardPosition
   columnId: string | null
   status: string
+  jobState: JobState
   sortPosition: number
   workshopStatusId: string | null
   priority: CardPriority

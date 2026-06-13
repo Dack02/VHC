@@ -49,6 +49,7 @@ displayed with the most common original casing). Implementation:
 | **Identified £ (per item)** | [Identified](#item-level-building-blocks) £ of live, top-level repair items whose linked findings include this item, attributed **once per distinct linked item name** per repair (via `repair_item_check_results → check_results → template_items`). Attribution is by junction **link**, not `source` — inspection-derived repairs carry `source = null` in practice; MRI/manual items simply have no finding link. A repair spanning two *different* items adds to both; two findings of the *same* item add once. |
 | **Sold £ (per item)** | The identified set restricted to [authorised](#item-level-building-blocks) (incl. the group-children fallback). |
 | **Conversion / Approval** | Sold £ ÷ identified £ (value); sold item count ÷ identified item count (approval %). |
+| **Red / Amber conversion** | The per-item Identified/Sold/Missed split *again*, but restricted to repairs triggered by a **red** vs an **amber** finding for that item — a repair is assigned to the band of its **worst** linked finding for the item (red > amber). Red conversion is the headline: red work is safety-critical and should sell same-day, so a low red conversion flags work walking out the door. A repair linked only to a *green* finding falls in neither band, so per-item `red £ + amber £ ≤ combined £`. Exposed as `byRag.{red,amber}` on each row and in the detail view. |
 | **Missed** | Declined £ + deferred £ for the item. |
 
 **Reconciliation (important).** Because per-item revenue can overlap (one repair, two
@@ -59,6 +60,10 @@ items with **no junction link** to a finding (MRI scans, manually-added and preb
 *per-item attribution*; the summary is the honest grand total. This report's universe is
 the **dual-date set** (below), so it reconciles with the dashboard; `/financial` uses
 `repair_items.created_at` and raw `total_inc_vat`, so small differences there are expected.
+The **summary** red/amber split (`summary.totals.byRag`) likewise classifies each repair
+**once** by its single worst linked finding across all items, so it is de-duplicated and
+need not equal the sum of the per-item red/amber bands (where the same repair can count
+toward a red item *and* a separate amber item).
 
 ## Period scoping
 

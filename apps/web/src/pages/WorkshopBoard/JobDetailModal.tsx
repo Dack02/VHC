@@ -58,7 +58,7 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
   const queueColumns = columns.filter(c => c.columnType === 'queue')
   const currentTechColumn = card.technician ? techColumns.find(c => c.technicianId === card.technician!.id) : null
   const inQueueColumn = card.position === 'column' && card.columnId && queueColumns.some(c => c.id === card.columnId)
-  const placementValue = card.position === 'work_complete' ? 'work_complete' : inQueueColumn ? card.columnId! : 'auto'
+  const placementValue = inQueueColumn ? card.columnId! : 'auto'
   const canUnassign = ['created', 'assigned', 'awaiting_checkin'].includes(card.status)
 
   const workedMinutes = Math.round(actualWorkedMinutes(card, new Date()))
@@ -143,11 +143,13 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
   const handlePlacementChange = (value: string) => {
     if (value === 'auto') {
       moveCard({ target: 'workshop' })
-    } else if (value === 'work_complete') {
-      moveCard({ target: 'work_complete' })
     } else {
       moveCard({ target: 'queue', columnId: value })
     }
+  }
+
+  const handleJobStateChange = (value: string) => {
+    updateCard({ jobState: value })
   }
 
   const plannedTimeValue = card.plannedStartAt
@@ -289,15 +291,35 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
                   </div>
                 </div>
 
-                {/* VHC pipeline stage + red/amber findings */}
-                <div className="flex items-center justify-between bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2.5">
+                {/* Two axes: the job's workshop lifecycle (editable - drives the
+                    board column) and the read-only VHC pipeline stage. */}
+                <div className="space-y-2">
                   <div>
-                    <div className="text-xs text-indigo-400 font-medium">VHC PIPELINE</div>
-                    <div className="text-sm font-semibold text-indigo-800">{stage.label}</div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Job state</label>
+                    <select
+                      value={card.jobState}
+                      onChange={e => handleJobStateChange(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                      <option value="due_in">Due in</option>
+                      <option value="arrived">Arrived (on site)</option>
+                      <option value="in_workshop">In workshop</option>
+                      <option value="work_complete">Work complete</option>
+                      <option value="collected">Collected / closed</option>
+                    </select>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Where the vehicle sits in the workshop — sets the board column, independent of the VHC stage.
+                    </p>
                   </div>
-                  <div className="flex items-center gap-2.5 text-xs font-medium text-gray-600">
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rag-red inline-block" />{card.ragCounts.red}</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rag-amber inline-block" />{card.ragCounts.amber}</span>
+                  <div className="flex items-center justify-between bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2.5">
+                    <div>
+                      <div className="text-xs text-indigo-400 font-medium">VHC PIPELINE</div>
+                      <div className="text-sm font-semibold text-indigo-800">{stage.label}</div>
+                    </div>
+                    <div className="flex items-center gap-2.5 text-xs font-medium text-gray-600">
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rag-red inline-block" />{card.ragCounts.red}</span>
+                      <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rag-amber inline-block" />{card.ragCounts.amber}</span>
+                    </div>
                   </div>
                 </div>
 
@@ -380,17 +402,16 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1">Board placement</label>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">Park in queue</label>
                         <select
                           value={placementValue}
                           onChange={e => handlePlacementChange(e.target.value)}
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                         >
-                          <option value="auto">Workshop flow (auto)</option>
+                          <option value="auto">On workshop flow</option>
                           {queueColumns.map(col => (
                             <option key={col.id} value={col.id}>{col.name}</option>
                           ))}
-                          <option value="work_complete">Work Complete</option>
                         </select>
                       </div>
                     </div>

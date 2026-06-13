@@ -10,6 +10,7 @@ import { authMiddleware, authorizeMinRole } from '../middleware/auth.js'
 import { sendSms } from '../services/sms.js'
 import { emitToHealthCheck, emitToOrganization, WS_EVENTS } from '../services/websocket.js'
 import { logger } from '../lib/logger.js'
+import { chunkIds } from '../services/hc-period-service.js'
 
 const messages = new Hono()
 
@@ -127,18 +128,20 @@ messages.get('/conversations', async (c) => {
 
   const customerMap = new Map<string, { id: string; firstName: string; lastName: string }>()
   if (allCustomerIds.size > 0) {
-    const { data: customers } = await supabaseAdmin
-      .from('customers')
-      .select('id, first_name, last_name')
-      .in('id', [...allCustomerIds])
+    for (const idChunk of chunkIds([...allCustomerIds])) {
+      const { data: customers } = await supabaseAdmin
+        .from('customers')
+        .select('id, first_name, last_name')
+        .in('id', idChunk)
 
-    if (customers) {
-      for (const cust of customers) {
-        customerMap.set(cust.id, {
-          id: cust.id,
-          firstName: cust.first_name,
-          lastName: cust.last_name
-        })
+      if (customers) {
+        for (const cust of customers) {
+          customerMap.set(cust.id, {
+            id: cust.id,
+            firstName: cust.first_name,
+            lastName: cust.last_name
+          })
+        }
       }
     }
   }
@@ -151,18 +154,20 @@ messages.get('/conversations', async (c) => {
 
   const hcMap = new Map<string, { id: string; vhcReference: string | null; status: string }>()
   if (allHcIds.size > 0) {
-    const { data: hcs } = await supabaseAdmin
-      .from('health_checks')
-      .select('id, vhc_reference, status')
-      .in('id', [...allHcIds])
+    for (const idChunk of chunkIds([...allHcIds])) {
+      const { data: hcs } = await supabaseAdmin
+        .from('health_checks')
+        .select('id, vhc_reference, status')
+        .in('id', idChunk)
 
-    if (hcs) {
-      for (const hc of hcs) {
-        hcMap.set(hc.id, {
-          id: hc.id,
-          vhcReference: hc.vhc_reference,
-          status: hc.status
-        })
+      if (hcs) {
+        for (const hc of hcs) {
+          hcMap.set(hc.id, {
+            id: hc.id,
+            vhcReference: hc.vhc_reference,
+            status: hc.status
+          })
+        }
       }
     }
   }

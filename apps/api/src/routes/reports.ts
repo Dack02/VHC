@@ -3,7 +3,7 @@ import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { aggregateRepairItemsByHc, computeHcConversion, isHcPresented } from '../lib/metrics.js'
 import { buildItemList, buildItemDetail } from '../services/item-report-service.js'
-import type { GroupBy } from '../services/hc-period-service.js'
+import { chunkIds, type GroupBy } from '../services/hc-period-service.js'
 
 const reports = new Hono()
 
@@ -96,22 +96,24 @@ reports.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
     )].filter(id => !hcMap.has(id))
 
     if (outcomeHcIds.length > 0) {
-      let actionedQ = supabaseAdmin
-        .from('health_checks')
-        .select(mainSelect)
-        .in('id', outcomeHcIds)
-        .is('deleted_at', null)
+      for (const idChunk of chunkIds(outcomeHcIds)) {
+        let actionedQ = supabaseAdmin
+          .from('health_checks')
+          .select(mainSelect)
+          .in('id', idChunk)
+          .is('deleted_at', null)
 
-      if (technician_id) actionedQ = actionedQ.eq('technician_id', technician_id)
-      if (advisor_id) actionedQ = actionedQ.eq('advisor_id', advisor_id)
+        if (technician_id) actionedQ = actionedQ.eq('technician_id', technician_id)
+        if (advisor_id) actionedQ = actionedQ.eq('advisor_id', advisor_id)
 
-      const { data: actionedHcs, error: actionedError } = await actionedQ
+        const { data: actionedHcs, error: actionedError } = await actionedQ
 
-      if (actionedError) {
-        console.error('Financial report actioned HC query error:', actionedError)
-      } else if (actionedHcs) {
-        for (const hc of actionedHcs) {
-          if (!hcMap.has(hc.id)) hcMap.set(hc.id, hc)
+        if (actionedError) {
+          console.error('Financial report actioned HC query error:', actionedError)
+        } else if (actionedHcs) {
+          for (const hc of actionedHcs) {
+            if (!hcMap.has(hc.id)) hcMap.set(hc.id, hc)
+          }
         }
       }
     }
@@ -2029,13 +2031,18 @@ reports.get('/customers', authorize(['super_admin', 'org_admin', 'site_admin', '
     const healthCheckIds = (healthChecks || []).filter(hc => hc.sent_at).map(hc => hc.id)
     let deviceBreakdown: Record<string, number> = { mobile: 0, tablet: 0, desktop: 0 }
     if (healthCheckIds.length > 0) {
-      const { data: activities } = await supabaseAdmin
-        .from('customer_activities')
-        .select('device_type')
-        .in('health_check_id', healthCheckIds)
-        .eq('activity_type', 'viewed')
+      const activities = (await Promise.all(
+        chunkIds(healthCheckIds, 100).map(async chunk => {
+          const { data } = await supabaseAdmin
+            .from('customer_activities')
+            .select('device_type')
+            .in('health_check_id', chunk)
+            .eq('activity_type', 'viewed')
+          return data || []
+        })
+      )).flat()
 
-      if (activities) {
+      if (activities.length > 0) {
         const total = activities.length
         let mobile = 0, tablet = 0, desktop = 0
         for (const a of activities) {
@@ -3181,18 +3188,20 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
     )].filter(id => !healthCheckMap.has(id))
 
     if (outcomeDateHcIds.length > 0) {
-      const { data: actionedHcs, error: actionedError } = await supabaseAdmin
-        .from('health_checks')
-        .select(hcSelect)
-        .in('id', outcomeDateHcIds)
-        .is('deleted_at', null)
+      for (const idChunk of chunkIds(outcomeDateHcIds)) {
+        const { data: actionedHcs, error: actionedError } = await supabaseAdmin
+          .from('health_checks')
+          .select(hcSelect)
+          .in('id', idChunk)
+          .is('deleted_at', null)
 
-      if (actionedError) {
-        console.error('Daily overview actioned HC query error:', actionedError)
-      } else if (actionedHcs) {
-        for (const hc of actionedHcs) {
-          if (!healthCheckMap.has(hc.id)) {
-            healthCheckMap.set(hc.id, hc)
+        if (actionedError) {
+          console.error('Daily overview actioned HC query error:', actionedError)
+        } else if (actionedHcs) {
+          for (const hc of actionedHcs) {
+            if (!healthCheckMap.has(hc.id)) {
+              healthCheckMap.set(hc.id, hc)
+            }
           }
         }
       }

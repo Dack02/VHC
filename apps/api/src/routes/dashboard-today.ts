@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { aggregateRepairItemsByHc, type RepairItemLike } from '../lib/metrics.js'
+import { chunkIds } from '../services/hc-period-service.js'
 
 const dashboardToday = new Hono()
 
@@ -108,18 +109,20 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     )].filter(id => !healthCheckMap.has(id))
 
     if (outcomeTodayHcIds.length > 0) {
-      const { data: actionedTodayHcs, error: actionedError } = await supabaseAdmin
-        .from('health_checks')
-        .select(baseSelect)
-        .in('id', outcomeTodayHcIds)
-        .is('deleted_at', null)
+      for (const idChunk of chunkIds(outcomeTodayHcIds)) {
+        const { data: actionedTodayHcs, error: actionedError } = await supabaseAdmin
+          .from('health_checks')
+          .select(baseSelect)
+          .in('id', idChunk)
+          .is('deleted_at', null)
 
-      if (actionedError) {
-        console.error('Actioned today HC query error:', actionedError)
-      } else if (actionedTodayHcs) {
-        for (const hc of actionedTodayHcs) {
-          if (!healthCheckMap.has(hc.id)) {
-            healthCheckMap.set(hc.id, hc)
+        if (actionedError) {
+          console.error('Actioned today HC query error:', actionedError)
+        } else if (actionedTodayHcs) {
+          for (const hc of actionedTodayHcs) {
+            if (!healthCheckMap.has(hc.id)) {
+              healthCheckMap.set(hc.id, hc)
+            }
           }
         }
       }
@@ -146,32 +149,33 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     }> = []
 
     if (healthCheckIds.length > 0) {
-      const { data, error } = await supabaseAdmin
-        .from('repair_items')
-        .select(`
-          id,
-          health_check_id,
-          labour_total,
-          parts_total,
-          total_inc_vat,
-          customer_approved,
-          outcome_status,
-          is_group,
-          parent_repair_item_id,
-          selected_option_id,
-          deleted_at,
-          rag_status,
-          check_results:repair_item_check_results(
-            check_result:check_results(rag_status)
-          )
-        `)
-        .in('health_check_id', healthCheckIds)
-
-      if (error) {
-        console.error('Repair items query error:', error)
-      } else {
-        repairData = data || []
-      }
+      // Chunk by HC id so today's set can't overflow a single .in() URL.
+      repairData = (await Promise.all(
+        chunkIds(healthCheckIds, 100).map(async chunk => {
+          const { data, error } = await supabaseAdmin
+            .from('repair_items')
+            .select(`
+              id,
+              health_check_id,
+              labour_total,
+              parts_total,
+              total_inc_vat,
+              customer_approved,
+              outcome_status,
+              is_group,
+              parent_repair_item_id,
+              selected_option_id,
+              deleted_at,
+              rag_status,
+              check_results:repair_item_check_results(
+                check_result:check_results(rag_status)
+              )
+            `)
+            .in('health_check_id', chunk)
+          if (error) console.error('Repair items query error:', error)
+          return data || []
+        })
+      )).flat()
     }
 
     // Fetch selected option totals
@@ -181,15 +185,12 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
 
     let optionTotalsMap: Record<string, { labour_total: number | null; parts_total: number | null; total_inc_vat: number | null }> = {}
     if (selectedOptionIds.length > 0) {
-      const { data: optionData } = await supabaseAdmin
-        .from('repair_options')
-        .select('id, labour_total, parts_total, total_inc_vat')
-        .in('id', selectedOptionIds)
-
-      if (optionData) {
-        for (const opt of optionData) {
-          optionTotalsMap[opt.id] = opt
-        }
+      for (const optChunk of chunkIds(selectedOptionIds)) {
+        const { data: optionData } = await supabaseAdmin
+          .from('repair_options')
+          .select('id, labour_total, parts_total, total_inc_vat')
+          .in('id', optChunk)
+        for (const opt of optionData || []) optionTotalsMap[opt.id] = opt
       }
     }
 
@@ -203,24 +204,32 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     }> = []
 
     if (healthCheckIds.length > 0) {
-      const { data: activityData } = await supabaseAdmin
-        .from('health_check_status_history')
-        .select(`
-          from_status,
-          to_status,
-          changed_at,
-          health_check:health_checks(
-            vehicle:vehicles(registration)
-          ),
-          user:users!health_check_status_history_changed_by_fkey(first_name, last_name)
-        `)
-        .in('health_check_id', healthCheckIds)
-        .gte('changed_at', todayISO)
-        .lt('changed_at', tomorrowISO)
-        .order('changed_at', { ascending: false })
-        .limit(20)
+      // Per-chunk top-20, then merge → sort → take the global latest 20.
+      const activityData = (await Promise.all(
+        chunkIds(healthCheckIds, 100).map(async chunk => {
+          const { data } = await supabaseAdmin
+            .from('health_check_status_history')
+            .select(`
+              from_status,
+              to_status,
+              changed_at,
+              health_check:health_checks(
+                vehicle:vehicles(registration)
+              ),
+              user:users!health_check_status_history_changed_by_fkey(first_name, last_name)
+            `)
+            .in('health_check_id', chunk)
+            .gte('changed_at', todayISO)
+            .lt('changed_at', tomorrowISO)
+            .order('changed_at', { ascending: false })
+            .limit(20)
+          return data || []
+        })
+      )).flat()
+        .sort((a, b) => String(b.changed_at).localeCompare(String(a.changed_at)))
+        .slice(0, 20)
 
-      recentActivity = (activityData || []).map((a: Record<string, unknown>) => {
+      recentActivity = activityData.map((a: Record<string, unknown>) => {
         const hc = a.health_check as { vehicle: { registration: string } | null } | null
         const u = a.user as { first_name: string; last_name: string } | null
         return {

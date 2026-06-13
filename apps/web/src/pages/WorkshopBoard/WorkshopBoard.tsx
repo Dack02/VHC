@@ -151,7 +151,7 @@ export default function WorkshopBoard() {
         if (card.position === 'due_in') push('due_in', card)
         else if (card.position === 'work_complete') push('work_complete', card)
         else if (card.position === 'column' && card.columnId && queueNameById.has(card.columnId)) push(card.columnId, card)
-        else if (card.technician) push('in_workshop', card)
+        else if (card.position === 'in_workshop' || card.technician) push('in_workshop', card)
         else push('checked_in', card)
       }
       return [
@@ -165,7 +165,7 @@ export default function WorkshopBoard() {
           droppable: canDrag,
           cards: sortCards(buckets.get(col.id) || [])
         })),
-        { key: 'work_complete', title: 'Work Complete', subtitle: `Completed ${date === dateForOffset(0) ? 'today' : date}`, droppable: canDrag, cards: sortCards(buckets.get('work_complete') || []) }
+        { key: 'work_complete', title: 'Work Complete', subtitle: 'Awaiting collection', droppable: canDrag, cards: sortCards(buckets.get('work_complete') || []) }
       ]
     }
 
@@ -191,7 +191,7 @@ export default function WorkshopBoard() {
           cards
         }
       }),
-      { key: 'work_complete', title: 'Work Complete', subtitle: `Completed ${date === dateForOffset(0) ? 'today' : date}`, droppable: canDrag, cards: sortCards(buckets.get('work_complete') || []) }
+      { key: 'work_complete', title: 'Work Complete', subtitle: 'Awaiting collection', droppable: canDrag, cards: sortCards(buckets.get('work_complete') || []) }
     ]
   }, [board, filteredCards, view, queueNameById, techColumnByUserId, techLoadByUserId, canDrag, date])
 

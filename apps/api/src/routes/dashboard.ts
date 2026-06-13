@@ -11,6 +11,7 @@ import {
   getTodayRag,
   type DashboardFilters
 } from '../services/dashboard-service.js'
+import { chunkIds } from '../services/hc-period-service.js'
 
 const dashboard = new Hono()
 
@@ -118,9 +119,10 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
 
     // No default date filter - show all active health checks
     // Only apply date filter if explicitly provided
-    let query = supabaseAdmin
-      .from('health_checks')
-      .select(`
+    const buildBoardQuery = () => {
+      let q = supabaseAdmin
+        .from('health_checks')
+        .select(`
         id,
         status,
         promised_at,
@@ -141,24 +143,29 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         technician:users!health_checks_technician_id_fkey(id, first_name, last_name),
         advisor:users!health_checks_advisor_id_fkey(id, first_name, last_name)
       `)
-      .eq('organization_id', auth.orgId)
-      .is('deleted_at', null) // Exclude soft-deleted records
-      // Exclude terminal states AND DMS pre-arrival states (awaiting_arrival has its own UI section)
-      .not('status', 'in', '(completed,cancelled,expired,awaiting_arrival,no_show)')
-      .order('created_at', { ascending: false })
+        .eq('organization_id', auth.orgId)
+        .is('deleted_at', null) // Exclude soft-deleted records
+        // Exclude terminal states AND DMS pre-arrival states (awaiting_arrival has its own UI section)
+        .not('status', 'in', '(completed,cancelled,expired,awaiting_arrival,no_show)')
+      if (date_from) q = q.gte('created_at', date_from)
+      if (date_to) q = q.lte('created_at', date_to)
+      if (site_id) q = q.eq('site_id', site_id)
+      if (technician_id) q = q.eq('technician_id', technician_id)
+      if (advisor_id) q = q.eq('advisor_id', advisor_id)
+      return q.order('created_at', { ascending: false })
+    }
 
-    // Only apply date filter if explicitly provided
-    if (date_from) query = query.gte('created_at', date_from)
-
-    if (site_id) query = query.eq('site_id', site_id)
-    if (technician_id) query = query.eq('technician_id', technician_id)
-    if (advisor_id) query = query.eq('advisor_id', advisor_id)
-    if (date_to) query = query.lte('created_at', date_to)
-
-    const { data: healthChecks, error } = await query
-
-    if (error) {
-      return c.json({ error: error.message }, 500)
+    // Drain every page: an org's active-HC set can exceed PostgREST's ~1000-row
+    // cap. A truncated board would hide cards AND (via healthCheckIds below) make
+    // the downstream repair-item / MRI / SMS .in() lookups overflow and error out.
+    let healthChecks: NonNullable<Awaited<ReturnType<typeof buildBoardQuery>>['data']> = []
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await buildBoardQuery().range(from, from + 999)
+      if (error) {
+        return c.json({ error: error.message }, 500)
+      }
+      healthChecks = healthChecks.concat(data || [])
+      if (!data || data.length < 1000) break
     }
 
     // Group by column
@@ -204,33 +211,36 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     if (healthCheckIds.length > 0) {
       // Query ALL repair items - use stored totals directly (labour_total, parts_total, total_inc_vat)
       // When a selected_option_id exists, use the option's totals instead (price options feature)
-      const { data: repairData, error: repairError } = await supabaseAdmin
-        .from('repair_items')
-        .select(`
-          health_check_id,
-          labour_total,
-          parts_total,
-          total_inc_vat,
-          labour_status,
-          parts_status,
-          quote_status,
-          outcome_status,
-          deleted_at,
-          customer_approved,
-          is_group,
-          parent_repair_item_id,
-          selected_option_id,
-          mri_result_id,
-          rag_status,
-          check_results:repair_item_check_results(
-            check_result:check_results(rag_status)
-          )
-        `)
-        .in('health_check_id', healthCheckIds)
-
-      if (repairError) {
-        console.error('Error fetching repair items for workflow:', repairError)
-      }
+      // Chunk by HC id: a busy org's active-HC list overflows a single .in() URL.
+      const repairData = (await Promise.all(
+        chunkIds(healthCheckIds, 100).map(async chunk => {
+          const { data, error: repairError } = await supabaseAdmin
+            .from('repair_items')
+            .select(`
+              health_check_id,
+              labour_total,
+              parts_total,
+              total_inc_vat,
+              labour_status,
+              parts_status,
+              quote_status,
+              outcome_status,
+              deleted_at,
+              customer_approved,
+              is_group,
+              parent_repair_item_id,
+              selected_option_id,
+              mri_result_id,
+              rag_status,
+              check_results:repair_item_check_results(
+                check_result:check_results(rag_status)
+              )
+            `)
+            .in('health_check_id', chunk)
+          if (repairError) console.error('Error fetching repair items for workflow:', repairError)
+          return data || []
+        })
+      )).flat()
 
       // Fetch selected option totals separately to avoid FK join issues
       const selectedOptionIds = (repairData || [])
@@ -239,41 +249,40 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
 
       let optionTotalsMap: Record<string, { labour_total: any; parts_total: any; total_inc_vat: any }> = {}
       if (selectedOptionIds.length > 0) {
-        const { data: optionData } = await supabaseAdmin
-          .from('repair_options')
-          .select('id, labour_total, parts_total, total_inc_vat')
-          .in('id', selectedOptionIds)
-
-        if (optionData) {
-          for (const opt of optionData) {
-            optionTotalsMap[opt.id] = opt
-          }
+        for (const optChunk of chunkIds(selectedOptionIds)) {
+          const { data: optionData } = await supabaseAdmin
+            .from('repair_options')
+            .select('id, labour_total, parts_total, total_inc_vat')
+            .in('id', optChunk)
+          for (const opt of optionData || []) optionTotalsMap[opt.id] = opt
         }
       }
 
       // Query MRI scan results (red/amber items that need attention)
-      const { data: mriData } = await supabaseAdmin
-        .from('mri_scan_results')
-        .select('health_check_id, rag_status')
-        .in('health_check_id', healthCheckIds)
-        .in('rag_status', ['red', 'amber'])
-
-      mriData?.forEach(r => {
-        mriCountByHc[r.health_check_id] = (mriCountByHc[r.health_check_id] || 0) + 1
-      })
+      await Promise.all(chunkIds(healthCheckIds, 100).map(async chunk => {
+        const { data: mriData } = await supabaseAdmin
+          .from('mri_scan_results')
+          .select('health_check_id, rag_status')
+          .in('health_check_id', chunk)
+          .in('rag_status', ['red', 'amber'])
+        mriData?.forEach(r => {
+          mriCountByHc[r.health_check_id] = (mriCountByHc[r.health_check_id] || 0) + 1
+        })
+      }))
 
       // Unread inbound SMS messages
-      const { data: unreadSmsData } = await supabaseAdmin
-        .from('sms_messages')
-        .select('health_check_id')
-        .eq('organization_id', auth.orgId)
-        .in('health_check_id', healthCheckIds)
-        .eq('direction', 'inbound')
-        .eq('is_read', false)
-
-      unreadSmsData?.forEach(row => {
-        unreadSmsByHc[row.health_check_id] = (unreadSmsByHc[row.health_check_id] || 0) + 1
-      })
+      await Promise.all(chunkIds(healthCheckIds, 100).map(async chunk => {
+        const { data: unreadSmsData } = await supabaseAdmin
+          .from('sms_messages')
+          .select('health_check_id')
+          .eq('organization_id', auth.orgId)
+          .in('health_check_id', chunk)
+          .eq('direction', 'inbound')
+          .eq('is_read', false)
+        unreadSmsData?.forEach(row => {
+          unreadSmsByHc[row.health_check_id] = (unreadSmsByHc[row.health_check_id] || 0) + 1
+        })
+      }))
 
       // Default VAT rate for calculating total when total_inc_vat is 0 but labour/parts exist
       const VAT_RATE = 0.20
@@ -423,15 +432,17 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       .map(hc => hc.id) || []
 
     if (inProgressIds.length > 0) {
-      // Query time entries for in_progress health checks
-      const { data: timeEntries, error: timeError } = await supabaseAdmin
-        .from('technician_time_entries')
-        .select('health_check_id, clock_in_at, clock_out_at, duration_minutes')
-        .in('health_check_id', inProgressIds)
-
-      if (timeError) {
-        console.error('Error fetching time entries for timer:', timeError)
-      }
+      // Query time entries for in_progress health checks (chunked — set can be large)
+      const timeEntries = (await Promise.all(
+        chunkIds(inProgressIds, 100).map(async chunk => {
+          const { data, error: timeError } = await supabaseAdmin
+            .from('technician_time_entries')
+            .select('health_check_id, clock_in_at, clock_out_at, duration_minutes')
+            .in('health_check_id', chunk)
+          if (timeError) console.error('Error fetching time entries for timer:', timeError)
+          return data || []
+        })
+      )).flat()
 
       // Process time entries for each health check
       timeEntries?.forEach(entry => {

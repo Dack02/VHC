@@ -46,7 +46,7 @@ displayed with the most common original casing). Implementation:
 | **Red / Amber** | Count of `check_results` for the item with that `rag_status`. |
 | **Flagged** | Red + Amber — the "how often raised as a concern" headline. |
 | **Flag rate** | Flagged ÷ inspected. |
-| **Identified £ (per item)** | [Identified](#item-level-building-blocks) £ of `source = 'inspection'` repair items whose linked findings include this item, attributed **once per distinct linked item name** per repair (via `repair_item_check_results → check_results → template_items`). A repair spanning two *different* items adds to both; two findings of the *same* item add once. |
+| **Identified £ (per item)** | [Identified](#item-level-building-blocks) £ of live, top-level repair items whose linked findings include this item, attributed **once per distinct linked item name** per repair (via `repair_item_check_results → check_results → template_items`). Attribution is by junction **link**, not `source` — inspection-derived repairs carry `source = null` in practice; MRI/manual items simply have no finding link. A repair spanning two *different* items adds to both; two findings of the *same* item add once. |
 | **Sold £ (per item)** | The identified set restricted to [authorised](#item-level-building-blocks) (incl. the group-children fallback). |
 | **Conversion / Approval** | Sold £ ÷ identified £ (value); sold item count ÷ identified item count (approval %). |
 | **Missed** | Declined £ + deferred £ for the item. |
@@ -54,8 +54,8 @@ displayed with the most common original casing). Implementation:
 **Reconciliation (important).** Because per-item revenue can overlap (one repair, two
 items), the **sum of item rows is not the true total**. The report's `summary.totals`
 are therefore independent, **de-duplicated** scalars (each repair counted once), and
-`summary.unmapped` carries revenue that can't be attributed to an inspection item
-(`source` of `mri_scan`/`manual`/`dms_prebooked`, or no junction link). Item rows are for
+`summary.unmapped` carries revenue that can't be attributed to an inspection item —
+items with **no junction link** to a finding (MRI scans, manually-added and prebooked work). Item rows are for
 *per-item attribution*; the summary is the honest grand total. This report's universe is
 the **dual-date set** (below), so it reconciles with the dashboard; `/financial` uses
 `repair_items.created_at` and raw `total_inc_vat`, so small differences there are expected.

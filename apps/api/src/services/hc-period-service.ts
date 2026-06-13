@@ -136,9 +136,7 @@ export async function fetchRepairItemsForHcs(
       )`
     : ''
 
-  const { data, error } = await supabaseAdmin
-    .from('repair_items')
-    .select(`
+  const itemSelect = `
       id,
       health_check_id,
       labour_total,
@@ -150,15 +148,26 @@ export async function fetchRepairItemsForHcs(
       parent_repair_item_id,
       selected_option_id,
       deleted_at${ragSelect}
-    `)
-    .in('health_check_id', healthCheckIds)
+    `
 
-  if (error) {
-    console.error('Error fetching repair items for dashboard metrics:', error)
-    return { items: [], optionTotalsMap: {} }
+  const items: RepairItemLike[] = []
+  // Batch by HC id so no single response approaches PostgREST's ~1000-row cap.
+  // A busy org's monthly dashboard window (getMonthlyKpis spans ~2 months of
+  // HCs) can hold well over 1000 repair items; an unchunked .in() would silently
+  // truncate and undercount revenue/conversion. Mirrors fetchRepairItemsWithItemLinks.
+  for (const chunk of chunkIds(healthCheckIds, 100)) {
+    const { data, error } = await supabaseAdmin
+      .from('repair_items')
+      .select(itemSelect)
+      .in('health_check_id', chunk)
+    if (error) {
+      console.error('Error fetching repair items for dashboard metrics:', error)
+      continue
+    }
+    const batch = (data || []) as unknown as RepairItemLike[]
+    if (batch.length >= 1000) console.warn(`fetchRepairItemsForHcs: chunk hit ${batch.length} rows — possible truncation`)
+    items.push(...batch)
   }
-
-  const items = (data || []) as unknown as RepairItemLike[]
 
   const selectedOptionIds = items
     .map(item => item.selected_option_id)
@@ -166,13 +175,12 @@ export async function fetchRepairItemsForHcs(
 
   const optionTotalsMap: Record<string, OptionTotals> = {}
   if (selectedOptionIds.length > 0) {
-    const { data: optionData } = await supabaseAdmin
-      .from('repair_options')
-      .select('id, labour_total, parts_total, total_inc_vat')
-      .in('id', selectedOptionIds)
-
-    for (const opt of optionData || []) {
-      optionTotalsMap[opt.id] = opt
+    for (const optChunk of chunkIds(selectedOptionIds)) {
+      const { data: optionData } = await supabaseAdmin
+        .from('repair_options')
+        .select('id, labour_total, parts_total, total_inc_vat')
+        .in('id', optChunk)
+      for (const opt of optionData || []) optionTotalsMap[opt.id] = opt
     }
   }
 
@@ -253,7 +261,9 @@ export async function fetchRepairItemsWithItemLinks(
   if (healthCheckIds.length === 0) return { items: [], optionTotalsMap: {} }
 
   const items: RepairItemWithLinks[] = []
-  for (const chunk of chunkIds(healthCheckIds)) {
+  // Smaller HC chunks keep each response's top-level row count well under
+  // PostgREST's ~1000-row cap (repair items run ~2-3 per HC).
+  for (const chunk of chunkIds(healthCheckIds, 100)) {
     const { data, error } = await supabaseAdmin
       .from('repair_items')
       .select(ITEM_LINK_SELECT)
@@ -262,7 +272,9 @@ export async function fetchRepairItemsWithItemLinks(
       console.error('Error fetching repair items with item links:', error)
       continue
     }
-    items.push(...((data || []) as unknown as RepairItemWithLinks[]))
+    const batch = (data || []) as unknown as RepairItemWithLinks[]
+    if (batch.length >= 1000) console.warn(`fetchRepairItemsWithItemLinks: chunk hit ${batch.length} rows — possible truncation`)
+    items.push(...batch)
   }
 
   const selectedOptionIds = items

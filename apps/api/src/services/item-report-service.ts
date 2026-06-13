@@ -219,6 +219,72 @@ interface RevTally { identified: number; sold: number; declined: number; deferre
 function emptyUsage(): UsageTally { return { inspected: 0, red: 0, amber: 0, green: 0 } }
 function emptyRev(): RevTally { return { identified: 0, sold: 0, declined: 0, deferred: 0, identifiedCount: 0, soldCount: 0 } }
 
+/**
+ * Per-item red/amber/green counts for a set of health checks, grouped by
+ * normalised item name.
+ *
+ * An org can have tens of thousands of check_results in a period, well past
+ * PostgREST's ~1000-row response cap — counting raw rows silently truncates.
+ * Preferred path: the `item_report_usage` SQL function aggregates in Postgres
+ * (one tiny result). If that function isn't deployed yet, fall back to a
+ * client-side count that PAGES through the rows (so the cap can't truncate) and
+ * runs the HC chunks concurrently. A template filter always uses the paged path
+ * (filtered by template_item_id, which keeps the row set small anyway).
+ */
+async function fetchUsageByName(
+  hcIds: string[],
+  picker: DisplayNamePicker,
+  allowedItemIds: Set<string> | null
+): Promise<Map<string, UsageTally>> {
+  const out = new Map<string, UsageTally>()
+  const add = (name: string | null | undefined, red: number, amber: number, green: number) => {
+    if (!name) return
+    const norm = normalizeName(name)
+    picker.observe(norm, name)
+    const u = out.get(norm) ?? emptyUsage()
+    u.red += red; u.amber += amber; u.green += green; u.inspected += red + amber + green
+    out.set(norm, u)
+  }
+
+  if (!allowedItemIds) {
+    const { data, error } = await supabaseAdmin.rpc('item_report_usage', { p_hc_ids: hcIds })
+    if (!error && Array.isArray(data)) {
+      for (const r of data as Array<{ item_name: string; red: number | string; amber: number | string; green: number | string }>) {
+        add(r.item_name, Number(r.red) || 0, Number(r.amber) || 0, Number(r.green) || 0)
+      }
+      return out
+    }
+    console.warn('item_report_usage RPC unavailable; using paginated fallback:', error?.message)
+  }
+
+  const itemIdFilter = allowedItemIds ? [...allowedItemIds] : null
+  const PAGE = 1000
+  await Promise.all(chunkIds(hcIds, 100).map(async chunk => {
+    let from = 0
+    for (;;) {
+      let q = supabaseAdmin
+        .from('check_results')
+        .select('rag_status, template_item:template_items!inner(name)')
+        .in('health_check_id', chunk)
+        .in('rag_status', ['red', 'amber', 'green'])
+      if (itemIdFilter) q = q.in('template_item_id', itemIdFilter)
+      // Stable order is REQUIRED for .range() pagination — without it pages
+      // overlap/skip and the counts come out wrong.
+      const { data: rows, error } = await q.order('id', { ascending: true }).range(from, from + PAGE - 1)
+      if (error) { console.error('Item usage fallback error:', error); break }
+      const batch = rows || []
+      for (const row of batch as Array<Record<string, unknown>>) {
+        const ti = unwrapRef(row.template_item) as { name?: string } | null
+        const rag = row.rag_status as string
+        add(ti?.name, rag === 'red' ? 1 : 0, rag === 'amber' ? 1 : 0, rag === 'green' ? 1 : 0)
+      }
+      if (batch.length < PAGE) break
+      from += PAGE
+    }
+  }))
+  return out
+}
+
 export async function buildItemList(
   filters: PeriodFilters,
   startDate: string,
@@ -248,38 +314,14 @@ export async function buildItemList(
     return p
   }
 
-  // --- Usage pass: check_results -> template_items(name) ---
+  // --- Usage pass: per-item red/amber/green (DB-aggregated; see fetchUsageByName) ---
   if (hcIds.length) {
-    for (const chunk of chunkIds(hcIds)) {
-      let q = supabaseAdmin
-        .from('check_results')
-        .select('health_check_id, template_item_id, rag_status, template_item:template_items!inner(id, name)')
-        .in('health_check_id', chunk)
-      if (allowedItemIds) q = q.in('template_item_id', [...allowedItemIds])
-      const { data, error } = await q
-      if (error) { console.error('Item report usage query error:', error); continue }
-
-      for (const row of (data || []) as Array<Record<string, unknown>>) {
-        const ti = unwrapRef(row.template_item) as TemplateItemRef | null
-        if (!ti || !ti.name) continue
-        const rag = row.rag_status as string | null
-        if (rag !== 'red' && rag !== 'amber' && rag !== 'green') continue // exclude not_checked / null
-
-        const norm = normalizeName(ti.name)
-        picker.observe(norm, ti.name)
-        const u = usageByName.get(norm) ?? emptyUsage()
-        u.inspected++
-        totInspected++
-        if (rag === 'red') { u.red++; totRed++ }
-        else if (rag === 'amber') { u.amber++; totAmber++ }
-        else u.green++
-        usageByName.set(norm, u)
-
-        if (rag === 'red' || rag === 'amber') {
-          const d = hcDateById.get(row.health_check_id as string)
-          if (d) trendBucket(norm, bucketKey(d, opts.groupBy)).flagged++
-        }
-      }
+    const usage = await fetchUsageByName(hcIds, picker, allowedItemIds)
+    for (const [norm, u] of usage) {
+      usageByName.set(norm, u)
+      totInspected += u.inspected
+      totRed += u.red
+      totAmber += u.amber
     }
   }
 
@@ -299,11 +341,17 @@ export async function buildItemList(
       const { authorised, authValue } = resolveAuthorisation(item, childrenByParent, optionTotalsMap)
       const outcome = item.outcome_status
 
-      const refs = item.source === 'inspection' ? linkedItemRefs(item, allowedItemIds) : []
+      // Attribution is by junction link (repair -> check_result -> template_item),
+      // not by `source`: inspection-derived repairs carry source=null in practice,
+      // while MRI/manual items simply have no finding links.
+      const refs = linkedItemRefs(item, allowedItemIds)
 
       if (refs.length === 0) {
-        // Non-inspection-sourced, unlinked, or (templateId set) out-of-scope.
-        if (item.source !== 'inspection' || !allowedItemIds) {
+        // No in-scope inspection link → unmapped (MRI / manual / unlinked). With a
+        // template filter on, a repair linked only to OTHER templates' items is out
+        // of scope — skip it rather than dumping it into unmapped.
+        const outOfScope = allowedItemIds ? linkedItemRefs(item, null).length > 0 : false
+        if (!outOfScope) {
           unmapped.identified += value
           if (authorised) unmapped.sold += authValue
           else if (outcome === 'declined') unmapped.declined += value
@@ -460,49 +508,66 @@ export async function buildItemDetail(
   const targetCrIds: string[] = []
   const techStats = new Map<string, { flagged: number; red: number; amber: number }>()
   const trendMap = new Map<string, ItemTrendPoint>()
-  let displayName = item
+  const displayName = item
 
-  if (hcIds.length) {
-    for (const chunk of chunkIds(hcIds)) {
-      let q = supabaseAdmin
-        .from('check_results')
-        .select('id, health_check_id, checked_by, template_item_id, rag_status, template_item:template_items!inner(id, name)')
-        .in('health_check_id', chunk)
-      if (allowedItemIds) q = q.in('template_item_id', [...allowedItemIds])
-      const { data, error } = await q
-      if (error) { console.error('Item detail usage query error:', error); continue }
+  // Resolve the target item's template_item ids (case-insensitive, across templates)
+  let targetItemIds: string[] = []
+  {
+    const { data: tiRows } = await supabaseAdmin
+      .from('template_items')
+      .select('id, name')
+      .ilike('name', item)
+    targetItemIds = (tiRows || [])
+      .filter(r => normalizeName((r as { name: string }).name) === targetNorm)
+      .map(r => (r as { id: string }).id)
+    if (allowedItemIds) targetItemIds = targetItemIds.filter(id => allowedItemIds.has(id))
+  }
 
-      for (const row of (data || []) as Array<Record<string, unknown>>) {
-        const ti = unwrapRef(row.template_item) as TemplateItemRef | null
-        if (!ti || !ti.name || normalizeName(ti.name) !== targetNorm) continue
-        const rag = row.rag_status as string | null
-        if (rag !== 'red' && rag !== 'amber' && rag !== 'green') continue
+  // Usage / technician pass: only THIS item's check_results (filtered by id, paged → no row-cap truncation)
+  if (hcIds.length && targetItemIds.length) {
+    const PAGE = 1000
+    await Promise.all(chunkIds(hcIds, 100).map(async chunk => {
+      let from = 0
+      for (;;) {
+        const { data, error } = await supabaseAdmin
+          .from('check_results')
+          .select('id, health_check_id, checked_by, rag_status')
+          .in('template_item_id', targetItemIds)
+          .in('health_check_id', chunk)
+          .order('id', { ascending: true })
+          .range(from, from + PAGE - 1)
+        if (error) { console.error('Item detail usage query error:', error); break }
+        const batch = data || []
+        for (const row of batch as Array<Record<string, unknown>>) {
+          const rag = row.rag_status as string | null
+          if (rag !== 'red' && rag !== 'amber' && rag !== 'green') continue
+          usage.inspected++
+          if (rag === 'red') usage.red++
+          else if (rag === 'amber') usage.amber++
+          else usage.green++
+          targetCrIds.push(row.id as string)
 
-        displayName = ti.name
-        usage.inspected++
-        if (rag === 'red') usage.red++
-        else if (rag === 'amber') usage.amber++
-        else usage.green++
-        targetCrIds.push(row.id as string)
-
-        if (rag === 'red' || rag === 'amber') {
-          const techId = (row.checked_by as string | null) ?? hcTechById.get(row.health_check_id as string) ?? null
-          if (techId) {
-            const t = techStats.get(techId) ?? { flagged: 0, red: 0, amber: 0 }
-            t.flagged++
-            if (rag === 'red') t.red++; else t.amber++
-            techStats.set(techId, t)
-          }
-          const d = hcDateById.get(row.health_check_id as string)
-          if (d) {
-            const period = bucketKey(d, opts.groupBy)
-            const p = trendMap.get(period) ?? { period, identified: 0, sold: 0, flagged: 0 }
-            p.flagged++
-            trendMap.set(period, p)
+          if (rag === 'red' || rag === 'amber') {
+            const techId = (row.checked_by as string | null) ?? hcTechById.get(row.health_check_id as string) ?? null
+            if (techId) {
+              const t = techStats.get(techId) ?? { flagged: 0, red: 0, amber: 0 }
+              t.flagged++
+              if (rag === 'red') t.red++; else t.amber++
+              techStats.set(techId, t)
+            }
+            const d = hcDateById.get(row.health_check_id as string)
+            if (d) {
+              const period = bucketKey(d, opts.groupBy)
+              const p = trendMap.get(period) ?? { period, identified: 0, sold: 0, flagged: 0 }
+              p.flagged++
+              trendMap.set(period, p)
+            }
           }
         }
+        if (batch.length < PAGE) break
+        from += PAGE
       }
-    }
+    }))
   }
 
   // --- Reasons pass: check_result_reasons for the target's findings ---
@@ -540,7 +605,7 @@ export async function buildItemDetail(
     const childrenByParent = buildChildrenByParent(items)
 
     for (const it of items) {
-      if (it.deleted_at || it.parent_repair_item_id || it.source !== 'inspection') continue
+      if (it.deleted_at || it.parent_repair_item_id) continue
       const refs = linkedItemRefs(it, allowedItemIds)
       if (!refs.some(r => normalizeName(r.name) === targetNorm)) continue
 

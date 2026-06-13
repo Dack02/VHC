@@ -421,7 +421,7 @@ function ItemDetailDrawer({
                   <CartesianGrid strokeDasharray="3 3" stroke={CHART_COLORS.grayLight} />
                   <XAxis dataKey="label" tick={{ fontSize: 11 }} />
                   <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v: number, n: string) => (n === 'flagged' ? formatNumber(v) : formatCurrency(v))} />
+                  <Tooltip formatter={(value, name) => (name === 'flagged' ? formatNumber(Number(value) || 0) : formatCurrency(Number(value) || 0))} />
                   <Area type="monotone" dataKey="identified" stroke={CHART_COLORS.primary} fill={CHART_COLORS.primaryLight} name="Identified" />
                   <Area type="monotone" dataKey="sold" stroke={RAG_COLORS.green} fill={RAG_COLORS.green} fillOpacity={0.15} name="Sold" />
                 </AreaChart>
@@ -461,7 +461,7 @@ function ItemDetailDrawer({
                   <BarChart data={detail.technicians} layout="vertical" margin={{ left: 20, right: 20 }}>
                     <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
                     <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: number) => formatNumber(v)} />
+                    <Tooltip formatter={(value) => formatNumber(Number(value) || 0)} />
                     <Bar dataKey="flagged" name="Flagged" radius={[0, 4, 4, 0]}>
                       {detail.technicians.map((t, i) => (
                         <Cell key={i} fill={t.red >= t.amber ? RAG_COLORS.red : RAG_COLORS.amber} />

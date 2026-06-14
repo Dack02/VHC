@@ -702,7 +702,7 @@ export function Inspection() {
       const formData = new FormData()
       formData.append('file', blob, `photo_${Date.now()}.jpg`)
 
-      await fetch(
+      const uploadResponse = await fetch(
         `${import.meta.env.VITE_API_URL}/api/v1/health-checks/${id}/results/${resultId}/media`,
         {
           method: 'POST',
@@ -710,6 +710,13 @@ export function Inspection() {
           body: formData
         }
       )
+
+      // fetch() resolves even for 4xx/5xx, so without this check an upload
+      // that the server rejected would look successful and the technician
+      // would never know the photo wasn't saved.
+      if (!uploadResponse.ok) {
+        throw new Error(`Failed to upload photo (status ${uploadResponse.status})`)
+      }
 
       fetchJob()
     } catch (err) {

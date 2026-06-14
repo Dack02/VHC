@@ -67,6 +67,7 @@ import followUps from './routes/follow-ups.js'
 import followUpOutcomes from './routes/follow-up-outcomes.js'
 import followUpDispositions from './routes/follow-up-dispositions.js'
 import followUpTimelines from './routes/follow-up-timelines.js'
+import followUpSettings from './routes/follow-up-settings.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
@@ -199,6 +200,7 @@ app.route('/api/v1/organizations/:orgId/declined-reasons', declinedReasons)
 app.route('/api/v1/organizations/:orgId/follow-up-outcomes', followUpOutcomes)
 app.route('/api/v1/organizations/:orgId/follow-up-dispositions', followUpDispositions)
 app.route('/api/v1/organizations/:orgId/follow-up-timelines', followUpTimelines)
+app.route('/api/v1/organizations/:orgId/follow-up-settings', followUpSettings)
 
 // Unable to send reasons routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/unable-to-send-reasons', unableToSendReasons)

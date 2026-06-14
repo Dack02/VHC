@@ -109,7 +109,10 @@ followUps.get('/summary', async (c) => {
 followUps.post('/run-sweep', authorize(['super_admin', 'org_admin']), async (c) => {
   const auth = c.get('auth')
   try {
-    const result = await runFollowUpSweep(auth.orgId)
+    const result = await runFollowUpSweep(auth.orgId, { trigger: 'manual' })
+    if (result.disabled) {
+      return c.json({ error: 'Follow-up automation is disabled for this organisation. Enable it in Follow-Up Settings first.' }, 400)
+    }
     return c.json({ success: true, ...result })
   } catch (err) {
     console.error('Manual follow-up sweep error:', err)

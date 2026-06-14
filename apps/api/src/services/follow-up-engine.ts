@@ -81,6 +81,89 @@ function followUpDryRun(): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Per-org settings (organization_settings columns) — gate the sweep, simulation
+// mode, and the send window / quiet hours. Defaults are opt-in: an org with no
+// settings row (or follow_up_enabled = false) is treated as disabled.
+// ---------------------------------------------------------------------------
+
+export interface FollowUpSettings {
+  enabled: boolean
+  autoSweepEnabled: boolean
+  simulationMode: boolean
+  sendWindowEnabled: boolean
+  sendWindowStart: string // 'HH:MM'
+  sendWindowEnd: string // 'HH:MM'
+  skipWeekends: boolean
+  timezone: string
+  lastCreatedOn: string | null // 'YYYY-MM-DD' (org-local)
+}
+
+export async function getFollowUpSettings(organizationId: string): Promise<FollowUpSettings> {
+  const { data } = await supabaseAdmin
+    .from('organization_settings')
+    .select(
+      'follow_up_enabled, follow_up_auto_sweep_enabled, follow_up_simulation_mode, follow_up_send_window_enabled, follow_up_send_window_start, follow_up_send_window_end, follow_up_skip_weekends, follow_up_last_created_on, timezone'
+    )
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+  return {
+    enabled: data?.follow_up_enabled === true,
+    autoSweepEnabled: data?.follow_up_auto_sweep_enabled !== false,
+    simulationMode: data?.follow_up_simulation_mode === true,
+    sendWindowEnabled: data?.follow_up_send_window_enabled === true,
+    sendWindowStart: data?.follow_up_send_window_start || '08:00',
+    sendWindowEnd: data?.follow_up_send_window_end || '18:00',
+    skipWeekends: data?.follow_up_skip_weekends === true,
+    timezone: data?.timezone || 'Europe/London',
+    lastCreatedOn: data?.follow_up_last_created_on || null,
+  }
+}
+
+function hmToMinutes(hm: string): number {
+  const [h, m] = (hm || '').split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+
+/** Current org-local date (YYYY-MM-DD), minutes-since-midnight, and weekday (0=Sun..6=Sat). */
+function nowInOrgTz(tz: string): { dateStr: string; minutes: number; weekday: number } {
+  const now = new Date()
+  const dateStr = now.toLocaleDateString('en-CA', { timeZone: tz })
+  const hm = now.toLocaleTimeString('en-GB', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit' })
+  const wd = now.toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' })
+  const wdMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }
+  return { dateStr, minutes: hmToMinutes(hm), weekday: wdMap[wd] ?? 0 }
+}
+
+/**
+ * Is "now" inside the org's configured send window? Customer-facing SMS/email is
+ * only dispatched when this is true; out-of-window cases are left due and picked
+ * up on a later tick once the window opens. A misconfigured window (start >= end)
+ * is treated as always-open so a typo can't silently halt all follow-ups.
+ */
+function withinSendWindow(s: FollowUpSettings): boolean {
+  if (!s.sendWindowEnabled) return true
+  const { minutes, weekday } = nowInOrgTz(s.timezone)
+  if (s.skipWeekends && (weekday === 0 || weekday === 6)) return false
+  const start = hmToMinutes(s.sendWindowStart)
+  const end = hmToMinutes(s.sendWindowEnd)
+  if (start >= end) return true
+  return minutes >= start && minutes < end
+}
+
+// Fallback sample templates for the "test send" preview, used when the org has no
+// default timeline yet. Mirror the seeded "Standard recovery" cadence.
+const SAMPLE_SMS =
+  'Hi {{customerFirstName}}, a reminder from {{dealershipName}}: your {{vehicleReg}} has work due soon (approx {{deferredTotal}}). View details & book: {{followUpUrl}}'
+const SAMPLE_EMAIL_SUBJECT = 'Work due soon on your {{vehicleReg}} — {{dealershipName}}'
+const SAMPLE_EMAIL_BODY =
+  'Hi {{customerFirstName}},\n\n' +
+  'During your recent visit we identified work on your {{vehicleMakeModel}} ({{vehicleReg}}) that was deferred. It is now coming due.\n\n' +
+  '{{deferredItemsTable}}\n\n' +
+  'Estimated total: {{deferredTotal}}\n\n' +
+  'To book or ask a question, view the full details here: {{followUpUrl}}\n\n' +
+  'Kind regards,\n{{dealershipName}}\n{{dealershipPhone}}'
+
+// ---------------------------------------------------------------------------
 // Types (loose — these mirror the DB rows we touch)
 // ---------------------------------------------------------------------------
 
@@ -613,10 +696,10 @@ async function buildContext(c: CaseRow): Promise<{
 // Execute one timeline step for a case
 // ---------------------------------------------------------------------------
 
-async function executeStep(c: CaseRow, step: TimelineStep, allSteps: TimelineStep[], timeline: Timeline): Promise<void> {
+async function executeStep(c: CaseRow, step: TimelineStep, allSteps: TimelineStep[], timeline: Timeline, simulate = false): Promise<void> {
   const org = c.organization_id
   const now = new Date().toISOString()
-  const dryRun = followUpDryRun()
+  const dryRun = followUpDryRun() || simulate
 
   // Manual call — park the case for a human
   if (step.action === 'manual_call') {
@@ -718,7 +801,7 @@ async function executeStep(c: CaseRow, step: TimelineStep, allSteps: TimelineSte
 // Process one due case
 // ---------------------------------------------------------------------------
 
-async function processCase(c: CaseRow, tlCache: Map<string, Timeline | null>): Promise<void> {
+async function processCase(c: CaseRow, tlCache: Map<string, Timeline | null>, settings: FollowUpSettings): Promise<void> {
   const org = c.organization_id
 
   // 1. Resolution check — are any snapshot items still deferred?
@@ -786,10 +869,16 @@ async function processCase(c: CaseRow, tlCache: Map<string, Timeline | null>): P
     return
   }
 
-  await executeStep(c, next, timeline.steps, timeline)
+  // Quiet hours — only gate customer-facing send steps. Leave the case due (no
+  // state change, no log) so a later tick inside the window dispatches it.
+  // manual_call / auto_close steps advance any time.
+  const isSendStep = next.action === 'send_sms' || next.action === 'send_email' || next.action === 'send_both'
+  if (isSendStep && !withinSendWindow(settings)) return
+
+  await executeStep(c, next, timeline.steps, timeline, settings.simulationMode)
 }
 
-async function processDueCasesForOrg(organizationId: string): Promise<number> {
+async function processDueCasesForOrg(organizationId: string, settings: FollowUpSettings): Promise<number> {
   const nowIso = new Date().toISOString()
   const { data: cases, error } = await supabaseAdmin
     .from('follow_up_cases')
@@ -812,7 +901,7 @@ async function processDueCasesForOrg(organizationId: string): Promise<number> {
   let processed = 0
   for (const c of cases as CaseRow[]) {
     try {
-      await processCase(c, tlCache)
+      await processCase(c, tlCache, settings)
       processed++
     } catch (e) {
       logger.error('Follow-up: error processing case', { caseId: c.id, error: String(e) })
@@ -825,9 +914,35 @@ async function processDueCasesForOrg(organizationId: string): Promise<number> {
 // Public entry points
 // ---------------------------------------------------------------------------
 
-export async function runFollowUpSweep(organizationId?: string): Promise<{ orgsProcessed: number; casesCreated: number; casesProcessed: number; dryRun: boolean }> {
-  const dryRun = followUpDryRun()
-  if (dryRun) logger.warn('Follow-up sweep running in DRY-RUN mode — no SMS/email will be sent (FOLLOW_UP_DRY_RUN)')
+export interface SweepResult {
+  orgsProcessed: number
+  orgsSwept: number
+  casesCreated: number
+  casesProcessed: number
+  dryRun: boolean
+  disabled: boolean
+}
+
+/**
+ * Run the follow-up sweep.
+ *
+ * trigger 'scheduled' (default) is the recurring tick: it skips any org that is
+ * disabled or has the automatic sweep turned off, and only runs the heavier
+ * deferred-item scan once per org per local day. trigger 'manual' is the admin
+ * "Run sweep now" action: it still requires the org to be enabled, but forces a
+ * fresh case scan and ignores the automatic-sweep toggle.
+ *
+ * The send window / quiet hours and per-org simulation mode are applied inside
+ * processCase regardless of trigger.
+ */
+export async function runFollowUpSweep(
+  organizationId?: string,
+  opts: { trigger?: 'scheduled' | 'manual' } = {}
+): Promise<SweepResult> {
+  const trigger = opts.trigger ?? 'scheduled'
+  const globalDryRun = followUpDryRun()
+  if (globalDryRun) logger.warn('Follow-up sweep running in DRY-RUN mode — no SMS/email will be sent (FOLLOW_UP_DRY_RUN)')
+
   let orgIds: string[]
   if (organizationId) {
     orgIds = [organizationId]
@@ -836,18 +951,45 @@ export async function runFollowUpSweep(organizationId?: string): Promise<{ orgsP
     orgIds = (data || []).map((o) => o.id)
   }
 
+  let orgsSwept = 0
   let casesCreated = 0
   let casesProcessed = 0
+  let anySimulation = false
+
   for (const orgId of orgIds) {
     try {
-      casesCreated += await createCasesForOrg(orgId)
-      casesProcessed += await processDueCasesForOrg(orgId)
+      const settings = await getFollowUpSettings(orgId)
+      if (!settings.enabled) continue // opt-in: skip disabled orgs entirely
+      if (trigger === 'scheduled' && !settings.autoSweepEnabled) continue // manual-only org
+      if (settings.simulationMode) anySimulation = true
+      orgsSwept++
+
+      // Heavy deferred-item scan: once per org per local day on the schedule;
+      // always on a manual run so a just-deferred item shows up immediately.
+      const { dateStr } = nowInOrgTz(settings.timezone)
+      const shouldCreate = trigger === 'manual' || settings.lastCreatedOn !== dateStr
+      if (shouldCreate) casesCreated += await createCasesForOrg(orgId)
+
+      casesProcessed += await processDueCasesForOrg(orgId, settings)
+
+      const upd: Record<string, unknown> = { follow_up_last_swept_at: new Date().toISOString() }
+      if (shouldCreate) upd.follow_up_last_created_on = dateStr
+      await supabaseAdmin.from('organization_settings').update(upd).eq('organization_id', orgId)
     } catch (e) {
       logger.error('Follow-up: sweep failed for org', { organizationId: orgId, error: String(e) })
     }
   }
-  logger.info('Follow-up sweep complete', { orgs: orgIds.length, casesCreated, casesProcessed, dryRun })
-  return { orgsProcessed: orgIds.length, casesCreated, casesProcessed, dryRun }
+
+  const dryRun = globalDryRun || anySimulation
+  if (orgsSwept > 0) logger.info('Follow-up sweep complete', { trigger, orgs: orgIds.length, orgsSwept, casesCreated, casesProcessed, dryRun })
+  return {
+    orgsProcessed: orgIds.length,
+    orgsSwept,
+    casesCreated,
+    casesProcessed,
+    dryRun,
+    disabled: trigger === 'manual' && orgIds.length === 1 && orgsSwept === 0,
+  }
 }
 
 /**
@@ -890,4 +1032,74 @@ export async function handleInboundSmsForFollowUps(params: {
     await supabaseAdmin.from('follow_up_cases').update({ status: 'engaged', next_action_at: now, updated_at: now }).eq('id', c.id)
     await logEvent(c.id, organizationId, 'sms_in', { channel: 'sms', body, metadata: { messageId } })
   }
+}
+
+/**
+ * Render a representative follow-up message for the "test send" feature. Uses the
+ * org's default-timeline templates (so what you preview is what customers get),
+ * falling back to the seeded sample copy if no default timeline exists yet. The
+ * content is filled with obvious sample data and a placeholder link.
+ */
+export async function renderFollowUpSample(
+  organizationId: string,
+  channel: 'sms' | 'email'
+): Promise<{ sms?: string; subject?: string; html?: string; text?: string }> {
+  // Pull the first SMS- and email-bearing steps from the active default timeline.
+  let smsTpl: string | null = null
+  let emailSubjectTpl: string | null = null
+  let emailBodyTpl: string | null = null
+
+  const { data: tlRow } = await supabaseAdmin
+    .from('follow_up_timelines')
+    .select('id')
+    .eq('organization_id', organizationId)
+    .eq('is_default', true)
+    .eq('is_active', true)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (tlRow) {
+    const { data: steps } = await supabaseAdmin
+      .from('follow_up_timeline_steps')
+      .select('action, sms_body, email_subject, email_body, step_order')
+      .eq('timeline_id', tlRow.id)
+      .order('step_order', { ascending: true })
+    for (const st of (steps || []) as TimelineStep[]) {
+      if (!smsTpl && (st.action === 'send_sms' || st.action === 'send_both') && st.sms_body) smsTpl = st.sms_body
+      if (!emailBodyTpl && (st.action === 'send_email' || st.action === 'send_both') && st.email_body) {
+        emailBodyTpl = st.email_body
+        emailSubjectTpl = st.email_subject
+      }
+    }
+  }
+
+  const branding = await getOrganizationBranding(organizationId)
+  const base = process.env.PUBLIC_APP_URL || 'http://localhost:5183'
+  const sampleDue = fmtDate(addDays(new Date(), 21))
+  const vars: Record<string, string> = {
+    customerFirstName: 'Alex',
+    customerName: 'Alex Sample',
+    vehicleReg: 'AB12 CDE',
+    vehicleMakeModel: 'Ford Focus',
+    dealershipName: branding.organizationName || 'Your dealership',
+    dealershipPhone: branding.phone || '',
+    followUpUrl: `${base}/view/sample`,
+    deferredTotal: gbp(480),
+    itemCount: '3',
+    dueDate: sampleDue,
+  }
+
+  if (channel === 'sms') {
+    return { sms: render(smsTpl || SAMPLE_SMS, vars) }
+  }
+
+  const sampleItems: CaseItemSnapshot[] = [
+    { name_snapshot: 'Front brake pads & discs', value_snapshot: 320, due_date_snapshot: addDays(new Date(), 21).toISOString().slice(0, 10) },
+    { name_snapshot: 'Air filter', value_snapshot: 45, due_date_snapshot: null },
+    { name_snapshot: 'Wiper blades (pair)', value_snapshot: 115, due_date_snapshot: null },
+  ]
+  const subject = render(emailSubjectTpl || SAMPLE_EMAIL_SUBJECT, vars)
+  const { html, text } = buildEmail(emailBodyTpl || SAMPLE_EMAIL_BODY, vars, sampleItems, branding)
+  return { subject, html, text }
 }

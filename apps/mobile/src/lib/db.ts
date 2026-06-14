@@ -32,6 +32,7 @@ interface VHCDBSchema extends DBSchema {
       result_id: string
       photo_data: string // base64
       created_at: string
+      retries?: number // undefined on records queued before retry tracking existed
     }
     indexes: { 'by-health-check': string }
   }
@@ -181,7 +182,8 @@ export const db = {
       health_check_id: healthCheckId,
       result_id: resultId,
       photo_data: photoData,
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      retries: 0
     })
     return id
   },
@@ -197,6 +199,14 @@ export const db = {
   async removeQueuedMedia(id: string) {
     const database = await getDB()
     await database.delete('mediaQueue', id)
+  },
+
+  async updateQueuedMedia(id: string, retries: number) {
+    const database = await getDB()
+    const item = await database.get('mediaQueue', id)
+    if (item) {
+      await database.put('mediaQueue', { ...item, retries })
+    }
   },
 
   // Sync queue

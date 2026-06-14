@@ -318,7 +318,7 @@ export default function DashboardLayout() {
                 <img
                   src={branding.logoUrl}
                   alt={branding.organizationName}
-                  className="h-8 w-auto max-w-full object-contain"
+                  className="h-16 w-auto max-w-full object-contain"
                 />
               ) : (
                 <h1 className="text-xl font-bold text-primary">

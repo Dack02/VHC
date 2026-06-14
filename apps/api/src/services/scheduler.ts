@@ -327,35 +327,29 @@ export async function initializeAutoCloseSchedules() {
 }
 
 /**
- * Start the daily Follow-Up sweep. Runs once per day at FOLLOW_UP_SWEEP_HOUR
- * (server local time, default 07:00). In-process so it works whether or not the
- * BullMQ worker / Redis are available; the sweep itself is idempotent.
- * See docs/follow-up-module-spec.md §10.
+ * Start the Follow-Up sweep. Ticks every FOLLOW_UP_SWEEP_INTERVAL_MIN minutes
+ * (default 30) rather than once a day, so per-org quiet hours / send windows can
+ * be honoured: an out-of-window case is left due and dispatched on a later tick
+ * once its window opens. The heavier deferred-item scan is still gated to once
+ * per org per local day inside the engine, and the whole sweep is idempotent and
+ * skips orgs that haven't opted in. In-process so it runs whether or not the
+ * BullMQ worker / Redis are available. See docs/follow-up-module-spec.md §10.
  */
 export function startFollowUpSweepSchedule() {
-  const hour = parseInt(process.env.FOLLOW_UP_SWEEP_HOUR || '7', 10)
+  const intervalMin = Math.max(1, parseInt(process.env.FOLLOW_UP_SWEEP_INTERVAL_MIN || '30', 10))
+  const tickMs = intervalMin * 60 * 1000
 
-  function msUntilNextRun(): number {
-    const now = new Date()
-    const next = new Date()
-    next.setHours(hour, 0, 0, 0)
-    if (next <= now) next.setDate(next.getDate() + 1)
-    return next.getTime() - now.getTime()
+  async function tick() {
+    try {
+      await runFollowUpSweep(undefined, { trigger: 'scheduled' })
+    } catch (err) {
+      console.error('[Follow-Up Sweep] Run failed:', err)
+    }
   }
 
-  function scheduleNext() {
-    setTimeout(async () => {
-      try {
-        await runFollowUpSweep()
-      } catch (err) {
-        console.error('[Follow-Up Sweep] Run failed:', err)
-      }
-      scheduleNext()
-    }, msUntilNextRun())
-  }
-
-  scheduleNext()
-  console.log(`[Follow-Up Sweep] Scheduled daily at ${String(hour).padStart(2, '0')}:00 (server time)`)
+  setTimeout(tick, 60 * 1000) // first run shortly after startup
+  setInterval(tick, tickMs)
+  console.log(`[Follow-Up Sweep] Scheduled (every ${intervalMin} min, per-org send window aware)`)
 }
 
 // =============================================================================

@@ -96,6 +96,7 @@ const FollowUpList = lazy(() => import('./pages/FollowUps/FollowUpList'))
 const FollowUpOutcomes = lazy(() => import('./pages/Settings/FollowUpOutcomes'))
 const FollowUpDispositions = lazy(() => import('./pages/Settings/FollowUpDispositions'))
 const FollowUpTimelines = lazy(() => import('./pages/Settings/FollowUpTimelines'))
+const FollowUpSettings = lazy(() => import('./pages/Settings/FollowUpSettings'))
 
 // Page loading fallback
 function PageLoader() {
@@ -200,6 +201,7 @@ function App() {
                         <Route path="/settings/supplier-types" element={<SupplierTypes />} />
                         <Route path="/settings/pricing" element={<PricingSettings />} />
                         <Route path="/settings/declined-reasons" element={<DeclinedReasons />} />
+                        <Route path="/settings/follow-up-settings" element={<FollowUpSettings />} />
                         <Route path="/settings/follow-up-outcomes" element={<FollowUpOutcomes />} />
                         <Route path="/settings/follow-up-dispositions" element={<FollowUpDispositions />} />
                         <Route path="/settings/follow-up-timelines" element={<FollowUpTimelines />} />

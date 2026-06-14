@@ -87,6 +87,7 @@ const Messages = lazy(() => import('./pages/Messages/Messages'))
 const NotesPage = lazy(() => import('./pages/Notes/NotesPage'))
 const ServicePackages = lazy(() => import('./pages/ServicePackages/ServicePackages'))
 const DailySmsOverview = lazy(() => import('./pages/Settings/DailySmsOverview'))
+const LibraryGapReport = lazy(() => import('./pages/Settings/LibraryGapReport'))
 const WorkshopBoard = lazy(() => import('./pages/WorkshopBoard/WorkshopBoard'))
 const WorkshopStatuses = lazy(() => import('./pages/Settings/WorkshopStatuses'))
 const WorkshopBoardSettings = lazy(() => import('./pages/Settings/WorkshopBoardSettings'))
@@ -210,6 +211,7 @@ function App() {
                         <Route path="/settings/workflow" element={<WorkflowSettings />} />
                         <Route path="/settings/mri-items" element={<MriItemsSettings />} />
                         <Route path="/settings/daily-sms-overview" element={<DailySmsOverview />} />
+                        <Route path="/settings/library-gap-report" element={<LibraryGapReport />} />
                         <Route path="/settings/workshop-statuses" element={<WorkshopStatuses />} />
                         <Route path="/settings/workshop-board" element={<WorkshopBoardSettings />} />
                         <Route path="/settings/time-tracking" element={<TimeTrackingSettings />} />

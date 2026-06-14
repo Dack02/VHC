@@ -887,6 +887,28 @@ status.post('/:id/clock-in', authorize(['super_admin', 'org_admin', 'site_admin'
         .eq('id', openEntry.id)
     }
 
+    // A tech can't be on a break and on a job at once: clocking onto a job ends
+    // any open shop-level indirect segment (job-less break/cleaning/training).
+    const { data: openIndirect } = await supabaseAdmin
+      .from('technician_time_entries')
+      .select('id, clock_in_at')
+      .eq('technician_id', auth.user.id)
+      .eq('organization_id', auth.orgId)
+      .is('health_check_id', null)
+      .is('clock_out_at', null)
+
+    for (const seg of openIndirect || []) {
+      const closeAt = new Date()
+      await supabaseAdmin
+        .from('technician_time_entries')
+        .update({
+          clock_out_at: closeAt.toISOString(),
+          duration_minutes: Math.round((closeAt.getTime() - new Date(seg.clock_in_at).getTime()) / 60000),
+          closed_reason: 'reclock'
+        })
+        .eq('id', seg.id)
+    }
+
     // Resolve the time category. An optional categoryKey in the body overrides the
     // split-by-milestone default: inspection before the VHC is completed, repair
     // after. Falls back to no category (treated as productive) if not found.

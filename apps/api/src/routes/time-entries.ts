@@ -61,14 +61,26 @@ timeEntries.post('/indirect', async (c) => {
   if (!category || category.is_active === false) return c.json({ error: 'Unknown or inactive category' }, 400)
   if (category.kind !== 'indirect') return c.json({ error: 'Category is not an indirect category' }, 400)
 
-  // Only one open shop-level indirect segment per tech — close any existing first.
-  await supabaseAdmin
+  // One open clock at a time per tech: starting a break ends whatever they were
+  // on — a job segment they forgot to stop, or a previous indirect segment.
+  const { data: openSegs } = await supabaseAdmin
     .from('technician_time_entries')
-    .update({ clock_out_at: new Date().toISOString(), closed_reason: 'reclock' })
+    .select('id, clock_in_at')
     .eq('technician_id', auth.user.id)
     .eq('organization_id', auth.orgId)
-    .is('health_check_id', null)
     .is('clock_out_at', null)
+
+  for (const seg of openSegs || []) {
+    const closeAt = new Date()
+    await supabaseAdmin
+      .from('technician_time_entries')
+      .update({
+        clock_out_at: closeAt.toISOString(),
+        duration_minutes: Math.round((closeAt.getTime() - new Date(seg.clock_in_at).getTime()) / 60000),
+        closed_reason: 'reclock'
+      })
+      .eq('id', seg.id)
+  }
 
   const { data: entry, error } = await supabaseAdmin
     .from('technician_time_entries')

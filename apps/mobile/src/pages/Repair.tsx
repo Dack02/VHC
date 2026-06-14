@@ -5,7 +5,6 @@ import { api, HealthCheck } from '../lib/api'
 import { Card, CardHeader, CardContent } from '../components/Card'
 import { Button } from '../components/Button'
 import { JobTimeSummary, JobTimeData } from '../components/JobTimeSummary'
-import IndirectTimeControl from '../components/IndirectTimeControl'
 
 /**
  * Repair re-clock screen. After a VHC is authorised the technician returns to
@@ -237,7 +236,6 @@ export function Repair() {
       {/* Footer — clock controls */}
       {!isComplete && (
         <footer className="bg-white border-t border-gray-200 safe-area-inset-bottom">
-          {id && <div className="px-4 pt-3 empty:hidden"><IndirectTimeControl healthCheckId={id} /></div>}
           <div className="p-4 space-y-2">
             {clockedOn ? (
               <div className="flex gap-2">

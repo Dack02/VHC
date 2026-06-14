@@ -65,7 +65,7 @@ function fmtDay(iso: string): string {
  * expandable per-segment history. Internal only — clocking time never appears
  * on the customer report. See docs/technician-job-clocking-spec.md §6.
  *
- * Drop in with just `healthCheckId` (mirrors IndirectTimeControl). Pass
+ * Drop in with just `healthCheckId` (self-contained). Pass
  * `refreshKey` to force a re-fetch after a clock action, and `onData` to let a
  * parent observe the breakdown (e.g. the Repair screen reads `activeClockInAt`
  * to pick its clock-on/off button) without a second fetch of the same endpoint.

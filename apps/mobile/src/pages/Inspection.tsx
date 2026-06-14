@@ -20,7 +20,6 @@ import { ReasonSelector } from '../components/ReasonSelector'
 import { LocationPicker } from '../components/LocationPicker'
 import { MriScanTab } from './MriScanTab'
 import type { VehicleLocation } from '../lib/api'
-import IndirectTimeControl from '../components/IndirectTimeControl'
 import { JobTimeSummary } from '../components/JobTimeSummary'
 
 // State for tracking which item has ReasonSelector open
@@ -1084,7 +1083,6 @@ export function Inspection() {
 
       {/* Footer */}
       <footer className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 safe-area-inset-bottom">
-        {id && <div className="px-4 pt-3 empty:hidden"><IndirectTimeControl healthCheckId={id} /></div>}
         <div className="flex gap-2 p-4">
           {currentSectionIndex > 0 && (
             <Button

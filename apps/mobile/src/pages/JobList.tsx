@@ -19,6 +19,8 @@ export function JobList() {
   const [filter, setFilter] = useState<FilterType>('mine')
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [indirectEnabled, setIndirectEnabled] = useState(false)
+  const [indirectActive, setIndirectActive] = useState(false)
 
   const fetchJobs = useCallback(async (showRefreshing = false) => {
     if (!session) return
@@ -64,6 +66,34 @@ export function JobList() {
   useEffect(() => {
     fetchJobs()
   }, [fetchJobs])
+
+  // Indirect-time entry point: only surfaced when the org enables it. Also
+  // reflect an in-progress break so a tech doesn't forget they're on indirect.
+  useEffect(() => {
+    const orgId = (user as any)?.organization?.id || (user as any)?.organizationId
+    if (!session || !orgId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const settings = await api<{ indirectTimeEnabled: boolean }>(
+          `/api/v1/organizations/${orgId}/time-tracking-settings`,
+          { token: session.access_token }
+        )
+        if (cancelled) return
+        setIndirectEnabled(settings.indirectTimeEnabled)
+        if (settings.indirectTimeEnabled) {
+          const { active } = await api<{ active: { id: string } | null }>(
+            `/api/v1/time-entries/indirect/active`,
+            { token: session.access_token }
+          )
+          if (!cancelled) setIndirectActive(!!active)
+        }
+      } catch {
+        /* leave hidden on failure */
+      }
+    })()
+    return () => { cancelled = true }
+  }, [session, user])
 
   // Pull-to-refresh handler
   const handleRefresh = () => {
@@ -134,6 +164,14 @@ export function JobList() {
           <div className="flex items-center gap-2">
             {!isOnline && (
               <Badge variant="amber" size="sm">Offline</Badge>
+            )}
+            {indirectEnabled && (
+              <button
+                onClick={() => navigate('/indirect')}
+                className={`text-sm underline ${indirectActive ? 'text-amber-300 font-semibold' : 'text-blue-200'}`}
+              >
+                {indirectActive ? '● Indirect' : 'Indirect'}
+              </button>
             )}
             <button
               onClick={() => navigate('/board')}

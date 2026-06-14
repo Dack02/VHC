@@ -5,6 +5,7 @@
 import { scheduleReminder, cancelReminders, queueNotification, scheduleDailySmsOverview, scheduleCloseStaleEntries } from './queue.js'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { runFollowUpSweep } from './follow-up-engine.js'
+import { sendLibraryGapReport } from './library-gap-report.js'
 
 // Default reminder schedule (can be overridden by organization settings)
 const DEFAULT_REMINDER_SCHEDULE = [
@@ -355,4 +356,72 @@ export function startFollowUpSweepSchedule() {
 
   scheduleNext()
   console.log(`[Follow-Up Sweep] Scheduled daily at ${String(hour).padStart(2, '0')}:00 (server time)`)
+}
+
+// =============================================================================
+// Library Gap Report — daily digest of manually-typed inspection notes.
+// =============================================================================
+
+const LIBRARY_GAP_TICK_MS = 15 * 60 * 1000
+
+function hmToMinutes(hm: string): number {
+  const [h, m] = (hm || '').split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+
+/**
+ * One scheduler tick: for every org with the report enabled, send the digest if
+ * the org-local clock has reached its configured time and it hasn't already run
+ * today (tracked by library_gap_report_last_sent_on). Per-org timezone aware and
+ * idempotent across restarts, so it works in-process without the BullMQ worker.
+ */
+export async function runLibraryGapReportTick() {
+  try {
+    const { data: settings, error } = await supabaseAdmin
+      .from('organization_settings')
+      .select('organization_id, library_gap_report_time, library_gap_report_last_sent_on, timezone')
+      .eq('library_gap_report_enabled', true)
+
+    if (error || !settings || settings.length === 0) return
+
+    const now = new Date()
+    for (const s of settings) {
+      const tz = s.timezone || 'Europe/London'
+      const localToday = now.toLocaleDateString('en-CA', { timeZone: tz })
+      const localHm = now.toLocaleTimeString('en-GB', {
+        timeZone: tz,
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+
+      if (s.library_gap_report_last_sent_on === localToday) continue // already ran today
+      if (hmToMinutes(localHm) < hmToMinutes(s.library_gap_report_time || '07:00')) continue // not time yet
+
+      try {
+        await sendLibraryGapReport(s.organization_id)
+      } catch (err) {
+        console.error(`[Library Gap Report] Send failed for org ${s.organization_id}:`, err)
+      }
+
+      // Mark as run today regardless of send/skip so we don't retry every tick.
+      await supabaseAdmin
+        .from('organization_settings')
+        .update({ library_gap_report_last_sent_on: localToday })
+        .eq('organization_id', s.organization_id)
+    }
+  } catch (err) {
+    console.error('[Library Gap Report] Tick error:', err)
+  }
+}
+
+/**
+ * Start the Library Gap Report scheduler: tick shortly after startup, then every
+ * 15 minutes. The per-org last_sent_on guard makes repeated ticks and restarts
+ * safe. In-process so it runs in production (the BullMQ worker does not).
+ */
+export function startLibraryGapReportSchedule() {
+  setTimeout(() => { runLibraryGapReportTick() }, 60 * 1000)
+  setInterval(() => { runLibraryGapReportTick() }, LIBRARY_GAP_TICK_MS)
+  console.log('[Library Gap Report] Scheduled (15-min tick, per-org send time)')
 }

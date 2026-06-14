@@ -61,6 +61,7 @@ import twilioWebhookRoutes from './routes/webhooks/twilio.js'
 import smsConversations from './routes/sms-conversations.js'
 import messages from './routes/messages.js'
 import dailySmsOverview from './routes/daily-sms-overview.js'
+import libraryGapReport from './routes/library-gap-report.js'
 import workshopBoard from './routes/workshop-board.js'
 import followUps from './routes/follow-ups.js'
 import followUpOutcomes from './routes/follow-up-outcomes.js'
@@ -70,7 +71,7 @@ import followUpTimelines from './routes/follow-up-timelines.js'
 // Services
 import { initializeWebSocket } from './services/websocket.js'
 import { checkRedisConnection, updateRedisStatus } from './services/queue.js'
-import { startScheduledCleanupTasks, initializeDailySmsOverviewSchedules, initializeAutoCloseSchedules, startFollowUpSweepSchedule } from './services/scheduler.js'
+import { startScheduledCleanupTasks, initializeDailySmsOverviewSchedules, initializeAutoCloseSchedules, startFollowUpSweepSchedule, startLibraryGapReportSchedule } from './services/scheduler.js'
 
 const app = new Hono()
 
@@ -223,6 +224,9 @@ app.route('/api/v1/organizations/:orgId/service-packages', servicePackages)
 // Daily SMS overview routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/daily-sms-overview', dailySmsOverview)
 
+// Library Gap Report routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/library-gap-report', libraryGapReport)
+
 // Check-in settings and MRI items routes (nested under organizations)
 app.route('/api/v1/organizations', checkinSettings)
 app.route('/api/v1/organizations', timeTrackingSettings)
@@ -280,6 +284,9 @@ startScheduledCleanupTasks()
 
 // Start the daily Follow-Up sweep (deferred-work recovery)
 startFollowUpSweepSchedule()
+
+// Start the Library Gap Report scheduler (daily digest of manually-typed notes)
+startLibraryGapReportSchedule()
 
 logger.info(`Server started`, { port, environment: process.env.NODE_ENV || 'development' })
 

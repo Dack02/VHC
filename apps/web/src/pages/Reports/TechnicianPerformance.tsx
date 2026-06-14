@@ -31,6 +31,7 @@ interface TechnicianData {
     libraryUsageRate: number
     avgPhotos: number
     brakeDiscNotMeasured: number
+    brakeDiscUnableToAccess: number
   }>
   timeByTech: Array<{ name: string; avgTime: number }>
   timeDistribution: Array<{ bucket: string; count: number }>
@@ -61,6 +62,11 @@ export default function TechnicianPerformance() {
       const color = count === 0 ? 'text-green-600' : count <= 2 ? 'text-amber-600' : 'text-red-600'
       return <span className={`font-medium ${color}`}>{count}</span>
     }, align: 'right', sortable: true, sortValue: r => r.brakeDiscNotMeasured },
+    { key: 'brakeDiscUnableToAccess', label: 'Unable to Access', render: r => {
+      const count = r.brakeDiscUnableToAccess
+      const color = count === 0 ? 'text-green-600' : count <= 2 ? 'text-amber-600' : 'text-red-600'
+      return <span className={`font-medium ${color}`}>{count}</span>
+    }, align: 'right', sortable: true, sortValue: r => r.brakeDiscUnableToAccess },
     { key: 'libraryUsage', label: 'Library %', render: r => {
       const rate = r.libraryUsageRate
       const denominator = r.libraryOnlyCount + r.freeTextOnlyCount + r.bothCount

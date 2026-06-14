@@ -1264,6 +1264,7 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       noReasonCount: number
       totalPhotos: number
       brakeDiscNotMeasured: number
+      brakeDiscUnableToAccess: number
     }> = {}
 
     // Time distribution buckets (minutes)
@@ -1293,6 +1294,7 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           noReasonCount: 0,
           totalPhotos: 0,
           brakeDiscNotMeasured: 0,
+          brakeDiscUnableToAccess: 0,
         }
       }
 
@@ -1409,46 +1411,74 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       }
     }
 
-    // --- Brake disc "not measured" per technician (count of health checks with any unmeasured disc) ---
+    // --- Brake disc inspection gaps per technician (counts of health checks) ---
+    //   • brakeDiscNotMeasured     — disc left blank with NO reason given
+    //   • brakeDiscUnableToAccess  — disc left blank but flagged "unable to access"
+    // Both are deduped per health check (a job with several affected discs counts
+    // once). Drum axles have no disc to measure and are excluded entirely.
     if (hcIds.length > 0) {
-      // Track which health checks have at least one unmeasured disc per technician
       const hcsWithUnmeasuredDisc: Record<string, Set<string>> = {}
+      const hcsWithUnableDisc: Record<string, Set<string>> = {}
       const brakeBatchSize = 500
       for (let i = 0; i < hcIds.length; i += brakeBatchSize) {
         const batch = hcIds.slice(i, i + brakeBatchSize)
-        const { data: brakeResults } = await supabaseAdmin
-          .from('check_results')
-          .select('health_check_id, value, template_item:template_items!inner(item_type)')
-          .in('health_check_id', batch)
-          .eq('template_item.item_type', 'brake_measurement')
+        // Paginate within each batch — a 500-HC batch can exceed the 1000-row
+        // PostgREST cap (≈2 brake rows per HC), which would silently drop results
+        // and undercount these columns.
+        const pageSize = 1000
+        let offset = 0
+        let hasMore = true
+        while (hasMore) {
+          const { data: brakeResults } = await supabaseAdmin
+            .from('check_results')
+            .select('health_check_id, value, template_item:template_items!inner(item_type)')
+            .in('health_check_id', batch)
+            .eq('template_item.item_type', 'brake_measurement')
+            .range(offset, offset + pageSize - 1)
 
-        for (const br of brakeResults || []) {
-          const techId = hcTechMap[br.health_check_id]
-          if (!techId || !techData[techId]) continue
+          const rows = brakeResults || []
+          for (const br of rows) {
+            const techId = hcTechMap[br.health_check_id]
+            if (!techId || !techData[techId]) continue
 
-          const value = br.value as Record<string, unknown> | null
-          if (!value) continue
+            const value = br.value as Record<string, unknown> | null
+            if (!value) continue
 
-          // Drum brakes have no disc to measure — exclude them so a drum axle
-          // (disc fields null by design) is never flagged as "not measured".
-          if (((value.brake_type as string | undefined) || 'disc') === 'drum') continue
+            // Drum brakes have no disc to measure — exclude them so a drum axle
+            // (disc fields null by design) is never flagged.
+            if (((value.brake_type as string | undefined) || 'disc') === 'drum') continue
 
-          const nearside = value.nearside as Record<string, unknown> | undefined
-          const offside = value.offside as Record<string, unknown> | undefined
+            const nearside = value.nearside as Record<string, unknown> | undefined
+            const offside = value.offside as Record<string, unknown> | undefined
 
-          const hasUnmeasured =
-            (!nearside?.disc_unable_to_access && (nearside?.disc === null || nearside?.disc === undefined)) ||
-            (!offside?.disc_unable_to_access && (offside?.disc === null || offside?.disc === undefined))
+            // "Not measured": disc blank AND not flagged unable-to-access.
+            const hasUnmeasured =
+              (!nearside?.disc_unable_to_access && (nearside?.disc === null || nearside?.disc === undefined)) ||
+              (!offside?.disc_unable_to_access && (offside?.disc === null || offside?.disc === undefined))
+            if (hasUnmeasured) {
+              if (!hcsWithUnmeasuredDisc[techId]) hcsWithUnmeasuredDisc[techId] = new Set()
+              hcsWithUnmeasuredDisc[techId].add(br.health_check_id)
+            }
 
-          if (hasUnmeasured) {
-            if (!hcsWithUnmeasuredDisc[techId]) hcsWithUnmeasuredDisc[techId] = new Set()
-            hcsWithUnmeasuredDisc[techId].add(br.health_check_id)
+            // "Unable to access": tech explicitly flagged a disc as inaccessible.
+            const hasUnable =
+              Boolean(nearside?.disc_unable_to_access) || Boolean(offside?.disc_unable_to_access)
+            if (hasUnable) {
+              if (!hcsWithUnableDisc[techId]) hcsWithUnableDisc[techId] = new Set()
+              hcsWithUnableDisc[techId].add(br.health_check_id)
+            }
           }
+
+          hasMore = rows.length === pageSize
+          offset += pageSize
         }
       }
-      // Set count of unique health checks with unmeasured discs
+      // Set per-technician counts of unique health checks
       for (const [techId, hcSet] of Object.entries(hcsWithUnmeasuredDisc)) {
         if (techData[techId]) techData[techId].brakeDiscNotMeasured = hcSet.size
+      }
+      for (const [techId, hcSet] of Object.entries(hcsWithUnableDisc)) {
+        if (techData[techId]) techData[techId].brakeDiscUnableToAccess = hcSet.size
       }
     }
 
@@ -1477,6 +1507,7 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           ? Math.round((t.totalPhotos / t.completed) * 10) / 10
           : 0,
         brakeDiscNotMeasured: t.brakeDiscNotMeasured,
+        brakeDiscUnableToAccess: t.brakeDiscUnableToAccess,
         libraryUsageRate: (() => {
           const denominator = t.libraryOnlyCount + t.freeTextOnlyCount + t.bothCount
           return denominator > 0

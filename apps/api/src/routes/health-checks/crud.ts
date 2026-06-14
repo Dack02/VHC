@@ -264,6 +264,7 @@ crud.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
         technician_id: healthCheck.technician_id,
         advisor_id: healthCheck.advisor_id,
         status: healthCheck.status,
+        job_state: healthCheck.job_state,
         created_at: healthCheck.created_at,
         updated_at: healthCheck.updated_at,
         mileage_in: healthCheck.mileage_in,

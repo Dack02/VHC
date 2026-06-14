@@ -261,6 +261,8 @@ export interface HealthCheck {
   technician_id: string | null
   advisor_id: string | null
   status: string
+  /** Workshop lifecycle axis (due_in/arrived/in_workshop/work_complete/collected) - drives the workshop board */
+  job_state?: string
   created_at: string
   updated_at: string
   mileage_in: number | null

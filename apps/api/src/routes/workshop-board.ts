@@ -232,7 +232,7 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
           .limit(300),
         supabaseAdmin
           .from('technician_time_entries')
-          .select('health_check_id, technician_id, clock_in_at')
+          .select('id, health_check_id, technician_id, clock_in_at, category:time_entry_categories(kind, counts_toward_job), technician:users(first_name, last_name)')
           .in('health_check_id', idChunk)
           .is('clock_out_at', null),
       ])
@@ -257,8 +257,12 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
       noteCountByHc.set(hcId, (noteCountByHc.get(hcId) || 0) + 1)
     }
 
+    // Only an open *productive* segment (inspection/repair) drives a card's live
+    // job timer; an indirect segment (break, waiting for parts) pauses it.
     const clockedOnByHc = new Map<string, Record<string, unknown>>()
     for (const entry of timeEntriesRes.data || []) {
+      const cat = entry.category as { counts_toward_job?: boolean } | null
+      if (cat && cat.counts_toward_job === false) continue
       clockedOnByHc.set(entry.health_check_id as string, entry)
     }
 
@@ -302,6 +306,7 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
           : bookedRepairsHours(hc.booked_repairs)
 
       const clockEntry = clockedOnByHc.get(hc.id)
+      const clockTech = clockEntry?.technician as { first_name?: string; last_name?: string } | null
 
       return {
         healthCheckId: hc.id,
@@ -335,6 +340,7 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
         techCompletedAt: hc.tech_completed_at,
         isClockedOn: !!clockEntry,
         clockedOnSince: (clockEntry?.clock_in_at as string) ?? null,
+        clockedOnBy: clockTech ? `${clockTech.first_name ?? ''} ${clockTech.last_name ?? ''}`.trim() || null : null,
         vehicle: hc.vehicle,
         customer: hc.customer,
         technician: hc.technician,
@@ -351,6 +357,13 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
       }
     })
 
+    // Org-level time-tracking settings (stale-clock threshold + indirect toggle)
+    const { data: orgTimeSettings } = await supabaseAdmin
+      .from('organization_settings')
+      .select('open_segment_stale_minutes, indirect_time_enabled')
+      .eq('organization_id', auth.orgId)
+      .maybeSingle()
+
     return c.json({
       siteId,
       date,
@@ -359,7 +372,9 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
         dayStartTime: (configRes.data?.day_start_time as string)?.slice(0, 5) || '08:00',
         dayEndTime: (configRes.data?.day_end_time as string)?.slice(0, 5) || '17:30',
         lunchStartTime: (configRes.data?.lunch_start_time as string)?.slice(0, 5) || null,
-        lunchEndTime: (configRes.data?.lunch_end_time as string)?.slice(0, 5) || null
+        lunchEndTime: (configRes.data?.lunch_end_time as string)?.slice(0, 5) || null,
+        staleClockMinutes: (orgTimeSettings?.open_segment_stale_minutes as number) ?? 600,
+        indirectTimeEnabled: orgTimeSettings?.indirect_time_enabled === true
       },
       statuses: (statusesRes.data || []).map(s => ({
         id: s.id,

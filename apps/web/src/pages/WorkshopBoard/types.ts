@@ -76,6 +76,8 @@ export interface BoardCard {
   techCompletedAt: string | null
   isClockedOn: boolean
   clockedOnSince: string | null
+  /** Name of the technician holding the open productive segment (cross-tech attribution) */
+  clockedOnBy: string | null
   vehicle: { id: string; registration: string; make: string | null; model: string | null; year: number | null; color: string | null } | null
   customer: { id: string; first_name: string; last_name: string; mobile: string | null } | null
   technician: { id: string; first_name: string; last_name: string } | null
@@ -90,6 +92,10 @@ export interface BoardConfig {
   dayEndTime: string
   lunchStartTime: string | null
   lunchEndTime: string | null
+  /** Open clock-ons older than this many minutes are treated as stale (forgotten clock-off) */
+  staleClockMinutes: number
+  /** Whether the org has indirect (non-productive) time tracking enabled */
+  indirectTimeEnabled: boolean
 }
 
 export interface BoardData {
@@ -107,10 +113,26 @@ export function timeToMinutes(hhmm: string): number {
   return h * 60 + m
 }
 
-// Actual minutes worked on a job, live (closed entries + open clock-in)
-export function actualWorkedMinutes(card: BoardCard, now: Date): number {
+// Default ceiling (minutes) for an open clock-on's live contribution, used when
+// the board config hasn't supplied the org's configured open_segment_stale_minutes.
+export const DEFAULT_STALE_CLOCK_MIN = 600 // 10h
+
+// True when a card's open clock-on is older than `staleMinutes` — almost always a
+// forgotten clock-off rather than genuine work. Surface a "check clock" flag
+// instead of letting the live timer run to hundreds of hours.
+export function isClockStale(card: BoardCard, now: Date, staleMinutes = DEFAULT_STALE_CLOCK_MIN): boolean {
+  if (!card.isClockedOn || !card.clockedOnSince) return false
+  const openMin = (now.getTime() - new Date(card.clockedOnSince).getTime()) / 60000
+  return openMin > staleMinutes
+}
+
+// Actual minutes worked on a job, live (closed entries + open clock-in). The open
+// segment's live contribution is ignored once it goes stale (see isClockStale) so
+// a forgotten clock-off can't run the timer away — the board then shows the closed
+// total plus a "check clock" flag rather than e.g. +407h.
+export function actualWorkedMinutes(card: BoardCard, now: Date, staleMinutes = DEFAULT_STALE_CLOCK_MIN): number {
   let minutes = card.totalTechTimeMinutes || 0
-  if (card.isClockedOn && card.clockedOnSince) {
+  if (card.isClockedOn && card.clockedOnSince && !isClockStale(card, now, staleMinutes)) {
     minutes += Math.max(0, (now.getTime() - new Date(card.clockedOnSince).getTime()) / 60000)
   }
   return minutes

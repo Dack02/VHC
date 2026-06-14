@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { useToast } from '../../contexts/ToastContext'
 import { api, HealthCheck, CheckResult, RepairItem, TemplateSection, HealthCheckSummary, FullHealthCheckResponse, NewRepairItem, TimelineEvent } from '../../lib/api'
 import { WorkflowBadges, WorkflowStatus, calculateWorkflowStatus, calculateAuthorisationInfo, CompletionInfo, AuthorisationInfo } from '../../components/WorkflowBadges'
 import { PhotosTab } from './tabs/PhotosTab'
@@ -44,6 +45,47 @@ function useOnlineStatus() {
   }, [])
 
   return isOnline
+}
+
+// Workshop lifecycle (job_state) - independent of the VHC pipeline `status`.
+const jobStateLabels: Record<string, string> = {
+  due_in: 'Due In',
+  arrived: 'Arrived',
+  in_workshop: 'In Workshop',
+  work_complete: 'Work Complete',
+  collected: 'Collected'
+}
+
+const jobStateColors: Record<string, string> = {
+  due_in: 'bg-gray-100 text-gray-700',
+  arrived: 'bg-blue-100 text-blue-700',
+  in_workshop: 'bg-indigo-100 text-indigo-700',
+  work_complete: 'bg-green-100 text-green-700',
+  collected: 'bg-gray-100 text-gray-500'
+}
+
+// Job state shown on the working document - editable (a dropdown) for users who
+// can change it, otherwise a read-only badge. Writes go through the same
+// workshop-board endpoint the Kanban board uses.
+function JobStateControl({ jobState, editable, onChange }: { jobState: string; editable: boolean; onChange?: (value: string) => void }) {
+  if (!editable) {
+    return (
+      <span className={`inline-block px-3 py-1 text-sm font-medium rounded ${jobStateColors[jobState] || 'bg-gray-100 text-gray-700'}`}>
+        {jobStateLabels[jobState] || jobState}
+      </span>
+    )
+  }
+  return (
+    <select
+      value={jobState}
+      onChange={e => onChange?.(e.target.value)}
+      className="text-sm font-medium rounded-lg border border-gray-300 px-2.5 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-primary"
+    >
+      {Object.entries(jobStateLabels).map(([value, label]) => (
+        <option key={value} value={value}>{label}</option>
+      ))}
+    </select>
+  )
 }
 
 const statusLabels: Record<string, string> = {
@@ -95,6 +137,7 @@ type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'tyres-brakes' | 'la
 export default function HealthCheckDetail() {
   const { id } = useParams<{ id: string }>()
   const { session, user } = useAuth()
+  const toast = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const isOnline = useOnlineStatus()
@@ -373,6 +416,23 @@ export default function HealthCheckDetail() {
       await fetchData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update status')
+    }
+  }
+
+  // Workshop job state - reuses the same endpoint the workshop board uses, so
+  // the board updates live too. Server enforces the technician-own-job rule.
+  const handleJobStateChange = async (jobState: string) => {
+    if (!session?.accessToken || !id) return
+    try {
+      await api(`/api/v1/workshop-board/cards/${id}`, {
+        method: 'PATCH',
+        token: session.accessToken,
+        body: { jobState }
+      })
+      await fetchData({ silent: true })
+      toast.success(`Job state set to ${jobStateLabels[jobState] || jobState}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update job state')
     }
   }
 
@@ -750,6 +810,11 @@ export default function HealthCheckDetail() {
         canEditCustomer={canChangeAdvisor || undefined}
         onCustomerEditClick={() => setShowCustomerEditModal(true)}
         timerData={timerData}
+        canEditJobState={!!user && (
+          ['super_admin', 'org_admin', 'site_admin', 'service_advisor'].includes(user.role) ||
+          (user.role === 'technician' && healthCheck.technician_id === user.id)
+        )}
+        onJobStateChange={handleJobStateChange}
       />
 
       {/* Tab Navigation */}
@@ -1001,6 +1066,8 @@ interface VehicleInfoBarProps {
   authorisationInfo?: AuthorisationInfo
   canChangeAdvisor?: boolean
   onAdvisorClick?: () => void
+  canEditJobState?: boolean
+  onJobStateChange?: (jobState: string) => void
   canEditCustomer?: boolean
   onCustomerEditClick?: () => void
   timerData?: {
@@ -1009,7 +1076,7 @@ interface VehicleInfoBarProps {
   } | null
 }
 
-function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, labourCompletion, partsCompletion, authorisationInfo, canChangeAdvisor, onAdvisorClick, canEditCustomer, onCustomerEditClick, timerData }: VehicleInfoBarProps) {
+function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, labourCompletion, partsCompletion, authorisationInfo, canChangeAdvisor, onAdvisorClick, canEditCustomer, onCustomerEditClick, timerData, canEditJobState, onJobStateChange }: VehicleInfoBarProps) {
   const vehicle = healthCheck.vehicle
   const customer = healthCheck.vehicle?.customer
   const [vinExpanded, setVinExpanded] = useState(false)
@@ -1059,6 +1126,11 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
               />
             )}
             {workflowStatus && <WorkflowBadges status={workflowStatus} compact technicianCompletion={technicianCompletion} labourCompletion={labourCompletion} partsCompletion={partsCompletion} authorisationInfo={authorisationInfo} />}
+            <JobStateControl
+              jobState={healthCheck.job_state || 'arrived'}
+              editable={!!canEditJobState}
+              onChange={onJobStateChange}
+            />
           </div>
         </div>
 
@@ -1302,6 +1374,16 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
               </span>
             )}
           </div>
+        </div>
+
+        {/* Workshop job state - the workshop lifecycle, separate from the VHC status above */}
+        <div>
+          <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Workshop</div>
+          <JobStateControl
+            jobState={healthCheck.job_state || 'arrived'}
+            editable={!!canEditJobState}
+            onChange={onJobStateChange}
+          />
         </div>
 
         {/* Inspection Timer - shown when in_progress */}

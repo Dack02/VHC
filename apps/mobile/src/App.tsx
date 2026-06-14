@@ -11,6 +11,7 @@ const PreCheck = lazy(() => import('./pages/PreCheck').then(m => ({ default: m.P
 const MyBoard = lazy(() => import('./pages/MyBoard').then(m => ({ default: m.MyBoard })))
 const Inspection = lazy(() => import('./pages/Inspection').then(m => ({ default: m.Inspection })))
 const Summary = lazy(() => import('./pages/Summary').then(m => ({ default: m.Summary })))
+const Repair = lazy(() => import('./pages/Repair').then(m => ({ default: m.Repair })))
 
 const PageSpinner = () => (
   <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -77,6 +78,12 @@ function AppRoutes() {
           path="/job/:id/summary"
           element={
             session && user ? <Summary /> : <Navigate to="/login" replace />
+          }
+        />
+        <Route
+          path="/job/:id/repair"
+          element={
+            session && user ? <Repair /> : <Navigate to="/login" replace />
           }
         />
 

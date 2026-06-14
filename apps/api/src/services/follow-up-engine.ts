@@ -69,6 +69,17 @@ function render(tpl: string | null | undefined, vars: Record<string, string>): s
   return tpl.replace(/\{\{(\w+)\}\}/g, (_, k: string) => vars[k] ?? '')
 }
 
+/**
+ * Dry-run guard. When FOLLOW_UP_DRY_RUN is truthy, the engine renders and logs
+ * every SMS/email step (so you can preview exactly what would go out and watch
+ * the timeline advance) but never calls sendSms/sendEmail. Default OFF, so
+ * production behaviour is unchanged. Intended for safe testing on dev.
+ */
+function followUpDryRun(): boolean {
+  const v = (process.env.FOLLOW_UP_DRY_RUN || '').trim().toLowerCase()
+  return v === 'true' || v === '1' || v === 'yes' || v === 'on'
+}
+
 // ---------------------------------------------------------------------------
 // Types (loose — these mirror the DB rows we touch)
 // ---------------------------------------------------------------------------
@@ -605,6 +616,7 @@ async function buildContext(c: CaseRow): Promise<{
 async function executeStep(c: CaseRow, step: TimelineStep, allSteps: TimelineStep[], timeline: Timeline): Promise<void> {
   const org = c.organization_id
   const now = new Date().toISOString()
+  const dryRun = followUpDryRun()
 
   // Manual call — park the case for a human
   if (step.action === 'manual_call') {
@@ -645,10 +657,18 @@ async function executeStep(c: CaseRow, step: TimelineStep, allSteps: TimelineSte
       await logEvent(c.id, org, 'system', { stepOrder: step.step_order, body: 'SMS skipped — no mobile on file' })
     } else {
       const body = render(step.sms_body, ctx.vars)
-      const res = await sendSms(ctx.customer.mobile, body, org)
-      await logComm(c.health_check_id, org, 'sms', ctx.customer.mobile, null, body, res)
-      await logEvent(c.id, org, 'step_sent', { channel: 'sms', stepOrder: step.step_order, body, metadata: { success: res.success, error: res.error } })
-      if (res.success) contacted = true
+      if (dryRun) {
+        await logEvent(c.id, org, 'step_sent', {
+          channel: 'sms', stepOrder: step.step_order, body,
+          metadata: { success: true, dryRun: true, wouldSendTo: ctx.customer.mobile },
+        })
+        contacted = true
+      } else {
+        const res = await sendSms(ctx.customer.mobile, body, org)
+        await logComm(c.health_check_id, org, 'sms', ctx.customer.mobile, null, body, res)
+        await logEvent(c.id, org, 'step_sent', { channel: 'sms', stepOrder: step.step_order, body, metadata: { success: res.success, error: res.error } })
+        if (res.success) contacted = true
+      }
     }
   }
 
@@ -660,10 +680,18 @@ async function executeStep(c: CaseRow, step: TimelineStep, allSteps: TimelineSte
     } else {
       const subject = render(step.email_subject || 'Your vehicle has work due', ctx.vars)
       const { html, text } = buildEmail(step.email_body || '', ctx.vars, ctx.items, ctx.branding)
-      const res = await sendEmail({ to: ctx.customer.email, subject, html, text, organizationId: org })
-      await logComm(c.health_check_id, org, 'email', ctx.customer.email, subject, text, res)
-      await logEvent(c.id, org, 'step_sent', { channel: 'email', stepOrder: step.step_order, body: subject, metadata: { success: res.success, error: res.error } })
-      if (res.success) contacted = true
+      if (dryRun) {
+        await logEvent(c.id, org, 'step_sent', {
+          channel: 'email', stepOrder: step.step_order, body: subject,
+          metadata: { success: true, dryRun: true, wouldSendTo: ctx.customer.email, preview: text, htmlBytes: html.length },
+        })
+        contacted = true
+      } else {
+        const res = await sendEmail({ to: ctx.customer.email, subject, html, text, organizationId: org })
+        await logComm(c.health_check_id, org, 'email', ctx.customer.email, subject, text, res)
+        await logEvent(c.id, org, 'step_sent', { channel: 'email', stepOrder: step.step_order, body: subject, metadata: { success: res.success, error: res.error } })
+        if (res.success) contacted = true
+      }
     }
   }
 
@@ -797,7 +825,9 @@ async function processDueCasesForOrg(organizationId: string): Promise<number> {
 // Public entry points
 // ---------------------------------------------------------------------------
 
-export async function runFollowUpSweep(organizationId?: string): Promise<{ orgsProcessed: number; casesCreated: number; casesProcessed: number }> {
+export async function runFollowUpSweep(organizationId?: string): Promise<{ orgsProcessed: number; casesCreated: number; casesProcessed: number; dryRun: boolean }> {
+  const dryRun = followUpDryRun()
+  if (dryRun) logger.warn('Follow-up sweep running in DRY-RUN mode — no SMS/email will be sent (FOLLOW_UP_DRY_RUN)')
   let orgIds: string[]
   if (organizationId) {
     orgIds = [organizationId]
@@ -816,8 +846,8 @@ export async function runFollowUpSweep(organizationId?: string): Promise<{ orgsP
       logger.error('Follow-up: sweep failed for org', { organizationId: orgId, error: String(e) })
     }
   }
-  logger.info('Follow-up sweep complete', { orgs: orgIds.length, casesCreated, casesProcessed })
-  return { orgsProcessed: orgIds.length, casesCreated, casesProcessed }
+  logger.info('Follow-up sweep complete', { orgs: orgIds.length, casesCreated, casesProcessed, dryRun })
+  return { orgsProcessed: orgIds.length, casesCreated, casesProcessed, dryRun }
 }
 
 /**

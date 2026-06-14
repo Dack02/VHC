@@ -36,14 +36,16 @@ export function JobList() {
         if (user?.id) {
           params.set('technician_id', user.id)
         }
-        params.set('status', 'assigned,in_progress,paused')
+        // 'authorized' surfaces jobs the customer has authorised so the tech can
+        // re-clock for the repair phase (routes to the Repair screen on tap).
+        params.set('status', 'assigned,in_progress,paused,authorized')
       } else if (filter === 'unassigned') {
         // Show unassigned jobs (awaiting_checkin and created status, no technician)
         params.set('status', 'awaiting_checkin,created')
         params.set('unassigned', 'true')
       } else {
-        // Show all jobs for the site (mine + unassigned + awaiting check-in)
-        params.set('status', 'awaiting_checkin,created,assigned,in_progress,paused')
+        // Show all jobs for the site (mine + unassigned + awaiting check-in + repair-ready)
+        params.set('status', 'awaiting_checkin,created,assigned,in_progress,paused,authorized')
       }
 
       const data = await api<{ healthChecks: HealthCheck[] }>(
@@ -98,6 +100,9 @@ export function JobList() {
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to claim job')
       }
+    } else if (job.status === 'authorized') {
+      // Authorised job - re-clock for repair work
+      navigate(`/job/${job.id}/repair`)
     } else if (job.status === 'assigned' || job.status === 'paused') {
       // Go to pre-check screen (need to clock in)
       navigate(`/job/${job.id}/pre-check`)
@@ -317,7 +322,12 @@ function JobCard({ job, onClick }: JobCardProps) {
             {vehicle?.make} {vehicle?.model} {vehicle?.year && `(${vehicle.year})`}
           </p>
         </div>
-        <StatusBadge status={job.status as any} />
+        <div className="flex flex-col items-end gap-1">
+          <StatusBadge status={job.status as any} />
+          {job.status === 'authorized' && (
+            <Badge variant="primary" size="sm">🔧 Repair</Badge>
+          )}
+        </div>
       </div>
 
       {customer && (
@@ -338,7 +348,7 @@ function JobCard({ job, onClick }: JobCardProps) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
           )}
-          {job.status === 'awaiting_checkin' ? 'Waiting for advisor' : `Tap to ${job.status === 'created' ? 'claim' : job.status === 'assigned' ? 'start' : job.status === 'paused' ? 'resume' : 'continue'}`}
+          {job.status === 'awaiting_checkin' ? 'Waiting for advisor' : `Tap to ${job.status === 'created' ? 'claim' : job.status === 'assigned' ? 'start' : job.status === 'paused' ? 'resume' : job.status === 'authorized' ? 'start repair' : 'continue'}`}
         </span>
       </div>
 

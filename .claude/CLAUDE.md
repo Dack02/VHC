@@ -61,13 +61,37 @@ router.delete('/:id', authorizeMinRole('org_admin'), handler)
 ```
 
 ## Health Check Workflow
-28 status states tracking inspection → pricing → customer → completion:
-- `inspection_pending` → `inspection_in_progress` → `inspection_complete`
-- `pricing_pending` → `pricing_in_progress` → `pricing_complete`
-- `advisor_review` → `customer_pending` → `customer_viewed`
-- `customer_approved` / `customer_partial` / `customer_declined`
-- `work_authorized` → `work_in_progress` → `work_complete`
-- Final states: `closed`, `archived`, `cancelled`
+The `status` field tracks one inspection from booking → inspection → pricing → customer response → completion. **21 states** — canonical list is the `HealthCheckStatus` enum (`packages/shared/src/types/index.ts`); the legal moves between them are enforced by `validTransitions` in `apps/api/src/routes/health-checks/helpers.ts` (that file is the source of truth for exact transitions).
+
+**Arrival / check-in (DMS-import bookings):**
+- `awaiting_arrival` → `awaiting_checkin` | `created` | `no_show` | `cancelled`
+- `awaiting_checkin` → `created` | `cancelled`
+- `no_show` → `awaiting_arrival` (reschedule) | `cancelled`
+
+**Inspection:**
+- `created` → `assigned` → `in_progress` → `tech_completed` (happy path)
+- `in_progress` ⇄ `paused`
+- `tech_completed` → `awaiting_review` | `awaiting_pricing` | `ready_to_send` | `authorized` | `declined`
+
+**Review / pricing:**
+- `awaiting_review` → `awaiting_pricing` | `ready_to_send`
+- `awaiting_pricing` → `awaiting_parts` | `ready_to_send`
+- `awaiting_parts` → `ready_to_send`
+
+**Customer delivery / response:**
+- Send path: `ready_to_send` → `sent` → `delivered` → `opened`
+- A customer response can arrive from `ready_to_send` onward: → `authorized` | `partial_response` | `declined`
+- Once actually sent (`sent` / `delivered` / `opened` / `partial_response`) the quote can also → `expired`
+- `partial_response` → `authorized` | `declined` | `expired`
+
+**Final states:**
+- `authorized` → `completed`
+- `declined` → `completed`
+- `expired` → `completed` | `authorized` | `partial_response` | `declined`
+- `completed` and `cancelled` are terminal (no outgoing transitions)
+- `cancelled` is only reachable through the arrival/inspection phases (`awaiting_arrival`, `awaiting_checkin`, `no_show`, `created`, `assigned`, `in_progress`, `paused`); once a check is `tech_completed` it can no longer be cancelled
+
+> **`status` vs `job_state` — don't conflate them.** The workshop kanban board groups cards by a *separate* `health_checks.job_state` field, not by `status`. Its pipeline is `due_in → arrived → in_workshop → work_complete → collected` (see `apps/api/src/routes/workshop-board.ts`). So `work_complete` (plus `work_authorized` / `work_in_progress` from older board iterations) are `job_state` values, **not** VHC `status` values.
 
 ## Multi-Tenancy
 **CRITICAL:** Always filter by organization_id:

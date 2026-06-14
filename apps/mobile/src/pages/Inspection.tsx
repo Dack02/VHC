@@ -21,6 +21,7 @@ import { LocationPicker } from '../components/LocationPicker'
 import { MriScanTab } from './MriScanTab'
 import type { VehicleLocation } from '../lib/api'
 import IndirectTimeControl from '../components/IndirectTimeControl'
+import { JobTimeSummary } from '../components/JobTimeSummary'
 
 // State for tracking which item has ReasonSelector open
 interface ReasonSelectorState {
@@ -880,6 +881,8 @@ export function Inspection() {
 
       {/* Section items or MRI Scan tab */}
       <main className="flex-1 p-4 space-y-3 overflow-auto pb-24">
+        {id && <JobTimeSummary healthCheckId={id} />}
+
         {error && (
           <div className="bg-rag-red-bg text-rag-red p-4 mb-4">{error}</div>
         )}

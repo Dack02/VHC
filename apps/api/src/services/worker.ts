@@ -18,7 +18,8 @@ import {
   type DmsImportJob,
   type DmsScheduledImportJob,
   type DmsJob,
-  type DailySmsOverviewJob
+  type DailySmsOverviewJob,
+  type CloseStaleEntriesJob
 } from './queue.js'
 import { runDmsImport } from '../jobs/dms-import.js'
 import { sendEmail, sendHealthCheckReadyEmail, sendReminderEmail, sendCustomerResponseNotification, sendWorkflowStatusNotification, RepairItemResponse } from './email.js'
@@ -1093,6 +1094,21 @@ dailySmsOverviewWorker.on('failed', (job, err) => {
   console.error(`Daily SMS overview job ${job?.id} failed:`, err.message)
 })
 
+const closeStaleEntriesWorker = new Worker(
+  QUEUE_NAMES.CLOSE_STALE_ENTRIES,
+  async (job: Job<CloseStaleEntriesJob>) => {
+    const { autoCloseStaleTimeEntries } = await import('./auto-close-time-entries.js')
+    const result = await autoCloseStaleTimeEntries(job.data.organizationId)
+    console.log(`Auto-closed ${result.closed} stale time entr${result.closed === 1 ? 'y' : 'ies'} for org ${job.data.organizationId}`)
+    return result
+  },
+  { connection: redis as any }
+)
+
+closeStaleEntriesWorker.on('failed', (job, err) => {
+  console.error(`Close stale entries job ${job?.id} failed:`, err.message)
+})
+
 /**
  * Graceful shutdown
  */
@@ -1104,7 +1120,8 @@ async function shutdown() {
     notificationWorker.close(),
     reminderWorker.close(),
     dmsImportWorker.close(),
-    dailySmsOverviewWorker.close()
+    dailySmsOverviewWorker.close(),
+    closeStaleEntriesWorker.close()
   ])
   await redis.quit()
   process.exit(0)

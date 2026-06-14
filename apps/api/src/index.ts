@@ -60,11 +60,15 @@ import smsConversations from './routes/sms-conversations.js'
 import messages from './routes/messages.js'
 import dailySmsOverview from './routes/daily-sms-overview.js'
 import workshopBoard from './routes/workshop-board.js'
+import followUps from './routes/follow-ups.js'
+import followUpOutcomes from './routes/follow-up-outcomes.js'
+import followUpDispositions from './routes/follow-up-dispositions.js'
+import followUpTimelines from './routes/follow-up-timelines.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
 import { checkRedisConnection, updateRedisStatus } from './services/queue.js'
-import { startScheduledCleanupTasks, initializeDailySmsOverviewSchedules } from './services/scheduler.js'
+import { startScheduledCleanupTasks, initializeDailySmsOverviewSchedules, initializeAutoCloseSchedules, startFollowUpSweepSchedule } from './services/scheduler.js'
 
 const app = new Hono()
 
@@ -144,6 +148,9 @@ app.route('/api/v1/dms-settings', dmsSettings)
 app.route('/api/v1/notifications', notifications)
 app.route('/api/v1/push', pushSubscriptions)
 
+// Follow-up module (deferred-work recovery)
+app.route('/api/v1/follow-ups', followUps)
+
 // Admin routes (Super Admin only)
 app.route('/api/v1/admin/platform', platformAdmin)
 app.route('/api/v1/admin/organizations', adminOrganizations)
@@ -184,6 +191,11 @@ app.route('/api/v1/organizations/:orgId/suppliers', suppliers)
 
 // Declined reasons routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/declined-reasons', declinedReasons)
+
+// Follow-up settings routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/follow-up-outcomes', followUpOutcomes)
+app.route('/api/v1/organizations/:orgId/follow-up-dispositions', followUpDispositions)
+app.route('/api/v1/organizations/:orgId/follow-up-timelines', followUpTimelines)
 
 // Unable to send reasons routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/unable-to-send-reasons', unableToSendReasons)
@@ -248,6 +260,9 @@ checkRedisConnection().then(async (connected) => {
       initializeDailySmsOverviewSchedules().catch(err => {
         logger.error('Failed to initialize daily SMS overview schedules', { error: String(err) })
       })
+      initializeAutoCloseSchedules().catch(err => {
+        logger.error('Failed to initialize auto-close schedules', { error: String(err) })
+      })
     } catch (err) {
       logger.error('Failed to start queue workers', { error: String(err) })
     }
@@ -258,6 +273,9 @@ checkRedisConnection().then(async (connected) => {
 
 // Start daily cleanup tasks (activity log retention, etc.)
 startScheduledCleanupTasks()
+
+// Start the daily Follow-Up sweep (deferred-work recovery)
+startFollowUpSweepSchedule()
 
 logger.info(`Server started`, { port, environment: process.env.NODE_ENV || 'development' })
 

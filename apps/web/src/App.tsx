@@ -89,6 +89,10 @@ const DailySmsOverview = lazy(() => import('./pages/Settings/DailySmsOverview'))
 const WorkshopBoard = lazy(() => import('./pages/WorkshopBoard/WorkshopBoard'))
 const WorkshopStatuses = lazy(() => import('./pages/Settings/WorkshopStatuses'))
 const WorkshopBoardSettings = lazy(() => import('./pages/Settings/WorkshopBoardSettings'))
+const FollowUpList = lazy(() => import('./pages/FollowUps/FollowUpList'))
+const FollowUpOutcomes = lazy(() => import('./pages/Settings/FollowUpOutcomes'))
+const FollowUpDispositions = lazy(() => import('./pages/Settings/FollowUpDispositions'))
+const FollowUpTimelines = lazy(() => import('./pages/Settings/FollowUpTimelines'))
 
 // Page loading fallback
 function PageLoader() {
@@ -164,6 +168,7 @@ function App() {
                         <Route path="/customers" element={<CustomerList />} />
                         <Route path="/customers/:id" element={<CustomerDetail />} />
                         <Route path="/messages" element={<Messages />} />
+                        <Route path="/follow-ups" element={<FollowUpList />} />
                         <Route path="/notes" element={<NotesPage />} />
                         <Route path="/parts" element={<PartsCatalog />} />
                         <Route path="/templates" element={<TemplateList />} />
@@ -191,6 +196,9 @@ function App() {
                         <Route path="/settings/supplier-types" element={<SupplierTypes />} />
                         <Route path="/settings/pricing" element={<PricingSettings />} />
                         <Route path="/settings/declined-reasons" element={<DeclinedReasons />} />
+                        <Route path="/settings/follow-up-outcomes" element={<FollowUpOutcomes />} />
+                        <Route path="/settings/follow-up-dispositions" element={<FollowUpDispositions />} />
+                        <Route path="/settings/follow-up-timelines" element={<FollowUpTimelines />} />
                         <Route path="/settings/unable-to-send-reasons" element={<UnableToSendReasons />} />
                         <Route path="/settings/deleted-reasons" element={<DeletedReasons />} />
                         <Route path="/settings/vhc-deletion-reasons" element={<HcDeletionReasons />} />

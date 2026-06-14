@@ -804,7 +804,7 @@ status.post('/:id/clock-in', authorize(['super_admin', 'org_admin', 'site_admin'
     const { data: healthCheck } = await supabaseAdmin
       .from('health_checks')
       .select(`
-        id, status, technician_id, site_id,
+        id, status, technician_id, site_id, organization_id, tech_completed_at,
         vehicle:vehicles(registration)
       `)
       .eq('id', id)
@@ -881,10 +881,28 @@ status.post('/:id/clock-in', authorize(['super_admin', 'org_admin', 'site_admin'
         .from('technician_time_entries')
         .update({
           clock_out_at: clockOut.toISOString(),
-          duration_minutes: durationMinutes
+          duration_minutes: durationMinutes,
+          closed_reason: 'reclock'
         })
         .eq('id', openEntry.id)
     }
+
+    // Resolve the time category. An optional categoryKey in the body overrides the
+    // split-by-milestone default: inspection before the VHC is completed, repair
+    // after. Falls back to no category (treated as productive) if not found.
+    let categoryKey: string | null = null
+    try {
+      const body = await c.req.json()
+      categoryKey = typeof body?.categoryKey === 'string' ? body.categoryKey : null
+    } catch { /* empty body */ }
+    const resolvedKey = categoryKey || (healthCheck.tech_completed_at ? 'repair' : 'inspection')
+    const { data: category } = await supabaseAdmin
+      .from('time_entry_categories')
+      .select('id')
+      .eq('organization_id', healthCheck.organization_id)
+      .eq('key', resolvedKey)
+      .eq('is_active', true)
+      .maybeSingle()
 
     // Create time entry
     const { data: timeEntry, error: entryError } = await supabaseAdmin
@@ -892,7 +910,10 @@ status.post('/:id/clock-in', authorize(['super_admin', 'org_admin', 'site_admin'
       .insert({
         health_check_id: id,
         technician_id: auth.user.id,
-        clock_in_at: new Date().toISOString()
+        clock_in_at: new Date().toISOString(),
+        category_id: category?.id ?? null,
+        organization_id: healthCheck.organization_id,
+        site_id: healthCheck.site_id
       })
       .select()
       .single()
@@ -1083,7 +1104,8 @@ status.post('/:id/clock-out', authorize(['super_admin', 'org_admin', 'site_admin
       .from('technician_time_entries')
       .update({
         clock_out_at: clockOut.toISOString(),
-        duration_minutes: durationMinutes
+        duration_minutes: durationMinutes,
+        closed_reason: 'manual'
       })
       .eq('id', openEntry.id)
       .select()
@@ -1186,31 +1208,72 @@ status.get('/:id/time-entries', authorize(['super_admin', 'org_admin', 'site_adm
     const { data: entries, error } = await supabaseAdmin
       .from('technician_time_entries')
       .select(`
-        *,
-        technician:users(id, first_name, last_name)
+        id, clock_in_at, clock_out_at, duration_minutes, auto_closed, closed_reason,
+        technician:users(id, first_name, last_name),
+        category:time_entry_categories(id, key, label, kind, counts_toward_job, is_health_check, colour)
       `)
       .eq('health_check_id', id)
-      .order('clock_in', { ascending: true })
+      .order('clock_in_at', { ascending: true })
 
     if (error) {
       return c.json({ error: error.message }, 500)
     }
 
-    const totalMinutes = entries?.reduce((sum, e) => sum + (e.duration_minutes || 0), 0) || 0
+    // Category-aware breakdown, all computed from the segments (the source of
+    // truth — health_checks.total_tech_time_minutes is not maintained).
+    let jobMinutes = 0
+    let healthCheckMinutes = 0
+    let indirectMinutes = 0
+    let activeClockInAt: string | null = null
+    let activeCategory: { key: string; label: string } | null = null
+
+    for (const e of (entries || []) as any[]) {
+      const cat = e.category as { key?: string; label?: string; counts_toward_job?: boolean; is_health_check?: boolean } | null
+      const productive = !cat || cat.counts_toward_job !== false
+      const dur = (e.duration_minutes as number) || 0
+      if (e.clock_out_at == null) {
+        if (productive && !activeClockInAt) {
+          activeClockInAt = e.clock_in_at
+          activeCategory = cat ? { key: cat.key || '', label: cat.label || '' } : null
+        }
+      } else if (productive) {
+        jobMinutes += dur
+        if (cat?.is_health_check) healthCheckMinutes += dur
+      } else {
+        indirectMinutes += dur
+      }
+    }
 
     return c.json({
-      entries: entries?.map(e => ({
-        id: e.id,
-        technician: e.technician ? {
-          id: e.technician.id,
-          firstName: e.technician.first_name,
-          lastName: e.technician.last_name
-        } : null,
-        clockIn: e.clock_in_at,
-        clockOut: e.clock_out_at,
-        durationMinutes: e.duration_minutes
-      })),
-      totalMinutes
+      entries: ((entries || []) as any[]).map(e => {
+        const cat = e.category as { key?: string; label?: string; kind?: string; is_health_check?: boolean; colour?: string } | null
+        return {
+          id: e.id,
+          technician: e.technician ? {
+            id: e.technician.id,
+            firstName: e.technician.first_name,
+            lastName: e.technician.last_name
+          } : null,
+          clockIn: e.clock_in_at,
+          clockOut: e.clock_out_at,
+          durationMinutes: e.duration_minutes,
+          autoClosed: e.auto_closed === true,
+          category: cat ? {
+            key: cat.key,
+            label: cat.label,
+            kind: cat.kind,
+            isHealthCheck: cat.is_health_check === true,
+            colour: cat.colour
+          } : null
+        }
+      }),
+      // totalMinutes kept for backward-compat; now productive-only (job time)
+      totalMinutes: jobMinutes,
+      jobMinutes,
+      healthCheckMinutes,
+      indirectMinutes,
+      activeClockInAt,
+      activeCategory
     })
   } catch (error) {
     console.error('Get time entries error:', error)

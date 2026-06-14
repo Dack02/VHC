@@ -232,9 +232,8 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
           .limit(300),
         supabaseAdmin
           .from('technician_time_entries')
-          .select('id, health_check_id, technician_id, clock_in_at, category:time_entry_categories(kind, counts_toward_job), technician:users(first_name, last_name)')
-          .in('health_check_id', idChunk)
-          .is('clock_out_at', null),
+          .select('id, health_check_id, technician_id, clock_in_at, clock_out_at, duration_minutes, category:time_entry_categories(counts_toward_job), technician:users(first_name, last_name)')
+          .in('health_check_id', idChunk),
       ])
       if (cards.data) cardsData.push(...cards.data as Record<string, unknown>[])
       if (notes.data) notesData.push(...notes.data as Record<string, unknown>[])
@@ -257,13 +256,21 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
       noteCountByHc.set(hcId, (noteCountByHc.get(hcId) || 0) + 1)
     }
 
-    // Only an open *productive* segment (inspection/repair) drives a card's live
-    // job timer; an indirect segment (break, waiting for parts) pauses it.
+    // Per-HC job time, computed from segments (health_checks.total_tech_time_minutes
+    // is not maintained). An open *productive* segment (inspection/repair) drives the
+    // live timer; closed productive segments are the job-time baseline; indirect
+    // segments (counts_toward_job=false) are excluded from both.
     const clockedOnByHc = new Map<string, Record<string, unknown>>()
+    const productiveClosedMinByHc = new Map<string, number>()
     for (const entry of timeEntriesRes.data || []) {
       const cat = entry.category as { counts_toward_job?: boolean } | null
       if (cat && cat.counts_toward_job === false) continue
-      clockedOnByHc.set(entry.health_check_id as string, entry)
+      const hcId = entry.health_check_id as string
+      if (entry.clock_out_at == null) {
+        clockedOnByHc.set(hcId, entry)
+      } else {
+        productiveClosedMinByHc.set(hcId, (productiveClosedMinByHc.get(hcId) || 0) + ((entry.duration_minutes as number) || 0))
+      }
     }
 
     const columns = (columnsRes.data || []).filter(col =>
@@ -319,7 +326,7 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
         priority: (meta?.priority as string) ?? 'normal',
         estimatedHours,
         plannedStartAt: (meta?.planned_start_at as string) ?? null,
-        totalTechTimeMinutes: (hc.total_tech_time_minutes as number) ?? 0,
+        totalTechTimeMinutes: productiveClosedMinByHc.get(hc.id) || 0,
         workCompletedAt: (meta?.work_completed_at as string) ?? hc.completed_at ?? null,
         promiseTime: hc.promise_time,
         dueDate: hc.due_date,

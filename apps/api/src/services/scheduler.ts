@@ -2,8 +2,9 @@
  * Scheduler Service - Manages automatic reminder scheduling
  */
 
-import { scheduleReminder, cancelReminders, queueNotification, scheduleDailySmsOverview } from './queue.js'
+import { scheduleReminder, cancelReminders, queueNotification, scheduleDailySmsOverview, scheduleCloseStaleEntries } from './queue.js'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { runFollowUpSweep } from './follow-up-engine.js'
 
 // Default reminder schedule (can be overridden by organization settings)
 const DEFAULT_REMINDER_SCHEDULE = [
@@ -289,4 +290,69 @@ export async function initializeDailySmsOverviewSchedules() {
   } catch (error) {
     console.error('[Daily SMS Overview Scheduler] Initialization error:', error)
   }
+}
+
+/**
+ * Initialize end-of-day auto-close schedules for all organizations. Closes any
+ * technician time entries left clocked on, so a forgotten clock-off can't run
+ * the live board timer away. See docs/technician-job-clocking-spec.md §5.3.
+ */
+export async function initializeAutoCloseSchedules() {
+  try {
+    const { data: orgs, error } = await supabaseAdmin
+      .from('organizations')
+      .select('id')
+
+    if (error || !orgs || orgs.length === 0) return
+
+    for (const org of orgs) {
+      const { data: settings } = await supabaseAdmin
+        .from('organization_settings')
+        .select('timezone')
+        .eq('organization_id', org.id)
+        .maybeSingle()
+
+      try {
+        await scheduleCloseStaleEntries(org.id, 22, 0, settings?.timezone || 'Europe/London')
+      } catch (err) {
+        console.error(`[Auto-close Scheduler] Failed to schedule for org ${org.id}:`, err)
+      }
+    }
+
+    console.log(`[Auto-close Scheduler] Initialized ${orgs.length} schedule(s)`)
+  } catch (error) {
+    console.error('[Auto-close Scheduler] Initialization error:', error)
+  }
+}
+
+/**
+ * Start the daily Follow-Up sweep. Runs once per day at FOLLOW_UP_SWEEP_HOUR
+ * (server local time, default 07:00). In-process so it works whether or not the
+ * BullMQ worker / Redis are available; the sweep itself is idempotent.
+ * See docs/follow-up-module-spec.md §10.
+ */
+export function startFollowUpSweepSchedule() {
+  const hour = parseInt(process.env.FOLLOW_UP_SWEEP_HOUR || '7', 10)
+
+  function msUntilNextRun(): number {
+    const now = new Date()
+    const next = new Date()
+    next.setHours(hour, 0, 0, 0)
+    if (next <= now) next.setDate(next.getDate() + 1)
+    return next.getTime() - now.getTime()
+  }
+
+  function scheduleNext() {
+    setTimeout(async () => {
+      try {
+        await runFollowUpSweep()
+      } catch (err) {
+        console.error('[Follow-Up Sweep] Run failed:', err)
+      }
+      scheduleNext()
+    }, msUntilNextRun())
+  }
+
+  scheduleNext()
+  console.log(`[Follow-Up Sweep] Scheduled daily at ${String(hour).padStart(2, '0')}:00 (server time)`)
 }

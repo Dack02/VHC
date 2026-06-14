@@ -9,6 +9,7 @@ import { logger } from '../lib/logger.js'
 import { formatPhoneNumber } from './sms.js'
 import { createNotification, createRoleNotifications } from '../routes/notifications.js'
 import { emitToHealthCheck, emitToOrganization, WS_EVENTS } from './websocket.js'
+import { handleInboundSmsForFollowUps } from './follow-up-engine.js'
 
 interface InboundSmsData {
   from: string
@@ -326,6 +327,19 @@ export async function processInboundSms(data: InboundSmsData): Promise<void> {
         customer_id: customerMatch?.customerId || null
       }
     })
+  }
+
+  // 5c. Pause any active follow-up cadences for this customer (and honour STOP opt-out)
+  try {
+    await handleInboundSmsForFollowUps({
+      organizationId,
+      customerId: customerMatch?.customerId || null,
+      healthCheckId: healthCheck?.id || null,
+      body,
+      messageId: message.id,
+    })
+  } catch (err) {
+    logger.error('Follow-up inbound hook failed', { error: String(err), messageSid })
   }
 
   // 6. Trigger notifications

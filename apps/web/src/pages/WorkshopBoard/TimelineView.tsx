@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
 import type { BoardCard, BoardData } from './types'
-import { timeToMinutes, actualWorkedMinutes } from './types'
+import { timeToMinutes, actualWorkedMinutes, isClockStale } from './types'
 import { promiseCountdown } from './JobCard'
 
 const PX_PER_MIN = 88 / 60 // 88px per hour
@@ -305,9 +305,10 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
               const allocated = blocks.reduce((sum, b) => sum + b.durationMin / 60, 0)
               const overCapacity = allocated > col.availableHours
               const anyOverrun = blocks.some(b => {
-                const actual = actualWorkedMinutes(b.card, now)
+                const actual = actualWorkedMinutes(b.card, now, board.config.staleClockMinutes)
                 return actual > b.durationMin
               })
+              const anyStale = blocks.some(b => isClockStale(b.card, now, board.config.staleClockMinutes))
               return (
                 <div key={col.id} className="flex-1 min-w-[140px] px-3 py-2 border-r border-gray-100 last:border-r-0">
                   <div className="flex items-center gap-1.5">
@@ -319,6 +320,7 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
                   <div className={`text-xs mt-0.5 ${overCapacity ? 'text-red-600 font-medium' : 'text-gray-400'}`}>
                     {fmtHours(allocated)} / {fmtHours(col.availableHours)}
                     {anyOverrun && <span className="ml-1.5 text-red-600 font-semibold">⚠ overrun</span>}
+                    {anyStale && <span className="ml-1.5 text-amber-600 font-semibold">⚠ check clock</span>}
                   </div>
                 </div>
               )
@@ -521,7 +523,8 @@ function TimelineBlock({ block, board, now, dayStartMin, dayEndMin, canDrag, res
   const queueName = card.position === 'column' && card.columnId ? queueNameById.get(card.columnId) : null
 
   // Actual time vs estimate (Garage Hive model)
-  const actualMin = actualWorkedMinutes(card, now)
+  const actualMin = actualWorkedMinutes(card, now, board.config.staleClockMinutes)
+  const clockStale = isClockStale(card, now, board.config.staleClockMinutes)
   const isDone = card.position === 'work_complete' || card.status === 'completed' || !!card.techCompletedAt
   const overrunMin = !isDone && actualMin > durationMin ? actualMin - durationMin : 0
   const progressPct = card.isClockedOn || actualMin > 0 ? Math.min(100, (actualMin / durationMin) * 100) : 0
@@ -585,6 +588,7 @@ function TimelineBlock({ block, board, now, dayStartMin, dayEndMin, canDrag, res
               {card.customer ? ` · ${card.customer.first_name} ${card.customer.last_name}` : ''}
             </div>
             <div className="flex flex-wrap gap-1 mt-0.5">
+              {clockStale && <span className="text-[9px] font-bold text-white bg-amber-500 rounded-full px-1.5 py-px">CHECK CLOCK</span>}
               {notArrived && <span className="text-[9px] font-medium text-gray-500 bg-gray-100 rounded-full px-1.5 py-px">DUE IN</span>}
               {workshopStatus && (
                 <span className="text-[9px] font-medium text-white rounded-full px-1.5 py-px" style={{ backgroundColor: workshopStatus.colour }}>

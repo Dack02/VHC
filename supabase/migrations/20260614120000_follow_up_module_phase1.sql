@@ -247,7 +247,6 @@ CREATE OR REPLACE FUNCTION seed_follow_up_config_for_org(p_organization_id UUID)
 RETURNS VOID AS $$
 DECLARE
   v_timeline_id UUID;
-  v_unable_id UUID;
 BEGIN
   -- Outcomes
   IF NOT EXISTS (SELECT 1 FROM follow_up_outcomes WHERE organization_id = p_organization_id) THEN
@@ -273,16 +272,14 @@ BEGIN
     ON CONFLICT (organization_id, name) DO NOTHING;
   END IF;
 
-  -- Default timeline + steps (due-date anchored)
+  -- Default timeline + steps (due-date anchored): Step 1 SMS+Email, Step 2 SMS, Step 3 manual call.
+  -- Ends at the manual-call stage; a human works it to a closing outcome from there.
   IF NOT EXISTS (SELECT 1 FROM follow_up_timelines WHERE organization_id = p_organization_id) THEN
     INSERT INTO follow_up_timelines (organization_id, name, description, anchor, is_default, is_active)
     VALUES (p_organization_id, 'Standard recovery',
             'Default due-date-aware recovery cadence for deferred work.',
             'due_date', true, true)
     RETURNING id INTO v_timeline_id;
-
-    SELECT id INTO v_unable_id FROM follow_up_outcomes
-      WHERE organization_id = p_organization_id AND name = 'Unable to Contact' LIMIT 1;
 
     INSERT INTO follow_up_timeline_steps
       (timeline_id, organization_id, step_order, action, offset_days, sms_body, email_subject, email_body, default_outcome_id)
@@ -301,12 +298,7 @@ BEGIN
        'Hi {{customerFirstName}}, just a reminder your {{vehicleReg}} has work due. We''d be happy to book you in — call {{dealershipPhone}} or view: {{followUpUrl}} ({{dealershipName}})',
        NULL, NULL, NULL),
       (v_timeline_id, p_organization_id, 3, 'manual_call', 0,
-       NULL, NULL, NULL, NULL),
-      (v_timeline_id, p_organization_id, 4, 'send_sms', 14,
-       'Hi {{customerFirstName}}, we still have the details of the work due on your {{vehicleReg}}. Reply or call {{dealershipPhone}} to get booked in. {{dealershipName}}',
-       NULL, NULL, NULL),
-      (v_timeline_id, p_organization_id, 5, 'auto_close', 30,
-       NULL, NULL, NULL, v_unable_id)
+       NULL, NULL, NULL, NULL)
     ON CONFLICT (timeline_id, step_order) DO NOTHING;
   END IF;
 END;

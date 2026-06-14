@@ -1187,6 +1187,81 @@ status.post('/:id/clock-out', authorize(['super_admin', 'org_admin', 'site_admin
   }
 })
 
+// POST /:id/clock-indirect - Start a job-linked indirect segment (pauses the job clock)
+status.post('/:id/clock-indirect', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const body = await c.req.json().catch(() => ({}))
+    const categoryKey = typeof body?.categoryKey === 'string' ? body.categoryKey : null
+    if (!categoryKey) return c.json({ error: 'categoryKey is required' }, 400)
+
+    const { data: healthCheck } = await supabaseAdmin
+      .from('health_checks')
+      .select('id, technician_id, site_id, organization_id')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+    if (!healthCheck) return c.json({ error: 'Health check not found' }, 404)
+    if (auth.user.role === 'technician' && healthCheck.technician_id !== auth.user.id) {
+      return c.json({ error: 'Not authorized for this health check' }, 403)
+    }
+
+    const { data: settings } = await supabaseAdmin
+      .from('organization_settings')
+      .select('indirect_time_enabled')
+      .eq('organization_id', auth.orgId)
+      .maybeSingle()
+    if (settings?.indirect_time_enabled !== true) {
+      return c.json({ error: 'Indirect time tracking is not enabled for this organization' }, 400)
+    }
+
+    const { data: category } = await supabaseAdmin
+      .from('time_entry_categories')
+      .select('id, kind, is_active')
+      .eq('organization_id', auth.orgId)
+      .eq('key', categoryKey)
+      .maybeSingle()
+    if (!category || category.is_active === false) return c.json({ error: 'Unknown or inactive category' }, 400)
+    if (category.kind !== 'indirect') return c.json({ error: 'Category is not an indirect category' }, 400)
+
+    // Indirect pauses the job clock: close the tech's open segment on this job first.
+    const { data: openEntry } = await supabaseAdmin
+      .from('technician_time_entries')
+      .select('id, clock_in_at')
+      .eq('health_check_id', id)
+      .eq('technician_id', auth.user.id)
+      .is('clock_out_at', null)
+      .maybeSingle()
+    if (openEntry) {
+      const clockOut = new Date()
+      const dur = Math.round((clockOut.getTime() - new Date(openEntry.clock_in_at).getTime()) / 60000)
+      await supabaseAdmin
+        .from('technician_time_entries')
+        .update({ clock_out_at: clockOut.toISOString(), duration_minutes: dur, closed_reason: 'reclock' })
+        .eq('id', openEntry.id)
+    }
+
+    const { data: entry, error } = await supabaseAdmin
+      .from('technician_time_entries')
+      .insert({
+        health_check_id: id,
+        technician_id: auth.user.id,
+        organization_id: healthCheck.organization_id,
+        site_id: healthCheck.site_id,
+        category_id: category.id,
+        clock_in_at: new Date().toISOString()
+      })
+      .select('id, clock_in_at')
+      .single()
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ id: entry.id, clockIn: entry.clock_in_at })
+  } catch (error) {
+    console.error('Clock indirect error:', error)
+    return c.json({ error: 'Failed to start indirect time' }, 500)
+  }
+})
+
 // GET /:id/time-entries - Get time entries
 status.get('/:id/time-entries', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {

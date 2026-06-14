@@ -126,6 +126,16 @@ export default function FollowUpDetailDrawer({ caseId, onClose, onChanged }: Pro
     setPanel('close')
   }
 
+  const setItemOutcome = async (itemId: string, outcomeId: string) => {
+    try {
+      await api(`/api/v1/follow-ups/${caseId}/items/${itemId}/outcome`, { method: 'POST', token, body: { outcome_id: outcomeId || null } })
+      await fetchDetail()
+      onChanged()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to set item outcome')
+    }
+  }
+
   const c = detail?.case
   const isClosed = c?.status === 'closed'
 
@@ -189,11 +199,23 @@ export default function FollowUpDetailDrawer({ caseId, onClose, onChanged }: Pro
                 <tbody className="divide-y divide-gray-100">
                   {detail?.items.map((it) => (
                     <tr key={it.id}>
-                      <td className="px-4 py-2.5">
+                      <td className="px-4 py-2.5 align-top">
                         <div className="text-gray-900">{it.name}</div>
                         {it.dueDate && <div className="text-xs text-gray-400">due {fmtDate(it.dueDate)}</div>}
+                        {!isClosed ? (
+                          <select
+                            value={it.itemOutcome?.id || ''}
+                            onChange={(e) => setItemOutcome(it.id, e.target.value)}
+                            className="mt-1.5 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                          >
+                            <option value="">— item outcome —</option>
+                            {outcomes.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                          </select>
+                        ) : it.itemOutcome ? (
+                          <div className="text-xs text-gray-500 mt-1">{it.itemOutcome.name}</div>
+                        ) : null}
                       </td>
-                      <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                      <td className="px-4 py-2.5 text-right whitespace-nowrap align-top">
                         <div className="font-medium text-gray-900">{fmtMoney(it.value)}</div>
                         {it.currentOutcomeStatus && it.currentOutcomeStatus !== 'deferred' && (
                           <div className="text-xs text-green-600 capitalize">{it.currentOutcomeStatus}</div>

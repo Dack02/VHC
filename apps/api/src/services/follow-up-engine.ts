@@ -315,6 +315,9 @@ function buildEmail(
   const html = `<!DOCTYPE html><html><body style="margin:0;background:#f4f5f7;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;">
     <div style="max-width:600px;margin:0 auto;padding:16px;">
       <div style="background:${color};padding:16px 20px;border-radius:12px 12px 0 0;">${header}</div>
+      <div style="background:#fff;border-bottom:1px solid #eee;padding:12px 20px;font-size:13px;color:#374151;">
+        <strong>${escapeHtml(vars.vehicleReg)}</strong> &middot; ${escapeHtml(vars.itemCount)} item(s) &middot; <strong>${escapeHtml(vars.deferredTotal)}</strong>${vars.dueDate ? ` &middot; due ${escapeHtml(vars.dueDate)}` : ''}
+      </div>
       <div style="background:#fff;padding:24px 20px;border-radius:0 0 12px 12px;">
         ${bodyHtml}
         ${cta}

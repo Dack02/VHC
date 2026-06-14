@@ -41,6 +41,7 @@ export interface FollowUpItem {
   dueDate: string | null
   rag: string | null
   currentOutcomeStatus: string | null
+  itemOutcome: { id: string; name: string } | null
 }
 
 export interface FollowUpEvent {

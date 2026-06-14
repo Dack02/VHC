@@ -76,6 +76,7 @@ const CustomerInsights = lazy(() => import('./pages/Reports/CustomerInsights'))
 const OperationalEfficiency = lazy(() => import('./pages/Reports/OperationalEfficiency'))
 const QualityCompliance = lazy(() => import('./pages/Reports/QualityCompliance'))
 const DeferredWork = lazy(() => import('./pages/Reports/DeferredWork'))
+const FollowUpRecovery = lazy(() => import('./pages/Reports/FollowUpRecovery'))
 const MriPerformance = lazy(() => import('./pages/Reports/MriPerformance'))
 const DailyOverview = lazy(() => import('./pages/Reports/DailyOverview'))
 const DeletedHealthChecks = lazy(() => import('./pages/Reports/DeletedHealthChecks'))
@@ -89,6 +90,7 @@ const DailySmsOverview = lazy(() => import('./pages/Settings/DailySmsOverview'))
 const WorkshopBoard = lazy(() => import('./pages/WorkshopBoard/WorkshopBoard'))
 const WorkshopStatuses = lazy(() => import('./pages/Settings/WorkshopStatuses'))
 const WorkshopBoardSettings = lazy(() => import('./pages/Settings/WorkshopBoardSettings'))
+const TimeTrackingSettings = lazy(() => import('./pages/Settings/TimeTrackingSettings'))
 const FollowUpList = lazy(() => import('./pages/FollowUps/FollowUpList'))
 const FollowUpOutcomes = lazy(() => import('./pages/Settings/FollowUpOutcomes'))
 const FollowUpDispositions = lazy(() => import('./pages/Settings/FollowUpDispositions'))
@@ -157,6 +159,7 @@ function App() {
                         <Route path="/reports/operations" element={<OperationalEfficiency />} />
                         <Route path="/reports/compliance" element={<QualityCompliance />} />
                         <Route path="/reports/deferred" element={<DeferredWork />} />
+                        <Route path="/reports/follow-up-recovery" element={<FollowUpRecovery />} />
                         <Route path="/reports/mri-performance" element={<MriPerformance />} />
                         <Route path="/reports/daily-overview" element={<DailyOverview />} />
                         <Route path="/reports/deleted-health-checks" element={<DeletedHealthChecks />} />
@@ -209,6 +212,7 @@ function App() {
                         <Route path="/settings/daily-sms-overview" element={<DailySmsOverview />} />
                         <Route path="/settings/workshop-statuses" element={<WorkshopStatuses />} />
                         <Route path="/settings/workshop-board" element={<WorkshopBoardSettings />} />
+                        <Route path="/settings/time-tracking" element={<TimeTrackingSettings />} />
                       </Route>
                     </Route>
 

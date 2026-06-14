@@ -67,6 +67,12 @@ async function getCaseForOrg(id: string, orgId: string) {
   return data
 }
 
+function monthLabel(ym: string): string {
+  const [y, m] = ym.split('-').map(Number)
+  if (!y || !m) return ym
+  return new Date(y, m - 1, 1).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
+}
+
 // ---------------------------------------------------------------------------
 // STATIC routes first (so they aren't captured by /:id)
 // ---------------------------------------------------------------------------
@@ -108,6 +114,68 @@ followUps.post('/run-sweep', authorize(['super_admin', 'org_admin']), async (c) 
   } catch (err) {
     console.error('Manual follow-up sweep error:', err)
     return c.json({ error: 'Sweep failed' }, 500)
+  }
+})
+
+// GET /api/v1/follow-ups/reports/pipeline — future deferred-work pipeline by due month
+followUps.get('/reports/pipeline', async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { site_id } = c.req.query()
+    const { data, error } = await supabaseAdmin.rpc('follow_up_pipeline', { p_org: auth.orgId, p_site: site_id || null })
+    if (error) {
+      console.error('Pipeline report error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+    const rows = (data || []) as Array<{ bucket: string; item_count: number; total_value: number }>
+    let totalCount = 0
+    let totalValue = 0
+    let undated = { count: 0, value: 0 }
+    const months: Array<{ month: string; label: string; count: number; value: number }> = []
+    for (const r of rows) {
+      const count = Number(r.item_count) || 0
+      const value = Number(r.total_value) || 0
+      totalCount += count
+      totalValue += value
+      if (r.bucket === 'undated') { undated = { count, value }; continue }
+      months.push({ month: r.bucket, label: monthLabel(r.bucket), count, value })
+    }
+    months.sort((a, b) => a.month.localeCompare(b.month))
+    return c.json({ totalCount, totalValue, undated, months })
+  } catch (err) {
+    console.error('Pipeline report error:', err)
+    return c.json({ error: 'Failed to load pipeline' }, 500)
+  }
+})
+
+// GET /api/v1/follow-ups/reports/conversion — recovery performance by outcome
+followUps.get('/reports/conversion', async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id } = c.req.query()
+    const from = date_from || new Date(Date.now() - 30 * 86400000).toISOString()
+    const to = date_to || new Date().toISOString()
+    const { data, error } = await supabaseAdmin.rpc('follow_up_conversion', { p_org: auth.orgId, p_from: from, p_to: to, p_site: site_id || null })
+    if (error) {
+      console.error('Conversion report error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+    const rows = (data || []) as Array<{ outcome_name: string; is_won: boolean; case_count: number; total_value: number }>
+    let totalClosed = 0
+    let wonCount = 0
+    let wonValue = 0
+    const byOutcome = rows.map((r) => {
+      const count = Number(r.case_count) || 0
+      const value = Number(r.total_value) || 0
+      totalClosed += count
+      if (r.is_won) { wonCount += count; wonValue += value }
+      return { name: r.outcome_name, isWon: r.is_won, count, value }
+    })
+    const conversionRate = totalClosed ? Math.round((wonCount / totalClosed) * 1000) / 10 : 0
+    return c.json({ period: { from, to }, totalClosed, wonCount, wonValue, conversionRate, byOutcome })
+  } catch (err) {
+    console.error('Conversion report error:', err)
+    return c.json({ error: 'Failed to load conversion report' }, 500)
   }
 })
 
@@ -184,7 +252,7 @@ followUps.get('/:id', async (c) => {
     const [{ data: items }, { data: events }, { data: timelineSteps }] = await Promise.all([
       supabaseAdmin
         .from('follow_up_case_items')
-        .select('id, repair_item_id, name_snapshot, value_snapshot, due_date_snapshot, rag_snapshot, repair_item:repair_items(outcome_status, total_inc_vat)')
+        .select('id, repair_item_id, name_snapshot, value_snapshot, due_date_snapshot, rag_snapshot, item_outcome_id, item_outcome:follow_up_outcomes!follow_up_case_items_item_outcome_id_fkey(id, name), repair_item:repair_items(outcome_status, total_inc_vat)')
         .eq('case_id', id),
       supabaseAdmin
         .from('follow_up_events')
@@ -224,6 +292,7 @@ followUps.get('/:id', async (c) => {
         dueDate: it.due_date_snapshot,
         rag: it.rag_snapshot,
         currentOutcomeStatus: it.repair_item?.outcome_status || null,
+        itemOutcome: it.item_outcome ? { id: it.item_outcome.id, name: it.item_outcome.name } : null,
       })),
       events: (events || []).map((e: any) => ({
         id: e.id,
@@ -363,6 +432,56 @@ followUps.post('/:id/close', authorize(['super_admin', 'org_admin', 'site_admin'
   } catch (err) {
     console.error('Close follow-up error:', err)
     return c.json({ error: 'Failed to close follow-up' }, 500)
+  }
+})
+
+// POST /api/v1/follow-ups/:id/items/:itemId/outcome — set a per-item outcome
+followUps.post('/:id/items/:itemId/outcome', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const id = c.req.param('id')
+    const itemId = c.req.param('itemId')
+    const { outcome_id } = await c.req.json()
+
+    const caseRow = await getCaseForOrg(id, auth.orgId)
+    if (!caseRow) return c.json({ error: 'Follow-up case not found' }, 404)
+
+    const { data: item } = await supabaseAdmin
+      .from('follow_up_case_items')
+      .select('id, name_snapshot')
+      .eq('id', itemId)
+      .eq('case_id', id)
+      .maybeSingle()
+    if (!item) return c.json({ error: 'Item not found' }, 404)
+
+    let outcomeName = ''
+    if (outcome_id) {
+      const { data: o } = await supabaseAdmin
+        .from('follow_up_outcomes')
+        .select('id, name')
+        .eq('id', outcome_id)
+        .eq('organization_id', auth.orgId)
+        .eq('is_active', true)
+        .maybeSingle()
+      if (!o) return c.json({ error: 'Outcome not found' }, 404)
+      outcomeName = o.name
+    }
+
+    await supabaseAdmin.from('follow_up_case_items').update({ item_outcome_id: outcome_id || null }).eq('id', itemId)
+
+    await supabaseAdmin.from('follow_up_events').insert({
+      case_id: id,
+      organization_id: auth.orgId,
+      event_type: 'note',
+      body: outcome_id ? `Item "${item.name_snapshot}" → ${outcomeName}` : `Item "${item.name_snapshot}" outcome cleared`,
+      metadata: { itemId, outcomeId: outcome_id || null },
+      created_by: auth.user.id,
+    })
+
+    return c.json({ success: true })
+  } catch (err) {
+    console.error('Set item outcome error:', err)
+    return c.json({ error: 'Failed to set item outcome' }, 500)
   }
 })
 

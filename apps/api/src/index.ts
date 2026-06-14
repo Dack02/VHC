@@ -50,6 +50,8 @@ import deletedReasons from './routes/deleted-reasons.js'
 import hcDeletionReasons from './routes/hc-deletion-reasons.js'
 import supplierTypes from './routes/supplier-types.js'
 import checkinSettings from './routes/checkin-settings.js'
+import timeTrackingSettings from './routes/time-tracking-settings.js'
+import timeEntriesRoutes from './routes/time-entries.js'
 import messageTemplates from './routes/message-templates.js'
 import vehicleLocations from './routes/vehicle-locations.js'
 import pushSubscriptions from './routes/push-subscriptions.js'
@@ -223,6 +225,8 @@ app.route('/api/v1/organizations/:orgId/daily-sms-overview', dailySmsOverview)
 
 // Check-in settings and MRI items routes (nested under organizations)
 app.route('/api/v1/organizations', checkinSettings)
+app.route('/api/v1/organizations', timeTrackingSettings)
+app.route('/api/v1/time-entries', timeEntriesRoutes)
 
 // Pricing calculator routes
 app.route('/api/v1/pricing', pricing)

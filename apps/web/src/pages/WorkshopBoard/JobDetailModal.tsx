@@ -7,6 +7,7 @@ import type { BoardCard, BoardColumnDef, BoardStatus, CardPriority } from './typ
 import { pipelineStage, renderSmsTemplate, actualWorkedMinutes } from './types'
 import SmsConfirmModal from './SmsConfirmModal'
 import WorkshopNotesPanel from '../../components/WorkshopNotesPanel'
+import { JobTimeSummary, type JobTimeData } from '../../components/JobTimeSummary'
 
 interface JobDetailModalProps {
   card: BoardCard
@@ -48,6 +49,7 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
   const [activityLoading, setActivityLoading] = useState(false)
   const [hoursDraft, setHoursDraft] = useState(card.estimatedHours?.toString() ?? '')
   const [smsPrompt, setSmsPrompt] = useState<{ message: string; statusName: string | null } | null>(null)
+  const [timeData, setTimeData] = useState<JobTimeData | null>(null)
 
   const stage = pipelineStage(card.status)
   const activeStatuses = statuses.filter(s => s.isActive)
@@ -81,6 +83,14 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
       .catch(() => setActivity([]))
       .finally(() => setActivityLoading(false))
   }, [tab, activity, token, card.healthCheckId])
+
+  // Load the time breakdown (job / health-check / indirect + segment history)
+  useEffect(() => {
+    if (!token) return
+    api<JobTimeData>(`/api/v1/health-checks/${card.healthCheckId}/time-entries`, { token })
+      .then(setTimeData)
+      .catch(() => setTimeData(null))
+  }, [token, card.healthCheckId])
 
   const updateCard = async (fields: Record<string, unknown>) => {
     if (!token) return false
@@ -290,6 +300,14 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
                     </div>
                   </div>
                 </div>
+
+                {/* Time: job / health-check / indirect, with segment history */}
+                {timeData && (
+                  <JobTimeSummary
+                    data={timeData}
+                    estimateMinutes={card.estimatedHours != null ? card.estimatedHours * 60 : null}
+                  />
+                )}
 
                 {/* Two axes: the job's workshop lifecycle (editable - drives the
                     board column) and the read-only VHC pipeline stage. */}

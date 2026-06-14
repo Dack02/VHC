@@ -25,6 +25,7 @@ import { CustomerEditModal } from './components/CustomerEditModal'
 import { HcDeletionModal } from './components/HcDeletionModal'
 import { AdvisorAuthorizationModal } from './components/AdvisorAuthorizationModal'
 import { InspectionTimer } from '../../components/InspectionTimer'
+import { JobTimeSummary, type JobTimeData } from '../../components/JobTimeSummary'
 import WorkshopNotesPanel from '../../components/WorkshopNotesPanel'
 
 // Hook for online/offline detection
@@ -181,6 +182,7 @@ export default function HealthCheckDetail() {
     total_closed_minutes: number
     active_clock_in_at: string | null
   } | null>(null)
+  const [jobTimeData, setJobTimeData] = useState<JobTimeData | null>(null)
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const fetchData = useCallback(async (options: { isRetry?: boolean; silent?: boolean } = {}) => {
@@ -225,20 +227,12 @@ export default function HealthCheckDetail() {
             `/api/v1/health-checks/${id}/timeline`,
             { token: session.accessToken }
           ),
-          // Time entries (only for in_progress)
-          hcData.healthCheck.status === 'in_progress'
-            ? api<{
-                entries: Array<{
-                  clockIn: string
-                  clockOut: string | null
-                  durationMinutes: number | null
-                }>
-                totalMinutes: number
-              }>(
-                `/api/v1/health-checks/${id}/time-entries`,
-                { token: session.accessToken }
-              )
-            : Promise.resolve(null),
+          // Time entries (segment breakdown — always fetched so the time summary
+          // persists after the inspection is complete)
+          api<JobTimeData>(
+            `/api/v1/health-checks/${id}/time-entries`,
+            { token: session.accessToken }
+          ),
           // Check-in settings
           user?.organization?.id
             ? api<{ checkinEnabled: boolean }>(
@@ -276,6 +270,7 @@ export default function HealthCheckDetail() {
       // Process time entries result
       if (timeEntriesResult.status === 'fulfilled' && timeEntriesResult.value) {
         const timeEntriesData = timeEntriesResult.value
+        setJobTimeData(timeEntriesData)
         const activeEntry = timeEntriesData.entries?.find(e => !e.clockOut)
         const closedMinutes = timeEntriesData.entries
           ?.filter(e => e.clockOut)
@@ -286,6 +281,7 @@ export default function HealthCheckDetail() {
         })
       } else {
         setTimerData(null)
+        setJobTimeData(null)
       }
 
       // Process check-in settings result
@@ -810,6 +806,7 @@ export default function HealthCheckDetail() {
         canEditCustomer={canChangeAdvisor || undefined}
         onCustomerEditClick={() => setShowCustomerEditModal(true)}
         timerData={timerData}
+        jobTimeData={jobTimeData}
         canEditJobState={!!user && (
           ['super_admin', 'org_admin', 'site_admin', 'service_advisor'].includes(user.role) ||
           (user.role === 'technician' && healthCheck.technician_id === user.id)
@@ -1074,9 +1071,10 @@ interface VehicleInfoBarProps {
     total_closed_minutes: number
     active_clock_in_at: string | null
   } | null
+  jobTimeData?: JobTimeData | null
 }
 
-function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, labourCompletion, partsCompletion, authorisationInfo, canChangeAdvisor, onAdvisorClick, canEditCustomer, onCustomerEditClick, timerData, canEditJobState, onJobStateChange }: VehicleInfoBarProps) {
+function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, labourCompletion, partsCompletion, authorisationInfo, canChangeAdvisor, onAdvisorClick, canEditCustomer, onCustomerEditClick, timerData, jobTimeData, canEditJobState, onJobStateChange }: VehicleInfoBarProps) {
   const vehicle = healthCheck.vehicle
   const customer = healthCheck.vehicle?.customer
   const [vinExpanded, setVinExpanded] = useState(false)
@@ -1133,6 +1131,13 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
             />
           </div>
         </div>
+
+        {/* Technician time: job / health-check / indirect, with segment history */}
+        {jobTimeData && (jobTimeData.entries.length > 0 || jobTimeData.activeClockInAt) && (
+          <div className="mb-4">
+            <JobTimeSummary data={jobTimeData} />
+          </div>
+        )}
 
         {/* Vehicle + Customer */}
         <div className="grid grid-cols-2 gap-4">

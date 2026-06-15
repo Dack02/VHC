@@ -35,6 +35,12 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+
+    if (!form.legalName.trim() || !form.addressLine1.trim() || !form.city.trim() || !form.postcode.trim()) {
+      setError('Please complete your legal business name and address (these appear on customer reports)')
+      return
+    }
+
     setSaving(true)
 
     try {
@@ -69,7 +75,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Legal Business Name
+              Legal Business Name <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
@@ -78,6 +84,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
               onChange={handleChange}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
               placeholder="ABC Motors Ltd"
+              required
             />
           </div>
           <div>
@@ -114,7 +121,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Address Line 1
+                Address Line 1 <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -123,6 +130,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
                 onChange={handleChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                 placeholder="123 High Street"
+                required
               />
             </div>
             <div className="md:col-span-2">
@@ -140,7 +148,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                City
+                City <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -149,6 +157,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
                 onChange={handleChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                 placeholder="London"
+                required
               />
             </div>
             <div>
@@ -166,7 +175,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Postcode
+                Postcode <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -175,6 +184,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
                 onChange={handleChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                 placeholder="SW1A 1AA"
+                required
               />
             </div>
             <div>

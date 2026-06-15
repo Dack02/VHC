@@ -1,7 +1,6 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { api } from '../lib/api'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -17,47 +16,30 @@ export default function Login() {
     setLoading(true)
 
     try {
-      // First try to login
       await login(email, password)
 
-      // Get the session from localStorage to check if super admin
       const sessionStr = localStorage.getItem('vhc_session')
-      if (sessionStr) {
-        const session = JSON.parse(sessionStr)
+      const userStr = localStorage.getItem('vhc_user')
+      const user = userStr ? JSON.parse(userStr) : null
 
-        // Check if user is a super admin
-        try {
-          await api('/api/v1/admin/stats', {
-            token: session.accessToken
-          })
+      // Super admins logging in via the main app: bridge a session for the /admin
+      // portal. The login response already carries the role, so no extra probe needed.
+      if (user?.isSuperAdmin && sessionStr) {
+        localStorage.setItem('vhc_super_admin_session', sessionStr)
+        localStorage.setItem('vhc_super_admin', JSON.stringify({
+          id: user.id,
+          email: user.email,
+          name: `${user.firstName} ${user.lastName}`,
+          isActive: true
+        }))
+        navigate('/')
+        return
+      }
 
-          // User is a super admin - store super admin session and redirect
-          localStorage.setItem('vhc_super_admin_session', sessionStr)
-          const userStr = localStorage.getItem('vhc_user')
-          if (userStr) {
-            const user = JSON.parse(userStr)
-            localStorage.setItem('vhc_super_admin', JSON.stringify({
-              id: user.id,
-              email: user.email,
-              name: `${user.firstName} ${user.lastName}`,
-              isActive: true
-            }))
-          }
-          navigate('/')
-          return
-        } catch {
-          // Not a super admin, continue to regular dashboard
-        }
-
-        // Check if org admin needs to complete onboarding
-        const userStr = localStorage.getItem('vhc_user')
-        if (userStr) {
-          const user = JSON.parse(userStr)
-          if (user.isOrgAdmin && user.organization?.onboardingCompleted === false) {
-            navigate('/onboarding')
-            return
-          }
-        }
+      // Org admins who haven't finished onboarding go straight to the wizard.
+      if (user?.isOrgAdmin && user.organization?.onboardingCompleted === false) {
+        navigate('/onboarding')
+        return
       }
 
       // Regular user - redirect to dashboard
@@ -119,6 +101,12 @@ export default function Login() {
                 required
                 disabled={loading}
               />
+            </div>
+
+            <div className="text-right -mt-2">
+              <Link to="/forgot-password" className="text-sm text-primary hover:underline">
+                Forgot password?
+              </Link>
             </div>
 
             <button

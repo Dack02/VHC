@@ -11,9 +11,12 @@ import DashboardLayout from './layouts/DashboardLayout'
 import AdminLayout from './layouts/AdminLayout'
 import ImpersonationBanner from './components/admin/ImpersonationBanner'
 import SuspendedBanner from './components/SuspendedBanner'
+import RecoveryRedirect from './components/RecoveryRedirect'
 
 // Eager: Login (entry point for unauthenticated users)
 import Login from './pages/Login'
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'))
+const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 
 // Lazy: All other page components
 const Dashboard = lazy(() => import('./pages/Dashboard'))
@@ -63,6 +66,7 @@ const AdminPlans = lazy(() => import('./pages/Admin/AdminPlans'))
 const AdminActivity = lazy(() => import('./pages/Admin/AdminActivity'))
 const AdminSettings = lazy(() => import('./pages/Admin/AdminSettings'))
 const AdminStarterTemplate = lazy(() => import('./pages/Admin/AdminStarterTemplate'))
+const AdminStarterTemplates = lazy(() => import('./pages/Admin/AdminStarterTemplates'))
 const AIConfiguration = lazy(() => import('./pages/Admin/AIConfiguration'))
 const AIUsageDashboard = lazy(() => import('./pages/Admin/AIUsageDashboard'))
 const Onboarding = lazy(() => import('./pages/Onboarding'))
@@ -118,11 +122,14 @@ function App() {
                 <BrowserRouter>
                   <ImpersonationBanner />
                   <SuspendedBanner />
+                  <RecoveryRedirect />
                   <Suspense fallback={<PageLoader />}>
                   <Routes>
                     {/* Public routes */}
                     <Route path="/view/:token" element={<CustomerPortal />} />
                     <Route path="/login" element={<Login />} />
+                    <Route path="/forgot-password" element={<ForgotPassword />} />
+                    <Route path="/reset-password" element={<ResetPassword />} />
 
                     {/* Super Admin Portal routes */}
                     <Route path="/admin/login" element={<AdminLogin />} />
@@ -136,6 +143,7 @@ function App() {
                       <Route path="settings" element={<AdminSettings />} />
                       <Route path="ai-configuration" element={<AIConfiguration />} />
                       <Route path="starter-template" element={<AdminStarterTemplate />} />
+                      <Route path="starter-templates" element={<AdminStarterTemplates />} />
                       <Route path="reason-types" element={<ReasonTypes />} />
                     </Route>
 

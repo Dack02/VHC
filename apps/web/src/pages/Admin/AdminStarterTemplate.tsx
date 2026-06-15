@@ -215,8 +215,8 @@ export default function AdminStarterTemplate() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Starter Template</h1>
-          <p className="text-gray-500 mt-1">Manage starter reasons for new organizations</p>
+          <h1 className="text-2xl font-bold text-gray-900">Starter Reasons</h1>
+          <p className="text-gray-500 mt-1">Manage starter reasons copied to new organizations</p>
         </div>
         <button
           onClick={handleSaveSettings}

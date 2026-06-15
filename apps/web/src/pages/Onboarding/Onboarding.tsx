@@ -16,8 +16,10 @@ interface OnboardingStatus {
   hasSettings: boolean
   hasSites: boolean
   hasTeamMembers: boolean
+  hasTemplates: boolean
   sitesCount: number
   teamMembersCount: number
+  templatesCount: number
 }
 
 const STEPS = [
@@ -125,8 +127,8 @@ export default function Onboarding() {
         <div className="max-w-4xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl font-bold text-primary">VHC</h1>
-              <p className="text-sm text-gray-500">Welcome, {user?.firstName}!</p>
+              <img src="/ollo-inspect-logo.png" alt="Ollo Inspect" className="h-8" />
+              <p className="text-sm text-gray-500 mt-1">Welcome, {user?.firstName}!</p>
             </div>
             <button
               onClick={handleSkip}

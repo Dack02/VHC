@@ -30,6 +30,7 @@ import platformAdmin from './routes/admin/platform.js'
 import adminOrganizations from './routes/admin/organizations.js'
 import adminStats from './routes/admin/stats.js'
 import starterReasons from './routes/admin/starter-reasons.js'
+import starterTemplates from './routes/admin/starter-templates.js'
 import aiSettings from './routes/admin/ai-settings.js'
 import aiUsage from './routes/admin/ai-usage.js'
 import adminReasonTypes from './routes/admin/reason-types.js'
@@ -160,6 +161,7 @@ app.route('/api/v1/admin/platform', platformAdmin)
 app.route('/api/v1/admin/organizations', adminOrganizations)
 app.route('/api/v1/admin', adminStats)
 app.route('/api/v1/admin/starter-reasons', starterReasons)
+app.route('/api/v1/admin/starter-templates', starterTemplates)
 app.route('/api/v1/admin/ai-settings', aiSettings)
 app.route('/api/v1/admin/ai-usage', aiUsage)
 app.route('/api/v1/admin/reason-types', adminReasonTypes)

@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { supabaseAuth, supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware } from '../middleware/auth.js'
+import { sendEmail } from '../services/email.js'
 
 const auth = new Hono()
 
@@ -353,6 +354,73 @@ auth.post('/switch-org', authMiddleware, async (c) => {
   } catch (error) {
     console.error('Switch org error:', error)
     return c.json({ error: 'Failed to switch organization' }, 500)
+  }
+})
+
+// POST /api/v1/auth/forgot-password
+// Public, self-service password reset request. Always returns 200 so the response
+// never reveals whether an account exists (no enumeration). Rate-limited by the
+// /api/v1/auth/* limiter mounted in index.ts.
+auth.post('/forgot-password', async (c) => {
+  try {
+    const { email } = await c.req.json().catch(() => ({}))
+
+    if (!email || typeof email !== 'string') {
+      return c.json({ success: true })
+    }
+
+    const redirectTo = `${process.env.WEB_URL || 'http://localhost:5181'}/reset-password`
+
+    // generateLink fails for unknown emails — that's fine, we swallow it and still
+    // return success so attackers can't probe which emails are registered.
+    const { data: linkData } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'recovery',
+      email,
+      options: { redirectTo }
+    })
+
+    const resetLink = linkData?.properties?.action_link
+    if (resetLink) {
+      // Look up the user for a friendly greeting + branded email credentials.
+      const { data: userRow } = await supabaseAdmin
+        .from('users')
+        .select('first_name, organization_id')
+        .eq('email', email)
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle()
+
+      const firstName = userRow?.first_name || 'there'
+      const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #1a1a1a;">Reset your password</h2>
+          <p>Hi ${firstName},</p>
+          <p>We received a request to reset the password for your Vehicle Health Check account.</p>
+          <div style="text-align: center; margin: 32px 0;">
+            <a href="${resetLink}" style="background-color: #2563eb; color: white; padding: 12px 32px; text-decoration: none; font-weight: bold; display: inline-block; border-radius: 6px;">Reset Password</a>
+          </div>
+          <p style="color: #666; font-size: 14px;">If the button doesn't work, copy and paste this link into your browser:</p>
+          <p style="color: #666; font-size: 12px; word-break: break-all;">${resetLink}</p>
+          <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
+          <p style="color: #999; font-size: 12px;">If you didn't request this, you can safely ignore this email — your password won't change.</p>
+        </div>
+      `
+      const text = `Reset your password\n\nHi ${firstName},\n\nWe received a request to reset the password for your Vehicle Health Check account.\n\nReset your password: ${resetLink}\n\nIf you didn't request this, you can safely ignore this email.`
+
+      await sendEmail({
+        to: email,
+        subject: 'Reset your VHC password',
+        html,
+        text,
+        organizationId: userRow?.organization_id || undefined
+      })
+    }
+
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Forgot password error:', error)
+    // Still return success to avoid leaking information.
+    return c.json({ success: true })
   }
 })
 

@@ -6,6 +6,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
+import { provisionOrganization, ProvisionError } from '../../services/provisioning.js'
 import crypto from 'crypto'
 
 const adminOrgRoutes = new Hono()
@@ -110,214 +111,48 @@ adminOrgRoutes.post('/', async (c) => {
   const superAdmin = c.get('superAdmin')
   const body = await c.req.json()
 
-  const {
-    name,
-    slug,
-    planId = 'starter',
-    // First admin user
-    adminEmail,
-    adminFirstName,
-    adminLastName,
-    adminPassword,
-    // Optional settings
-    settings = {}
-  } = body
-
-  if (!name || !adminEmail || !adminFirstName || !adminLastName) {
-    return c.json({
-      error: 'Name, adminEmail, adminFirstName, and adminLastName are required'
-    }, 400)
-  }
-
-  // Generate slug if not provided
-  const orgSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-
-  // Check if slug is unique
-  const { data: existingOrg } = await supabaseAdmin
-    .from('organizations')
-    .select('id')
-    .eq('slug', orgSlug)
-    .single()
-
-  if (existingOrg) {
-    return c.json({ error: 'Organization slug already exists' }, 400)
-  }
-
   try {
-    // 1. Create the organization
-    const { data: org, error: orgError } = await supabaseAdmin
-      .from('organizations')
-      .insert({
-        name,
-        slug: orgSlug,
-        status: 'active',
-        onboarding_completed: false,
-        onboarding_step: 0
-      })
-      .select()
-      .single()
-
-    if (orgError) {
-      return c.json({ error: orgError.message }, 500)
-    }
-
-    // 2. Create organization settings
-    await supabaseAdmin
-      .from('organization_settings')
-      .insert({
-        organization_id: org.id,
-        ...settings
-      })
-
-    // 3. Create organization notification settings (with platform defaults)
-    await supabaseAdmin
-      .from('organization_notification_settings')
-      .insert({
-        organization_id: org.id,
-        use_platform_sms: true,
-        use_platform_email: true
-      })
-
-    // 4. Create organization subscription
-    const periodStart = new Date()
-    const periodEnd = new Date()
-    periodEnd.setMonth(periodEnd.getMonth() + 1)
-
-    await supabaseAdmin
-      .from('organization_subscriptions')
-      .insert({
-        organization_id: org.id,
-        plan_id: planId,
-        status: 'active',
-        current_period_start: periodStart.toISOString(),
-        current_period_end: periodEnd.toISOString()
-      })
-
-    // 5. Create first site (default)
-    const { data: site } = await supabaseAdmin
-      .from('sites')
-      .insert({
-        organization_id: org.id,
-        name: `${name} - Main Site`,
-        is_active: true
-      })
-      .select()
-      .single()
-
-    // 6. Create the admin user in Supabase Auth
-    const tempPassword = adminPassword || crypto.randomBytes(16).toString('hex')
-
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: adminEmail,
-      password: tempPassword,
-      email_confirm: true,
-      user_metadata: {
-        first_name: adminFirstName,
-        last_name: adminLastName
-      }
+    const result = await provisionOrganization({
+      name: body.name,
+      slug: body.slug,
+      planId: body.planId,
+      adminEmail: body.adminEmail,
+      adminFirstName: body.adminFirstName,
+      adminLastName: body.adminLastName,
+      adminPassword: body.adminPassword,
+      settings: body.settings || {}
     })
-
-    if (authError) {
-      // Rollback: delete organization
-      await supabaseAdmin.from('organizations').delete().eq('id', org.id)
-      return c.json({ error: `Failed to create admin user: ${authError.message}` }, 500)
-    }
-
-    // 7. Create the user record
-    const { data: user, error: userError } = await supabaseAdmin
-      .from('users')
-      .insert({
-        auth_id: authData.user.id,
-        organization_id: org.id,
-        site_id: site?.id,
-        email: adminEmail,
-        first_name: adminFirstName,
-        last_name: adminLastName,
-        role: 'org_admin',
-        is_org_admin: true,
-        is_active: true
-      })
-      .select()
-      .single()
-
-    if (userError) {
-      // Rollback: delete auth user and organization
-      await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
-      await supabaseAdmin.from('organizations').delete().eq('id', org.id)
-      return c.json({ error: `Failed to create user record: ${userError.message}` }, 500)
-    }
-
-    // 8. Initialize usage tracking for current period
-    const usagePeriodStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-    const usagePeriodEnd = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)
-    await supabaseAdmin
-      .from('organization_usage')
-      .insert({
-        organization_id: org.id,
-        period_start: usagePeriodStart.toISOString().split('T')[0],
-        period_end: usagePeriodEnd.toISOString().split('T')[0],
-        health_checks_created: 0,
-        health_checks_completed: 0,
-        sms_sent: 0,
-        emails_sent: 0,
-        storage_used_bytes: 0
-      })
-
-    // 9. Auto-copy starter reasons if enabled
-    let starterReasonsCopied = 0
-    try {
-      const { data: starterSettings } = await supabaseAdmin
-        .from('platform_settings')
-        .select('settings')
-        .eq('id', 'starter_reasons')
-        .single()
-
-      const starterConfig = starterSettings?.settings as { auto_copy_on_create?: boolean; source_organization_id?: string } | null
-      if (starterConfig?.auto_copy_on_create !== false) {
-        // Copy starter reasons to new organization
-        const { data: copyResult } = await supabaseAdmin.rpc('copy_starter_reasons_to_org', {
-          target_org_id: org.id,
-          source_org_id: starterConfig?.source_organization_id || null
-        })
-        starterReasonsCopied = copyResult || 0
-      }
-    } catch (starterError) {
-      console.error('Failed to copy starter reasons:', starterError)
-      // Non-blocking error - organization creation should still succeed
-    }
 
     // Log activity
     await logSuperAdminActivity(
       superAdmin.id,
       'create_organization',
       'organizations',
-      org.id,
-      { name, slug: orgSlug, planId, adminEmail },
+      result.organization.id,
+      {
+        name: result.organization.name,
+        slug: result.organization.slug,
+        planId: body.planId || 'starter',
+        adminEmail: body.adminEmail
+      },
       c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
       c.req.header('User-Agent')
     )
 
     return c.json({
-      organization: {
-        id: org.id,
-        name: org.name,
-        slug: org.slug,
-        status: org.status
-      },
-      adminUser: {
-        id: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name
-      },
-      site: site ? {
-        id: site.id,
-        name: site.name
-      } : null,
-      temporaryPassword: adminPassword ? undefined : tempPassword,
-      starterReasonsCopied
+      organization: result.organization,
+      adminUser: result.adminUser,
+      site: result.site,
+      inviteEmailSent: result.inviteEmailSent,
+      starterReasonsCopied: result.starterReasonsCopied,
+      starterTemplateCopied: result.starterTemplateCopied
     }, 201)
   } catch (error) {
+    if (error instanceof ProvisionError) {
+      return error.statusCode === 400
+        ? c.json({ error: error.message }, 400)
+        : c.json({ error: error.message }, 500)
+    }
     console.error('Create organization error:', error)
     return c.json({ error: 'Failed to create organization' }, 500)
   }

@@ -31,6 +31,16 @@ async function attemptTokenRefresh(): Promise<string | null> {
   return _refreshPromise
 }
 
+// Super-admin endpoints (mounted under /api/v1/admin/) authenticate against the
+// super_admins table via a dedicated session — NOT the org-scoped dashboard session.
+// They must never inherit the dashboard's active-org header or its token-refresh
+// fallback: on a 401 the fallback would retry the admin request with the dashboard
+// user's token, which fails super-admin auth with a 403 and silently blocks admin
+// login when a normal user session is also present. See SuperAdminContext.
+function isSuperAdminEndpoint(endpoint: string): boolean {
+  return endpoint.startsWith('/api/v1/admin/')
+}
+
 interface ApiOptions {
   method?: string
   body?: unknown
@@ -115,7 +125,7 @@ export async function api<T>(endpoint: string, options: ApiOptions = {}): Promis
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  if (_activeOrgId) {
+  if (_activeOrgId && !isSuperAdminEndpoint(endpoint)) {
     headers['X-Organization-Id'] = _activeOrgId
   }
 
@@ -145,8 +155,11 @@ export async function api<T>(endpoint: string, options: ApiOptions = {}): Promis
       }
 
       if (!response.ok) {
-        // On 401, attempt a token refresh and retry the request once
-        if (response.status === 401 && token && _tokenRefreshCallback) {
+        // On 401, attempt a token refresh and retry the request once.
+        // Skipped for super-admin endpoints: the refresh hook is bound to the
+        // dashboard session, so retrying an admin call with it swaps in the wrong
+        // account's token and turns a transient 401 into a hard 403.
+        if (response.status === 401 && token && _tokenRefreshCallback && !isSuperAdminEndpoint(endpoint)) {
           const newToken = await attemptTokenRefresh()
           if (newToken) {
             // Retry the original request with the fresh token

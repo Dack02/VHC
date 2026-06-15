@@ -15,6 +15,26 @@ onboarding.use('*', authMiddleware)
 onboarding.use('*', requireOrgAdmin())
 
 /**
+ * Advance the stored onboarding step monotonically. Revisiting an earlier step
+ * (via the wizard's Back button) must never roll the saved progress backwards,
+ * otherwise the user resumes earlier than they had reached on their next visit.
+ */
+async function advanceOnboardingStep(organizationId: string, step: number): Promise<void> {
+  const { data: org } = await supabaseAdmin
+    .from('organizations')
+    .select('onboarding_step')
+    .eq('id', organizationId)
+    .maybeSingle()
+
+  const next = Math.max(org?.onboarding_step || 0, step)
+
+  await supabaseAdmin
+    .from('organizations')
+    .update({ onboarding_step: next, updated_at: new Date().toISOString() })
+    .eq('id', organizationId)
+}
+
+/**
  * GET /api/v1/onboarding/status
  * Get current onboarding status and progress
  */
@@ -54,6 +74,13 @@ onboarding.get('/status', async (c) => {
     .eq('is_active', true)
     .neq('id', auth.user.id)
 
+  // Get inspection templates count (an org needs at least one to create a health check)
+  const { count: templatesCount } = await supabaseAdmin
+    .from('check_templates')
+    .select('id', { count: 'exact', head: true })
+    .eq('organization_id', organizationId)
+    .eq('is_active', true)
+
   return c.json({
     organizationId: org.id,
     organizationName: org.name,
@@ -62,8 +89,10 @@ onboarding.get('/status', async (c) => {
     hasSettings: !!org.settings,
     hasSites: (sitesCount || 0) > 0,
     hasTeamMembers: (usersCount || 0) > 0,
+    hasTemplates: (templatesCount || 0) > 0,
     sitesCount: sitesCount || 0,
-    teamMembersCount: usersCount || 0
+    teamMembersCount: usersCount || 0,
+    templatesCount: templatesCount || 0
   })
 })
 
@@ -172,14 +201,8 @@ onboarding.post('/business-details', async (c) => {
     return c.json({ error: result.error.message }, 500)
   }
 
-  // Update onboarding step
-  await supabaseAdmin
-    .from('organizations')
-    .update({
-      onboarding_step: 1,
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', organizationId)
+  // Advance onboarding progress (monotonic — never regress when revisiting a step)
+  await advanceOnboardingStep(organizationId, 1)
 
   return c.json({
     success: true,
@@ -233,13 +256,7 @@ onboarding.post('/first-site', async (c) => {
       .eq('id', auth.user.id)
       .is('site_id', null)
 
-    await supabaseAdmin
-      .from('organizations')
-      .update({
-        onboarding_step: 2,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', organizationId)
+    await advanceOnboardingStep(organizationId, 2)
 
     return c.json({
       success: true,
@@ -323,14 +340,8 @@ onboarding.post('/first-site', async (c) => {
     })
     .eq('id', auth.user.id)
 
-  // Update onboarding step
-  await supabaseAdmin
-    .from('organizations')
-    .update({
-      onboarding_step: 2,
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', organizationId)
+  // Advance onboarding progress (monotonic)
+  await advanceOnboardingStep(organizationId, 2)
 
   return c.json({
     success: true,
@@ -358,14 +369,14 @@ onboarding.post('/invite-team', async (c) => {
     return c.json({ error: 'Invites must be an array' }, 400)
   }
 
-  // Get the first site for the organization
+  // Get the first site for the organization (may be absent if this step is reached early)
   const { data: site } = await supabaseAdmin
     .from('sites')
     .select('id')
     .eq('organization_id', organizationId)
     .eq('is_active', true)
     .limit(1)
-    .single()
+    .maybeSingle()
 
   // Get organization name for invite email
   const { data: org } = await supabaseAdmin
@@ -375,8 +386,11 @@ onboarding.post('/invite-team', async (c) => {
     .single()
   const orgName = org?.name || 'Vehicle Health Check'
 
-  const results = []
-  const errors = []
+  const results: Array<{ email: string; userId: string; role: string; success: boolean; emailSent: boolean }> = []
+  const errors: Array<{ email: string; error: string }> = []
+
+  const validRoles = ['site_admin', 'service_advisor', 'technician']
+  const resetRedirect = `${process.env.WEB_URL || 'http://localhost:5181'}/reset-password`
 
   for (const invite of invites) {
     const { email, firstName, lastName, role } = invite
@@ -386,34 +400,65 @@ onboarding.post('/invite-team', async (c) => {
       continue
     }
 
-    // Valid roles for onboarding
-    const validRoles = ['site_admin', 'service_advisor', 'technician']
     if (!validRoles.includes(role)) {
       errors.push({ email, error: 'Invalid role' })
       continue
     }
 
+    // Prevent duplicate membership within this organisation
+    const { data: existingMember } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .eq('organization_id', organizationId)
+      .maybeSingle()
+    if (existingMember) {
+      errors.push({ email, error: 'Already a member of this organisation' })
+      continue
+    }
+
     try {
-      // Create auth user
+      // Create (or resolve an existing) auth user
+      let authUserId: string | null = null
+      let createdNewAuthUser = false
+
       const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.createUser({
         email,
         email_confirm: true,
-        user_metadata: {
-          first_name: firstName,
-          last_name: lastName
-        }
+        user_metadata: { first_name: firstName, last_name: lastName }
       })
 
       if (authError) {
-        errors.push({ email, error: authError.message })
+        // The email may already exist in Supabase Auth (e.g. a member of another org) —
+        // link to that existing account rather than failing the invite.
+        if (authError.message.includes('already been registered')) {
+          const { data: existingAuthUsers } = await supabaseAdmin.auth.admin.listUsers()
+          const existingAuth = existingAuthUsers?.users?.find(u => u.email === email)
+          if (existingAuth) {
+            authUserId = existingAuth.id
+          } else {
+            errors.push({ email, error: authError.message })
+            continue
+          }
+        } else {
+          errors.push({ email, error: authError.message })
+          continue
+        }
+      } else if (authUser?.user) {
+        authUserId = authUser.user.id
+        createdNewAuthUser = true
+      }
+
+      if (!authUserId) {
+        errors.push({ email, error: 'Could not resolve auth user' })
         continue
       }
 
-      // Create user record
+      // Create the org membership record
       const { data: user, error: userError } = await supabaseAdmin
         .from('users')
         .insert({
-          auth_id: authUser.user.id,
+          auth_id: authUserId,
           organization_id: organizationId,
           site_id: site?.id,
           email,
@@ -432,66 +477,63 @@ onboarding.post('/invite-team', async (c) => {
         .single()
 
       if (userError) {
-        // Clean up auth user if user record creation fails
-        await supabaseAdmin.auth.admin.deleteUser(authUser.user.id)
+        // Only clean up the auth user if WE created it (never delete another org's account)
+        if (createdNewAuthUser) {
+          await supabaseAdmin.auth.admin.deleteUser(authUserId)
+        }
         errors.push({ email, error: userError.message })
         continue
       }
 
-      // Generate a password reset link so the invited user can set their password
-      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-        type: 'recovery',
-        email
-      })
-
-      if (linkData?.properties?.action_link) {
-        const resetLink = linkData.properties.action_link
-
-        const roleLabel = role.replace('_', ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
-
-        await sendEmail({
-          to: email,
-          subject: `You've been invited to join ${orgName} on VHC`,
-          organizationId,
-          html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2 style="color: #1a1a1a;">You've Been Invited!</h2>
-              <p>Hi ${firstName},</p>
-              <p><strong>${orgName}</strong> has invited you to join their team as a <strong>${roleLabel}</strong> on the Vehicle Health Check platform.</p>
-              <p>Click the button below to set your password and get started:</p>
-              <div style="text-align: center; margin: 32px 0;">
-                <a href="${resetLink}" style="background-color: #2563eb; color: white; padding: 12px 32px; text-decoration: none; font-weight: bold; display: inline-block;">Set Your Password</a>
-              </div>
-              <p style="color: #666; font-size: 14px;">If the button doesn't work, copy and paste this link into your browser:</p>
-              <p style="color: #666; font-size: 12px; word-break: break-all;">${resetLink}</p>
-              <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
-              <p style="color: #999; font-size: 12px;">This invite was sent by ${orgName} via Vehicle Health Check.</p>
-            </div>
-          `
+      // Best-effort: email a "set your password" link. A failure here does NOT fail
+      // the invite — the user exists and an admin can re-send the link later.
+      let emailSent = false
+      try {
+        const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+          type: 'recovery',
+          email,
+          options: { redirectTo: resetRedirect }
         })
-      } else {
-        console.warn(`Failed to generate invite link for ${email}:`, linkError?.message)
+
+        const resetLink = linkData?.properties?.action_link
+        if (resetLink) {
+          const roleLabel = role.replace('_', ' ').replace(/\b\w/g, (ch: string) => ch.toUpperCase())
+          const result = await sendEmail({
+            to: email,
+            subject: `You've been invited to join ${orgName} on VHC`,
+            organizationId,
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #1a1a1a;">You've Been Invited!</h2>
+                <p>Hi ${firstName},</p>
+                <p><strong>${orgName}</strong> has invited you to join their team as a <strong>${roleLabel}</strong> on the Vehicle Health Check platform.</p>
+                <p>Click the button below to set your password and get started:</p>
+                <div style="text-align: center; margin: 32px 0;">
+                  <a href="${resetLink}" style="background-color: #2563eb; color: white; padding: 12px 32px; text-decoration: none; font-weight: bold; display: inline-block; border-radius: 6px;">Set Your Password</a>
+                </div>
+                <p style="color: #666; font-size: 14px;">If the button doesn't work, copy and paste this link into your browser:</p>
+                <p style="color: #666; font-size: 12px; word-break: break-all;">${resetLink}</p>
+                <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
+                <p style="color: #999; font-size: 12px;">This invite was sent by ${orgName} via Vehicle Health Check.</p>
+              </div>
+            `
+          })
+          emailSent = result.success
+        } else {
+          console.warn(`Failed to generate invite link for ${email}:`, linkError?.message)
+        }
+      } catch (emailErr) {
+        console.warn(`Failed to send invite email to ${email}:`, emailErr)
       }
 
-      results.push({
-        email,
-        userId: user.id,
-        role,
-        success: true
-      })
+      results.push({ email, userId: user.id, role, success: true, emailSent })
     } catch (err) {
       errors.push({ email, error: err instanceof Error ? err.message : 'Unknown error' })
     }
   }
 
-  // Update onboarding step
-  await supabaseAdmin
-    .from('organizations')
-    .update({
-      onboarding_step: 3,
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', organizationId)
+  // Advance onboarding progress (monotonic)
+  await advanceOnboardingStep(organizationId, 3)
 
   return c.json({
     success: true,
@@ -557,14 +599,8 @@ onboarding.post('/notifications', async (c) => {
     return c.json({ error: result.error.message }, 500)
   }
 
-  // Update onboarding step
-  await supabaseAdmin
-    .from('organizations')
-    .update({
-      onboarding_step: 4,
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', organizationId)
+  // Advance onboarding progress (monotonic)
+  await advanceOnboardingStep(organizationId, 4)
 
   return c.json({
     success: true,
@@ -616,6 +652,7 @@ onboarding.post('/skip', async (c) => {
     .from('organizations')
     .update({
       onboarding_completed: true,
+      onboarding_step: 5,
       updated_at: new Date().toISOString()
     })
     .eq('id', organizationId)

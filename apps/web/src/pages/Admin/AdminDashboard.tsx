@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useSuperAdmin } from '../../contexts/SuperAdminContext'
 import { api } from '../../lib/api'
@@ -21,6 +21,14 @@ interface PlatformStats {
   healthChecks: {
     total: number
     thisMonth: number
+  }
+  communications: {
+    smsThisMonth: number
+    emailsThisMonth: number
+  }
+  revenue: {
+    mrr: number
+    currency: string
   }
   recentActivity: Array<{
     id: string
@@ -80,7 +88,13 @@ export default function AdminDashboard() {
     )
   }
 
-  const statCards = [
+  const statCards: Array<{
+    label: string
+    value: number
+    icon: ReactNode
+    color: string
+    to?: string
+  }> = [
     {
       label: 'Total Organisations',
       value: stats?.organizations?.total || 0,
@@ -120,6 +134,28 @@ export default function AdminDashboard() {
         </svg>
       ),
       color: 'bg-purple-500'
+    },
+    {
+      label: 'SMS Sent (This Month)',
+      value: stats?.communications?.smsThisMonth || 0,
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 3v-3z" />
+        </svg>
+      ),
+      color: 'bg-teal-500',
+      to: '/admin/usage'
+    },
+    {
+      label: 'Emails Sent (This Month)',
+      value: stats?.communications?.emailsThisMonth || 0,
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+        </svg>
+      ),
+      color: 'bg-cyan-500',
+      to: '/admin/usage'
     }
   ]
 
@@ -132,8 +168,8 @@ export default function AdminDashboard() {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {statCards.map((stat, index) => (
-          <div key={index} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        {statCards.map((stat, index) => {
+          const inner = (
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500">{stat.label}</p>
@@ -143,8 +179,21 @@ export default function AdminDashboard() {
                 {stat.icon}
               </div>
             </div>
-          </div>
-        ))}
+          )
+          return stat.to ? (
+            <Link
+              key={index}
+              to={stat.to}
+              className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:border-indigo-300 hover:shadow transition-colors"
+            >
+              {inner}
+            </Link>
+          ) : (
+            <div key={index} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+              {inner}
+            </div>
+          )
+        })}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -176,6 +225,15 @@ export default function AdminDashboard() {
             <div className="flex justify-between items-center">
               <span className="text-gray-600">Active Users</span>
               <span className="font-semibold">{stats?.users?.active || 0}</span>
+            </div>
+            <div className="flex justify-between items-center pt-4 border-t">
+              <span className="text-gray-600">Monthly Recurring Revenue</span>
+              <span className="font-semibold text-gray-900">
+                {new Intl.NumberFormat('en-GB', {
+                  style: 'currency',
+                  currency: stats?.revenue?.currency || 'GBP'
+                }).format(stats?.revenue?.mrr || 0)}
+              </span>
             </div>
           </div>
         </div>

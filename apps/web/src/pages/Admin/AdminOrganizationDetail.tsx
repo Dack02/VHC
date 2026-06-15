@@ -75,7 +75,16 @@ interface AISettings {
   periodEnd: string
 }
 
-type TabType = 'overview' | 'sites' | 'users' | 'billing' | 'activity' | 'ai'
+interface UsageHistoryRow {
+  periodStart: string
+  healthChecksCreated: number
+  healthChecksCompleted: number
+  smsSent: number
+  emailsSent: number
+  storageUsedBytes: number
+}
+
+type TabType = 'overview' | 'sites' | 'users' | 'billing' | 'communications' | 'activity' | 'ai'
 
 export default function AdminOrganizationDetail() {
   const { id } = useParams<{ id: string }>()
@@ -87,6 +96,7 @@ export default function AdminOrganizationDetail() {
   const [users, setUsers] = useState<User[]>([])
   const [activity, setActivity] = useState<ActivityItem[]>([])
   const [aiSettings, setAiSettings] = useState<AISettings | null>(null)
+  const [commsHistory, setCommsHistory] = useState<UsageHistoryRow[]>([])
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const [loading, setLoading] = useState(true)
   const [activityLoading, setActivityLoading] = useState(false)
@@ -104,6 +114,7 @@ export default function AdminOrganizationDetail() {
   useEffect(() => {
     if (activeTab === 'sites') fetchSites()
     if (activeTab === 'users') fetchUsers()
+    if (activeTab === 'communications') fetchCommsHistory()
     if (activeTab === 'activity') fetchActivity()
     if (activeTab === 'ai') fetchAiSettings()
   }, [activeTab])
@@ -183,6 +194,16 @@ export default function AdminOrganizationDetail() {
       setAiSettings(data)
     } catch (error) {
       console.error('Failed to fetch AI settings:', error)
+    }
+  }
+
+  const fetchCommsHistory = async () => {
+    if (!session?.accessToken || !id) return
+    try {
+      const data = await api<{ history: UsageHistoryRow[] }>(`/api/v1/admin/organizations/${id}/usage/history`, { token: session.accessToken })
+      setCommsHistory(data.history || [])
+    } catch (error) {
+      console.error('Failed to fetch usage history:', error)
     }
   }
 
@@ -321,6 +342,7 @@ export default function AdminOrganizationDetail() {
     { id: 'sites', label: 'Sites' },
     { id: 'users', label: 'Users' },
     { id: 'billing', label: 'Billing' },
+    { id: 'communications', label: 'Communications' },
     { id: 'ai', label: 'AI Settings' },
     { id: 'activity', label: 'Activity' }
   ]
@@ -577,6 +599,50 @@ export default function AdminOrganizationDetail() {
               <dd className="text-gray-900">{org.subscription?.limits?.maxStorageGb || 0} GB</dd>
             </div>
           </dl>
+        </div>
+      )}
+
+      {activeTab === 'communications' && (
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <button
+              onClick={() => navigate(`/admin/communications?organization_id=${id}`)}
+              className="text-sm text-indigo-600 hover:text-indigo-700"
+            >
+              View all messages →
+            </button>
+          </div>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="font-semibold text-gray-900">Usage History (last 12 months)</h3>
+            </div>
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Month</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">SMS Sent</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Emails Sent</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">HC Created</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">HC Completed</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {commsHistory.length === 0 ? (
+                  <tr><td colSpan={5} className="px-6 py-8 text-center text-gray-500">No usage history</td></tr>
+                ) : (
+                  commsHistory.map((row) => (
+                    <tr key={row.periodStart}>
+                      <td className="px-6 py-4 text-gray-900">{new Date(row.periodStart).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</td>
+                      <td className="px-6 py-4 text-right text-gray-700">{(row.smsSent || 0).toLocaleString()}</td>
+                      <td className="px-6 py-4 text-right text-gray-700">{(row.emailsSent || 0).toLocaleString()}</td>
+                      <td className="px-6 py-4 text-right text-gray-500">{(row.healthChecksCreated || 0).toLocaleString()}</td>
+                      <td className="px-6 py-4 text-right text-gray-500">{(row.healthChecksCompleted || 0).toLocaleString()}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

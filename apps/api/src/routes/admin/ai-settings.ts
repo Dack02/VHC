@@ -18,7 +18,7 @@ aiSettings.use('*', superAdminMiddleware)
 
 // Valid models
 const VALID_MODELS = [
-  'claude-sonnet-4-20250514',
+  'claude-sonnet-4-6',
   'claude-haiku-4-5-20251001'
 ]
 
@@ -85,7 +85,7 @@ aiSettings.get('/', async (c) => {
       aiEnabled: settingsMap['ai_enabled']?.value === 'true',
       defaultMonthlyLimit: parseInt(settingsMap['default_monthly_ai_limit']?.value || '100'),
       costAlertThreshold: parseFloat(settingsMap['ai_cost_alert_threshold_usd']?.value || '50'),
-      model: settingsMap['ai_model']?.value || 'claude-sonnet-4-20250514',
+      model: settingsMap['ai_model']?.value || 'claude-sonnet-4-6',
       encryptionConfigured: isEncryptionConfigured()
     })
   } catch (error) {
@@ -301,7 +301,7 @@ aiSettings.post('/test', async (c) => {
       .eq('key', 'ai_model')
       .single()
 
-    const model = modelSetting?.value || 'claude-sonnet-4-20250514'
+    const model = modelSetting?.value || 'claude-sonnet-4-6'
 
     // Test the connection with a simple request
     const anthropic = new Anthropic({ apiKey })

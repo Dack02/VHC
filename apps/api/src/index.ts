@@ -33,6 +33,7 @@ import starterReasons from './routes/admin/starter-reasons.js'
 import starterTemplates from './routes/admin/starter-templates.js'
 import aiSettings from './routes/admin/ai-settings.js'
 import aiUsage from './routes/admin/ai-usage.js'
+import adminUsageRoutes from './routes/admin/usage.js'
 import adminReasonTypes from './routes/admin/reason-types.js'
 import orgNotificationSettings from './routes/organization-notification-settings.js'
 import orgAdmin from './routes/org-admin.js'
@@ -166,6 +167,7 @@ app.route('/api/v1/admin/starter-reasons', starterReasons)
 app.route('/api/v1/admin/starter-templates', starterTemplates)
 app.route('/api/v1/admin/ai-settings', aiSettings)
 app.route('/api/v1/admin/ai-usage', aiUsage)
+app.route('/api/v1/admin', adminUsageRoutes) // /usage/* and /communications/* (no path collision with adminStats)
 app.route('/api/v1/admin/reason-types', adminReasonTypes)
 
 // Organization notification settings (extends organizations routes)

@@ -183,7 +183,7 @@ export async function getModel(): Promise<string> {
   }
 
   // Default model
-  const defaultModel = 'claude-sonnet-4-20250514'
+  const defaultModel = 'claude-sonnet-4-6'
   setCachedSetting('ai_model', defaultModel)
   return defaultModel
 }

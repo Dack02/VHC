@@ -70,6 +70,8 @@ const AdminStarterTemplate = lazy(() => import('./pages/Admin/AdminStarterTempla
 const AdminStarterTemplates = lazy(() => import('./pages/Admin/AdminStarterTemplates'))
 const AIConfiguration = lazy(() => import('./pages/Admin/AIConfiguration'))
 const AIUsageDashboard = lazy(() => import('./pages/Admin/AIUsageDashboard'))
+const AdminUsageDashboard = lazy(() => import('./pages/Admin/AdminUsageDashboard'))
+const AdminCommunications = lazy(() => import('./pages/Admin/AdminCommunications'))
 const Onboarding = lazy(() => import('./pages/Onboarding'))
 const TechnicianWorkload = lazy(() => import('./pages/Dashboard/TechnicianWorkload'))
 const ReportsHub = lazy(() => import('./pages/Reports/ReportsHub'))
@@ -142,6 +144,8 @@ function App() {
                       <Route path="plans" element={<AdminPlans />} />
                       <Route path="activity" element={<AdminActivity />} />
                       <Route path="ai-usage" element={<AIUsageDashboard />} />
+                      <Route path="usage" element={<AdminUsageDashboard />} />
+                      <Route path="communications" element={<AdminCommunications />} />
                       <Route path="settings" element={<AdminSettings />} />
                       <Route path="ai-configuration" element={<AIConfiguration />} />
                       <Route path="starter-template" element={<AdminStarterTemplate />} />

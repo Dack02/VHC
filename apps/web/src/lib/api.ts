@@ -41,6 +41,33 @@ function isSuperAdminEndpoint(endpoint: string): boolean {
   return endpoint.startsWith('/api/v1/admin/')
 }
 
+/**
+ * Trigger a browser download of a file (e.g. CSV) from an API endpoint.
+ * The JSON `api()` helper parses responses as JSON and can't return a file body,
+ * so CSV/blob downloads fetch directly with the bearer token and save the blob.
+ */
+export async function downloadCsv(
+  endpoint: string,
+  token: string | null | undefined,
+  filename: string
+): Promise<void> {
+  const res = await fetch(`${API_URL}${endpoint}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
+  if (!res.ok) {
+    throw new ApiError(`Download failed (${res.status})`, res.status)
+  }
+  const blob = await res.blob()
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  window.URL.revokeObjectURL(url)
+  document.body.removeChild(a)
+}
+
 interface ApiOptions {
   method?: string
   body?: unknown

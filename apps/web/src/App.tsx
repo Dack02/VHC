@@ -17,6 +17,7 @@ import RecoveryRedirect from './components/RecoveryRedirect'
 import Login from './pages/Login'
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'))
 const ResetPassword = lazy(() => import('./pages/ResetPassword'))
+const Signup = lazy(() => import('./pages/Signup'))
 
 // Lazy: All other page components
 const Dashboard = lazy(() => import('./pages/Dashboard'))
@@ -130,6 +131,7 @@ function App() {
                     <Route path="/login" element={<Login />} />
                     <Route path="/forgot-password" element={<ForgotPassword />} />
                     <Route path="/reset-password" element={<ResetPassword />} />
+                    <Route path="/signup" element={<Signup />} />
 
                     {/* Super Admin Portal routes */}
                     <Route path="/admin/login" element={<AdminLogin />} />

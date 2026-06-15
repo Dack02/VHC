@@ -2,6 +2,8 @@ import { Hono } from 'hono'
 import { supabaseAuth, supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware } from '../middleware/auth.js'
 import { sendEmail } from '../services/email.js'
+import { provisionOrganization } from '../services/provisioning.js'
+import crypto from 'crypto'
 
 const auth = new Hono()
 
@@ -421,6 +423,141 @@ auth.post('/forgot-password', async (c) => {
     console.error('Forgot password error:', error)
     // Still return success to avoid leaking information.
     return c.json({ success: true })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Public self-service signup
+// ---------------------------------------------------------------------------
+
+/** Read a platform_settings row's JSON, defaulting to {} when absent. */
+async function readPlatformSettings(id: string): Promise<Record<string, unknown>> {
+  const { data } = await supabaseAdmin
+    .from('platform_settings')
+    .select('settings')
+    .eq('id', id)
+    .maybeSingle()
+  return (data?.settings as Record<string, unknown>) || {}
+}
+
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+
+// GET /api/v1/auth/signup-config
+// Public-safe config so the signup page can self-disable and show terms links.
+// (The full platform settings GET is super-admin only.)
+auth.get('/signup-config', async (c) => {
+  try {
+    const [features, general] = await Promise.all([
+      readPlatformSettings('features'),
+      readPlatformSettings('general')
+    ])
+    return c.json({
+      enabled: features.allowSelfSignup === true,
+      platformName: (general.platformName as string) || 'Vehicle Health Check',
+      termsUrl: (general.termsUrl as string) || null,
+      privacyUrl: (general.privacyUrl as string) || null
+    })
+  } catch (error) {
+    console.error('Signup config error:', error)
+    return c.json({ enabled: false, platformName: 'Vehicle Health Check', termsUrl: null, privacyUrl: null })
+  }
+})
+
+// POST /api/v1/auth/signup
+// Public self-service organization signup. Guarded by: a strict per-IP rate limit
+// (mounted in index.ts), the allowSelfSignup kill-switch (fail-safe: off unless
+// explicitly enabled), and email verification — the admin sets their password via
+// an emailed link (handled inside provisionOrganization when no password is given).
+auth.post('/signup', async (c) => {
+  try {
+    const features = await readPlatformSettings('features')
+    // Fail-safe: signup is disabled unless a super-admin has explicitly turned it on.
+    if (features.allowSelfSignup !== true) {
+      return c.json({ error: 'Signups are currently closed' }, 403)
+    }
+
+    const body = await c.req.json().catch(() => ({}))
+    const organizationName = String(body.organizationName || '').trim()
+    const adminFirstName = String(body.adminFirstName || '').trim()
+    const adminLastName = String(body.adminLastName || '').trim()
+    const adminEmail = String(body.adminEmail || '').trim().toLowerCase()
+    const acceptTerms = body.acceptTerms === true
+
+    if (!organizationName || !adminFirstName || !adminLastName || !adminEmail) {
+      return c.json({ error: 'All fields are required' }, 400)
+    }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(adminEmail)) {
+      return c.json({ error: 'Please enter a valid email address' }, 400)
+    }
+    if (!acceptTerms) {
+      return c.json({ error: 'You must accept the terms to continue' }, 400)
+    }
+
+    const genericSuccess = {
+      success: true,
+      message: 'Check your email to finish setting up your account.'
+    }
+
+    // No enumeration: if the email already belongs to a user, respond exactly as a
+    // fresh signup would (without creating anything or sending an email).
+    const { data: existing } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .eq('email', adminEmail)
+      .limit(1)
+      .maybeSingle()
+    if (existing) {
+      return c.json(genericSuccess)
+    }
+
+    const defaults = await readPlatformSettings('defaults')
+    const planId = (defaults.defaultPlanId as string) || 'starter'
+    const requireEmailVerification = defaults.requireEmailVerification !== false
+
+    // Collision-safe slug: derive from the name, add a short random suffix if taken.
+    const base = slugify(organizationName) || 'org'
+    let slug = base
+    const { data: clash } = await supabaseAdmin
+      .from('organizations')
+      .select('id')
+      .eq('slug', slug)
+      .maybeSingle()
+    if (clash) {
+      slug = `${base}-${crypto.randomBytes(3).toString('hex')}`
+    }
+
+    // Default path: no password → provisionOrganization emails a "set your password"
+    // link, which also verifies the email. If a super-admin disabled verification,
+    // allow an optional password from the form for instant login.
+    const adminPassword =
+      requireEmailVerification ? undefined
+      : (typeof body.password === 'string' && body.password ? body.password : undefined)
+
+    try {
+      await provisionOrganization({
+        name: organizationName,
+        slug,
+        planId,
+        adminEmail,
+        adminFirstName,
+        adminLastName,
+        adminPassword
+      })
+    } catch (err) {
+      const msg = (err instanceof Error ? err.message : '').toLowerCase()
+      // Existing auth account or a rare slug race — respond generically (no leak).
+      if (msg.includes('already been registered') || msg.includes('slug already exists')) {
+        return c.json(genericSuccess)
+      }
+      throw err
+    }
+
+    return c.json(genericSuccess)
+  } catch (error) {
+    console.error('Signup error:', error)
+    return c.json({ error: 'Something went wrong. Please try again.' }, 500)
   }
 })
 

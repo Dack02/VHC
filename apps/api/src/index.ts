@@ -102,6 +102,8 @@ app.use('*', cors({
 // Rate limiting for API routes
 // Note: More specific routes must come BEFORE less specific ones
 // Auth routes (stricter, only counts failed attempts)
+// Stricter limiter for public self-service signup (must run before the broad auth limiter)
+app.use('/api/v1/auth/signup', RateLimiters.signup())
 app.use('/api/v1/auth/*', RateLimiters.auth())
 // Standard authenticated API routes
 app.use('/api/v1/*', RateLimiters.standard())

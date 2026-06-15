@@ -30,6 +30,18 @@ interface SmsThread {
   createdAt: string
 }
 
+interface UnroutedMessage {
+  id: string
+  fromNumber: string
+  toNumber: string
+  body: string
+  status: string | null
+  isRead: boolean
+  createdAt: string
+  routingStatus: string
+  candidateOrgIds: string[]
+}
+
 interface ChannelStat {
   channel: string
   total: number
@@ -60,11 +72,15 @@ export default function AdminCommunications() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const [view, setView] = useState<'logs' | 'threads'>('logs')
+  const [view, setView] = useState<'logs' | 'threads' | 'unrouted'>('logs')
   const [orgsList, setOrgsList] = useState<OrgOption[]>([])
   const [channelStats, setChannelStats] = useState<ChannelStat[]>([])
   const [logs, setLogs] = useState<CommLog[]>([])
   const [threads, setThreads] = useState<SmsThread[]>([])
+  const [unrouted, setUnrouted] = useState<UnroutedMessage[]>([])
+  const [unroutedCount, setUnroutedCount] = useState(0)
+  const [reassignSel, setReassignSel] = useState<Record<string, string>>({})
+  const [reassigning, setReassigning] = useState<string | null>(null)
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [exporting, setExporting] = useState(false)
@@ -106,6 +122,16 @@ export default function AdminCommunications() {
       .catch(() => {})
   }, [session])
 
+  // Load the unrouted-message count for the tab badge
+  const loadUnroutedCount = useCallback(() => {
+    if (!session?.accessToken) return
+    api<{ pagination: { total: number } }>('/api/v1/admin/communications/unrouted?limit=1', { token: session.accessToken })
+      .then((d) => setUnroutedCount(d.pagination?.total || 0))
+      .catch(() => {})
+  }, [session])
+
+  useEffect(() => { loadUnroutedCount() }, [loadUnroutedCount])
+
   const buildQuery = useCallback(() => {
     const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) })
     if (organizationId) params.set('organization_id', organizationId)
@@ -124,16 +150,43 @@ export default function AdminCommunications() {
     const params = buildQuery()
     const endpoint = view === 'logs'
       ? `/api/v1/admin/communications/logs?${params}`
-      : `/api/v1/admin/communications/sms-threads?${params}`
-    api<{ logs?: CommLog[]; messages?: SmsThread[]; pagination: { total: number } }>(endpoint, { token: session.accessToken })
+      : view === 'threads'
+      ? `/api/v1/admin/communications/sms-threads?${params}`
+      : `/api/v1/admin/communications/unrouted?${params}`
+    api<{ logs?: CommLog[]; messages?: unknown[]; pagination: { total: number } }>(endpoint, { token: session.accessToken })
       .then((d) => {
         if (view === 'logs') setLogs(d.logs || [])
-        else setThreads(d.messages || [])
+        else if (view === 'threads') setThreads((d.messages as SmsThread[]) || [])
+        else {
+          setUnrouted((d.messages as UnroutedMessage[]) || [])
+          setUnroutedCount(d.pagination?.total || 0) // keep the tab badge in sync without a second request
+        }
         setTotal(d.pagination?.total || 0)
       })
       .catch((err) => console.error('Failed to fetch communications:', err))
       .finally(() => setLoading(false))
   }, [session, buildQuery, view])
+
+  const handleReassign = async (messageId: string) => {
+    if (!session?.accessToken) return
+    const orgId = reassignSel[messageId]
+    if (!orgId) return
+    setReassigning(messageId)
+    try {
+      await api(`/api/v1/admin/communications/unrouted/${messageId}/reassign`, {
+        method: 'POST',
+        body: { organization_id: orgId },
+        token: session.accessToken
+      })
+      setUnrouted((prev) => prev.filter((m) => m.id !== messageId))
+      setTotal((t) => Math.max(0, t - 1))
+      loadUnroutedCount() // refresh the badge authoritatively rather than guessing
+    } catch (err) {
+      console.error('Failed to reassign message:', err)
+    } finally {
+      setReassigning(null)
+    }
+  }
 
   const handleExport = async () => {
     if (!session?.accessToken) return
@@ -164,7 +217,7 @@ export default function AdminCommunications() {
         </div>
         <button
           onClick={handleExport}
-          disabled={exporting || view === 'threads'}
+          disabled={exporting || view !== 'logs'}
           className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"
         >
           {exporting ? 'Exporting...' : 'Export CSV'}
@@ -205,18 +258,33 @@ export default function AdminCommunications() {
 
       {/* View toggle */}
       <div className="flex gap-2">
-        {(['logs', 'threads'] as const).map((v) => (
+        {(['logs', 'threads', 'unrouted'] as const).map((v) => (
           <button
             key={v}
             onClick={() => setView(v)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium ${view === v ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+            className={`px-4 py-2 rounded-lg text-sm font-medium inline-flex items-center gap-2 ${view === v ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'}`}
           >
-            {v === 'logs' ? 'Delivery Logs' : 'SMS Threads'}
+            {v === 'logs' ? 'Delivery Logs' : v === 'threads' ? 'SMS Threads' : 'Unrouted'}
+            {v === 'unrouted' && unroutedCount > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${view === v ? 'bg-white text-indigo-700' : 'bg-red-100 text-red-700'}`}>
+                {unroutedCount}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
+      {/* Unrouted explainer */}
+      {view === 'unrouted' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+          Inbound replies received on the shared platform number that couldn't be confidently
+          attributed to one tenant — either the sender's number exists in several organisations or
+          it doesn't match any known customer. Assign each to the correct organisation below.
+        </div>
+      )}
+
       {/* Filters */}
+      {view !== 'unrouted' && (
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 flex flex-wrap gap-3">
         <select value={organizationId} onChange={(e) => setFilter('organization_id', e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
           <option value="">All organisations</option>
@@ -242,6 +310,7 @@ export default function AdminCommunications() {
         <input type="date" value={from} onChange={(e) => setFilter('from', e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
         <input type="date" value={to} onChange={(e) => setFilter('to', e.target.value)} className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
       </div>
+      )}
 
       {/* Table */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -279,7 +348,7 @@ export default function AdminCommunications() {
               ))}
             </tbody>
           </table>
-        ) : (
+        ) : view === 'threads' ? (
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
@@ -304,6 +373,55 @@ export default function AdminCommunications() {
                   </td>
                   <td className="px-6 py-4 text-xs text-gray-500 whitespace-nowrap">{m.fromNumber} → {m.toNumber}</td>
                   <td className="px-6 py-4 text-sm text-gray-700 max-w-md truncate" title={m.body}>{m.body}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Received</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">From → To</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Message</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Reason</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Assign to organisation</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {unrouted.length === 0 ? (
+                <tr><td colSpan={5} className="px-6 py-8 text-center text-gray-500">No unrouted messages</td></tr>
+              ) : unrouted.map((m) => (
+                <tr key={m.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 text-sm text-gray-500 whitespace-nowrap">{new Date(m.createdAt).toLocaleString('en-GB')}</td>
+                  <td className="px-6 py-4 text-xs text-gray-500 whitespace-nowrap">{m.fromNumber} → {m.toNumber}</td>
+                  <td className="px-6 py-4 text-sm text-gray-700 max-w-md truncate" title={m.body}>{m.body}</td>
+                  <td className="px-6 py-4">
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                      {m.routingStatus === 'unrouted_ambiguous'
+                        ? `Ambiguous${m.candidateOrgIds.length ? ` (${m.candidateOrgIds.length} orgs)` : ''}`
+                        : 'Unknown sender'}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={reassignSel[m.id] || ''}
+                        onChange={(e) => setReassignSel((prev) => ({ ...prev, [m.id]: e.target.value }))}
+                        className="border border-gray-300 rounded-lg px-2 py-1 text-sm"
+                      >
+                        <option value="">Select organisation…</option>
+                        {orgsList.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                      </select>
+                      <button
+                        onClick={() => handleReassign(m.id)}
+                        disabled={!reassignSel[m.id] || reassigning === m.id}
+                        className="px-3 py-1 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50 hover:bg-indigo-700"
+                      >
+                        {reassigning === m.id ? 'Routing…' : 'Route'}
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

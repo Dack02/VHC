@@ -8,9 +8,11 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware } from '../middleware/auth.js'
+import { requireModule } from '../middleware/require-module.js'
 
 const timeEntries = new Hono()
 timeEntries.use('*', authMiddleware)
+timeEntries.use('*', requireModule('job_clocking'))
 
 async function indirectEnabled(orgId: string): Promise<boolean> {
   const { data } = await supabaseAdmin

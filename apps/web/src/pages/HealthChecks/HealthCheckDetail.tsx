@@ -27,6 +27,8 @@ import { AdvisorAuthorizationModal } from './components/AdvisorAuthorizationModa
 import { InspectionTimer } from '../../components/InspectionTimer'
 import { JobTimeSummary, type JobTimeData } from '../../components/JobTimeSummary'
 import WorkshopNotesPanel from '../../components/WorkshopNotesPanel'
+import { MotHistoryPanel } from './components/MotHistoryPanel'
+import { useModules } from '../../contexts/ModulesContext'
 
 // Hook for online/offline detection
 function useOnlineStatus() {
@@ -133,7 +135,7 @@ const statusColors: Record<string, string> = {
   no_show: 'bg-red-100 text-red-700'
 }
 
-type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'tyres-brakes' | 'labour' | 'parts' | 'photos' | 'timeline' | 'notes' | 'activity' | 'sms'
+type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'tyres-brakes' | 'labour' | 'parts' | 'photos' | 'timeline' | 'notes' | 'activity' | 'sms' | 'mot'
 
 export default function HealthCheckDetail() {
   const { id } = useParams<{ id: string }>()
@@ -142,9 +144,11 @@ export default function HealthCheckDetail() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const isOnline = useOnlineStatus()
+  const { isEnabled } = useModules()
+  const vehicleLookupEnabled = isEnabled('vehicle_lookup')
 
   // Get initial tab from URL query parameter
-  const validTabs: Tab[] = ['summary', 'checkin', 'mri', 'health-check', 'tyres-brakes', 'labour', 'parts', 'photos', 'timeline', 'notes', 'activity', 'sms']
+  const validTabs: Tab[] = ['summary', 'checkin', 'mri', 'health-check', 'tyres-brakes', 'labour', 'parts', 'photos', 'timeline', 'notes', 'activity', 'sms', 'mot']
   const urlTab = searchParams.get('tab') as Tab | null
   const initialTab: Tab = urlTab && validTabs.includes(urlTab) ? urlTab : 'health-check'
 
@@ -598,7 +602,8 @@ export default function HealthCheckDetail() {
     { id: 'timeline', label: 'Timeline' },
     { id: 'notes' as Tab, label: 'Notes', badge: workshopNotesCount > 0 ? workshopNotesCount : undefined, badgeColor: 'gray' },
     { id: 'activity', label: 'Customer Activity' },
-    { id: 'sms' as Tab, label: 'SMS', badge: unreadSmsCount > 0 ? unreadSmsCount : undefined, badgeColor: 'red' }
+    { id: 'sms' as Tab, label: 'SMS', badge: unreadSmsCount > 0 ? unreadSmsCount : undefined, badgeColor: 'red' },
+    ...(vehicleLookupEnabled ? [{ id: 'mot' as Tab, label: 'MOT History' }] : [])
   ]
 
   // Determine available actions based on status
@@ -855,6 +860,13 @@ export default function HealthCheckDetail() {
             bookedRepairs={healthCheck.booked_repairs}
             bookingNotes={healthCheck.notes}
             onUpdate={silentRefresh}
+          />
+        )}
+        {activeTab === 'mot' && (
+          <MotHistoryPanel
+            vehicleId={healthCheck.vehicle_id}
+            token={session?.accessToken}
+            registration={healthCheck.vehicle?.registration}
           />
         )}
         {activeTab === 'checkin' && (

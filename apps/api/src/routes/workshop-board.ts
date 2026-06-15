@@ -19,6 +19,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import { requireModule } from '../middleware/require-module.js'
 import { emitToSite, WS_EVENTS } from '../services/websocket.js'
 import { createNotification } from './notifications.js'
 import { chunkIds } from '../services/hc-period-service.js'
@@ -26,6 +27,7 @@ import { chunkIds } from '../services/hc-period-service.js'
 const workshopBoard = new Hono()
 
 workshopBoard.use('*', authMiddleware)
+workshopBoard.use('*', requireModule('workshop_board'))
 
 const ADMIN_ROLES = ['super_admin', 'org_admin', 'site_admin'] as const
 const ADVISOR_ROLES = [...ADMIN_ROLES, 'service_advisor'] as const

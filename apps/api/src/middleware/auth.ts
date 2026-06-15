@@ -1,5 +1,6 @@
 import { Context, Next } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
+import type { ModuleKey } from '../lib/modules.js'
 
 export interface AuthUser {
   id: string
@@ -37,6 +38,7 @@ declare module 'hono' {
   interface ContextVariableMap {
     auth: AuthContext
     superAdmin: SuperAdmin
+    effectiveModules: Record<ModuleKey, boolean>
   }
 }
 

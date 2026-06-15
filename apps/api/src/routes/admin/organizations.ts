@@ -7,6 +7,8 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
 import { provisionOrganization, ProvisionError } from '../../services/provisioning.js'
+import { getOrgModuleDetail } from '../../services/modules.js'
+import { MODULE_MAP, isModuleKey, type ModuleKey } from '../../lib/modules.js'
 import crypto from 'crypto'
 
 const adminOrgRoutes = new Hono()
@@ -703,6 +705,79 @@ adminOrgRoutes.get('/:id/usage/history', async (c) => {
 })
 
 /**
+ * GET /api/v1/admin/organizations/:id/billing
+ * Current-month billing/usage summary: plan price + comms/AI usage + estimated
+ * spend (GBP plan+SMS; AI cost/chargeout in USD, kept separate — no fake FX).
+ */
+adminOrgRoutes.get('/:id/billing', async (c) => {
+  const orgId = c.req.param('id')
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
+
+  const { data: org, error } = await supabaseAdmin
+    .from('organizations')
+    .select('id, name, organization_subscriptions(plan:subscription_plans(*))')
+    .eq('id', orgId)
+    .single()
+
+  if (error || !org) {
+    return c.json({ error: 'Organisation not found' }, 404)
+  }
+
+  const [smsRes, emailRes, hcRes, aiRes, billingRes, marginRes] = await Promise.all([
+    supabaseAdmin.from('communication_logs').select('id', { count: 'exact', head: true })
+      .eq('organization_id', orgId).eq('channel', 'sms').in('status', ['sent', 'delivered', 'bounced']).gte('created_at', monthStart),
+    supabaseAdmin.from('communication_logs').select('id', { count: 'exact', head: true })
+      .eq('organization_id', orgId).eq('channel', 'email').in('status', ['sent', 'delivered', 'bounced']).gte('created_at', monthStart),
+    supabaseAdmin.from('health_checks').select('id', { count: 'exact', head: true })
+      .eq('organization_id', orgId).gte('created_at', monthStart),
+    supabaseAdmin.from('organization_ai_settings').select('current_period_cost_usd').eq('organization_id', orgId).maybeSingle(),
+    supabaseAdmin.from('platform_settings').select('settings').eq('id', 'billing').maybeSingle(),
+    supabaseAdmin.from('platform_ai_settings').select('value').eq('key', 'ai_margin_percent').maybeSingle()
+  ])
+
+  const subs = org.organization_subscriptions as unknown as Array<{ plan: Record<string, unknown> | Record<string, unknown>[] | null }> | null
+  const planRel = subs?.[0]?.plan
+  const plan = (Array.isArray(planRel) ? planRel[0] : planRel) || null
+
+  const billingSettings = (billingRes.data?.settings as Record<string, unknown> | null) || null
+  const smsRate = Number(billingSettings?.sms_unit_cost ?? 0.04)
+  const emailRate = Number(billingSettings?.email_unit_cost ?? 0)
+  const margin = marginRes.data?.value ? parseFloat(marginRes.data.value) : 0
+
+  const smsSent = smsRes.count || 0
+  const emailsSent = emailRes.count || 0
+  const planPrice = Number(plan?.price_monthly || 0)
+  const estSmsCost = Math.round(smsSent * smsRate * 100) / 100
+  const estEmailCost = Math.round(emailsSent * emailRate * 100) / 100
+  const aiCostUsd = Number(aiRes.data?.current_period_cost_usd || 0)
+
+  return c.json({
+    period: { start: monthStart },
+    plan: plan ? {
+      name: plan.name,
+      priceMonthly: planPrice,
+      currency: plan.currency || 'GBP',
+      limits: {
+        maxSites: plan.max_sites,
+        maxUsers: plan.max_users,
+        maxHealthChecksPerMonth: plan.max_health_checks_per_month,
+        maxStorageGb: plan.max_storage_gb
+      }
+    } : null,
+    usage: { smsSent, emailsSent, healthChecksCreated: hcRes.count || 0 },
+    estimated: {
+      planCostGbp: planPrice,
+      smsCostGbp: estSmsCost,
+      emailCostGbp: estEmailCost,
+      totalGbp: Math.round((planPrice + estSmsCost + estEmailCost) * 100) / 100,
+      aiCostUsd: Math.round(aiCostUsd * 100) / 100,
+      aiChargeoutUsd: Math.round(aiCostUsd * (1 + margin / 100) * 100) / 100,
+      aiMarginPercent: margin
+    }
+  })
+})
+
+/**
  * GET /api/v1/admin/organizations/:id/sites
  * List sites for an organization
  */
@@ -1262,6 +1337,130 @@ adminOrgRoutes.post('/:id/ai-settings/reset-period', async (c) => {
     const message = error instanceof Error ? error.message : 'Failed to reset period'
     return c.json({ error: message }, 500)
   }
+})
+
+// =============================================================================
+// MODULES (per-org feature enablement)
+// =============================================================================
+
+/**
+ * GET /api/v1/admin/organizations/:id/modules
+ * Per-module effective state + override (true/false/null=inherit) + plan default.
+ */
+adminOrgRoutes.get('/:id/modules', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const orgId = c.req.param('id')
+
+  const { data: org } = await supabaseAdmin
+    .from('organizations')
+    .select('id, name')
+    .eq('id', orgId)
+    .single()
+
+  if (!org) {
+    return c.json({ error: 'Organisation not found' }, 404)
+  }
+
+  const detail = await getOrgModuleDetail(orgId)
+  const modules = detail.map((m) => ({
+    ...m,
+    label: MODULE_MAP[m.key].label,
+    description: MODULE_MAP[m.key].description
+  }))
+
+  await logSuperAdminActivity(
+    superAdmin.id,
+    'view_org_modules',
+    'organization_settings',
+    orgId,
+    {},
+    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    c.req.header('User-Agent')
+  )
+
+  return c.json({ modules })
+})
+
+/**
+ * PATCH /api/v1/admin/organizations/:id/modules
+ * Body: { overrides: { [moduleKey]: boolean | null } }  (null clears -> inherit plan)
+ */
+adminOrgRoutes.patch('/:id/modules', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const orgId = c.req.param('id')
+  const body = await c.req.json()
+  const overrides = body?.overrides
+
+  if (!overrides || typeof overrides !== 'object') {
+    return c.json({ error: 'overrides object is required' }, 400)
+  }
+
+  // Validate keys and values
+  for (const [key, val] of Object.entries(overrides)) {
+    if (!isModuleKey(key)) {
+      return c.json({ error: `Unknown module: ${key}` }, 400)
+    }
+    if (MODULE_MAP[key as ModuleKey].core) {
+      return c.json({ error: `Module "${key}" is core and cannot be disabled` }, 400)
+    }
+    if (val !== null && typeof val !== 'boolean') {
+      return c.json({ error: `Override for "${key}" must be boolean or null` }, 400)
+    }
+  }
+
+  // Verify org exists
+  const { data: org } = await supabaseAdmin
+    .from('organizations')
+    .select('id, name')
+    .eq('id', orgId)
+    .single()
+
+  if (!org) {
+    return c.json({ error: 'Organisation not found' }, 404)
+  }
+
+  // Merge into existing overrides (null clears the key)
+  const { data: existing } = await supabaseAdmin
+    .from('organization_settings')
+    .select('module_overrides')
+    .eq('organization_id', orgId)
+    .maybeSingle()
+
+  const next: Record<string, boolean> = { ...((existing?.module_overrides as Record<string, boolean>) || {}) }
+  for (const [key, val] of Object.entries(overrides)) {
+    if (val === null) delete next[key]
+    else next[key] = val as boolean
+  }
+
+  const { error } = await supabaseAdmin
+    .from('organization_settings')
+    .upsert(
+      { organization_id: orgId, module_overrides: next, updated_at: new Date().toISOString() },
+      { onConflict: 'organization_id' }
+    )
+
+  if (error) {
+    return c.json({ error: error.message }, 500)
+  }
+
+  await logSuperAdminActivity(
+    superAdmin.id,
+    'update_org_modules',
+    'organization_settings',
+    orgId,
+    { organizationName: org.name, changes: Object.keys(overrides) },
+    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    c.req.header('User-Agent')
+  )
+
+  const detail = await getOrgModuleDetail(orgId)
+  const modules = detail.map((m) => ({
+    ...m,
+    label: MODULE_MAP[m.key].label,
+    description: MODULE_MAP[m.key].description
+  }))
+
+  return c.json({ success: true, modules })
 })
 
 export default adminOrgRoutes

@@ -2,6 +2,38 @@ import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { api, Vehicle, Template, User, Site } from '../../lib/api'
+import { useModules } from '../../contexts/ModulesContext'
+
+interface VehicleLookupResponse {
+  found: boolean
+  registration: string
+  vehicle?: {
+    registration: string
+    make: string | null
+    model: string | null
+    primaryColour: string | null
+    fuelType: string | null
+    engineSize: string | null
+    firstUsedDate: string | null
+    manufactureDate: string | null
+  }
+  motTests: unknown[]
+  motStatus: string | null
+  motExpiryDate: string | null
+}
+
+interface VehicleLookupDraft {
+  registration: string
+  make: string
+  model: string
+  color: string
+  fuelType: string
+  engineSize: string
+  year: string
+  motStatus: string | null
+  motExpiryDate: string | null
+  motTestCount: number
+}
 
 export default function NewHealthCheck() {
   const { session } = useAuth()
@@ -27,6 +59,14 @@ export default function NewHealthCheck() {
   })
 
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null)
+
+  // DVSA vehicle lookup (gated by the vehicle_lookup module)
+  const { isEnabled } = useModules()
+  const lookupEnabled = isEnabled('vehicle_lookup')
+  const [lookingUp, setLookingUp] = useState(false)
+  const [lookupError, setLookupError] = useState<string | null>(null)
+  const [lookupDraft, setLookupDraft] = useState<VehicleLookupDraft | null>(null)
+  const [creatingVehicle, setCreatingVehicle] = useState(false)
 
   // Load templates and technicians on mount
   useEffect(() => {
@@ -104,6 +144,87 @@ export default function NewHealthCheck() {
   const clearVehicle = () => {
     setSelectedVehicle(null)
     setForm({ ...form, vehicleId: '' })
+  }
+
+  const handleLookup = async () => {
+    if (!session?.accessToken) return
+    const reg = searchQuery.trim().toUpperCase().replace(/\s/g, '')
+    if (reg.length < 2) return
+
+    setLookingUp(true)
+    setLookupError(null)
+    try {
+      const result = await api<VehicleLookupResponse>(
+        `/api/v1/vehicle-lookup/${encodeURIComponent(reg)}`,
+        { token: session.accessToken }
+      )
+
+      if (!result.found || !result.vehicle) {
+        // No DVSA record — let the advisor enter the details manually
+        setLookupDraft({
+          registration: reg, make: '', model: '', color: '', fuelType: '',
+          engineSize: '', year: '', motStatus: result.motStatus,
+          motExpiryDate: result.motExpiryDate, motTestCount: 0
+        })
+        setLookupError('No DVSA record found — you can still enter the details manually.')
+        return
+      }
+
+      const v = result.vehicle
+      const dateForYear = v.firstUsedDate || v.manufactureDate
+      setLookupDraft({
+        registration: v.registration || reg,
+        make: v.make || '',
+        model: v.model || '',
+        color: v.primaryColour || '',
+        fuelType: v.fuelType || '',
+        engineSize: v.engineSize || '',
+        year: dateForYear ? String(new Date(dateForYear).getFullYear()) : '',
+        motStatus: result.motStatus,
+        motExpiryDate: result.motExpiryDate,
+        motTestCount: result.motTests?.length || 0
+      })
+    } catch (err) {
+      setLookupError(err instanceof Error ? err.message : 'Vehicle lookup failed')
+    } finally {
+      setLookingUp(false)
+    }
+  }
+
+  const handleCreateFromLookup = async () => {
+    if (!session?.accessToken || !lookupDraft) return
+
+    setCreatingVehicle(true)
+    setLookupError(null)
+    try {
+      const created = await api<Vehicle>(
+        '/api/v1/vehicles',
+        {
+          method: 'POST',
+          token: session.accessToken,
+          body: {
+            registration: lookupDraft.registration,
+            make: lookupDraft.make || undefined,
+            model: lookupDraft.model || undefined,
+            color: lookupDraft.color || undefined,
+            fuelType: lookupDraft.fuelType || undefined,
+            engineSize: lookupDraft.engineSize || undefined,
+            year: lookupDraft.year ? parseInt(lookupDraft.year, 10) : undefined,
+            syncMotHistory: true
+          }
+        }
+      )
+
+      setSelectedVehicle(created)
+      setForm(f => ({ ...f, vehicleId: created.id }))
+      setLookupDraft(null)
+      setSearchQuery('')
+      setSearchResults([])
+    } catch (err) {
+      setLookupError(err instanceof Error ? err.message : 'Failed to add vehicle')
+    } finally {
+      setCreatingVehicle(false)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -203,6 +324,119 @@ export default function NewHealthCheck() {
                   </svg>
                 </button>
               </div>
+            ) : lookupDraft ? (
+              <div className="border border-indigo-200 bg-indigo-50/40 rounded-xl p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-gray-900">DVSA lookup</span>
+                    {lookupDraft.motTestCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
+                        {lookupDraft.motTestCount} MOT test{lookupDraft.motTestCount === 1 ? '' : 's'}
+                      </span>
+                    )}
+                    {lookupDraft.motStatus && (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                        MOT: {lookupDraft.motStatus}{lookupDraft.motExpiryDate ? ` (exp ${lookupDraft.motExpiryDate})` : ''}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setLookupDraft(null); setLookupError(null) }}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Review and adjust the details, then add the vehicle. Full MOT history is saved automatically.
+                </p>
+                {lookupError && <p className="text-xs text-amber-700">{lookupError}</p>}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Registration</label>
+                    <input
+                      type="text"
+                      value={lookupDraft.registration}
+                      onChange={(e) => setLookupDraft(d => d ? { ...d, registration: e.target.value.toUpperCase() } : d)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm uppercase focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Year</label>
+                    <input
+                      type="text"
+                      value={lookupDraft.year}
+                      onChange={(e) => setLookupDraft(d => d ? { ...d, year: e.target.value } : d)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Make</label>
+                    <input
+                      type="text"
+                      value={lookupDraft.make}
+                      onChange={(e) => setLookupDraft(d => d ? { ...d, make: e.target.value } : d)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Model</label>
+                    <input
+                      type="text"
+                      value={lookupDraft.model}
+                      onChange={(e) => setLookupDraft(d => d ? { ...d, model: e.target.value } : d)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Colour</label>
+                    <input
+                      type="text"
+                      value={lookupDraft.color}
+                      onChange={(e) => setLookupDraft(d => d ? { ...d, color: e.target.value } : d)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Fuel</label>
+                    <input
+                      type="text"
+                      value={lookupDraft.fuelType}
+                      onChange={(e) => setLookupDraft(d => d ? { ...d, fuelType: e.target.value } : d)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Engine size</label>
+                    <input
+                      type="text"
+                      value={lookupDraft.engineSize}
+                      onChange={(e) => setLookupDraft(d => d ? { ...d, engineSize: e.target.value } : d)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCreateFromLookup}
+                    disabled={creatingVehicle || !lookupDraft.registration}
+                    className="px-4 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50"
+                  >
+                    {creatingVehicle ? 'Adding...' : 'Use this vehicle'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setLookupDraft(null); setLookupError(null) }}
+                    className="px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50"
+                  >
+                    Back to search
+                  </button>
+                </div>
+              </div>
             ) : (
               <div className="relative">
                 <input
@@ -236,6 +470,19 @@ export default function NewHealthCheck() {
                       </button>
                     ))}
                   </div>
+                )}
+                {lookupEnabled && !searching && searchResults.length === 0 && searchQuery.trim().length >= 2 && (
+                  <button
+                    type="button"
+                    onClick={handleLookup}
+                    disabled={lookingUp}
+                    className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2 border border-indigo-300 text-indigo-700 rounded-lg text-sm font-medium hover:bg-indigo-50 disabled:opacity-50"
+                  >
+                    {lookingUp ? 'Looking up…' : `Look up "${searchQuery.trim().toUpperCase().replace(/\s/g, '')}" via DVSA`}
+                  </button>
+                )}
+                {lookupError && (
+                  <p className="mt-2 text-sm text-amber-700">{lookupError}</p>
                 )}
               </div>
             )}

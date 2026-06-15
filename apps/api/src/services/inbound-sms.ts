@@ -29,7 +29,7 @@ const TERMINAL_STATUSES = ['completed', 'cancelled', 'no_show']
  * - 07700900123 (UK local)
  * - 447700900123 (without +)
  */
-function phoneVariants(e164: string): string[] {
+export function phoneVariants(e164: string): string[] {
   const variants = [e164]
 
   // Without +
@@ -117,7 +117,7 @@ async function matchOrganizations(toNumber: string): Promise<string[]> {
  * A phone number can legitimately exist in more than one org (no global uniqueness),
  * so we return all matches and let the caller decide whether routing is unambiguous.
  */
-async function findCustomerMatches(
+export async function findCustomerMatches(
   fromVariants: string[],
   orgIds: string[]
 ): Promise<Array<{ customerId: string; organizationId: string }>> {
@@ -152,16 +152,32 @@ async function findMostRecentOutbound(
 
   const candidates: Array<{ organizationId: string; healthCheckId: string | null; customerId: string | null; sentAt: string }> = []
 
-  // Source 1: sms_messages (outbound)
-  const { data: smsRow } = await supabaseAdmin
-    .from('sms_messages')
-    .select('organization_id, health_check_id, customer_id, created_at')
-    .eq('direction', 'outbound')
-    .in('to_number', fromVariants)
-    .in('organization_id', orgIds)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  // The two source queries are independent — run them concurrently.
+  const [smsRes, logRes] = await Promise.all([
+    // Source 1: sms_messages (outbound)
+    supabaseAdmin
+      .from('sms_messages')
+      .select('organization_id, health_check_id, customer_id, created_at')
+      .eq('direction', 'outbound')
+      .in('to_number', fromVariants)
+      .in('organization_id', orgIds)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    // Source 2: communication_logs (worker quote/reminder sends) — org via the health check
+    supabaseAdmin
+      .from('communication_logs')
+      .select('health_check_id, created_at, health_checks!inner(organization_id)')
+      .eq('channel', 'sms')
+      .in('recipient', fromVariants)
+      .in('health_checks.organization_id', orgIds)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+  ])
+
+  const smsRow = smsRes.data
+  const logRow = logRes.data
 
   if (smsRow?.organization_id) {
     candidates.push({
@@ -171,17 +187,6 @@ async function findMostRecentOutbound(
       sentAt: smsRow.created_at,
     })
   }
-
-  // Source 2: communication_logs (worker quote/reminder sends) — org via the health check
-  const { data: logRow } = await supabaseAdmin
-    .from('communication_logs')
-    .select('health_check_id, created_at, health_checks!inner(organization_id)')
-    .eq('channel', 'sms')
-    .in('recipient', fromVariants)
-    .in('health_checks.organization_id', orgIds)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
 
   if (logRow?.health_check_id) {
     const hc = Array.isArray(logRow.health_checks) ? logRow.health_checks[0] : logRow.health_checks
@@ -208,7 +213,9 @@ async function findActiveHealthCheck(
   customerId: string,
   organizationId: string
 ): Promise<{ id: string; advisorId: string | null; siteId: string | null } | null> {
-  const terminalStatuses = TERMINAL_STATUSES
+  const notTerminal = `(${TERMINAL_STATUSES.join(',')})`
+  const mapHc = (h: { id: string; advisor_id: string | null; site_id: string | null }) =>
+    ({ id: h.id, advisorId: h.advisor_id, siteId: h.site_id })
 
   // Path 1: find via vehicle -> customer relationship
   const { data: hcViaVehicle, error: vehicleError } = await supabaseAdmin
@@ -222,7 +229,7 @@ async function findActiveHealthCheck(
     `)
     .eq('organization_id', organizationId)
     .eq('vehicles.customer_id', customerId)
-    .not('status', 'in', `(${terminalStatuses.join(',')})`)
+    .not('status', 'in', notTerminal)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -233,11 +240,7 @@ async function findActiveHealthCheck(
 
   if (hcViaVehicle) {
     logger.info('Found active HC via vehicle path', { healthCheckId: hcViaVehicle.id, status: hcViaVehicle.status })
-    return {
-      id: hcViaVehicle.id,
-      advisorId: hcViaVehicle.advisor_id,
-      siteId: hcViaVehicle.site_id
-    }
+    return mapHc(hcViaVehicle)
   }
 
   // Path 2: find via direct customer_id on health_checks
@@ -246,7 +249,7 @@ async function findActiveHealthCheck(
     .select('id, advisor_id, site_id, status')
     .eq('organization_id', organizationId)
     .eq('customer_id', customerId)
-    .not('status', 'in', `(${terminalStatuses.join(',')})`)
+    .not('status', 'in', notTerminal)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -257,11 +260,7 @@ async function findActiveHealthCheck(
 
   if (hcDirect) {
     logger.info('Found active HC via direct customer_id', { healthCheckId: hcDirect.id, status: hcDirect.status })
-    return {
-      id: hcDirect.id,
-      advisorId: hcDirect.advisor_id,
-      siteId: hcDirect.site_id
-    }
+    return mapHc(hcDirect)
   }
 
   // Path 3: match via existing outbound SMS — if we previously sent an SMS for a health check
@@ -283,16 +282,12 @@ async function findActiveHealthCheck(
       .from('health_checks')
       .select('id, advisor_id, site_id, status')
       .eq('id', existingSms.health_check_id)
-      .not('status', 'in', `(${terminalStatuses.join(',')})`)
+      .not('status', 'in', notTerminal)
       .single()
 
     if (hcFromSms) {
       logger.info('Found active HC via previous outbound SMS', { healthCheckId: hcFromSms.id, status: hcFromSms.status })
-      return {
-        id: hcFromSms.id,
-        advisorId: hcFromSms.advisor_id,
-        siteId: hcFromSms.site_id
-      }
+      return mapHc(hcFromSms)
     }
   }
 
@@ -300,76 +295,91 @@ async function findActiveHealthCheck(
   return null
 }
 
+interface RoutingResult {
+  organizationId: string | null
+  customerId: string | null
+  healthCheckHint: string | null
+  routingStatus: 'routed' | 'unrouted_ambiguous' | 'unrouted_unknown'
+  candidateOrgIds: string[] // populated only when ambiguous, for the quarantine metadata
+}
+
 /**
- * Process an inbound SMS message.
- *
- * Tenant routing on a SHARED platform number is best-effort and ordered by confidence —
- * an inbound SMS carries only From/To/Body, and on a shared number To cannot identify the
+ * Decide which tenant an inbound SMS belongs to. Best-effort and ordered by confidence —
+ * an inbound SMS carries only From/To/Body, and on a SHARED number To cannot identify the
  * tenant, so we route by the strongest available signal and refuse to guess otherwise:
  *
  *   1. Dedicated number (exactly one candidate org)  -> route directly (unambiguous).
  *   2. Shared number -> most recent outbound to this phone wins (deterministic).
  *   3. No prior outbound -> customer-phone match, but only if it resolves to exactly ONE org.
- *   4. Otherwise -> quarantine (organization_id = NULL). Never assign an arbitrary tenant,
- *      never emit into a tenant's room. Quarantined messages surface in the super-admin queue.
+ *   4. Otherwise -> quarantine (organizationId = null). Never assign an arbitrary tenant.
+ *
+ * Reads only — no writes or notifications — so the decision can be reasoned about and tested
+ * independently of the persistence/notification side effects in processInboundSms.
+ */
+async function resolveInboundRouting(toNumber: string, fromVariants: string[]): Promise<RoutingResult> {
+  const unknown: RoutingResult = {
+    organizationId: null, customerId: null, healthCheckHint: null,
+    routingStatus: 'unrouted_unknown', candidateOrgIds: []
+  }
+  const routed = (
+    organizationId: string,
+    customerId: string | null = null,
+    healthCheckHint: string | null = null
+  ): RoutingResult => ({ organizationId, customerId, healthCheckHint, routingStatus: 'routed', candidateOrgIds: [] })
+
+  const candidateOrgIds = await matchOrganizations(toNumber)
+  logger.info('Matched organizations for inbound SMS', { to: toNumber, orgCount: candidateOrgIds.length })
+
+  // No tenant owns this number.
+  if (candidateOrgIds.length === 0) {
+    logger.warn('Inbound SMS to unrecognised number', { to: toNumber })
+    return unknown
+  }
+
+  // Dedicated number, or a single-tenant deployment — unambiguous.
+  if (candidateOrgIds.length === 1) return routed(candidateOrgIds[0])
+
+  // Shared number. Prefer the most recent outbound to this phone (strongest signal).
+  const recent = await findMostRecentOutbound(fromVariants, candidateOrgIds)
+  if (recent) {
+    logger.info('Inbound SMS routed via most-recent outbound', { organizationId: recent.organizationId, healthCheckHint: recent.healthCheckId })
+    return routed(recent.organizationId, recent.customerId, recent.healthCheckId)
+  }
+
+  // Cold inbound (no prior outbound) — fall back to a customer-phone match, only if unambiguous.
+  const matches = await findCustomerMatches(fromVariants, candidateOrgIds)
+  const distinctOrgs = [...new Set(matches.map(m => m.organizationId))]
+  if (distinctOrgs.length === 1) {
+    logger.info('Inbound SMS routed via unique customer match', { organizationId: distinctOrgs[0] })
+    return routed(distinctOrgs[0], matches[0].customerId)
+  }
+  if (distinctOrgs.length > 1) {
+    logger.warn('Inbound SMS ambiguous — phone exists in multiple orgs on shared number', { orgCount: distinctOrgs.length })
+    return {
+      organizationId: null, customerId: null, healthCheckHint: null,
+      routingStatus: 'unrouted_ambiguous', candidateOrgIds: distinctOrgs
+    }
+  }
+  logger.warn('Inbound SMS from unknown sender on shared number', { from: fromVariants[0] })
+  return unknown
+}
+
+/**
+ * Process an inbound SMS message: resolve the tenant (see resolveInboundRouting), persist the
+ * message, and — only when confidently routed — emit realtime events and notify staff.
+ * Quarantined (unrouted) messages are stored with organization_id = NULL and never reach a tenant.
  */
 export async function processInboundSms(data: InboundSmsData): Promise<void> {
   const { from, to, body, messageSid } = data
 
   logger.info('Processing inbound SMS', { from, to, messageSid })
 
-  const normalizedFrom = formatPhoneNumber(from)
-  const fromVariants = phoneVariants(normalizedFrom)
+  const fromVariants = phoneVariants(formatPhoneNumber(from))
 
-  // Candidate orgs for the TO number: exactly one for a dedicated number, many for the shared number.
-  const candidateOrgIds = await matchOrganizations(to)
-  logger.info('Matched organizations for inbound SMS', { to, orgCount: candidateOrgIds.length })
-
-  let organizationId: string | null = null
-  let customerId: string | null = null
-  let healthCheckHint: string | null = null
-  let routingStatus: 'routed' | 'unrouted_ambiguous' | 'unrouted_unknown' = 'unrouted_unknown'
-  let metaCandidateOrgIds: string[] = []
-
-  if (candidateOrgIds.length === 1) {
-    // Dedicated number, or a single-tenant deployment — unambiguous.
-    organizationId = candidateOrgIds[0]
-    routingStatus = 'routed'
-  } else if (candidateOrgIds.length > 1) {
-    // Shared number. Prefer the most recent outbound to this phone (strongest signal).
-    const recent = await findMostRecentOutbound(fromVariants, candidateOrgIds)
-    if (recent) {
-      organizationId = recent.organizationId
-      healthCheckHint = recent.healthCheckId
-      customerId = recent.customerId
-      routingStatus = 'routed'
-      logger.info('Inbound SMS routed via most-recent outbound', { organizationId, healthCheckHint })
-    } else {
-      // Cold inbound (no prior outbound) — fall back to customer-phone match, only if unambiguous.
-      const matches = await findCustomerMatches(fromVariants, candidateOrgIds)
-      const distinctOrgs = [...new Set(matches.map(m => m.organizationId))]
-      if (distinctOrgs.length === 1) {
-        organizationId = distinctOrgs[0]
-        customerId = matches[0].customerId
-        routingStatus = 'routed'
-        logger.info('Inbound SMS routed via unique customer match', { organizationId })
-      } else if (distinctOrgs.length > 1) {
-        routingStatus = 'unrouted_ambiguous'
-        metaCandidateOrgIds = distinctOrgs
-        logger.warn('Inbound SMS ambiguous — phone exists in multiple orgs on shared number', {
-          from: normalizedFrom,
-          orgCount: distinctOrgs.length,
-        })
-      } else {
-        routingStatus = 'unrouted_unknown'
-        logger.warn('Inbound SMS from unknown sender on shared number', { from: normalizedFrom })
-      }
-    }
-  } else {
-    // TO number not recognised at all.
-    routingStatus = 'unrouted_unknown'
-    logger.warn('Inbound SMS to unrecognised number', { to })
-  }
+  const routing = await resolveInboundRouting(to, fromVariants)
+  const { organizationId, healthCheckHint, routingStatus } = routing
+  const metaCandidateOrgIds = routing.candidateOrgIds
+  let customerId = routing.customerId
 
   // Resolve the customer within the routed org if not already known (e.g. routed via comms log).
   if (organizationId && !customerId) {

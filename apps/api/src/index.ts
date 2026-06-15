@@ -34,6 +34,10 @@ import starterTemplates from './routes/admin/starter-templates.js'
 import aiSettings from './routes/admin/ai-settings.js'
 import aiUsage from './routes/admin/ai-usage.js'
 import adminUsageRoutes from './routes/admin/usage.js'
+import adminSuperAdmins from './routes/admin/super-admins.js'
+import adminSystem from './routes/admin/system.js'
+import adminAudit from './routes/admin/audit.js'
+import adminAlerts from './routes/admin/alerts.js'
 import adminReasonTypes from './routes/admin/reason-types.js'
 import orgNotificationSettings from './routes/organization-notification-settings.js'
 import orgAdmin from './routes/org-admin.js'
@@ -70,6 +74,8 @@ import followUpOutcomes from './routes/follow-up-outcomes.js'
 import followUpDispositions from './routes/follow-up-dispositions.js'
 import followUpTimelines from './routes/follow-up-timelines.js'
 import followUpSettings from './routes/follow-up-settings.js'
+import modulesRoute from './routes/modules.js'
+import vehicleLookup from './routes/vehicle-lookup.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
@@ -159,6 +165,12 @@ app.route('/api/v1/push', pushSubscriptions)
 // Follow-up module (deferred-work recovery)
 app.route('/api/v1/follow-ups', followUps)
 
+// Effective module set for the current organisation (frontend gating)
+app.route('/api/v1/modules', modulesRoute)
+
+// Vehicle data lookup (DVSA MOT History) — registration -> vehicle details + MOT
+app.route('/api/v1/vehicle-lookup', vehicleLookup)
+
 // Admin routes (Super Admin only)
 app.route('/api/v1/admin/platform', platformAdmin)
 app.route('/api/v1/admin/organizations', adminOrganizations)
@@ -168,6 +180,10 @@ app.route('/api/v1/admin/starter-templates', starterTemplates)
 app.route('/api/v1/admin/ai-settings', aiSettings)
 app.route('/api/v1/admin/ai-usage', aiUsage)
 app.route('/api/v1/admin', adminUsageRoutes) // /usage/* and /communications/* (no path collision with adminStats)
+app.route('/api/v1/admin/super-admins', adminSuperAdmins)
+app.route('/api/v1/admin/system', adminSystem)
+app.route('/api/v1/admin/audit', adminAudit)
+app.route('/api/v1/admin/alerts', adminAlerts)
 app.route('/api/v1/admin/reason-types', adminReasonTypes)
 
 // Organization notification settings (extends organizations routes)

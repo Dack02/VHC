@@ -8,11 +8,13 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import { requireModule } from '../middleware/require-module.js'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 const libraryGapReport = new Hono()
 libraryGapReport.use('*', authMiddleware)
+libraryGapReport.use('*', requireModule('library_gap_report'))
 
 function localDateStr(tz: string | undefined): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: tz || 'Europe/London' })

@@ -1,9 +1,25 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { useModules } from '../../contexts/ModulesContext'
 import { api } from '../../lib/api'
+import type { ModuleKey } from '../../lib/modules'
 
 type UserRole = 'super_admin' | 'org_admin' | 'site_admin' | 'service_advisor' | 'technician'
+
+// Settings cards owned by a gateable module — hidden when that module is disabled.
+const CARD_MODULE: Record<string, ModuleKey> = {
+  '/settings/workshop-board': 'workshop_board',
+  '/settings/time-tracking': 'job_clocking',
+  '/settings/library-gap-report': 'library_gap_report',
+  '/settings/follow-up-settings': 'follow_up',
+  '/settings/follow-up-outcomes': 'follow_up',
+  '/settings/follow-up-dispositions': 'follow_up',
+  '/settings/follow-up-timelines': 'follow_up',
+  '/settings/integrations': 'dms_integration',
+  '/settings/daily-sms-overview': 'customer_comms',
+  '/settings/message-templates': 'customer_comms'
+}
 
 interface SettingsCard {
   to: string
@@ -17,6 +33,7 @@ interface SettingsCard {
 
 export default function SettingsHub() {
   const { user, session } = useAuth()
+  const { isEnabled } = useModules()
   const [pendingSubmissionsCount, setPendingSubmissionsCount] = useState(0)
   const [isAiEnabled, setIsAiEnabled] = useState(false)
 
@@ -516,11 +533,12 @@ export default function SettingsHub() {
     }
   ]
 
+  const moduleOk = (card: SettingsCard) => !CARD_MODULE[card.to] || isEnabled(CARD_MODULE[card.to])
   const visibleGeneral = generalCards.filter(card =>
-    card.roles.includes(userRole) && (card.condition === undefined || card.condition)
+    card.roles.includes(userRole) && (card.condition === undefined || card.condition) && moduleOk(card)
   )
   const visibleSystem = systemCards.filter(card =>
-    card.roles.includes(userRole) && (card.condition === undefined || card.condition)
+    card.roles.includes(userRole) && (card.condition === undefined || card.condition) && moduleOk(card)
   )
 
   // Bucket the visible general cards into their configured sub-sections (cards

@@ -10,6 +10,9 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
 import { logger } from '../../lib/logger.js'
+import { phoneVariants, findCustomerMatches } from '../../services/inbound-sms.js'
+import { formatPhoneNumber } from '../../services/sms.js'
+import { emitToOrganization, WS_EVENTS } from '../../services/websocket.js'
 
 const adminUsage = new Hono()
 
@@ -551,6 +554,158 @@ adminUsage.get('/communications/export', async (c) => {
   } catch (error) {
     logger.error('Error exporting communications', { error })
     const message = error instanceof Error ? error.message : 'Failed to export communications'
+    return c.json({ error: message }, 500)
+  }
+})
+
+// =============================================================================
+// UNROUTED INBOUND SMS (shared-number quarantine queue)
+// =============================================================================
+
+interface UnroutedRow {
+  id: string
+  health_check_id: string | null
+  customer_id: string | null
+  from_number: string
+  to_number: string
+  body: string
+  twilio_status: string | null
+  is_read: boolean
+  created_at: string
+  metadata: { routing?: { status?: string; candidate_org_ids?: string[] } } | null
+}
+
+/**
+ * GET /api/v1/admin/communications/unrouted
+ * Inbound SMS that could not be confidently attributed to a tenant (organization_id IS NULL).
+ * These arrive on the shared platform number when recency + customer-phone matching is
+ * ambiguous or the sender is unknown. Surfaced here for manual reassignment.
+ */
+adminUsage.get('/communications/unrouted', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const { page = '1', limit = '50' } = c.req.query()
+
+  try {
+    const pageNum = Math.max(1, parseInt(page))
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit)))
+    const offset = (pageNum - 1) * limitNum
+
+    const { data, error, count } = await supabaseAdmin
+      .from('sms_messages')
+      .select(`
+        id, health_check_id, customer_id, from_number, to_number,
+        body, twilio_status, is_read, created_at, metadata
+      `, { count: 'exact' })
+      .eq('direction', 'inbound')
+      .is('organization_id', null)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limitNum - 1)
+
+    if (error) throw new Error(`Failed to fetch unrouted messages: ${error.message}`)
+
+    const messages = ((data as UnroutedRow[] | null) || []).map((m) => ({
+      id: m.id,
+      fromNumber: m.from_number,
+      toNumber: m.to_number,
+      body: m.body,
+      status: m.twilio_status,
+      isRead: m.is_read,
+      createdAt: m.created_at,
+      routingStatus: m.metadata?.routing?.status || 'unrouted_unknown',
+      candidateOrgIds: m.metadata?.routing?.candidate_org_ids || []
+    }))
+
+    const total = count || 0
+    const [ip, ua] = ipUa(c)
+    await logSuperAdminActivity(superAdmin.id, 'view_unrouted_sms', 'sms_messages', undefined, { page: pageNum }, ip, ua)
+
+    return c.json({ messages, pagination: { page: pageNum, limit: limitNum, total, pages: Math.ceil(total / limitNum) } })
+  } catch (error) {
+    logger.error('Error fetching unrouted messages', { error })
+    const message = error instanceof Error ? error.message : 'Failed to fetch unrouted messages'
+    return c.json({ error: message }, 500)
+  }
+})
+
+/**
+ * POST /api/v1/admin/communications/unrouted/:id/reassign
+ * Manually attribute a quarantined inbound SMS to an organization. Resolves the customer
+ * by the sender number within that org when possible, clears the quarantine flag, and emits
+ * to the org so it appears live on their Messages page.
+ */
+adminUsage.post('/communications/unrouted/:id/reassign', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const id = c.req.param('id')
+  const body = await c.req.json().catch(() => ({})) as { organization_id?: string }
+  const organizationId = body.organization_id
+
+  if (!organizationId) return c.json({ error: 'organization_id is required' }, 400)
+
+  try {
+    const { data: msg } = await supabaseAdmin
+      .from('sms_messages')
+      .select('id, from_number, to_number, body, twilio_sid, twilio_status, is_read, created_at, metadata, organization_id, direction')
+      .eq('id', id)
+      .maybeSingle()
+
+    if (!msg) return c.json({ error: 'Message not found' }, 404)
+    if (msg.organization_id) return c.json({ error: 'Message is already routed to an organization' }, 409)
+
+    const { data: org } = await supabaseAdmin
+      .from('organizations')
+      .select('id')
+      .eq('id', organizationId)
+      .maybeSingle()
+    if (!org) return c.json({ error: 'Organization not found' }, 404)
+
+    // Best-effort: resolve the customer by the sender number within the target org
+    // (reuses the same matcher the live inbound-routing path uses).
+    const customerMatches = await findCustomerMatches(phoneVariants(formatPhoneNumber(msg.from_number)), [organizationId])
+    const customerId: string | null = customerMatches[0]?.customerId ?? null
+
+    const existingMeta = (msg.metadata || {}) as Record<string, unknown>
+    const existingRouting = (existingMeta.routing || {}) as Record<string, unknown>
+    const newMeta = {
+      ...existingMeta,
+      routing: {
+        ...existingRouting,
+        status: 'manually_routed',
+        reassigned_by: superAdmin.id,
+        reassigned_at: new Date().toISOString()
+      }
+    }
+
+    const { error: updateErr } = await supabaseAdmin
+      .from('sms_messages')
+      .update({ organization_id: organizationId, customer_id: customerId, metadata: newMeta })
+      .eq('id', id)
+
+    if (updateErr) throw new Error(`Failed to reassign message: ${updateErr.message}`)
+
+    // Surface it live on the org's Messages page.
+    emitToOrganization(organizationId, WS_EVENTS.SMS_RECEIVED, {
+      message: {
+        id: msg.id,
+        direction: 'inbound',
+        from_number: msg.from_number,
+        to_number: msg.to_number,
+        body: msg.body,
+        twilio_sid: msg.twilio_sid,
+        twilio_status: msg.twilio_status,
+        is_read: false,
+        created_at: msg.created_at,
+        health_check_id: null,
+        customer_id: customerId
+      }
+    })
+
+    const [ip, ua] = ipUa(c)
+    await logSuperAdminActivity(superAdmin.id, 'reassign_unrouted_sms', 'sms_messages', id, { organizationId, customerMatched: !!customerId }, ip, ua)
+
+    return c.json({ success: true, organizationId, customerId })
+  } catch (error) {
+    logger.error('Error reassigning unrouted message', { error })
+    const message = error instanceof Error ? error.message : 'Failed to reassign message'
     return c.json({ error: message }, 500)
   }
 })

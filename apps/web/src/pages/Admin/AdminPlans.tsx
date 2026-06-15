@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useSuperAdmin } from '../../contexts/SuperAdminContext'
 import { api } from '../../lib/api'
+import { MODULES } from '../../lib/modules'
 
 interface Plan {
   id: string
@@ -60,7 +61,8 @@ export default function AdminPlans() {
           maxStorageGb: editingPlan.maxStorageGb,
           priceMonthly: editingPlan.priceMonthly,
           priceAnnual: editingPlan.priceAnnual,
-          isActive: editingPlan.isActive
+          isActive: editingPlan.isActive,
+          features: editingPlan.features
         }
       })
       setEditingPlan(null)
@@ -123,6 +125,10 @@ export default function AdminPlans() {
                 <div className="flex justify-between">
                   <span className="text-gray-500">Storage</span>
                   <span className="font-medium">{plan.maxStorageGb != null ? `${plan.maxStorageGb} GB` : 'Unlimited'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Modules</span>
+                  <span className="font-medium">{MODULES.filter(m => m.core || plan.features?.[m.key] !== false).length} / {MODULES.length}</span>
                 </div>
               </div>
 
@@ -265,6 +271,33 @@ export default function AdminPlans() {
                 <label htmlFor="isActive" className="ml-2 text-sm text-gray-700">
                   Plan is active and available for new organizations
                 </label>
+              </div>
+
+              <div className="pt-4 border-t border-gray-100">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Modules included in this plan</label>
+                <p className="text-xs text-gray-500 mb-3">Default module access for organisations on this plan. Individual orgs can be overridden on their Modules tab.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {MODULES.map((mod) => {
+                    const checked = mod.core ? true : editingPlan.features?.[mod.key] !== false
+                    return (
+                      <label key={mod.key} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          disabled={mod.core}
+                          checked={checked}
+                          onChange={(e) => setEditingPlan({
+                            ...editingPlan,
+                            features: { ...(editingPlan.features || {}), [mod.key]: e.target.checked }
+                          })}
+                          className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded disabled:opacity-50"
+                        />
+                        <span className={mod.core ? 'text-gray-400' : 'text-gray-700'}>
+                          {mod.label}{mod.core ? ' (core)' : ''}
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
               </div>
             </div>
 

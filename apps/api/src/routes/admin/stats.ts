@@ -161,7 +161,7 @@ adminStatsRoutes.get('/stats', async (c) => {
  * Get activity log (paginated)
  */
 adminStatsRoutes.get('/activity', async (c) => {
-  const { limit = '50', offset = '0', action, targetType, superAdminId, organizationId } = c.req.query()
+  const { limit = '50', offset = '0', action, targetType, superAdminId, organizationId, from, to, q } = c.req.query()
 
   let query = supabaseAdmin
     .from('super_admin_activity_log')
@@ -182,6 +182,17 @@ adminStatsRoutes.get('/activity', async (c) => {
   }
   if (organizationId) {
     query = query.or(`target_id.eq.${organizationId},details->>organizationId.eq.${organizationId}`)
+  }
+  if (from) {
+    query = query.gte('created_at', new Date(from).toISOString())
+  }
+  if (to) {
+    query = query.lte('created_at', new Date(to).toISOString())
+  }
+  if (q) {
+    // Best-effort free-text over action + a curated set of detail keys.
+    const safe = String(q).replace(/[,()]/g, '')
+    query = query.or(`action.ilike.%${safe}%,details->>organizationName.ilike.%${safe}%,details->>email.ilike.%${safe}%,details->>userEmail.ilike.%${safe}%,details->>name.ilike.%${safe}%`)
   }
 
   // Apply pagination
@@ -213,6 +224,58 @@ adminStatsRoutes.get('/activity', async (c) => {
       offset: parseInt(offset)
     }
   })
+})
+
+/**
+ * GET /api/v1/admin/activity/export
+ * CSV export of the platform activity log (same filters as /activity).
+ */
+adminStatsRoutes.get('/activity/export', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const { action, targetType, superAdminId, organizationId, from, to, q } = c.req.query()
+
+  let query = supabaseAdmin
+    .from('super_admin_activity_log')
+    .select(`*, super_admin:super_admins(name, email)`)
+
+  if (action) query = query.eq('action', action)
+  if (targetType) query = query.eq('target_type', targetType)
+  if (superAdminId) query = query.eq('super_admin_id', superAdminId)
+  if (organizationId) query = query.or(`target_id.eq.${organizationId},details->>organizationId.eq.${organizationId}`)
+  if (from) query = query.gte('created_at', new Date(from).toISOString())
+  if (to) query = query.lte('created_at', new Date(to).toISOString())
+  if (q) {
+    const safe = String(q).replace(/[,()]/g, '')
+    query = query.or(`action.ilike.%${safe}%,details->>organizationName.ilike.%${safe}%,details->>email.ilike.%${safe}%,details->>userEmail.ilike.%${safe}%,details->>name.ilike.%${safe}%`)
+  }
+  query = query.order('created_at', { ascending: false }).limit(10000)
+
+  const { data, error } = await query
+  if (error) return c.json({ error: error.message }, 500)
+
+  const headers = ['date', 'super_admin', 'action', 'target_type', 'target_id', 'ip_address', 'details']
+  const rows = (data || []).map((a) => {
+    const sa = a.super_admin as { name?: string; email?: string } | null
+    return [
+      new Date(a.created_at).toISOString(),
+      `"${(sa?.name || sa?.email || 'System').replace(/"/g, '""')}"`,
+      a.action,
+      a.target_type || '',
+      a.target_id || '',
+      a.ip_address || '',
+      `"${JSON.stringify(a.details || {}).replace(/"/g, '""')}"`
+    ].join(',')
+  })
+  const csv = [headers.join(','), ...rows].join('\n')
+
+  await logSuperAdminActivity(
+    superAdmin.id, 'export_admin_activity', 'super_admin_activity_log', undefined,
+    { filters: { action, from, to, q }, rowCount: rows.length },
+    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'), c.req.header('User-Agent')
+  )
+
+  const filename = `admin-activity-${new Date().toISOString().split('T')[0]}.csv`
+  return new Response(csv, { headers: { 'Content-Type': 'text/csv', 'Content-Disposition': `attachment; filename="${filename}"` } })
 })
 
 /**
@@ -394,6 +457,22 @@ adminStatsRoutes.post('/impersonate/:userId', async (c) => {
     c.req.header('User-Agent')
   )
 
+  // Record a server-side impersonation session (audit + expiry visibility).
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  const { data: sessionRow } = await supabaseAdmin
+    .from('impersonation_sessions')
+    .insert({
+      super_admin_id: superAdmin.id,
+      target_user_id: user.id,
+      organization_id: user.organization_id,
+      reason,
+      ip_address: c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      user_agent: c.req.header('User-Agent'),
+      expires_at: expiresAt
+    })
+    .select('id')
+    .single()
+
   // Return the user data for the frontend to set up impersonation session
   return c.json({
     success: true,
@@ -401,7 +480,9 @@ adminStatsRoutes.post('/impersonate/:userId', async (c) => {
       originalSuperAdminId: superAdmin.id,
       originalSuperAdminEmail: superAdmin.email,
       reason,
-      startedAt: new Date().toISOString()
+      startedAt: new Date().toISOString(),
+      sessionId: sessionRow?.id || null,
+      expiresAt
     },
     user: {
       id: user.id,
@@ -424,21 +505,90 @@ adminStatsRoutes.post('/impersonate/:userId', async (c) => {
 adminStatsRoutes.delete('/impersonate', async (c) => {
   const superAdmin = c.get('superAdmin')
 
-  // Log activity
+  // Close the server-side session if a sessionId was provided (body or query).
+  let sessionId: string | undefined
+  try { sessionId = (await c.req.json())?.sessionId } catch { /* no body */ }
+  if (!sessionId) sessionId = c.req.query('sessionId')
+  if (sessionId) {
+    await supabaseAdmin
+      .from('impersonation_sessions')
+      .update({ ended_at: new Date().toISOString(), end_reason: 'manual' })
+      .eq('id', sessionId)
+      .is('ended_at', null)
+  }
+
   await logSuperAdminActivity(
     superAdmin.id,
     'end_impersonation',
     'users',
     undefined,
-    undefined,
+    { sessionId },
     c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
     c.req.header('User-Agent')
   )
 
+  return c.json({ success: true, message: 'Impersonation session ended' })
+})
+
+/**
+ * GET /api/v1/admin/impersonate/sessions
+ * Active and recent impersonation sessions.
+ */
+adminStatsRoutes.get('/impersonate/sessions', async (c) => {
+  const { data, error } = await supabaseAdmin
+    .from('impersonation_sessions')
+    .select(`
+      *,
+      super_admin:super_admins(name, email),
+      target:users(email, first_name, last_name),
+      organization:organizations(name)
+    `)
+    .order('started_at', { ascending: false })
+    .limit(50)
+
+  if (error) return c.json({ error: error.message }, 500)
+
+  const now = Date.now()
   return c.json({
-    success: true,
-    message: 'Impersonation session ended'
+    sessions: (data || []).map((s) => {
+      const expired = !s.ended_at && new Date(s.expires_at).getTime() < now
+      const target = s.target as { email?: string; first_name?: string; last_name?: string } | null
+      return {
+        id: s.id,
+        superAdmin: s.super_admin,
+        targetEmail: target?.email || null,
+        targetName: target ? `${target.first_name || ''} ${target.last_name || ''}`.trim() : null,
+        organizationName: (s.organization as { name?: string } | null)?.name || null,
+        reason: s.reason,
+        startedAt: s.started_at,
+        expiresAt: s.expires_at,
+        endedAt: s.ended_at,
+        active: !s.ended_at && !expired,
+        status: s.ended_at ? (s.end_reason || 'ended') : (expired ? 'expired' : 'active')
+      }
+    })
   })
+})
+
+/**
+ * POST /api/v1/admin/impersonate/sessions/:id/revoke
+ * Force-end another admin's active impersonation session.
+ */
+adminStatsRoutes.post('/impersonate/sessions/:id/revoke', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const id = c.req.param('id')
+  const { error } = await supabaseAdmin
+    .from('impersonation_sessions')
+    .update({ ended_at: new Date().toISOString(), end_reason: 'admin_revoked' })
+    .eq('id', id)
+    .is('ended_at', null)
+  if (error) return c.json({ error: error.message }, 500)
+
+  await logSuperAdminActivity(
+    superAdmin.id, 'revoke_impersonation', 'impersonation_sessions', id, {},
+    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'), c.req.header('User-Agent')
+  )
+  return c.json({ success: true })
 })
 
 export default adminStatsRoutes

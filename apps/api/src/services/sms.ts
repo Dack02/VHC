@@ -4,6 +4,7 @@
  */
 
 import twilio from 'twilio'
+import { supabaseAdmin } from '../lib/supabase.js'
 import { getSmsCredentials, SmsCredentials } from './credentials.js'
 import {
   getOrganizationTemplate,
@@ -323,4 +324,38 @@ export function formatPhoneNumber(phone: string): string {
  */
 export function isTwilioConfigured(): boolean {
   return !!legacyClient && !!envFromNumber
+}
+
+/**
+ * Record an outbound SMS into sms_messages (the two-way conversation log).
+ * Centralises the outbound-row shape so an inbound reply can thread back to it via
+ * recency-based tenant routing and so the send appears in the conversation view.
+ * Non-fatal: the SMS has already been sent, so a logging failure is reported, never thrown.
+ */
+export async function recordOutboundSms(rec: {
+  organizationId: string
+  healthCheckId: string | null
+  customerId: string | null
+  toNumber: string
+  result: SmsResult
+  kind?: string
+  sentBy?: string | null
+}): Promise<void> {
+  const { error } = await supabaseAdmin.from('sms_messages').insert({
+    organization_id: rec.organizationId,
+    health_check_id: rec.healthCheckId,
+    customer_id: rec.customerId,
+    direction: 'outbound',
+    from_number: rec.result.from || '',
+    to_number: rec.toNumber,
+    body: rec.result.body || '',
+    twilio_sid: rec.result.messageId || null,
+    twilio_status: 'sent',
+    is_read: true,
+    sent_by: rec.sentBy ?? null,
+    metadata: { source: rec.result.source, kind: rec.kind }
+  })
+  if (error) {
+    console.error('Failed to record outbound SMS:', error.message)
+  }
 }

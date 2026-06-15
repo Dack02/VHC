@@ -10,6 +10,7 @@ import ProtectedLayout from './layouts/ProtectedLayout'
 import DashboardLayout from './layouts/DashboardLayout'
 import AdminLayout from './layouts/AdminLayout'
 import ImpersonationBanner from './components/admin/ImpersonationBanner'
+import RequireModule from './components/RequireModule'
 import SuspendedBanner from './components/SuspendedBanner'
 import RecoveryRedirect from './components/RecoveryRedirect'
 
@@ -72,6 +73,9 @@ const AIConfiguration = lazy(() => import('./pages/Admin/AIConfiguration'))
 const AIUsageDashboard = lazy(() => import('./pages/Admin/AIUsageDashboard'))
 const AdminUsageDashboard = lazy(() => import('./pages/Admin/AdminUsageDashboard'))
 const AdminCommunications = lazy(() => import('./pages/Admin/AdminCommunications'))
+const AdminSuperAdmins = lazy(() => import('./pages/Admin/AdminSuperAdmins'))
+const AdminSystemHealth = lazy(() => import('./pages/Admin/AdminSystemHealth'))
+const AdminAlerts = lazy(() => import('./pages/Admin/AdminAlerts'))
 const Onboarding = lazy(() => import('./pages/Onboarding'))
 const TechnicianWorkload = lazy(() => import('./pages/Dashboard/TechnicianWorkload'))
 const ReportsHub = lazy(() => import('./pages/Reports/ReportsHub'))
@@ -147,6 +151,9 @@ function App() {
                       <Route path="usage" element={<AdminUsageDashboard />} />
                       <Route path="communications" element={<AdminCommunications />} />
                       <Route path="settings" element={<AdminSettings />} />
+                      <Route path="super-admins" element={<AdminSuperAdmins />} />
+                      <Route path="system" element={<AdminSystemHealth />} />
+                      <Route path="alerts" element={<AdminAlerts />} />
                       <Route path="ai-configuration" element={<AIConfiguration />} />
                       <Route path="starter-template" element={<AdminStarterTemplate />} />
                       <Route path="starter-templates" element={<AdminStarterTemplates />} />
@@ -166,7 +173,7 @@ function App() {
                         <Route path="/dashboard/technicians" element={<TechnicianWorkload />} />
                         <Route path="/today" element={<Today />} />
                         <Route path="/upcoming" element={<Upcoming />} />
-                        <Route path="/reports" element={<ReportsHub />} />
+                        <Route path="/reports" element={<RequireModule module="reports"><ReportsHub /></RequireModule>} />
                         <Route path="/reports/financial" element={<FinancialReports />} />
                         <Route path="/reports/items" element={<ItemPerformance />} />
                         <Route path="/reports/technicians" element={<TechnicianPerformance />} />
@@ -180,14 +187,14 @@ function App() {
                         <Route path="/reports/daily-overview" element={<DailyOverview />} />
                         <Route path="/reports/deleted-health-checks" element={<DeletedHealthChecks />} />
                         <Route path="/users" element={<Users />} />
-                        <Route path="/workshop-board" element={<WorkshopBoard />} />
+                        <Route path="/workshop-board" element={<RequireModule module="workshop_board"><WorkshopBoard /></RequireModule>} />
                         <Route path="/health-checks" element={<HealthCheckList />} />
                         <Route path="/health-checks/new" element={<NewHealthCheck />} />
                         <Route path="/health-checks/:id" element={<HealthCheckDetail />} />
                         <Route path="/customers" element={<CustomerList />} />
                         <Route path="/customers/:id" element={<CustomerDetail />} />
-                        <Route path="/messages" element={<Messages />} />
-                        <Route path="/follow-ups" element={<FollowUpList />} />
+                        <Route path="/messages" element={<RequireModule module="customer_comms"><Messages /></RequireModule>} />
+                        <Route path="/follow-ups" element={<RequireModule module="follow_up"><FollowUpList /></RequireModule>} />
                         <Route path="/notes" element={<NotesPage />} />
                         <Route path="/parts" element={<PartsCatalog />} />
                         <Route path="/templates" element={<TemplateList />} />

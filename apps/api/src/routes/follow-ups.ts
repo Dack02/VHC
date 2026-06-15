@@ -5,10 +5,12 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import { requireModule } from '../middleware/require-module.js'
 import { runFollowUpSweep, findFutureBooking } from '../services/follow-up-engine.js'
 
 const followUps = new Hono()
 followUps.use('*', authMiddleware)
+followUps.use('*', requireModule('follow_up'))
 
 const OPEN_STATUSES = ['active', 'booking_found', 'engaged', 'manual']
 

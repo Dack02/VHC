@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { getEffectiveModules } from '../services/modules.js'
 
 type DmsContext = {
   Variables: {
@@ -27,6 +28,15 @@ async function dmsAuth(c: any, next: any) {
 
   if (error || !org) {
     return c.json({ error: 'Invalid API key' }, 401)
+  }
+
+  // Module gate (this route uses API-key auth, not the JWT requireModule middleware)
+  const mods = await getEffectiveModules(org.id)
+  if (!mods.dms_integration) {
+    return c.json(
+      { error: 'DMS integration is not enabled for this organisation', code: 'MODULE_DISABLED', module: 'dms_integration' },
+      403
+    )
   }
 
   c.set('orgId', org.id)

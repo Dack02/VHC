@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import { requireModule } from '../middleware/require-module.js'
 import { aggregateRepairItemsByHc, computeHcConversion, isHcPresented } from '../lib/metrics.js'
 import { buildItemList, buildItemDetail } from '../services/item-report-service.js'
 import { chunkIds, type GroupBy } from '../services/hc-period-service.js'
@@ -11,6 +12,7 @@ const parseGroupBy = (g: string | undefined): GroupBy =>
   g === 'week' || g === 'month' ? g : 'day'
 
 reports.use('*', authMiddleware)
+reports.use('*', requireModule('reports'))
 
 // GET /api/v1/reports - Reporting data with metrics
 reports.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {

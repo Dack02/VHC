@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { useModules } from '../contexts/ModulesContext'
 import { useBranding } from '../contexts/BrandingContext'
+import type { ModuleKey } from '../lib/modules'
 import NotificationBell from '../components/NotificationBell'
 import AILimitWarningBanner from '../components/AILimitWarningBanner'
 import OrgSwitcher from '../components/OrgSwitcher'
@@ -17,12 +19,14 @@ interface NavItem {
   icon: React.ReactNode
   roles: UserRole[]
   badge?: number
+  module?: ModuleKey
 }
 
 const NAV_COLLAPSED_KEY = 'vhc-nav-collapsed'
 
 export default function DashboardLayout() {
   const { user, logout } = useAuth()
+  const { isEnabled } = useModules()
   const { branding } = useBranding()
   const navigate = useNavigate()
   const location = useLocation()
@@ -113,7 +117,8 @@ export default function DashboardLayout() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
         </svg>
       ),
-      roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor']
+      roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor'],
+      module: 'workshop_board'
     },
     {
       to: '/notes',
@@ -155,7 +160,8 @@ export default function DashboardLayout() {
         </svg>
       ),
       roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor'],
-      badge: followUpDueCount
+      badge: followUpDueCount,
+      module: 'follow_up'
     },
     {
       to: '/messages',
@@ -166,7 +172,8 @@ export default function DashboardLayout() {
         </svg>
       ),
       roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor'],
-      badge: unreadSmsCount
+      badge: unreadSmsCount,
+      module: 'customer_comms'
     },
     {
       to: '/parts',
@@ -186,7 +193,8 @@ export default function DashboardLayout() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
         </svg>
       ),
-      roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor']
+      roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor'],
+      module: 'reports'
     },
     {
       to: '/templates',
@@ -232,7 +240,9 @@ export default function DashboardLayout() {
   ]
 
   // Filter nav items based on user role
-  const visibleMainNav = mainNavItems.filter(item => item.roles.includes(userRole))
+  const visibleMainNav = mainNavItems.filter(item =>
+    item.roles.includes(userRole) && (!item.module || isEnabled(item.module))
+  )
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/'

@@ -13,6 +13,7 @@ export type ModuleKey =
   | 'customer_comms'
   | 'reports'
   | 'ai_generation'
+  | 'vehicle_lookup'
 
 export interface ModuleDefinition {
   key: ModuleKey
@@ -31,7 +32,8 @@ export const MODULES: ModuleDefinition[] = [
   { key: 'dms_integration',    label: 'DMS Integration',    description: 'Booking import from dealer management systems', defaultOn: true },
   { key: 'customer_comms',     label: 'Customer Messaging', description: 'SMS & email customer communications', defaultOn: true },
   { key: 'reports',            label: 'Reports',            description: 'Reporting & analytics dashboards', defaultOn: true },
-  { key: 'ai_generation',      label: 'AI Generation',      description: 'AI-assisted reason & note generation', defaultOn: true }
+  { key: 'ai_generation',      label: 'AI Generation',      description: 'AI-assisted reason & note generation', defaultOn: true },
+  { key: 'vehicle_lookup',     label: 'Vehicle Data Lookup', description: 'DVSA MOT history & vehicle lookup by registration', defaultOn: true }
 ]
 
 export const MODULE_KEYS: ModuleKey[] = MODULES.map((m) => m.key)

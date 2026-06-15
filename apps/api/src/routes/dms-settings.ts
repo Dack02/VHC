@@ -9,6 +9,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { encrypt, decrypt, isEncryptionConfigured, maskString } from '../lib/encryption.js'
 import { authMiddleware, requireOrgAdmin } from '../middleware/auth.js'
+import { requireModule } from '../middleware/require-module.js'
 import { logger } from '../lib/logger.js'
 import { runDmsImport } from '../jobs/dms-import.js'
 import { testConnection, isDmsAvailable, getDmsCredentials, fetchDiaryBookings } from '../services/gemini-osi.js'
@@ -26,6 +27,7 @@ const dmsSettings = new Hono()
 
 // All routes require authentication
 dmsSettings.use('*', authMiddleware)
+dmsSettings.use('*', requireModule('dms_integration'))
 
 // ============================================
 // DMS Settings Endpoints

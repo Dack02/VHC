@@ -1,5 +1,6 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { ModulesProvider } from '../contexts/ModulesContext'
 
 export default function ProtectedLayout() {
   const { user, loading } = useAuth()
@@ -27,5 +28,9 @@ export default function ProtectedLayout() {
     return <Navigate to="/onboarding" replace />
   }
 
-  return <Outlet />
+  return (
+    <ModulesProvider>
+      <Outlet />
+    </ModulesProvider>
+  )
 }

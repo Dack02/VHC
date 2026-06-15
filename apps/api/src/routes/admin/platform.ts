@@ -9,6 +9,7 @@ import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/au
 import { encrypt, decrypt, maskString, isEncryptionConfigured } from '../../lib/encryption.js'
 import { testSmsWithCredentials } from '../../services/sms.js'
 import { testEmailWithCredentials } from '../../services/email.js'
+import { testMotConnection } from '../../services/mot-history.js'
 
 const platformRoutes = new Hono()
 
@@ -29,6 +30,13 @@ platformRoutes.get('/settings', async (c) => {
     if (error) {
       return c.json({ error: error.message }, 500)
     }
+
+    // AI chargeout margin lives in platform_ai_settings (key-value store)
+    const { data: aiMarginRow } = await supabaseAdmin
+      .from('platform_ai_settings')
+      .select('value')
+      .eq('key', 'ai_margin_percent')
+      .maybeSingle()
 
     // Build combined settings object
     const combined: Record<string, unknown> = {
@@ -54,8 +62,20 @@ platformRoutes.get('/settings', async (c) => {
         resendFromName: '',
         twilioAccountSid: '',
         twilioAuthToken: '',
-        twilioFromNumber: '',
-        dvlaApiKey: ''
+        twilioFromNumber: ''
+      },
+      vehicleLookup: {
+        enabled: false,
+        motClientId: '',
+        motTenantId: '',
+        motClientSecret: '',
+        motApiKey: ''
+      },
+      billing: {
+        smsUnitCost: 0.04,
+        emailUnitCost: 0,
+        aiMarginPercent: aiMarginRow?.value ? parseFloat(aiMarginRow.value) : 0,
+        currency: 'GBP'
       }
     }
 
@@ -91,6 +111,31 @@ platformRoutes.get('/settings', async (c) => {
             creds.resendApiKey = maskString(decrypted)
           } catch {
             creds.resendApiKey = '••••••••'
+          }
+        }
+      } else if (row.id === 'billing') {
+        const b = combined.billing as Record<string, unknown>
+        if (settings.sms_unit_cost != null) b.smsUnitCost = Number(settings.sms_unit_cost)
+        if (settings.email_unit_cost != null) b.emailUnitCost = Number(settings.email_unit_cost)
+        if (settings.currency) b.currency = settings.currency
+      } else if (row.id === 'vehicle_lookup') {
+        const vl = combined.vehicleLookup as Record<string, unknown>
+        vl.enabled = settings.enabled === true
+        if (settings.mot_client_id) vl.motClientId = settings.mot_client_id
+        if (settings.mot_tenant_id) vl.motTenantId = settings.mot_tenant_id
+        // Mask encrypted secrets for display
+        if (settings.mot_client_secret_encrypted) {
+          try {
+            vl.motClientSecret = maskString(decrypt(settings.mot_client_secret_encrypted as string))
+          } catch {
+            vl.motClientSecret = '••••••••'
+          }
+        }
+        if (settings.mot_api_key_encrypted) {
+          try {
+            vl.motApiKey = maskString(decrypt(settings.mot_api_key_encrypted as string))
+          } catch {
+            vl.motApiKey = '••••••••'
           }
         }
       }
@@ -145,6 +190,34 @@ platformRoutes.patch('/settings', async (c) => {
           updated_at: new Date().toISOString(),
           updated_by: superAdmin.id
         })
+    }
+
+    // Update billing (SMS/email unit cost in platform_settings; AI margin in
+    // platform_ai_settings where getAiMarginPercent reads it). Snake_case keys
+    // so getSmsUnitRate (settings.sms_unit_cost) resolves correctly.
+    if (body.billing) {
+      await supabaseAdmin
+        .from('platform_settings')
+        .upsert({
+          id: 'billing',
+          settings: {
+            sms_unit_cost: Number(body.billing.smsUnitCost ?? 0.04),
+            email_unit_cost: Number(body.billing.emailUnitCost ?? 0),
+            currency: body.billing.currency || 'GBP'
+          },
+          updated_at: new Date().toISOString(),
+          updated_by: superAdmin.id
+        })
+      if (body.billing.aiMarginPercent !== undefined && body.billing.aiMarginPercent !== null) {
+        await supabaseAdmin
+          .from('platform_ai_settings')
+          .upsert({
+            key: 'ai_margin_percent',
+            value: String(body.billing.aiMarginPercent),
+            updated_at: new Date().toISOString(),
+            updated_by: superAdmin.id
+          })
+      }
     }
 
     // Update credentials (notifications)
@@ -206,6 +279,39 @@ platformRoutes.patch('/settings', async (c) => {
         .upsert({
           id: 'notifications',
           settings: notificationSettings,
+          updated_at: new Date().toISOString(),
+          updated_by: superAdmin.id
+        })
+    }
+
+    // Update vehicle lookup (DVSA MOT History) credentials
+    if (body.vehicleLookup) {
+      const { data: existingVl } = await supabaseAdmin
+        .from('platform_settings')
+        .select('settings')
+        .eq('id', 'vehicle_lookup')
+        .single()
+
+      const vlSettings: Record<string, unknown> =
+        (existingVl?.settings as Record<string, unknown>) || { provider: 'dvsa_mot_history' }
+
+      const vl = body.vehicleLookup
+      if (vl.enabled !== undefined) vlSettings.enabled = !!vl.enabled
+      if (vl.motClientId !== undefined) vlSettings.mot_client_id = vl.motClientId
+      if (vl.motTenantId !== undefined) vlSettings.mot_tenant_id = vl.motTenantId
+      // Only update secrets when a new (non-masked) value is provided
+      if (vl.motClientSecret && !String(vl.motClientSecret).includes('•') && isEncryptionConfigured()) {
+        vlSettings.mot_client_secret_encrypted = encrypt(vl.motClientSecret)
+      }
+      if (vl.motApiKey && !String(vl.motApiKey).includes('•') && isEncryptionConfigured()) {
+        vlSettings.mot_api_key_encrypted = encrypt(vl.motApiKey)
+      }
+
+      await supabaseAdmin
+        .from('platform_settings')
+        .upsert({
+          id: 'vehicle_lookup',
+          settings: vlSettings,
           updated_at: new Date().toISOString(),
           updated_by: superAdmin.id
         })
@@ -575,6 +681,37 @@ platformRoutes.post('/notifications/test-email', async (c) => {
     return c.json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to send test email'
+    })
+  }
+})
+
+/**
+ * POST /api/v1/admin/platform/vehicle-lookup/test
+ * Test the DVSA MOT History credentials (token + optional sample registration)
+ */
+platformRoutes.post('/vehicle-lookup/test', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const body = await c.req.json().catch(() => ({} as Record<string, unknown>))
+  const sampleReg = typeof body.registration === 'string' ? body.registration : undefined
+
+  try {
+    const result = await testMotConnection(sampleReg)
+
+    await logSuperAdminActivity(
+      superAdmin.id,
+      'test_vehicle_lookup',
+      'platform_settings',
+      'vehicle_lookup',
+      { success: result.success, sampleReg: sampleReg || null },
+      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      c.req.header('User-Agent')
+    )
+
+    return c.json(result)
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: error instanceof Error ? error.message : 'Vehicle lookup test failed'
     })
   }
 })

@@ -23,7 +23,7 @@ import {
 } from './queue.js'
 import { runDmsImport } from '../jobs/dms-import.js'
 import { sendEmail, sendHealthCheckReadyEmail, sendReminderEmail, sendCustomerResponseNotification, sendWorkflowStatusNotification, RepairItemResponse } from './email.js'
-import { sendSms, sendHealthCheckReadySms, sendReminderSms, sendCustomerResponseNotificationSms } from './sms.js'
+import { sendSms, sendHealthCheckReadySms, sendReminderSms, sendCustomerResponseNotificationSms, recordOutboundSms } from './sms.js'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { WS_EVENTS } from './websocket.js'
 import { sendPushNotification } from './web-push.js'
@@ -496,18 +496,13 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
 
       // Mirror the outbound send into sms_messages so an inbound reply can thread back to it
       // (recency-based tenant routing) and so it appears in the two-way conversation view.
-      await supabaseAdmin.from('sms_messages').insert({
-        organization_id: organizationId,
-        health_check_id: data.healthCheckId,
-        customer_id: customer.id || null,
-        direction: 'outbound',
-        from_number: smsResult.from || '',
-        to_number: data.customerMobile,
-        body: smsResult.body || '',
-        twilio_sid: smsResult.messageId || null,
-        twilio_status: 'sent',
-        is_read: true,
-        metadata: { source: smsResult.source, kind: 'health_check_ready' }
+      await recordOutboundSms({
+        organizationId,
+        healthCheckId: data.healthCheckId,
+        customerId: customer.id || null,
+        toNumber: data.customerMobile,
+        result: smsResult,
+        kind: 'health_check_ready'
       })
     } else {
       console.error(`[Customer Notification] SMS failed for ${data.healthCheckId}:`, smsResult.error)
@@ -888,18 +883,13 @@ async function processReminder(data: SendReminderJob) {
       if (smsResult.success) {
         await incrementOrgUsage(organizationId, { sms_sent: 1 })
 
-        await supabaseAdmin.from('sms_messages').insert({
-          organization_id: organizationId,
-          health_check_id: data.healthCheckId,
-          customer_id: customer.id || null,
-          direction: 'outbound',
-          from_number: smsResult.from || '',
-          to_number: customer.mobile,
-          body: smsResult.body || '',
-          twilio_sid: smsResult.messageId || null,
-          twilio_status: 'sent',
-          is_read: true,
-          metadata: { source: smsResult.source, kind: 'reminder' }
+        await recordOutboundSms({
+          organizationId,
+          healthCheckId: data.healthCheckId,
+          customerId: customer.id || null,
+          toNumber: customer.mobile,
+          result: smsResult,
+          kind: 'reminder'
         })
       }
     }

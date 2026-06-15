@@ -78,7 +78,10 @@ LANGUAGE sql STABLE AS $$
 $$;
 
 -- Platform-wide totals for the same window (single row), so header cards never
--- fetch raw rows into Node.
+-- fetch raw rows into Node. Aggregates admin_usage_by_org so the header total is
+-- ALWAYS exactly the sum of the per-org table (same population: non-cancelled,
+-- org-attributed). Unattributed (NULL organization_id) comms are intentionally
+-- excluded — they can't belong to any org row.
 CREATE OR REPLACE FUNCTION admin_usage_totals(p_from date, p_to date)
 RETURNS TABLE(
   sms_sent bigint,
@@ -91,13 +94,14 @@ RETURNS TABLE(
 )
 LANGUAGE sql STABLE AS $$
   SELECT
-    COALESCE((SELECT COUNT(*) FROM communication_logs WHERE channel = 'sms'   AND status IN ('sent','delivered','bounced') AND created_at >= p_from::timestamptz AND created_at < (p_to + 1)::timestamptz), 0)::bigint,
-    COALESCE((SELECT COUNT(*) FROM communication_logs WHERE channel = 'email' AND status IN ('sent','delivered','bounced') AND created_at >= p_from::timestamptz AND created_at < (p_to + 1)::timestamptz), 0)::bigint,
-    COALESCE((SELECT COUNT(*) FROM health_checks WHERE created_at >= p_from::timestamptz AND created_at < (p_to + 1)::timestamptz), 0)::bigint,
-    COALESCE((SELECT COUNT(*) FROM health_checks WHERE status = 'completed' AND created_at >= p_from::timestamptz AND created_at < (p_to + 1)::timestamptz), 0)::bigint,
-    COALESCE((SELECT COUNT(*)                     FROM ai_usage_logs WHERE created_at >= p_from::timestamptz AND created_at < (p_to + 1)::timestamptz), 0)::bigint,
-    COALESCE((SELECT SUM(total_cost_usd)          FROM ai_usage_logs WHERE created_at >= p_from::timestamptz AND created_at < (p_to + 1)::timestamptz), 0)::numeric,
-    (SELECT COUNT(*) FROM organizations WHERE status = 'active')::bigint;
+    COALESCE(SUM(sms_sent), 0)::bigint,
+    COALESCE(SUM(emails_sent), 0)::bigint,
+    COALESCE(SUM(health_checks_created), 0)::bigint,
+    COALESCE(SUM(health_checks_completed), 0)::bigint,
+    COALESCE(SUM(ai_generations), 0)::bigint,
+    COALESCE(SUM(ai_cost_usd), 0)::numeric,
+    COUNT(*) FILTER (WHERE status = 'active')::bigint
+  FROM admin_usage_by_org(p_from, p_to);
 $$;
 
 -- Per-org / per-channel communication delivery quality for a window.

@@ -174,28 +174,32 @@ export default function AdminCommunications() {
       {/* Delivery quality strip */}
       {channelStats.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {channelStats.map((s) => (
-            <div key={s.channel} className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-gray-700 capitalize">{s.channel} (30d)</p>
-                <p className="text-xs text-gray-400">{s.total.toLocaleString()} sent</p>
+          {channelStats.map((s) => {
+            const label = s.channel === 'sms' ? 'SMS' : s.channel.charAt(0).toUpperCase() + s.channel.slice(1)
+            const failedRate = s.total > 0 ? Math.round((s.failed / s.total) * 1000) / 10 : 0
+            return (
+              <div key={s.channel} className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-gray-700">{label} (30d)</p>
+                  <p className="text-xs text-gray-400">{s.total.toLocaleString()} total</p>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-3 text-center">
+                  <div>
+                    <p className="text-lg font-semibold text-green-600">{s.delivered.toLocaleString()}</p>
+                    <p className="text-xs text-gray-500">Delivered ({s.successRate}%)</p>
+                  </div>
+                  <div>
+                    <p className="text-lg font-semibold text-red-600">{s.failed.toLocaleString()}</p>
+                    <p className="text-xs text-gray-500">Failed ({failedRate}%)</p>
+                  </div>
+                  <div>
+                    <p className="text-lg font-semibold text-amber-600">{s.bounced.toLocaleString()}</p>
+                    <p className="text-xs text-gray-500">Bounced ({s.bounceRate}%)</p>
+                  </div>
+                </div>
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-3 text-center">
-                <div>
-                  <p className="text-lg font-semibold text-green-600">{s.successRate}%</p>
-                  <p className="text-xs text-gray-500">Delivered</p>
-                </div>
-                <div>
-                  <p className="text-lg font-semibold text-red-600">{s.failed.toLocaleString()}</p>
-                  <p className="text-xs text-gray-500">Failed</p>
-                </div>
-                <div>
-                  <p className="text-lg font-semibold text-amber-600">{s.bounceRate}%</p>
-                  <p className="text-xs text-gray-500">Bounced</p>
-                </div>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 

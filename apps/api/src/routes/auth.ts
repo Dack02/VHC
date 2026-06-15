@@ -409,13 +409,16 @@ auth.post('/forgot-password', async (c) => {
       `
       const text = `Reset your password\n\nHi ${firstName},\n\nWe received a request to reset the password for your Vehicle Health Check account.\n\nReset your password: ${resetLink}\n\nIf you didn't request this, you can safely ignore this email.`
 
-      await sendEmail({
-        to: email,
-        subject: 'Reset your VHC password',
-        html,
-        text,
-        organizationId: userRow?.organization_id || undefined
-      })
+      // Surface the link in logs outside production (dev/staging may not send email).
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[auth] Password reset link for ${email}: ${resetLink}`)
+      }
+      // Try the org/platform sender, then fall back to the platform env sender.
+      const emailPayload = { to: email, subject: 'Reset your VHC password', html, text }
+      let result = await sendEmail({ ...emailPayload, organizationId: userRow?.organization_id || undefined })
+      if (!result.success) {
+        result = await sendEmail(emailPayload)
+      }
     }
 
     return c.json({ success: true })

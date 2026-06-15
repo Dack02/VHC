@@ -25,6 +25,10 @@ export interface SmsResult {
   messageId?: string
   error?: string
   source?: 'organization' | 'platform' | 'env'
+  /** The phone number the message was actually sent FROM (org or platform sender id). */
+  from?: string
+  /** The rendered message body that was sent (for mirroring into the conversation thread). */
+  body?: string
 }
 
 /**
@@ -70,7 +74,9 @@ export async function sendSms(
       return {
         success: true,
         messageId: result.sid,
-        source: credResult.source
+        source: credResult.source,
+        from: credResult.credentials.phoneNumber,
+        body: message
       }
     } catch (error) {
       console.error('SMS send error:', error)
@@ -107,7 +113,9 @@ export async function sendSms(
     return {
       success: true,
       messageId: result.sid,
-      source: 'env'
+      source: 'env',
+      from: envFromNumber,
+      body: message
     }
   } catch (error) {
     console.error('SMS send error:', error)

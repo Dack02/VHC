@@ -54,6 +54,36 @@ async function getSmsUnitRate(): Promise<number> {
   }
 }
 
+/** Platform-wide AI chargeout margin (%). chargeout = cost × (1 + margin/100). */
+async function getAiMarginPercent(): Promise<number> {
+  try {
+    const { data } = await supabaseAdmin
+      .from('platform_ai_settings')
+      .select('value')
+      .eq('key', 'ai_margin_percent')
+      .maybeSingle()
+    const rate = parseFloat(String(data?.value ?? ''))
+    return Number.isFinite(rate) && rate >= 0 ? rate : 0
+  } catch {
+    return 0
+  }
+}
+
+/** USD→GBP rate used to convert AI chargeout to the billing currency (GBP). */
+async function getUsdToGbpRate(): Promise<number> {
+  try {
+    const { data } = await supabaseAdmin
+      .from('platform_ai_settings')
+      .select('value')
+      .eq('key', 'usd_to_gbp_rate')
+      .maybeSingle()
+    const rate = parseFloat(String(data?.value ?? ''))
+    return Number.isFinite(rate) && rate > 0 ? rate : 0.79
+  } catch {
+    return 0.79
+  }
+}
+
 const ipUa = (c: { req: { header: (k: string) => string | undefined } }) =>
   [c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'), c.req.header('User-Agent')] as const
 
@@ -74,22 +104,31 @@ adminUsage.get('/usage/summary', async (c) => {
     const p_from = toDateStr(start)
     const p_to = toDateStr(end)
 
-    const { data, error } = await supabaseAdmin.rpc('admin_usage_totals', { p_from, p_to })
+    const [{ data, error }, marginPercent, usdToGbpRate] = await Promise.all([
+      supabaseAdmin.rpc('admin_usage_totals', { p_from, p_to }),
+      getAiMarginPercent(),
+      getUsdToGbpRate()
+    ])
     if (error) throw new Error(`Failed to fetch usage totals: ${error.message}`)
 
     const t = (data?.[0] as Record<string, unknown>) || {}
+    const aiCostUsd = Number(t.ai_cost_usd || 0)
+    const aiChargeoutGbp = aiCostUsd * (1 + marginPercent / 100) * usdToGbpRate
     const [ip, ua] = ipUa(c)
     await logSuperAdminActivity(superAdmin.id, 'view_usage_summary', 'organization_usage', undefined, { period }, ip, ua)
 
     return c.json({
       period: { start: p_from, end: p_to },
+      marginPercent,
+      usdToGbpRate,
       totals: {
         smsSent: Number(t.sms_sent || 0),
         emailsSent: Number(t.emails_sent || 0),
         healthChecksCreated: Number(t.health_checks_created || 0),
         healthChecksCompleted: Number(t.health_checks_completed || 0),
         aiGenerations: Number(t.ai_generations || 0),
-        aiCostUsd: Math.round(Number(t.ai_cost_usd || 0) * 100) / 100,
+        aiCostUsd: Math.round(aiCostUsd * 100) / 100,
+        aiChargeoutGbp: Math.round(aiChargeoutGbp * 100) / 100,
         activeOrgs: Number(t.active_orgs || 0)
       }
     })
@@ -117,15 +156,20 @@ async function fetchUsageByOrg(period: string) {
   const { start, end } = getPeriodDates(period)
   const p_from = toDateStr(start)
   const p_to = toDateStr(end)
-  const [{ data, error }, smsRate] = await Promise.all([
+  const [{ data, error }, smsRate, marginPercent, usdToGbpRate] = await Promise.all([
     supabaseAdmin.rpc('admin_usage_by_org', { p_from, p_to }),
-    getSmsUnitRate()
+    getSmsUnitRate(),
+    getAiMarginPercent(),
+    getUsdToGbpRate()
   ])
   if (error) throw new Error(`Failed to fetch usage by org: ${error.message}`)
 
+  // chargeout (GBP) = cost (USD) × (1 + margin%) × USD→GBP rate
+  const chargeoutFactor = (1 + marginPercent / 100) * usdToGbpRate
   const rows = (data as UsageByOrgRow[] | null) || []
   const organizations = rows.map((r) => {
     const smsSent = Number(r.sms_sent || 0)
+    const aiCostUsd = Number(r.ai_cost_usd || 0)
     return {
       id: r.organization_id,
       name: r.organization_name,
@@ -136,11 +180,12 @@ async function fetchUsageByOrg(period: string) {
       healthChecksCompleted: Number(r.health_checks_completed || 0),
       storageUsedBytes: Number(r.storage_used_bytes || 0),
       aiGenerations: Number(r.ai_generations || 0),
-      aiCostUsd: Math.round(Number(r.ai_cost_usd || 0) * 100) / 100,
+      aiCostUsd: Math.round(aiCostUsd * 100) / 100,
+      aiChargeoutGbp: Math.round(aiCostUsd * chargeoutFactor * 100) / 100,
       estimatedSmsCost: Math.round(smsSent * smsRate * 100) / 100
     }
   })
-  return { period: { start: p_from, end: p_to }, organizations, smsRate }
+  return { period: { start: p_from, end: p_to }, organizations, smsRate, marginPercent, usdToGbpRate }
 }
 
 function sortOrgs<T extends { name: string; smsSent: number; emailsSent: number; healthChecksCreated: number; aiCostUsd: number; storageUsedBytes: number }>(orgs: T[], sort: string): T[] {
@@ -167,13 +212,13 @@ adminUsage.get('/usage/by-organization', async (c) => {
   const sort = c.req.query('sort') || 'sms_desc'
 
   try {
-    const { period: range, organizations } = await fetchUsageByOrg(period)
+    const { period: range, organizations, marginPercent, usdToGbpRate } = await fetchUsageByOrg(period)
     const sorted = sortOrgs(organizations, sort)
 
     const [ip, ua] = ipUa(c)
     await logSuperAdminActivity(superAdmin.id, 'view_usage_by_org', 'organization_usage', undefined, { period, sort }, ip, ua)
 
-    return c.json({ period: range, organizations: sorted })
+    return c.json({ period: range, marginPercent, usdToGbpRate, organizations: sorted })
   } catch (error) {
     logger.error('Error fetching usage by organization', { error })
     const message = error instanceof Error ? error.message : 'Failed to fetch usage by organization'
@@ -192,7 +237,7 @@ adminUsage.get('/usage/export', async (c) => {
 
   try {
     const { organizations } = await fetchUsageByOrg(period)
-    const headers = ['organization', 'status', 'sms_sent', 'emails_sent', 'health_checks_created', 'health_checks_completed', 'storage_gb', 'ai_generations', 'ai_cost_usd', 'est_sms_cost_gbp']
+    const headers = ['organization', 'status', 'sms_sent', 'emails_sent', 'health_checks_created', 'health_checks_completed', 'storage_gb', 'ai_generations', 'ai_cost_usd', 'ai_chargeout_gbp', 'est_sms_cost_gbp']
     const rows = organizations.map((o) => [
       `"${o.name.replace(/"/g, '""')}"`,
       o.status,
@@ -203,6 +248,7 @@ adminUsage.get('/usage/export', async (c) => {
       (o.storageUsedBytes / (1024 * 1024 * 1024)).toFixed(2),
       o.aiGenerations,
       o.aiCostUsd.toFixed(2),
+      o.aiChargeoutGbp.toFixed(2),
       o.estimatedSmsCost.toFixed(2)
     ].join(','))
     const csv = [headers.join(','), ...rows].join('\n')

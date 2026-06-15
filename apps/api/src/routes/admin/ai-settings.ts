@@ -86,6 +86,8 @@ aiSettings.get('/', async (c) => {
       defaultMonthlyLimit: parseInt(settingsMap['default_monthly_ai_limit']?.value || '100'),
       costAlertThreshold: parseFloat(settingsMap['ai_cost_alert_threshold_usd']?.value || '50'),
       model: settingsMap['ai_model']?.value || 'claude-sonnet-4-6',
+      marginPercent: parseFloat(settingsMap['ai_margin_percent']?.value || '0'),
+      usdToGbpRate: parseFloat(settingsMap['usd_to_gbp_rate']?.value || '0.79'),
       encryptionConfigured: isEncryptionConfigured()
     })
   } catch (error) {
@@ -108,6 +110,8 @@ aiSettings.patch('/', async (c) => {
       ai_enabled,
       default_monthly_ai_limit,
       ai_cost_alert_threshold_usd,
+      ai_margin_percent,
+      usd_to_gbp_rate,
       ai_model
     } = body
 
@@ -210,6 +214,46 @@ aiSettings.patch('/', async (c) => {
 
       if (error) throw new Error(`Failed to update ai_cost_alert_threshold_usd: ${error.message}`)
       updated.push('ai_cost_alert_threshold_usd')
+    }
+
+    // Update chargeout margin percentage
+    if (ai_margin_percent !== undefined) {
+      const margin = parseFloat(ai_margin_percent)
+      if (isNaN(margin) || margin < 0 || margin > 1000) {
+        return c.json({ error: 'ai_margin_percent must be a number between 0 and 1000' }, 400)
+      }
+
+      const { error } = await supabaseAdmin
+        .from('platform_ai_settings')
+        .update({
+          value: String(margin),
+          updated_at: now,
+          updated_by: superAdmin.id
+        })
+        .eq('key', 'ai_margin_percent')
+
+      if (error) throw new Error(`Failed to update ai_margin_percent: ${error.message}`)
+      updated.push('ai_margin_percent')
+    }
+
+    // Update USD->GBP exchange rate (used to bill AI chargeout in GBP)
+    if (usd_to_gbp_rate !== undefined) {
+      const rate = parseFloat(usd_to_gbp_rate)
+      if (isNaN(rate) || rate <= 0 || rate > 100) {
+        return c.json({ error: 'usd_to_gbp_rate must be a positive number' }, 400)
+      }
+
+      const { error } = await supabaseAdmin
+        .from('platform_ai_settings')
+        .update({
+          value: String(rate),
+          updated_at: now,
+          updated_by: superAdmin.id
+        })
+        .eq('key', 'usd_to_gbp_rate')
+
+      if (error) throw new Error(`Failed to update usd_to_gbp_rate: ${error.message}`)
+      updated.push('usd_to_gbp_rate')
     }
 
     // Update AI model

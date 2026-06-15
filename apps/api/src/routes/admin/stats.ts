@@ -54,14 +54,29 @@ adminStatsRoutes.get('/stats', async (c) => {
     .from('health_checks')
     .select('id', { count: 'exact' })
 
-  // Get SMS/emails this month (from usage table)
-  const { data: usageData } = await supabaseAdmin
-    .from('organization_usage')
-    .select('sms_sent, emails_sent')
-    .eq('period_start', monthStart)
+  // Get SMS/emails sent this month from the communication log (the reliable
+  // per-message audit; status sent/delivered/bounced = successfully dispatched).
+  // The organization_usage rollup counters are not consistently maintained, so
+  // we count attributed (non-null organization_id) sent messages directly.
+  const [{ count: smsCount }, { count: emailCount }] = await Promise.all([
+    supabaseAdmin
+      .from('communication_logs')
+      .select('id', { count: 'exact', head: true })
+      .eq('channel', 'sms')
+      .in('status', ['sent', 'delivered', 'bounced'])
+      .not('organization_id', 'is', null)
+      .gte('created_at', monthStart),
+    supabaseAdmin
+      .from('communication_logs')
+      .select('id', { count: 'exact', head: true })
+      .eq('channel', 'email')
+      .in('status', ['sent', 'delivered', 'bounced'])
+      .not('organization_id', 'is', null)
+      .gte('created_at', monthStart)
+  ])
 
-  const smsThisMonth = usageData?.reduce((sum, u) => sum + (u.sms_sent || 0), 0) || 0
-  const emailsThisMonth = usageData?.reduce((sum, u) => sum + (u.emails_sent || 0), 0) || 0
+  const smsThisMonth = smsCount || 0
+  const emailsThisMonth = emailCount || 0
 
   // Get MRR (Monthly Recurring Revenue)
   const { data: subscriptions } = await supabaseAdmin

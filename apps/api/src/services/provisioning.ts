@@ -309,6 +309,12 @@ async function sendAdminInviteEmail(
       return false
     }
 
+    // Outside production, surface the link in logs — dev/staging often can't send
+    // outbound email (e.g. platform Resend credentials can't be decrypted there).
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[provisioning] Set-password link for ${email}: ${resetLink}`)
+    }
+
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #1a1a1a;">Welcome to ${orgName} on VHC</h2>
@@ -326,13 +332,18 @@ async function sendAdminInviteEmail(
     `
     const text = `Welcome to ${orgName} on VHC\n\nHi ${firstName},\n\nAn account has been created for you as the administrator of ${orgName}.\n\nSet your password to get started: ${resetLink}\n\nIf you weren't expecting this, you can safely ignore this email.`
 
-    const result = await sendEmail({
+    // Account/auth emails: try the org/platform sender first; if those credentials
+    // are unavailable (e.g. on dev), fall back to the platform env (RESEND_API_KEY) sender.
+    const emailPayload = {
       to: email,
       subject: `Welcome to ${orgName} on VHC — set your password`,
       html,
-      text,
-      organizationId: orgId
-    })
+      text
+    }
+    let result = await sendEmail({ ...emailPayload, organizationId: orgId })
+    if (!result.success) {
+      result = await sendEmail(emailPayload)
+    }
     return result.success
   } catch (err) {
     console.error('Failed to send admin invite email:', err)

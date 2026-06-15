@@ -395,7 +395,7 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
       amber_count,
       green_count,
       vehicle:vehicles(registration, make, model),
-      customer:customers(first_name, last_name, email, mobile),
+      customer:customers(id, first_name, last_name, email, mobile),
       site:sites(name, phone, email)
     `)
     .eq('id', data.healthCheckId)
@@ -406,7 +406,7 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
   }
 
   // Cast nested relations for TypeScript
-  const customer = healthCheck.customer as unknown as { first_name: string; last_name: string; email: string; mobile: string }
+  const customer = healthCheck.customer as unknown as { id: string; first_name: string; last_name: string; email: string; mobile: string }
   const vehicle = healthCheck.vehicle as unknown as { registration: string; make: string; model: string }
   const site = healthCheck.site as unknown as { name: string; phone: string; email: string }
 
@@ -442,6 +442,7 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
     })
 
     await supabaseAdmin.from('communication_logs').insert({
+      organization_id: organizationId,
       health_check_id: data.healthCheckId,
       channel: 'email',
       recipient: data.customerEmail,
@@ -480,6 +481,7 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
     })
 
     await supabaseAdmin.from('communication_logs').insert({
+      organization_id: organizationId,
       health_check_id: data.healthCheckId,
       channel: 'sms',
       recipient: data.customerMobile,
@@ -491,6 +493,22 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
     // Only track usage if actually sent
     if (smsResult.success) {
       await incrementOrgUsage(organizationId, { sms_sent: 1 })
+
+      // Mirror the outbound send into sms_messages so an inbound reply can thread back to it
+      // (recency-based tenant routing) and so it appears in the two-way conversation view.
+      await supabaseAdmin.from('sms_messages').insert({
+        organization_id: organizationId,
+        health_check_id: data.healthCheckId,
+        customer_id: customer.id || null,
+        direction: 'outbound',
+        from_number: smsResult.from || '',
+        to_number: data.customerMobile,
+        body: smsResult.body || '',
+        twilio_sid: smsResult.messageId || null,
+        twilio_status: 'sent',
+        is_read: true,
+        metadata: { source: smsResult.source, kind: 'health_check_ready' }
+      })
     } else {
       console.error(`[Customer Notification] SMS failed for ${data.healthCheckId}:`, smsResult.error)
     }
@@ -761,7 +779,7 @@ async function processReminder(data: SendReminderJob) {
       token_expires_at,
       public_token,
       vehicle:vehicles(registration),
-      customer:customers(first_name, last_name, email, mobile),
+      customer:customers(id, first_name, last_name, email, mobile),
       site:sites(name, phone, settings)
     `)
     .eq('id', data.healthCheckId)
@@ -797,7 +815,7 @@ async function processReminder(data: SendReminderJob) {
   }
 
   // Cast nested relations for TypeScript
-  const customer = healthCheck.customer as unknown as { first_name: string; last_name: string; email: string; mobile: string }
+  const customer = healthCheck.customer as unknown as { id: string; first_name: string; last_name: string; email: string; mobile: string }
   const vehicle = healthCheck.vehicle as unknown as { registration: string }
   const site = healthCheck.site as unknown as { name: string; phone: string; settings: unknown }
 
@@ -828,6 +846,7 @@ async function processReminder(data: SendReminderJob) {
       )
 
       await supabaseAdmin.from('communication_logs').insert({
+        organization_id: organizationId,
         health_check_id: data.healthCheckId,
         channel: 'email',
         recipient: customer.email,
@@ -844,7 +863,7 @@ async function processReminder(data: SendReminderJob) {
   // Send SMS reminder
   if (data.channel === 'sms' || data.channel === 'both') {
     if (customer.mobile) {
-      await sendReminderSms(
+      const smsResult = await sendReminderSms(
         customer.mobile,
         customerName,
         vehicleReg,
@@ -855,15 +874,34 @@ async function processReminder(data: SendReminderJob) {
       )
 
       await supabaseAdmin.from('communication_logs').insert({
+        organization_id: organizationId,
         health_check_id: data.healthCheckId,
         channel: 'sms',
         recipient: customer.mobile,
-        status: 'sent',
+        status: smsResult.success ? 'sent' : 'failed',
+        external_id: smsResult.messageId,
+        error_message: smsResult.error,
         template_id: 'reminder'
       })
 
-      // Track usage
-      await incrementOrgUsage(organizationId, { sms_sent: 1 })
+      // Track usage + mirror the send so an inbound reply can thread back to it
+      if (smsResult.success) {
+        await incrementOrgUsage(organizationId, { sms_sent: 1 })
+
+        await supabaseAdmin.from('sms_messages').insert({
+          organization_id: organizationId,
+          health_check_id: data.healthCheckId,
+          customer_id: customer.id || null,
+          direction: 'outbound',
+          from_number: smsResult.from || '',
+          to_number: customer.mobile,
+          body: smsResult.body || '',
+          twilio_sid: smsResult.messageId || null,
+          twilio_status: 'sent',
+          is_read: true,
+          metadata: { source: smsResult.source, kind: 'reminder' }
+        })
+      }
     }
   }
 

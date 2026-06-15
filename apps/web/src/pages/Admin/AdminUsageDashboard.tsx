@@ -10,6 +10,7 @@ interface UsageTotals {
   healthChecksCompleted: number
   aiGenerations: number
   aiCostUsd: number
+  aiChargeoutGbp: number
   activeOrgs: number
 }
 
@@ -24,6 +25,7 @@ interface OrgUsage {
   storageUsedBytes: number
   aiGenerations: number
   aiCostUsd: number
+  aiChargeoutGbp: number
   estimatedSmsCost: number
 }
 
@@ -41,17 +43,21 @@ export default function AdminUsageDashboard() {
   const [sort, setSort] = useState<SortKey>('sms_desc')
   const [totals, setTotals] = useState<UsageTotals | null>(null)
   const [orgs, setOrgs] = useState<OrgUsage[]>([])
+  const [marginPercent, setMarginPercent] = useState(0)
+  const [usdToGbpRate, setUsdToGbpRate] = useState(0)
   const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     if (!session?.accessToken) return
     setLoading(true)
     Promise.all([
-      api<{ totals: UsageTotals }>(`/api/v1/admin/usage/summary?period=${period}`, { token: session.accessToken }),
+      api<{ totals: UsageTotals; marginPercent: number; usdToGbpRate: number }>(`/api/v1/admin/usage/summary?period=${period}`, { token: session.accessToken }),
       api<{ organizations: OrgUsage[] }>(`/api/v1/admin/usage/by-organization?period=${period}&sort=${sort}`, { token: session.accessToken })
     ])
       .then(([summary, byOrg]) => {
         setTotals(summary.totals)
+        setMarginPercent(summary.marginPercent || 0)
+        setUsdToGbpRate(summary.usdToGbpRate || 0)
         setOrgs(byOrg.organizations || [])
       })
       .catch((err) => console.error('Failed to fetch usage data:', err))
@@ -116,11 +122,12 @@ export default function AdminUsageDashboard() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4">
         <SummaryCard title="SMS Sent" value={num(totals?.smsSent || 0)} />
         <SummaryCard title="Emails Sent" value={num(totals?.emailsSent || 0)} />
         <SummaryCard title="Health Checks" value={num(totals?.healthChecksCreated || 0)} />
         <SummaryCard title="AI Cost (USD)" value={`$${(totals?.aiCostUsd || 0).toFixed(2)}`} />
+        <SummaryCard title="AI Chargeout (GBP)" value={gbp(totals?.aiChargeoutGbp || 0)} />
         <SummaryCard title="Est. SMS Spend" value={gbp(orgs.reduce((s, o) => s + (o.estimatedSmsCost || 0), 0))} />
         <SummaryCard title="Active Orgs" value={num(totals?.activeOrgs || 0)} />
       </div>
@@ -142,13 +149,14 @@ export default function AdminUsageDashboard() {
                 <th className="px-6 py-3 text-right">{sortable('storage_desc', 'Storage')}</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">AI Gens</th>
                 <th className="px-6 py-3 text-right">{sortable('ai_cost_desc', 'AI Cost')}</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">AI Chargeout £</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Est. SMS £</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
               {orgs.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-8 text-center text-gray-500">No usage data for this period</td>
+                  <td colSpan={10} className="px-6 py-8 text-center text-gray-500">No usage data for this period</td>
                 </tr>
               ) : (
                 orgs.map((o) => (
@@ -168,6 +176,7 @@ export default function AdminUsageDashboard() {
                     <td className="px-6 py-4 text-right text-gray-500">{gb(o.storageUsedBytes)}</td>
                     <td className="px-6 py-4 text-right text-gray-500">{num(o.aiGenerations)}</td>
                     <td className="px-6 py-4 text-right text-gray-500">${(o.aiCostUsd || 0).toFixed(2)}</td>
+                    <td className="px-6 py-4 text-right text-gray-900">{gbp(o.aiChargeoutGbp || 0)}</td>
                     <td className="px-6 py-4 text-right text-gray-700">{gbp(o.estimatedSmsCost)}</td>
                   </tr>
                 ))
@@ -176,7 +185,8 @@ export default function AdminUsageDashboard() {
           </table>
         </div>
         <p className="px-6 py-3 text-xs text-gray-400 border-t border-gray-100">
-          SMS spend is estimated from a configurable per-message rate (Platform Settings → Billing). AI cost is billed in USD.
+          SMS spend is estimated from a configurable per-message rate (Platform Settings → Billing). AI cost is in USD;
+          chargeout is billed in GBP = cost × margin{marginPercent ? ` (+${marginPercent}%)` : ''} × USD→GBP rate{usdToGbpRate ? ` (${usdToGbpRate})` : ''}, set in AI Configuration.
         </p>
       </div>
     </div>

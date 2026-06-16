@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import type { EmailOtpType } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function ResetPassword() {
   const navigate = useNavigate()
+  const { login } = useAuth()
   const [ready, setReady] = useState(false)
   const [checking, setChecking] = useState(true)
   const [password, setPassword] = useState('')
@@ -90,10 +92,53 @@ export default function ResetPassword() {
         }
       }
 
-      const { error: updateError } = await supabase.auth.updateUser({ password })
+      const { data: updateData, error: updateError } = await supabase.auth.updateUser({ password })
       if (updateError) throw updateError
-      // Clear the temporary recovery session so it doesn't linger.
+
+      // The recovery link proved control of the inbox and the user just chose this
+      // password, so log them straight in rather than bouncing to /login to re-type it.
+      // (Mirrors the Google flow, which also adopts its session — see AuthCallback.)
+      // We sign the temporary recovery session out FIRST, then re-authenticate through
+      // the normal login path — that mints a fresh app session, so the sign-out can't
+      // revoke the one we're about to depend on.
+      const email = updateData.user?.email
       await supabase.auth.signOut()
+
+      if (email) {
+        try {
+          await login(email, password)
+
+          const userStr = localStorage.getItem('vhc_user')
+          const sessionStr = localStorage.getItem('vhc_session')
+          const user = userStr ? JSON.parse(userStr) : null
+
+          // Super admins setting a password via the main app: bridge a session for the
+          // /admin portal, exactly as the login screen does.
+          if (user?.isSuperAdmin && sessionStr) {
+            localStorage.setItem('vhc_super_admin_session', sessionStr)
+            localStorage.setItem('vhc_super_admin', JSON.stringify({
+              id: user.id,
+              email: user.email,
+              name: `${user.firstName} ${user.lastName}`,
+              isActive: true,
+            }))
+          }
+
+          // New org admins land in the onboarding wizard; everyone else in the app. A
+          // full-page load (not client navigate) re-boots every provider cleanly with the
+          // freshly persisted session — same reasoning as the OAuth callback.
+          const dest =
+            user?.isOrgAdmin && user.organization?.onboardingCompleted === false
+              ? '/onboarding'
+              : '/'
+          window.location.replace(dest)
+          return
+        } catch {
+          // Auto sign-in failed for some reason — fall back to the manual login screen
+          // below. The password itself was updated successfully.
+        }
+      }
+
       setDone(true)
       setTimeout(() => navigate('/login'), 2500)
     } catch (err) {

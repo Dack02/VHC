@@ -129,11 +129,14 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
   }, [fetchBranding])
 
   // Generate CSS variables from branding colors
+  const primaryColor = branding?.primaryColor || defaultBranding.primaryColor!
   const cssVariables: Record<string, string> = {
-    '--brand-primary': branding?.primaryColor || defaultBranding.primaryColor!,
+    '--brand-primary': primaryColor,
+    // RGB channels back the `primary` Tailwind token so opacity modifiers work.
+    '--brand-primary-rgb': hexToRgb(primaryColor),
     '--brand-secondary': branding?.secondaryColor || defaultBranding.secondaryColor!,
-    '--brand-primary-hover': adjustBrightness(branding?.primaryColor || defaultBranding.primaryColor!, -15),
-    '--brand-primary-light': adjustBrightness(branding?.primaryColor || defaultBranding.primaryColor!, 40)
+    '--brand-primary-hover': adjustBrightness(primaryColor, -15),
+    '--brand-primary-light': adjustBrightness(primaryColor, 40)
   }
 
   // Apply CSS variables to document root
@@ -180,6 +183,19 @@ export function useBranding() {
     throw new Error('useBranding must be used within a BrandingProvider')
   }
   return context
+}
+
+// Convert a hex colour to space-separated RGB channels (e.g. "79 70 229") for
+// Tailwind's `rgb(... / <alpha-value>)` opacity modifiers. Falls back to the
+// default indigo channels if the input can't be parsed, so a bad value can't
+// blank out the primary colour app-wide.
+function hexToRgb(hex: string): string {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.substring(0, 2), 16)
+  const g = parseInt(h.substring(2, 4), 16)
+  const b = parseInt(h.substring(4, 6), 16)
+  if ([r, g, b].some(Number.isNaN)) return '79 70 229' // #4F46E5
+  return `${r} ${g} ${b}`
 }
 
 // Helper function to adjust color brightness

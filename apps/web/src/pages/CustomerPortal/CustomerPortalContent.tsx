@@ -47,15 +47,23 @@ export default function CustomerPortalContent({
     if (settings.primaryColor) {
       target.style.setProperty('--brand-primary', settings.primaryColor)
       const hex = settings.primaryColor.replace('#', '')
-      const r = Math.max(0, parseInt(hex.substring(0, 2), 16) * 0.85)
-      const g = Math.max(0, parseInt(hex.substring(2, 4), 16) * 0.85)
-      const b = Math.max(0, parseInt(hex.substring(4, 6), 16) * 0.85)
+      const baseR = parseInt(hex.substring(0, 2), 16)
+      const baseG = parseInt(hex.substring(2, 4), 16)
+      const baseB = parseInt(hex.substring(4, 6), 16)
+      // RGB channels back the `primary` Tailwind token so opacity modifiers work.
+      if (![baseR, baseG, baseB].some(Number.isNaN)) {
+        target.style.setProperty('--brand-primary-rgb', `${baseR} ${baseG} ${baseB}`)
+      }
+      const r = Math.max(0, baseR * 0.85)
+      const g = Math.max(0, baseG * 0.85)
+      const b = Math.max(0, baseB * 0.85)
       target.style.setProperty('--brand-primary-hover', `#${Math.round(r).toString(16).padStart(2, '0')}${Math.round(g).toString(16).padStart(2, '0')}${Math.round(b).toString(16).padStart(2, '0')}`)
     }
 
     return () => {
       if (!previewMode) {
         document.documentElement.style.removeProperty('--brand-primary')
+        document.documentElement.style.removeProperty('--brand-primary-rgb')
         document.documentElement.style.removeProperty('--brand-primary-hover')
       }
     }

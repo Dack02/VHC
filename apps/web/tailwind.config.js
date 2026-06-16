@@ -8,8 +8,15 @@ export default {
     extend: {
       colors: {
         primary: {
-          DEFAULT: 'var(--brand-primary, #4F46E5)',
+          // DEFAULT is expressed as RGB channels so Tailwind opacity modifiers
+          // (e.g. `bg-primary/5`, `ring-primary/20`) actually compile. The channels
+          // are supplied as `--brand-primary-rgb` by BrandingContext /
+          // CustomerPortalContent; the fallback equals #4F46E5.
+          DEFAULT: 'rgb(var(--brand-primary-rgb, 79 70 229) / <alpha-value>)',
           hover: 'var(--brand-primary-hover, #4338CA)',
+          // `dark` aliases `hover` so the long-standing `*-primary-dark` classes
+          // resolve to the darker brand shade instead of emitting no CSS.
+          dark: 'var(--brand-primary-hover, #4338CA)',
           light: 'var(--brand-primary-light, #A5B4FC)',
         },
         secondary: {

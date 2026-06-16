@@ -4,6 +4,7 @@ import { buildResetPasswordLink } from '../lib/authLinks.js'
 import { authMiddleware } from '../middleware/auth.js'
 import { sendEmail } from '../services/email.js'
 import { provisionOrganization } from '../services/provisioning.js'
+import { notifyNewOrganizationSignup } from '../services/super-admin-alerts.js'
 import crypto from 'crypto'
 
 const auth = new Hono()
@@ -570,7 +571,7 @@ auth.post('/signup', async (c) => {
       : (typeof body.password === 'string' && body.password ? body.password : undefined)
 
     try {
-      await provisionOrganization({
+      const provisioned = await provisionOrganization({
         name: organizationName,
         slug,
         planId,
@@ -579,6 +580,17 @@ auth.post('/signup', async (c) => {
         adminLastName,
         adminPassword
       })
+
+      // Best-effort: text the platform super admin(s) that a new org just joined.
+      // Fire-and-forget so it never delays or breaks the signup response.
+      void notifyNewOrganizationSignup({
+        organizationId: provisioned.organization.id,
+        organizationName,
+        adminName: `${adminFirstName} ${adminLastName}`.trim(),
+        adminEmail,
+        planId,
+        source: 'email'
+      }).catch(() => {})
     } catch (err) {
       const msg = (err instanceof Error ? err.message : '').toLowerCase()
       // Existing auth account or a rare slug race — respond generically (no leak).
@@ -716,7 +728,7 @@ auth.post('/oauth/exchange', async (c) => {
       slug = `${base}-${crypto.randomBytes(3).toString('hex')}`
     }
 
-    await provisionOrganization({
+    const provisioned = await provisionOrganization({
       name: organizationName,
       slug,
       planId,
@@ -725,6 +737,16 @@ auth.post('/oauth/exchange', async (c) => {
       adminLastName: lastName,
       existingAuthUserId: authUser.id
     })
+
+    // Best-effort: text the platform super admin(s) that a new org just joined.
+    void notifyNewOrganizationSignup({
+      organizationId: provisioned.organization.id,
+      organizationName,
+      adminName: `${firstName} ${lastName}`.trim(),
+      adminEmail: email,
+      planId,
+      source: 'google'
+    }).catch(() => {})
 
     resolved = await resolveSession(authUser.id, tokens)
     if (resolved.type === 'super_admin' || resolved.type === 'user') return c.json(resolved.body)

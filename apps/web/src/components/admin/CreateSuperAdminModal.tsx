@@ -6,6 +6,7 @@ export default function CreateSuperAdminModal({ onClose, onCreated }: { onClose:
   const { session } = useSuperAdmin()
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
+  const [phone, setPhone] = useState('')
   const [sendInvite, setSendInvite] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -18,7 +19,7 @@ export default function CreateSuperAdminModal({ onClose, onCreated }: { onClose:
       const data = await api<{ inviteEmailSent: boolean }>('/api/v1/admin/super-admins', {
         method: 'POST',
         token: session.accessToken,
-        body: { email, name, sendInvite }
+        body: { email, name, phone, sendInvite }
       })
       onCreated(!!data.inviteEmailSent)
     } catch (e) {
@@ -58,6 +59,17 @@ export default function CreateSuperAdminModal({ onClose, onCreated }: { onClose:
               onChange={(e) => setEmail(e.target.value)}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Mobile <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+447700900123"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <p className="mt-1 text-xs text-gray-400">Receives the SMS alert when a new organisation signs up. Include the country code (e.g. +44).</p>
           </div>
           <label className="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" checked={sendInvite} onChange={(e) => setSendInvite(e.target.checked)} className="h-4 w-4 text-indigo-600 rounded border-gray-300" />

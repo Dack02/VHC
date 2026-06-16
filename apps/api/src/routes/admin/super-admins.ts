@@ -64,7 +64,7 @@ adminSuperAdmins.get('/', async (c) => {
   const superAdmin = c.get('superAdmin')
   const { data, error } = await supabaseAdmin
     .from('super_admins')
-    .select('id, email, name, is_active, last_login_at, created_at, deactivated_at')
+    .select('id, email, name, phone, is_active, last_login_at, created_at, deactivated_at')
     .order('created_at', { ascending: true })
 
   if (error) {
@@ -78,6 +78,7 @@ adminSuperAdmins.get('/', async (c) => {
       id: a.id,
       email: a.email,
       name: a.name,
+      phone: a.phone ?? null,
       isActive: a.is_active,
       lastLoginAt: a.last_login_at,
       createdAt: a.created_at,
@@ -96,6 +97,7 @@ adminSuperAdmins.post('/', async (c) => {
   const superAdmin = c.get('superAdmin')
   const body = await c.req.json()
   const { email, name, sendInvite = true, password } = body
+  const phone = typeof body.phone === 'string' ? body.phone.trim() : ''
   const [ip, ua] = ipUa(c)
 
   if (!email || !name) {
@@ -146,6 +148,7 @@ adminSuperAdmins.post('/', async (c) => {
       .insert({
         email,
         name,
+        phone: phone || null,
         auth_user_id: authUserId,
         is_active: true,
         created_by: superAdmin.id
@@ -188,6 +191,61 @@ adminSuperAdmins.post('/', async (c) => {
     console.error('Create super admin error:', error)
     return c.json({ error: 'Failed to create super admin' }, 500)
   }
+})
+
+/**
+ * PATCH /api/v1/admin/super-admins/:id
+ * Update editable fields on a super admin. Currently the mobile number, which is used
+ * as a recipient for platform alerts (e.g. the new-organization signup SMS).
+ * Body: { phone?: string }  — an empty string clears the number.
+ */
+adminSuperAdmins.patch('/:id', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const targetId = c.req.param('id')
+  const body = await c.req.json().catch(() => ({}))
+  const [ip, ua] = ipUa(c)
+
+  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  if (typeof body.phone === 'string') {
+    const phone = body.phone.trim()
+    updates.phone = phone || null
+  }
+
+  // Nothing to change beyond the timestamp → reject as a no-op.
+  if (Object.keys(updates).length <= 1) {
+    return c.json({ error: 'No updatable fields provided' }, 400)
+  }
+
+  const { data: row, error } = await supabaseAdmin
+    .from('super_admins')
+    .update(updates)
+    .eq('id', targetId)
+    .select('id, email, name, phone, is_active')
+    .maybeSingle()
+
+  if (error) {
+    return c.json({ error: error.message }, 500)
+  }
+  if (!row) {
+    return c.json({ error: 'Super admin not found' }, 404)
+  }
+
+  await logSuperAdminActivity(
+    superAdmin.id,
+    'update_super_admin',
+    'super_admins',
+    targetId,
+    { phone: 'phone' in updates ? (updates.phone ? 'set' : 'cleared') : undefined },
+    ip, ua
+  )
+
+  return c.json({
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    phone: row.phone ?? null,
+    isActive: row.is_active
+  })
 })
 
 /**

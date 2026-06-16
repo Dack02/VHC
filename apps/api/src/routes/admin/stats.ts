@@ -404,6 +404,72 @@ adminStatsRoutes.patch('/plans/:id', async (c) => {
 })
 
 /**
+ * DELETE /api/v1/admin/plans/:id
+ * Permanently delete a subscription plan.
+ *
+ * Blocked while any organisation still references the plan: organization_subscriptions.plan_id
+ * is a NOT NULL foreign key with no ON DELETE rule (RESTRICT), so a hard delete would otherwise
+ * fail with a cryptic FK error. We surface a friendly 409 and tell the admin to reassign those
+ * organisations (or just deactivate the plan) first.
+ */
+adminStatsRoutes.delete('/plans/:id', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const planId = c.req.param('id')
+
+  // Confirm the plan exists (and grab its name for the confirmation + activity log)
+  const { data: existing, error: fetchError } = await supabaseAdmin
+    .from('subscription_plans')
+    .select('id, name')
+    .eq('id', planId)
+    .single()
+
+  if (fetchError || !existing) {
+    return c.json({ error: 'Plan not found' }, 404)
+  }
+
+  // Guard: refuse while any organisation references this plan (any subscription status —
+  // the FK blocks on the row's existence, not its status).
+  const { count, error: countError } = await supabaseAdmin
+    .from('organization_subscriptions')
+    .select('id', { count: 'exact', head: true })
+    .eq('plan_id', planId)
+
+  if (countError) {
+    return c.json({ error: countError.message }, 500)
+  }
+
+  if ((count ?? 0) > 0) {
+    return c.json({
+      error: `Cannot delete "${existing.name}" — ${count} organisation${count === 1 ? '' : 's'} still reference this plan. Move them to another plan first, or set this plan inactive instead.`,
+      code: 'PLAN_IN_USE',
+      subscriberCount: count
+    }, 409)
+  }
+
+  const { error: deleteError } = await supabaseAdmin
+    .from('subscription_plans')
+    .delete()
+    .eq('id', planId)
+
+  if (deleteError) {
+    return c.json({ error: deleteError.message }, 500)
+  }
+
+  // Log activity
+  await logSuperAdminActivity(
+    superAdmin.id,
+    'delete_plan',
+    'subscription_plans',
+    planId,
+    { name: existing.name },
+    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    c.req.header('User-Agent')
+  )
+
+  return c.json({ success: true })
+})
+
+/**
  * POST /api/v1/admin/impersonate/:userId
  * Start impersonation session
  *

@@ -26,6 +26,9 @@ export default function AdminPlans() {
   const [loading, setLoading] = useState(true)
   const [editingPlan, setEditingPlan] = useState<Plan | null>(null)
   const [saving, setSaving] = useState(false)
+  const [deletingPlan, setDeletingPlan] = useState<Plan | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   useEffect(() => {
     fetchPlans()
@@ -71,6 +74,25 @@ export default function AdminPlans() {
       console.error('Failed to save plan:', error)
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleDeletePlan = async () => {
+    if (!session?.accessToken || !deletingPlan) return
+
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await api(`/api/v1/admin/plans/${deletingPlan.id}`, {
+        method: 'DELETE',
+        token: session.accessToken,
+      })
+      setDeletingPlan(null)
+      fetchPlans()
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'Failed to delete plan')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -147,12 +169,18 @@ export default function AdminPlans() {
               </div>
             </div>
 
-            <div className="px-6 py-3 bg-gray-50 border-t border-gray-100">
+            <div className="px-6 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
               <button
                 onClick={() => setEditingPlan(plan)}
                 className="text-sm text-indigo-600 hover:text-indigo-700 font-medium"
               >
                 Edit Plan
+              </button>
+              <button
+                onClick={() => { setDeletingPlan(plan); setDeleteError(null) }}
+                className="text-sm text-red-600 hover:text-red-700 font-medium"
+              >
+                Delete
               </button>
             </div>
           </div>
@@ -314,6 +342,58 @@ export default function AdminPlans() {
                 className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
               >
                 {saving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Plan Confirmation Modal */}
+      {deletingPlan && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-xl font-semibold text-gray-900">Delete plan</h2>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600">
+                Are you sure you want to delete{' '}
+                <span className="font-semibold text-gray-900">{deletingPlan.name}</span>? This cannot be undone.
+              </p>
+
+              {deletingPlan.subscriberCount > 0 && (
+                <div className="flex gap-3 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
+                  <svg className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <p className="text-sm text-amber-800">
+                    {deletingPlan.subscriberCount} organisation{deletingPlan.subscriberCount === 1 ? ' is' : 's are'} currently on this plan.
+                    Move {deletingPlan.subscriberCount === 1 ? 'it' : 'them'} to another plan before it can be deleted.
+                  </p>
+                </div>
+              )}
+
+              {deleteError && (
+                <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+                  {deleteError}
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => { setDeletingPlan(null); setDeleteError(null) }}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeletePlan}
+                disabled={deleting || deletingPlan.subscriberCount > 0}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleting ? 'Deleting...' : 'Delete Plan'}
               </button>
             </div>
           </div>

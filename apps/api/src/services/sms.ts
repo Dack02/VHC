@@ -5,7 +5,7 @@
 
 import twilio from 'twilio'
 import { supabaseAdmin } from '../lib/supabase.js'
-import { getSmsCredentials, SmsCredentials } from './credentials.js'
+import { getSmsCredentials, getPlatformSmsCredentials, SmsCredentials } from './credentials.js'
 import {
   getOrganizationTemplate,
   renderSmsMessage,
@@ -124,6 +124,48 @@ export async function sendSms(
       success: false,
       error: error instanceof Error ? error.message : 'Failed to send SMS',
       source: 'env'
+    }
+  }
+}
+
+/**
+ * Send an SMS using the PLATFORM's Twilio credentials, independent of any organization.
+ * Credentials resolve env-first (TWILIO_* in the Railway secret store) then the encrypted
+ * platform_settings row — the same platform resolution org sends fall back to. Use this
+ * for platform-level alerts (e.g. notifying super admins of a new signup) where there is
+ * no tenant to bill or attribute the message to.
+ */
+export async function sendPlatformSms(to: string, message: string): Promise<SmsResult> {
+  const credResult = await getPlatformSmsCredentials()
+  if (!credResult.configured || !credResult.credentials) {
+    return {
+      success: false,
+      error: credResult.error || 'Platform SMS not configured',
+      source: 'platform'
+    }
+  }
+
+  try {
+    const client = createTwilioClient(credResult.credentials)
+    const formattedTo = formatPhoneNumber(to)
+    const result = await client.messages.create({
+      body: message,
+      from: credResult.credentials.phoneNumber,
+      to: formattedTo
+    })
+    return {
+      success: true,
+      messageId: result.sid,
+      source: 'platform',
+      from: credResult.credentials.phoneNumber,
+      body: message
+    }
+  } catch (error) {
+    console.error('Platform SMS send error:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to send SMS',
+      source: 'platform'
     }
   }
 }

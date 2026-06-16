@@ -7,6 +7,7 @@ interface SuperAdminRow {
   id: string
   email: string
   name: string
+  phone: string | null
   isActive: boolean
   lastLoginAt: string | null
   createdAt: string
@@ -35,6 +36,9 @@ export default function AdminSuperAdmins() {
   const [actioning, setActioning] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [sessions, setSessions] = useState<ImpSession[]>([])
+  const [editingPhone, setEditingPhone] = useState<string | null>(null)
+  const [phoneDraft, setPhoneDraft] = useState('')
+  const [savingPhone, setSavingPhone] = useState(false)
 
   const fetchAdmins = async () => {
     if (!session?.accessToken) return
@@ -91,6 +95,30 @@ export default function AdminSuperAdmins() {
     }
   }
 
+  const startEditPhone = (a: SuperAdminRow) => {
+    setEditingPhone(a.id)
+    setPhoneDraft(a.phone || '')
+  }
+
+  const savePhone = async (id: string) => {
+    if (!session?.accessToken) return
+    setSavingPhone(true)
+    try {
+      await api(`/api/v1/admin/super-admins/${id}`, {
+        method: 'PATCH',
+        token: session.accessToken,
+        body: { phone: phoneDraft.trim() }
+      })
+      setEditingPhone(null)
+      flash('success', phoneDraft.trim() ? 'Mobile number saved' : 'Mobile number removed')
+      fetchAdmins()
+    } catch (e) {
+      flash('error', e instanceof Error ? e.message : 'Failed to save mobile number')
+    } finally {
+      setSavingPhone(false)
+    }
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center h-64"><div className="text-gray-500">Loading super admins...</div></div>
   }
@@ -119,6 +147,7 @@ export default function AdminSuperAdmins() {
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Mobile</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Last Login</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
@@ -134,6 +163,28 @@ export default function AdminSuperAdmins() {
                     {a.isYou && <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">You</span>}
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-500">{a.email}</td>
+                  <td className="px-6 py-4 text-sm text-gray-500">
+                    {editingPhone === a.id ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="tel"
+                          value={phoneDraft}
+                          onChange={(e) => setPhoneDraft(e.target.value)}
+                          placeholder="+447700900123"
+                          autoFocus
+                          onKeyDown={(e) => { if (e.key === 'Enter') savePhone(a.id); if (e.key === 'Escape') setEditingPhone(null) }}
+                          className="w-40 px-2 py-1 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <button onClick={() => savePhone(a.id)} disabled={savingPhone} className="text-indigo-600 hover:text-indigo-900 text-xs font-medium disabled:opacity-50">Save</button>
+                        <button onClick={() => setEditingPhone(null)} className="text-gray-400 hover:text-gray-600 text-xs">Cancel</button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className={a.phone ? 'text-gray-700' : 'text-gray-400'}>{a.phone || '—'}</span>
+                        <button onClick={() => startEditPhone(a)} className="text-indigo-600 hover:text-indigo-900 text-xs">{a.phone ? 'Edit' : 'Add'}</button>
+                      </div>
+                    )}
+                  </td>
                   <td className="px-6 py-4">
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${a.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
                       {a.isActive ? 'Active' : 'Deactivated'}
@@ -175,6 +226,9 @@ export default function AdminSuperAdmins() {
           </tbody>
         </table>
       </div>
+      <p className="text-xs text-gray-400 -mt-3">
+        Mobile numbers above receive an SMS whenever a new organisation signs up.
+      </p>
 
       {sessions.length > 0 && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">

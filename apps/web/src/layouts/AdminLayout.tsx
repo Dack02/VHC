@@ -96,7 +96,13 @@ export default function AdminLayout() {
     if (path === '/admin') {
       return location.pathname === '/admin'
     }
-    return location.pathname.startsWith(path)
+    // Match the exact path or a true sub-route (path + '/...'), not just any
+    // string prefix — otherwise sibling routes that share a prefix (e.g.
+    // '/admin/starter-template' vs '/admin/starter-templates') both highlight.
+    return (
+      location.pathname === path ||
+      location.pathname.startsWith(path + '/')
+    )
   }
 
   const navLinkClass = (path: string) => {

@@ -52,15 +52,17 @@ export function isPlatformSmsManagedByEnv(): boolean {
   return readPlatformSmsEnv() !== null
 }
 
-/** Read platform Resend credentials from env vars, if the required ones are present. */
+/** Read platform Resend credentials from env vars. Only RESEND_API_KEY is required;
+ * from-email/name default to the verified platform sender (matching the legacy env
+ * sender in email.ts) so setting just the API key activates platform email. */
 export function readPlatformEmailEnv(): EmailCredentials | null {
   const apiKey = process.env.RESEND_API_KEY
-  const fromEmail = process.env.RESEND_FROM_EMAIL
-  const fromName = process.env.RESEND_FROM_NAME || 'Vehicle Health Check'
-  if (apiKey && fromEmail) {
-    return { apiKey, fromEmail, fromName }
+  if (!apiKey) {
+    return null
   }
-  return null
+  const fromEmail = process.env.RESEND_FROM_EMAIL || 'noreply@ollosoft.co.uk'
+  const fromName = process.env.RESEND_FROM_NAME || 'Vehicle Health Check'
+  return { apiKey, fromEmail, fromName }
 }
 
 /** True when platform Email credentials are supplied via environment variables. */

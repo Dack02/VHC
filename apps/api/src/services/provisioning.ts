@@ -124,7 +124,9 @@ export async function provisionOrganization(
       throw new ProvisionError(`Failed to create notification settings: ${notifError.message}`)
     }
 
-    // 4. Subscription
+    // 4. Subscription — new organizations start on a 1-month free trial of their
+    //    chosen plan. status = 'trialing' until trial_ends_at; there is no automatic
+    //    enforcement/billing yet (a later phase).
     const periodStart = new Date()
     const periodEnd = new Date()
     periodEnd.setMonth(periodEnd.getMonth() + 1)
@@ -133,7 +135,9 @@ export async function provisionOrganization(
       .insert({
         organization_id: org.id,
         plan_id: planId,
-        status: 'active',
+        status: 'trialing',
+        trial_started_at: periodStart.toISOString(),
+        trial_ends_at: periodEnd.toISOString(),
         current_period_start: periodStart.toISOString(),
         current_period_end: periodEnd.toISOString()
       })

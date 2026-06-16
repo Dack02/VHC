@@ -23,6 +23,7 @@ interface SubscriptionData {
   plan: SubscriptionPlan | null
   currentPeriodStart: string | null
   currentPeriodEnd: string | null
+  trialEndsAt?: string | null
 }
 
 interface UsageData {
@@ -157,6 +158,12 @@ export default function Subscription() {
             </span>
           )}
         </div>
+
+        {subscription?.status === 'trialing' && subscription?.trialEndsAt && (
+          <div className="mt-4 bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-800">
+            Free trial — ends <strong>{formatDate(subscription.trialEndsAt)}</strong>
+          </div>
+        )}
 
         {subscription?.plan && (
           <div className="mt-6 pt-6 border-t border-gray-200">

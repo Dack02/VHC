@@ -10,6 +10,9 @@ interface OnboardingStatus {
   sitesCount: number
   teamMembersCount: number
   templatesCount: number
+  planName?: string | null
+  trialEndsAt?: string | null
+  subscriptionStatus?: string | null
 }
 
 interface Props {
@@ -19,18 +22,29 @@ interface Props {
 
 export default function Step5Ready({ status, onComplete }: Props) {
   const hasTemplates = status?.hasTemplates ?? false
+  const trialDate = status?.trialEndsAt
+    ? new Date(status.trialEndsAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+    : null
   const checkmarks = [
+    {
+      label: status?.planName ? `${status.planName} plan selected` : 'Plan selected',
+      completed: !!status?.planName
+    },
     {
       label: 'Business details configured',
       completed: status?.hasSettings || false
+    },
+    {
+      label: 'Inspection template ready',
+      completed: hasTemplates
     },
     {
       label: 'First site created',
       completed: status?.hasSites || false
     },
     {
-      label: 'Inspection template ready',
-      completed: hasTemplates
+      label: 'Pricing defaults set',
+      completed: true
     },
     {
       label: 'Team members invited',
@@ -38,7 +52,7 @@ export default function Step5Ready({ status, onComplete }: Props) {
       optional: true
     },
     {
-      label: 'Notifications configured',
+      label: 'Notifications & daily overview',
       completed: true,
       optional: true
     }
@@ -59,6 +73,12 @@ export default function Step5Ready({ status, onComplete }: Props) {
           ? "Your organization is ready to start creating vehicle health checks. Here's what we've set up for you:"
           : "Your organization is set up. One more step — create your first inspection template so you can start running health checks. Here's where things stand:"}
       </p>
+
+      {trialDate && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-8 max-w-md mx-auto text-sm text-green-800">
+          Your <strong>1-month free trial</strong> is active until <strong>{trialDate}</strong>.
+        </div>
+      )}
 
       {/* Checklist */}
       <div className="bg-gray-50 rounded-lg p-6 mb-8 max-w-md mx-auto text-left">

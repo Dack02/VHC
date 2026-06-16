@@ -81,6 +81,13 @@ onboarding.get('/status', async (c) => {
     .eq('organization_id', organizationId)
     .eq('is_active', true)
 
+  // Subscription / trial info for the plan step + the "Ready" summary
+  const { data: sub } = await supabaseAdmin
+    .from('organization_subscriptions')
+    .select('plan_id, status, trial_ends_at, plan:subscription_plans(name)')
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+
   return c.json({
     organizationId: org.id,
     organizationName: org.name,
@@ -92,7 +99,11 @@ onboarding.get('/status', async (c) => {
     hasTemplates: (templatesCount || 0) > 0,
     sitesCount: sitesCount || 0,
     teamMembersCount: usersCount || 0,
-    templatesCount: templatesCount || 0
+    templatesCount: templatesCount || 0,
+    planId: sub?.plan_id || null,
+    planName: (sub?.plan as { name?: string } | null)?.name || null,
+    subscriptionStatus: sub?.status || null,
+    trialEndsAt: sub?.trial_ends_at || null
   })
 })
 
@@ -105,7 +116,7 @@ onboarding.patch('/step', async (c) => {
   const organizationId = auth.user.organizationId
   const { step } = await c.req.json()
 
-  if (typeof step !== 'number' || step < 0 || step > 5) {
+  if (typeof step !== 'number' || step < 0 || step > 9) {
     return c.json({ error: 'Invalid step number' }, 400)
   }
 
@@ -202,7 +213,7 @@ onboarding.post('/business-details', async (c) => {
   }
 
   // Advance onboarding progress (monotonic — never regress when revisiting a step)
-  await advanceOnboardingStep(organizationId, 1)
+  await advanceOnboardingStep(organizationId, 2)
 
   return c.json({
     success: true,
@@ -256,7 +267,7 @@ onboarding.post('/first-site', async (c) => {
       .eq('id', auth.user.id)
       .is('site_id', null)
 
-    await advanceOnboardingStep(organizationId, 2)
+    await advanceOnboardingStep(organizationId, 4)
 
     return c.json({
       success: true,
@@ -341,7 +352,7 @@ onboarding.post('/first-site', async (c) => {
     .eq('id', auth.user.id)
 
   // Advance onboarding progress (monotonic)
-  await advanceOnboardingStep(organizationId, 2)
+  await advanceOnboardingStep(organizationId, 4)
 
   return c.json({
     success: true,
@@ -533,7 +544,7 @@ onboarding.post('/invite-team', async (c) => {
   }
 
   // Advance onboarding progress (monotonic)
-  await advanceOnboardingStep(organizationId, 3)
+  await advanceOnboardingStep(organizationId, 6)
 
   return c.json({
     success: true,
@@ -600,7 +611,7 @@ onboarding.post('/notifications', async (c) => {
   }
 
   // Advance onboarding progress (monotonic)
-  await advanceOnboardingStep(organizationId, 4)
+  await advanceOnboardingStep(organizationId, 7)
 
   return c.json({
     success: true,
@@ -625,7 +636,7 @@ onboarding.post('/complete', async (c) => {
     .from('organizations')
     .update({
       onboarding_completed: true,
-      onboarding_step: 5,
+      onboarding_step: 9,
       updated_at: new Date().toISOString()
     })
     .eq('id', organizationId)
@@ -652,7 +663,7 @@ onboarding.post('/skip', async (c) => {
     .from('organizations')
     .update({
       onboarding_completed: true,
-      onboarding_step: 5,
+      onboarding_step: 9,
       updated_at: new Date().toISOString()
     })
     .eq('id', organizationId)
@@ -665,6 +676,262 @@ onboarding.post('/skip', async (c) => {
     success: true,
     message: 'Onboarding skipped. You can complete setup later in Settings.'
   })
+})
+
+/**
+ * GET /api/v1/onboarding/plans
+ * List active subscription plans for the plan picker, plus the org's current plan
+ * and trial end date. Every plan is offered with a 1-month free trial.
+ */
+onboarding.get('/plans', async (c) => {
+  const auth = c.get('auth')
+  const organizationId = auth.user.organizationId
+
+  const { data: plans, error } = await supabaseAdmin
+    .from('subscription_plans')
+    .select('*')
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+
+  if (error) {
+    return c.json({ error: error.message }, 500)
+  }
+
+  const { data: sub } = await supabaseAdmin
+    .from('organization_subscriptions')
+    .select('plan_id, status, trial_ends_at')
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+
+  return c.json({
+    plans: (plans || []).map(p => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      priceMonthly: p.price_monthly,
+      priceAnnual: p.price_annual,
+      currency: p.currency,
+      maxSites: p.max_sites,
+      maxUsers: p.max_users,
+      maxHealthChecksPerMonth: p.max_health_checks_per_month,
+      maxStorageGb: p.max_storage_gb,
+      isPopular: p.is_popular,
+      features: p.features
+    })),
+    currentPlanId: sub?.plan_id || null,
+    status: sub?.status || null,
+    trialEndsAt: sub?.trial_ends_at || null
+  })
+})
+
+/**
+ * POST /api/v1/onboarding/plan
+ * Step 0: choose a subscription plan. Sets the plan and (re)starts a 1-month free
+ * trial if one isn't already running. No charge is taken — billing is a later phase.
+ */
+onboarding.post('/plan', async (c) => {
+  const auth = c.get('auth')
+  const organizationId = auth.user.organizationId
+  const { planId } = await c.req.json()
+
+  if (!planId || typeof planId !== 'string') {
+    return c.json({ error: 'A plan is required' }, 400)
+  }
+
+  const { data: plan } = await supabaseAdmin
+    .from('subscription_plans')
+    .select('id')
+    .eq('id', planId)
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (!plan) {
+    return c.json({ error: 'Invalid plan selected' }, 400)
+  }
+
+  // Preserve any trial that's already running; otherwise start a fresh 1-month trial.
+  const { data: sub } = await supabaseAdmin
+    .from('organization_subscriptions')
+    .select('trial_started_at, trial_ends_at')
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+
+  const now = new Date()
+  const trialStart = sub?.trial_started_at || now.toISOString()
+  let trialEnd = sub?.trial_ends_at
+  if (!trialEnd) {
+    const end = new Date()
+    end.setMonth(end.getMonth() + 1)
+    trialEnd = end.toISOString()
+  }
+
+  const { error } = await supabaseAdmin
+    .from('organization_subscriptions')
+    .upsert({
+      organization_id: organizationId,
+      plan_id: planId,
+      status: 'trialing',
+      trial_started_at: trialStart,
+      trial_ends_at: trialEnd,
+      updated_at: now.toISOString()
+    }, { onConflict: 'organization_id' })
+
+  if (error) {
+    return c.json({ error: error.message }, 500)
+  }
+
+  await advanceOnboardingStep(organizationId, 1)
+
+  return c.json({ success: true, planId, trialEndsAt: trialEnd })
+})
+
+/**
+ * POST /api/v1/onboarding/template
+ * Step 2: ensure the org has at least one inspection template. mode:
+ *  - 'starter' copies the platform starter template(s) into this org
+ *  - 'create'  creates a new template by name (customised later in Settings)
+ *  - 'skip'    just records progress (used when a template already exists)
+ */
+onboarding.post('/template', async (c) => {
+  const auth = c.get('auth')
+  const organizationId = auth.user.organizationId
+  const { mode, name } = await c.req.json()
+
+  let templatesCopied = 0
+  let createdId: string | null = null
+
+  if (mode === 'starter') {
+    const { data, error } = await supabaseAdmin.rpc('copy_starter_template_to_org', {
+      target_org_id: organizationId,
+      source_org_id: null
+    })
+    if (error) {
+      return c.json({ error: error.message }, 500)
+    }
+    templatesCopied = data || 0
+  } else if (mode === 'create') {
+    if (!name || !name.trim()) {
+      return c.json({ error: 'Template name is required' }, 400)
+    }
+    // The org's first template becomes the default
+    const { count } = await supabaseAdmin
+      .from('check_templates')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', organizationId)
+      .eq('is_active', true)
+    const { data: tmpl, error } = await supabaseAdmin
+      .from('check_templates')
+      .insert({
+        organization_id: organizationId,
+        name: name.trim(),
+        is_default: (count || 0) === 0,
+        is_active: true
+      })
+      .select('id')
+      .single()
+    if (error) {
+      return c.json({ error: error.message }, 500)
+    }
+    createdId = tmpl.id
+  }
+
+  const { count: templatesCount } = await supabaseAdmin
+    .from('check_templates')
+    .select('id', { count: 'exact', head: true })
+    .eq('organization_id', organizationId)
+    .eq('is_active', true)
+
+  await advanceOnboardingStep(organizationId, 3)
+
+  return c.json({ success: true, templatesCopied, createdId, templatesCount: templatesCount || 0 })
+})
+
+/**
+ * POST /api/v1/onboarding/pricing
+ * Step 4: capture the standard labour rate, VAT rate and (optionally) parts margin.
+ * VAT + margin live on organization_settings; the labour rate updates the org's
+ * default labour code (auto-seeded when the org was created).
+ */
+onboarding.post('/pricing', async (c) => {
+  const auth = c.get('auth')
+  const organizationId = auth.user.organizationId
+  const { vatRate, labourRate, marginPercent } = await c.req.json()
+
+  // VAT + parts margin on organization_settings
+  const settingsUpdate: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  if (vatRate !== undefined && vatRate !== null) settingsUpdate.vat_rate = vatRate
+  if (marginPercent !== undefined && marginPercent !== null) settingsUpdate.default_margin_percent = marginPercent
+
+  if (Object.keys(settingsUpdate).length > 1) {
+    const { data: existing } = await supabaseAdmin
+      .from('organization_settings')
+      .select('id')
+      .eq('organization_id', organizationId)
+      .maybeSingle()
+    if (existing) {
+      await supabaseAdmin
+        .from('organization_settings')
+        .update(settingsUpdate)
+        .eq('organization_id', organizationId)
+    } else {
+      await supabaseAdmin
+        .from('organization_settings')
+        .insert({ organization_id: organizationId, ...settingsUpdate })
+    }
+  }
+
+  // Labour rate → default labour code (fall back to 'LAB', else create one)
+  if (labourRate !== undefined && labourRate !== null) {
+    const { data: defaultCode } = await supabaseAdmin
+      .from('labour_codes')
+      .select('id')
+      .eq('organization_id', organizationId)
+      .eq('is_default', true)
+      .maybeSingle()
+    let targetId = defaultCode?.id
+    if (!targetId) {
+      const { data: labCode } = await supabaseAdmin
+        .from('labour_codes')
+        .select('id')
+        .eq('organization_id', organizationId)
+        .eq('code', 'LAB')
+        .maybeSingle()
+      targetId = labCode?.id
+    }
+    if (targetId) {
+      await supabaseAdmin
+        .from('labour_codes')
+        .update({ hourly_rate: labourRate, updated_at: new Date().toISOString() })
+        .eq('id', targetId)
+    } else {
+      await supabaseAdmin
+        .from('labour_codes')
+        .insert({
+          organization_id: organizationId,
+          code: 'LAB',
+          description: 'Standard Labour',
+          hourly_rate: labourRate,
+          is_default: true,
+          sort_order: 1
+        })
+    }
+  }
+
+  await advanceOnboardingStep(organizationId, 5)
+
+  return c.json({ success: true })
+})
+
+/**
+ * POST /api/v1/onboarding/daily-sms
+ * Step 7: the Daily SMS Overview itself is saved through the
+ * /organizations/:orgId/daily-sms-overview endpoints; this only records progress.
+ */
+onboarding.post('/daily-sms', async (c) => {
+  const auth = c.get('auth')
+  const organizationId = auth.user.organizationId
+  await advanceOnboardingStep(organizationId, 8)
+  return c.json({ success: true })
 })
 
 export default onboarding

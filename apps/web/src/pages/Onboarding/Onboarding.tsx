@@ -2,10 +2,14 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { api } from '../../lib/api'
+import StepPlan from './steps/StepPlan'
 import Step1BusinessDetails from './steps/Step1BusinessDetails'
+import StepTemplate from './steps/StepTemplate'
 import Step2FirstSite from './steps/Step2FirstSite'
+import StepPricing from './steps/StepPricing'
 import Step3InviteTeam from './steps/Step3InviteTeam'
 import Step4Notifications from './steps/Step4Notifications'
+import StepDailySms from './steps/StepDailySms'
 import Step5Ready from './steps/Step5Ready'
 
 interface OnboardingStatus {
@@ -20,19 +24,27 @@ interface OnboardingStatus {
   sitesCount: number
   teamMembersCount: number
   templatesCount: number
+  planName?: string | null
+  trialEndsAt?: string | null
+  subscriptionStatus?: string | null
 }
 
 const STEPS = [
-  { id: 0, title: 'Business Details', description: 'Add your business information' },
-  { id: 1, title: 'First Site', description: 'Set up your first location' },
-  { id: 2, title: 'Invite Team', description: 'Add team members (optional)' },
-  { id: 3, title: 'Notifications', description: 'Configure notifications (optional)' },
-  { id: 4, title: 'Ready!', description: 'You\'re all set' }
+  { id: 0, title: 'Plan', description: 'Choose your plan' },
+  { id: 1, title: 'Business', description: 'Your business details' },
+  { id: 2, title: 'Template', description: 'Inspection template' },
+  { id: 3, title: 'Site', description: 'Your first location' },
+  { id: 4, title: 'Pricing', description: 'Labour & VAT' },
+  { id: 5, title: 'Team', description: 'Invite your team' },
+  { id: 6, title: 'Notifications', description: 'Customer comms' },
+  { id: 7, title: 'Daily SMS', description: 'Daily overview' },
+  { id: 8, title: 'Ready!', description: 'You\'re all set' }
 ]
 
 export default function Onboarding() {
   const { user, session, refreshSession } = useAuth()
   const navigate = useNavigate()
+  const orgId = user?.organization?.id || ''
   const [currentStep, setCurrentStep] = useState(0)
   const [status, setStatus] = useState<OnboardingStatus | null>(null)
   const [loading, setLoading] = useState(true)
@@ -188,34 +200,63 @@ export default function Onboarding() {
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           {currentStep === 0 && (
-            <Step1BusinessDetails
+            <StepPlan
               token={session?.accessToken || ''}
               onNext={handleNext}
-              onBack={handleBack}
             />
           )}
           {currentStep === 1 && (
-            <Step2FirstSite
+            <Step1BusinessDetails
               token={session?.accessToken || ''}
+              orgId={orgId}
               onNext={handleNext}
               onBack={handleBack}
             />
           )}
           {currentStep === 2 && (
-            <Step3InviteTeam
+            <StepTemplate
               token={session?.accessToken || ''}
               onNext={handleNext}
               onBack={handleBack}
             />
           )}
           {currentStep === 3 && (
-            <Step4Notifications
+            <Step2FirstSite
               token={session?.accessToken || ''}
               onNext={handleNext}
               onBack={handleBack}
             />
           )}
           {currentStep === 4 && (
+            <StepPricing
+              token={session?.accessToken || ''}
+              onNext={handleNext}
+              onBack={handleBack}
+            />
+          )}
+          {currentStep === 5 && (
+            <Step3InviteTeam
+              token={session?.accessToken || ''}
+              onNext={handleNext}
+              onBack={handleBack}
+            />
+          )}
+          {currentStep === 6 && (
+            <Step4Notifications
+              token={session?.accessToken || ''}
+              onNext={handleNext}
+              onBack={handleBack}
+            />
+          )}
+          {currentStep === 7 && (
+            <StepDailySms
+              token={session?.accessToken || ''}
+              orgId={orgId}
+              onNext={handleNext}
+              onBack={handleBack}
+            />
+          )}
+          {currentStep === 8 && (
             <Step5Ready
               status={status}
               onComplete={handleComplete}

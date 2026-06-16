@@ -696,7 +696,9 @@ orgAdminRoutes.get('/:id/subscription', async (c) => {
       features: subscription.plan.features
     } : null,
     currentPeriodStart: subscription.current_period_start,
-    currentPeriodEnd: subscription.current_period_end
+    currentPeriodEnd: subscription.current_period_end,
+    trialEndsAt: subscription.trial_ends_at ?? null,
+    trialStartedAt: subscription.trial_started_at ?? null
   })
 })
 

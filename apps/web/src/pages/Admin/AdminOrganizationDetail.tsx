@@ -14,6 +14,8 @@ interface Organization {
   subscription: {
     planId: string
     planName: string
+    status?: string
+    trialEndsAt?: string | null
     limits: {
       maxSites: number
       maxUsersPerSite: number
@@ -664,6 +666,20 @@ export default function AdminOrganizationDetail() {
               <dt className="text-gray-500">Current Plan</dt>
               <dd className="font-medium text-gray-900">{org.subscription?.planName || 'No plan'}</dd>
             </div>
+            {org.subscription?.status === 'trialing' && org.subscription?.trialEndsAt && (
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <dt className="text-gray-500">Trial</dt>
+                <dd className="font-medium text-gray-900">
+                  {(() => {
+                    const end = new Date(org.subscription!.trialEndsAt!)
+                    const days = Math.ceil((end.getTime() - Date.now()) / 86400000)
+                    return days > 0
+                      ? `${days} day${days === 1 ? '' : 's'} left — ends ${end.toLocaleDateString()}`
+                      : `Ended ${end.toLocaleDateString()}`
+                  })()}
+                </dd>
+              </div>
+            )}
             <div className="flex justify-between py-2 border-b border-gray-100">
               <dt className="text-gray-500">Max Sites</dt>
               <dd className="text-gray-900">{org.subscription?.limits?.maxSites || 0}</dd>

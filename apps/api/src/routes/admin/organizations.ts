@@ -182,7 +182,9 @@ adminOrgRoutes.get('/', async (c) => {
       planId: org.organization_subscriptions[0].plan_id,
       planName: org.organization_subscriptions[0].plan?.name,
       status: org.organization_subscriptions[0].status,
-      currentPeriodEnd: org.organization_subscriptions[0].current_period_end
+      currentPeriodEnd: org.organization_subscriptions[0].current_period_end,
+      trialStartedAt: org.organization_subscriptions[0].trial_started_at,
+      trialEndsAt: org.organization_subscriptions[0].trial_ends_at
     } : null,
     sitesCount: org.sites?.[0]?.count || 0,
     usersCount: org.users?.[0]?.count || 0
@@ -355,6 +357,8 @@ adminOrgRoutes.get('/:id', async (c) => {
         status: sub.status,
         currentPeriodStart: sub.current_period_start,
         currentPeriodEnd: sub.current_period_end,
+        trialStartedAt: sub.trial_started_at,
+        trialEndsAt: sub.trial_ends_at,
         limits: planData ? {
           maxSites: planData.max_sites || 0,
           maxUsersPerSite: planData.max_users || 0,

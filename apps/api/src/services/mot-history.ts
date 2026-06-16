@@ -119,16 +119,52 @@ interface RawMotVehicle {
 // ============================================
 
 /**
- * Resolve the platform DVSA MOT History credentials (decrypted).
- * `enabled` is the super-admin toggle; `configured` means all required fields
- * are present and decryptable.
+ * Read DVSA MOT History credentials from environment variables, if all four are
+ * present. Env vars take precedence over the database row so the secrets can be
+ * managed in the platform secret store (Railway) rather than the admin UI.
+ */
+export function readMotEnvCredentials(): MotCredentials | null {
+  const clientId = process.env.DVSA_MOT_CLIENT_ID
+  const tenantId = process.env.DVSA_MOT_TENANT_ID
+  const clientSecret = process.env.DVSA_MOT_CLIENT_SECRET
+  const apiKey = process.env.DVSA_MOT_API_KEY
+  if (clientId && tenantId && clientSecret && apiKey) {
+    return { clientId, tenantId, clientSecret, apiKey }
+  }
+  return null
+}
+
+/** True when the DVSA credentials are supplied via environment variables. */
+export function isMotManagedByEnv(): boolean {
+  return readMotEnvCredentials() !== null
+}
+
+/**
+ * Resolve the platform DVSA MOT History credentials. Environment variables take
+ * precedence over the encrypted database row, so secrets can live in the
+ * platform secret store (Railway). For the env path, `enabled` is implied by
+ * the vars being present (unless DVSA_MOT_ENABLED=false); for the DB path it is
+ * the super-admin toggle. `configured` means all required fields are present.
  */
 export async function getMotCredentials(): Promise<{
   configured: boolean
   enabled: boolean
   credentials: MotCredentials | null
+  source: 'env' | 'database' | 'none'
   error?: string
 }> {
+  // 1. Environment variables win (managed in Railway).
+  const envCreds = readMotEnvCredentials()
+  if (envCreds) {
+    return {
+      configured: true,
+      enabled: process.env.DVSA_MOT_ENABLED !== 'false',
+      credentials: envCreds,
+      source: 'env'
+    }
+  }
+
+  // 2. Fall back to the encrypted database row (admin UI).
   try {
     const { data: row, error } = await supabaseAdmin
       .from('platform_settings')
@@ -137,7 +173,7 @@ export async function getMotCredentials(): Promise<{
       .maybeSingle()
 
     if (error || !row?.settings) {
-      return { configured: false, enabled: false, credentials: null, error: 'Vehicle lookup is not configured' }
+      return { configured: false, enabled: false, credentials: null, source: 'none', error: 'Vehicle lookup is not configured' }
     }
 
     const s = row.settings as Record<string, unknown>
@@ -148,11 +184,11 @@ export async function getMotCredentials(): Promise<{
     const apiKeyEnc = (s.mot_api_key_encrypted as string) || ''
 
     if (!clientId || !tenantId || !secretEnc || !apiKeyEnc) {
-      return { configured: false, enabled, credentials: null, error: 'Vehicle lookup credentials are incomplete' }
+      return { configured: false, enabled, credentials: null, source: 'none', error: 'Vehicle lookup credentials are incomplete' }
     }
 
     if (!isEncryptionConfigured()) {
-      return { configured: false, enabled, credentials: null, error: 'Encryption is not configured on the server' }
+      return { configured: false, enabled, credentials: null, source: 'none', error: 'Encryption is not configured on the server' }
     }
 
     let clientSecret: string
@@ -162,13 +198,13 @@ export async function getMotCredentials(): Promise<{
       apiKey = decrypt(apiKeyEnc)
     } catch (decryptError) {
       logger.error('Failed to decrypt vehicle-lookup credentials', {}, decryptError as Error)
-      return { configured: false, enabled, credentials: null, error: 'Failed to decrypt vehicle lookup credentials' }
+      return { configured: false, enabled, credentials: null, source: 'none', error: 'Failed to decrypt vehicle lookup credentials' }
     }
 
-    return { configured: true, enabled, credentials: { clientId, clientSecret, apiKey, tenantId } }
+    return { configured: true, enabled, credentials: { clientId, clientSecret, apiKey, tenantId }, source: 'database' }
   } catch (err) {
     logger.error('Error fetching vehicle-lookup credentials', {}, err as Error)
-    return { configured: false, enabled: false, credentials: null, error: 'Failed to fetch vehicle lookup credentials' }
+    return { configured: false, enabled: false, credentials: null, source: 'none', error: 'Failed to fetch vehicle lookup credentials' }
   }
 }
 

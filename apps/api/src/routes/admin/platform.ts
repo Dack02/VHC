@@ -9,7 +9,13 @@ import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/au
 import { encrypt, decrypt, maskString, isEncryptionConfigured } from '../../lib/encryption.js'
 import { testSmsWithCredentials } from '../../services/sms.js'
 import { testEmailWithCredentials } from '../../services/email.js'
-import { testMotConnection } from '../../services/mot-history.js'
+import { testMotConnection, isMotManagedByEnv } from '../../services/mot-history.js'
+import {
+  getPlatformSmsCredentials,
+  getPlatformEmailCredentials,
+  isPlatformSmsManagedByEnv,
+  isPlatformEmailManagedByEnv
+} from '../../services/credentials.js'
 
 const platformRoutes = new Hono()
 
@@ -22,6 +28,9 @@ platformRoutes.use('*', superAdminMiddleware)
  */
 platformRoutes.get('/settings', async (c) => {
   try {
+    const motManagedByEnv = isMotManagedByEnv()
+    const smsManagedByEnv = isPlatformSmsManagedByEnv()
+    const emailManagedByEnv = isPlatformEmailManagedByEnv()
     // Fetch all platform settings
     const { data: allSettings, error } = await supabaseAdmin
       .from('platform_settings')
@@ -62,10 +71,13 @@ platformRoutes.get('/settings', async (c) => {
         resendFromName: '',
         twilioAccountSid: '',
         twilioAuthToken: '',
-        twilioFromNumber: ''
+        twilioFromNumber: '',
+        smsManagedByEnv,
+        emailManagedByEnv
       },
       vehicleLookup: {
-        enabled: false,
+        enabled: motManagedByEnv,
+        managedByEnv: motManagedByEnv,
         motClientId: '',
         motTenantId: '',
         motClientSecret: '',
@@ -90,27 +102,29 @@ platformRoutes.get('/settings', async (c) => {
       } else if (row.id === 'features') {
         combined.features = { ...combined.features as Record<string, unknown>, ...settings }
       } else if (row.id === 'notifications') {
-        // Map notification settings to credentials
+        // Map notification settings to credentials. When env vars supply the
+        // platform creds for a channel they win — don't surface the DB row.
         const creds = combined.credentials as Record<string, unknown>
-        if (settings.twilio_account_sid) creds.twilioAccountSid = settings.twilio_account_sid
-        if (settings.twilio_phone_number) creds.twilioFromNumber = settings.twilio_phone_number
-        if (settings.resend_from_email) creds.resendFromEmail = settings.resend_from_email
-        if (settings.resend_from_name) creds.resendFromName = settings.resend_from_name
-        // Mask encrypted values
-        if (settings.twilio_auth_token_encrypted) {
-          try {
-            const decrypted = decrypt(settings.twilio_auth_token_encrypted as string)
-            creds.twilioAuthToken = maskString(decrypted)
-          } catch {
-            creds.twilioAuthToken = '••••••••'
+        if (!smsManagedByEnv) {
+          if (settings.twilio_account_sid) creds.twilioAccountSid = settings.twilio_account_sid
+          if (settings.twilio_phone_number) creds.twilioFromNumber = settings.twilio_phone_number
+          if (settings.twilio_auth_token_encrypted) {
+            try {
+              creds.twilioAuthToken = maskString(decrypt(settings.twilio_auth_token_encrypted as string))
+            } catch {
+              creds.twilioAuthToken = '••••••••'
+            }
           }
         }
-        if (settings.resend_api_key_encrypted) {
-          try {
-            const decrypted = decrypt(settings.resend_api_key_encrypted as string)
-            creds.resendApiKey = maskString(decrypted)
-          } catch {
-            creds.resendApiKey = '••••••••'
+        if (!emailManagedByEnv) {
+          if (settings.resend_from_email) creds.resendFromEmail = settings.resend_from_email
+          if (settings.resend_from_name) creds.resendFromName = settings.resend_from_name
+          if (settings.resend_api_key_encrypted) {
+            try {
+              creds.resendApiKey = maskString(decrypt(settings.resend_api_key_encrypted as string))
+            } catch {
+              creds.resendApiKey = '••••••••'
+            }
           }
         }
       } else if (row.id === 'billing') {
@@ -119,23 +133,26 @@ platformRoutes.get('/settings', async (c) => {
         if (settings.email_unit_cost != null) b.emailUnitCost = Number(settings.email_unit_cost)
         if (settings.currency) b.currency = settings.currency
       } else if (row.id === 'vehicle_lookup') {
-        const vl = combined.vehicleLookup as Record<string, unknown>
-        vl.enabled = settings.enabled === true
-        if (settings.mot_client_id) vl.motClientId = settings.mot_client_id
-        if (settings.mot_tenant_id) vl.motTenantId = settings.mot_tenant_id
-        // Mask encrypted secrets for display
-        if (settings.mot_client_secret_encrypted) {
-          try {
-            vl.motClientSecret = maskString(decrypt(settings.mot_client_secret_encrypted as string))
-          } catch {
-            vl.motClientSecret = '••••••••'
+        // When env vars supply the creds they win — don't surface the DB row.
+        if (!motManagedByEnv) {
+          const vl = combined.vehicleLookup as Record<string, unknown>
+          vl.enabled = settings.enabled === true
+          if (settings.mot_client_id) vl.motClientId = settings.mot_client_id
+          if (settings.mot_tenant_id) vl.motTenantId = settings.mot_tenant_id
+          // Mask encrypted secrets for display
+          if (settings.mot_client_secret_encrypted) {
+            try {
+              vl.motClientSecret = maskString(decrypt(settings.mot_client_secret_encrypted as string))
+            } catch {
+              vl.motClientSecret = '••••••••'
+            }
           }
-        }
-        if (settings.mot_api_key_encrypted) {
-          try {
-            vl.motApiKey = maskString(decrypt(settings.mot_api_key_encrypted as string))
-          } catch {
-            vl.motApiKey = '••••••••'
+          if (settings.mot_api_key_encrypted) {
+            try {
+              vl.motApiKey = maskString(decrypt(settings.mot_api_key_encrypted as string))
+            } catch {
+              vl.motApiKey = '••••••••'
+            }
           }
         }
       }
@@ -569,37 +586,14 @@ platformRoutes.post('/notifications/test-sms', async (c) => {
     return c.json({ error: 'Phone number (to) is required' }, 400)
   }
 
-  if (!isEncryptionConfigured()) {
-    return c.json({ error: 'Encryption not configured' }, 500)
-  }
-
-  const { data: settings } = await supabaseAdmin
-    .from('platform_settings')
-    .select('settings')
-    .eq('id', 'notifications')
-    .single()
-
-  if (!settings?.settings) {
-    return c.json({ error: 'Platform notification settings not found' }, 404)
-  }
-
-  const notificationSettings = settings.settings as Record<string, unknown>
-
-  if (!notificationSettings.twilio_account_sid || !notificationSettings.twilio_auth_token_encrypted || !notificationSettings.twilio_phone_number) {
-    return c.json({ error: 'Platform SMS credentials not configured' }, 400)
+  // Resolve platform SMS credentials (env vars first, then encrypted DB row)
+  const credResult = await getPlatformSmsCredentials()
+  if (!credResult.configured || !credResult.credentials) {
+    return c.json({ error: credResult.error || 'Platform SMS credentials not configured' }, 400)
   }
 
   try {
-    const authToken = decrypt(notificationSettings.twilio_auth_token_encrypted as string)
-
-    const result = await testSmsWithCredentials(
-      {
-        accountSid: notificationSettings.twilio_account_sid as string,
-        authToken,
-        phoneNumber: notificationSettings.twilio_phone_number as string
-      },
-      body.to
-    )
+    const result = await testSmsWithCredentials(credResult.credentials, body.to)
 
     // Log activity
     await logSuperAdminActivity(
@@ -633,37 +627,14 @@ platformRoutes.post('/notifications/test-email', async (c) => {
     return c.json({ error: 'Email address (to) is required' }, 400)
   }
 
-  if (!isEncryptionConfigured()) {
-    return c.json({ error: 'Encryption not configured' }, 500)
-  }
-
-  const { data: settings } = await supabaseAdmin
-    .from('platform_settings')
-    .select('settings')
-    .eq('id', 'notifications')
-    .single()
-
-  if (!settings?.settings) {
-    return c.json({ error: 'Platform notification settings not found' }, 404)
-  }
-
-  const notificationSettings = settings.settings as Record<string, unknown>
-
-  if (!notificationSettings.resend_api_key_encrypted || !notificationSettings.resend_from_email) {
-    return c.json({ error: 'Platform email credentials not configured' }, 400)
+  // Resolve platform email credentials (env vars first, then encrypted DB row)
+  const credResult = await getPlatformEmailCredentials()
+  if (!credResult.configured || !credResult.credentials) {
+    return c.json({ error: credResult.error || 'Platform email credentials not configured' }, 400)
   }
 
   try {
-    const apiKey = decrypt(notificationSettings.resend_api_key_encrypted as string)
-
-    const result = await testEmailWithCredentials(
-      {
-        apiKey,
-        fromEmail: notificationSettings.resend_from_email as string,
-        fromName: (notificationSettings.resend_from_name as string) || 'VHC Platform'
-      },
-      body.to
-    )
+    const result = await testEmailWithCredentials(credResult.credentials, body.to)
 
     // Log activity
     await logSuperAdminActivity(

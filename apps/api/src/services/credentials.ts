@@ -26,6 +26,173 @@ export interface CredentialResult<T> {
   error?: string
 }
 
+// ============================================================
+// Platform credentials — environment variables take precedence
+// ============================================================
+// Platform-default credentials (the fallback used by organizations that don't
+// bring their own) can be supplied via environment variables managed in the
+// deployment secret store (Railway), instead of the encrypted platform_settings
+// row. Env vars win, so the platform fallback never depends on ENCRYPTION_KEY
+// matching across environments. Mirrors the DVSA MOT env-first pattern in
+// mot-history.ts.
+
+/** Read platform Twilio credentials from env vars, if all are present. */
+export function readPlatformSmsEnv(): SmsCredentials | null {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID
+  const authToken = process.env.TWILIO_AUTH_TOKEN
+  const phoneNumber = process.env.TWILIO_FROM_NUMBER
+  if (accountSid && authToken && phoneNumber) {
+    return { accountSid, authToken, phoneNumber }
+  }
+  return null
+}
+
+/** True when platform SMS credentials are supplied via environment variables. */
+export function isPlatformSmsManagedByEnv(): boolean {
+  return readPlatformSmsEnv() !== null
+}
+
+/** Read platform Resend credentials from env vars, if the required ones are present. */
+export function readPlatformEmailEnv(): EmailCredentials | null {
+  const apiKey = process.env.RESEND_API_KEY
+  const fromEmail = process.env.RESEND_FROM_EMAIL
+  const fromName = process.env.RESEND_FROM_NAME || 'Vehicle Health Check'
+  if (apiKey && fromEmail) {
+    return { apiKey, fromEmail, fromName }
+  }
+  return null
+}
+
+/** True when platform Email credentials are supplied via environment variables. */
+export function isPlatformEmailManagedByEnv(): boolean {
+  return readPlatformEmailEnv() !== null
+}
+
+/**
+ * Resolve platform SMS credentials: environment variables first (Railway secret
+ * store), then the encrypted platform_settings DB row (admin UI).
+ */
+export async function getPlatformSmsCredentials(): Promise<CredentialResult<SmsCredentials>> {
+  const envCreds = readPlatformSmsEnv()
+  if (envCreds) {
+    console.log('[Credentials] Using PLATFORM SMS credentials from environment variables')
+    return { source: 'platform', configured: true, credentials: envCreds }
+  }
+
+  const { data: platformSettings, error: platformError } = await supabaseAdmin
+    .from('platform_settings')
+    .select('settings')
+    .eq('id', 'notifications')
+    .single()
+
+  if (platformError || !platformSettings?.settings) {
+    return {
+      source: 'platform',
+      configured: false,
+      credentials: null,
+      error: 'Platform notification settings not found'
+    }
+  }
+
+  const settings = platformSettings.settings as Record<string, unknown>
+
+  if (
+    !settings.sms_enabled ||
+    !settings.twilio_account_sid ||
+    !settings.twilio_auth_token_encrypted ||
+    !settings.twilio_phone_number
+  ) {
+    return {
+      source: 'platform',
+      configured: false,
+      credentials: null,
+      error: 'Platform SMS not configured'
+    }
+  }
+
+  try {
+    return {
+      source: 'platform',
+      configured: true,
+      credentials: {
+        accountSid: settings.twilio_account_sid as string,
+        authToken: decrypt(settings.twilio_auth_token_encrypted as string),
+        phoneNumber: settings.twilio_phone_number as string
+      }
+    }
+  } catch (decryptError) {
+    console.error('[Credentials] Failed to decrypt platform SMS credentials:', decryptError)
+    return {
+      source: 'platform',
+      configured: false,
+      credentials: null,
+      error: 'Failed to decrypt platform credentials'
+    }
+  }
+}
+
+/**
+ * Resolve platform Email credentials: environment variables first (Railway
+ * secret store), then the encrypted platform_settings DB row (admin UI).
+ */
+export async function getPlatformEmailCredentials(): Promise<CredentialResult<EmailCredentials>> {
+  const envCreds = readPlatformEmailEnv()
+  if (envCreds) {
+    console.log('[Credentials] Using PLATFORM Email credentials from environment variables')
+    return { source: 'platform', configured: true, credentials: envCreds }
+  }
+
+  const { data: platformSettings, error: platformError } = await supabaseAdmin
+    .from('platform_settings')
+    .select('settings')
+    .eq('id', 'notifications')
+    .single()
+
+  if (platformError || !platformSettings?.settings) {
+    return {
+      source: 'platform',
+      configured: false,
+      credentials: null,
+      error: 'Platform notification settings not found'
+    }
+  }
+
+  const settings = platformSettings.settings as Record<string, unknown>
+
+  if (
+    !settings.email_enabled ||
+    !settings.resend_api_key_encrypted ||
+    !settings.resend_from_email
+  ) {
+    return {
+      source: 'platform',
+      configured: false,
+      credentials: null,
+      error: 'Platform Email not configured'
+    }
+  }
+
+  try {
+    return {
+      source: 'platform',
+      configured: true,
+      credentials: {
+        apiKey: decrypt(settings.resend_api_key_encrypted as string),
+        fromEmail: settings.resend_from_email as string,
+        fromName: (settings.resend_from_name as string) || 'Vehicle Health Check'
+      }
+    }
+  } catch (decryptError) {
+    console.error('[Credentials] Failed to decrypt platform Email credentials:', decryptError)
+    return {
+      source: 'platform',
+      configured: false,
+      credentials: null,
+      error: 'Failed to decrypt platform credentials'
+    }
+  }
+}
+
 /**
  * Get SMS credentials for an organization
  * Returns org credentials if set and use_platform_sms is false, else platform credentials
@@ -81,76 +248,9 @@ export async function getSmsCredentials(
       }
     }
 
-    // Fall back to platform credentials
+    // Fall back to platform credentials (env vars first, then encrypted DB row)
     console.log(`[Credentials] Falling back to platform SMS credentials for org ${organizationId}`)
-    const { data: platformSettings, error: platformError } = await supabaseAdmin
-      .from('platform_settings')
-      .select('settings')
-      .eq('id', 'notifications')
-      .single()
-
-    console.log(`[Credentials] Platform settings:`, {
-      found: !!platformSettings,
-      error: platformError?.message,
-      settings_exists: !!platformSettings?.settings
-    })
-
-    if (!platformSettings?.settings) {
-      console.log(`[Credentials] Platform notification settings not found`)
-      return {
-        source: 'platform',
-        configured: false,
-        credentials: null,
-        error: 'Platform notification settings not found'
-      }
-    }
-
-    const settings = platformSettings.settings as Record<string, unknown>
-
-    console.log(`[Credentials] Platform SMS config:`, {
-      sms_enabled: settings.sms_enabled,
-      has_account_sid: !!settings.twilio_account_sid,
-      has_auth_token: !!settings.twilio_auth_token_encrypted,
-      has_phone: !!settings.twilio_phone_number
-    })
-
-    if (
-      !settings.sms_enabled ||
-      !settings.twilio_account_sid ||
-      !settings.twilio_auth_token_encrypted ||
-      !settings.twilio_phone_number
-    ) {
-      console.log(`[Credentials] Platform SMS not configured`)
-      return {
-        source: 'platform',
-        configured: false,
-        credentials: null,
-        error: 'Platform SMS not configured'
-      }
-    }
-
-    try {
-      const credentials: SmsCredentials = {
-        accountSid: settings.twilio_account_sid as string,
-        authToken: decrypt(settings.twilio_auth_token_encrypted as string),
-        phoneNumber: settings.twilio_phone_number as string
-      }
-
-      console.log(`[Credentials] Using PLATFORM SMS credentials for org ${organizationId}`)
-      return {
-        source: 'platform',
-        configured: true,
-        credentials
-      }
-    } catch (decryptError) {
-      console.error('[Credentials] Failed to decrypt platform SMS credentials:', decryptError)
-      return {
-        source: 'platform',
-        configured: false,
-        credentials: null,
-        error: 'Failed to decrypt platform credentials'
-      }
-    }
+    return await getPlatformSmsCredentials()
   } catch (error) {
     console.error('[Credentials] Error getting SMS credentials:', error)
     return {
@@ -215,74 +315,9 @@ export async function getEmailCredentials(
       }
     }
 
-    // Fall back to platform credentials
+    // Fall back to platform credentials (env vars first, then encrypted DB row)
     console.log(`[Credentials] Falling back to platform Email credentials for org ${organizationId}`)
-    const { data: platformSettings, error: platformError } = await supabaseAdmin
-      .from('platform_settings')
-      .select('settings')
-      .eq('id', 'notifications')
-      .single()
-
-    console.log(`[Credentials] Platform settings for email:`, {
-      found: !!platformSettings,
-      error: platformError?.message,
-      settings_exists: !!platformSettings?.settings
-    })
-
-    if (!platformSettings?.settings) {
-      console.log(`[Credentials] Platform notification settings not found for email`)
-      return {
-        source: 'platform',
-        configured: false,
-        credentials: null,
-        error: 'Platform notification settings not found'
-      }
-    }
-
-    const settings = platformSettings.settings as Record<string, unknown>
-
-    console.log(`[Credentials] Platform Email config:`, {
-      email_enabled: settings.email_enabled,
-      has_api_key: !!settings.resend_api_key_encrypted,
-      has_from_email: !!settings.resend_from_email
-    })
-
-    if (
-      !settings.email_enabled ||
-      !settings.resend_api_key_encrypted ||
-      !settings.resend_from_email
-    ) {
-      console.log(`[Credentials] Platform Email not configured`)
-      return {
-        source: 'platform',
-        configured: false,
-        credentials: null,
-        error: 'Platform Email not configured'
-      }
-    }
-
-    try {
-      const credentials: EmailCredentials = {
-        apiKey: decrypt(settings.resend_api_key_encrypted as string),
-        fromEmail: settings.resend_from_email as string,
-        fromName: (settings.resend_from_name as string) || 'Vehicle Health Check'
-      }
-
-      console.log(`[Credentials] Using PLATFORM Email credentials for org ${organizationId}`)
-      return {
-        source: 'platform',
-        configured: true,
-        credentials
-      }
-    } catch (decryptError) {
-      console.error('[Credentials] Failed to decrypt platform Email credentials:', decryptError)
-      return {
-        source: 'platform',
-        configured: false,
-        credentials: null,
-        error: 'Failed to decrypt platform credentials'
-      }
-    }
+    return await getPlatformEmailCredentials()
   } catch (error) {
     console.error('[Credentials] Error getting Email credentials:', error)
     return {

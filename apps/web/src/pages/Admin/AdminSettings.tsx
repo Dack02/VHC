@@ -28,9 +28,13 @@ interface PlatformSettings {
     twilioAccountSid: string
     twilioAuthToken: string
     twilioFromNumber: string
+    // True when supplied via env vars (Railway) instead of the admin UI
+    emailManagedByEnv?: boolean
+    smsManagedByEnv?: boolean
   }
   vehicleLookup: {
     enabled: boolean
+    managedByEnv?: boolean
     motClientId: string
     motTenantId: string
     motClientSecret: string
@@ -474,15 +478,24 @@ export default function AdminSettings() {
                 <p className="text-xs text-gray-500 mb-3">
                   Platform default email credentials for organizations that don't have their own.
                 </p>
+                {settings.credentials.emailManagedByEnv && (
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                    <strong>Managed via environment variables.</strong> These credentials come from the
+                    <code className="mx-1 px-1 py-0.5 bg-blue-100 rounded text-xs">RESEND_*</code>
+                    env vars (set in Railway) and override anything entered here. Edit them in Railway; use
+                    Test Email below to verify.
+                  </div>
+                )}
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Resend API Key</label>
                     <input
                       type="password"
                       value={settings.credentials.resendApiKey}
+                      disabled={settings.credentials.emailManagedByEnv}
                       onChange={(e) => updateSettings('credentials', 'resendApiKey', e.target.value)}
                       placeholder="re_••••••••••••••••"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -491,9 +504,10 @@ export default function AdminSettings() {
                       <input
                         type="email"
                         value={settings.credentials.resendFromEmail}
+                        disabled={settings.credentials.emailManagedByEnv}
                         onChange={(e) => updateSettings('credentials', 'resendFromEmail', e.target.value)}
                         placeholder="noreply@vhc-platform.com"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                       />
                     </div>
                     <div>
@@ -501,9 +515,10 @@ export default function AdminSettings() {
                       <input
                         type="text"
                         value={settings.credentials.resendFromName}
+                        disabled={settings.credentials.emailManagedByEnv}
                         onChange={(e) => updateSettings('credentials', 'resendFromName', e.target.value)}
                         placeholder="VHC Platform"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                       />
                     </div>
                   </div>
@@ -516,14 +531,23 @@ export default function AdminSettings() {
                 <p className="text-xs text-gray-500 mb-3">
                   Platform default SMS credentials for organizations that don't have their own.
                 </p>
+                {settings.credentials.smsManagedByEnv && (
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                    <strong>Managed via environment variables.</strong> These credentials come from the
+                    <code className="mx-1 px-1 py-0.5 bg-blue-100 rounded text-xs">TWILIO_*</code>
+                    env vars (set in Railway) and override anything entered here. Edit them in Railway; use
+                    Test SMS below to verify.
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Account SID</label>
                     <input
                       type="text"
                       value={settings.credentials.twilioAccountSid}
+                      disabled={settings.credentials.smsManagedByEnv}
                       onChange={(e) => updateSettings('credentials', 'twilioAccountSid', e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                     />
                   </div>
                   <div>
@@ -531,9 +555,10 @@ export default function AdminSettings() {
                     <input
                       type="password"
                       value={settings.credentials.twilioAuthToken}
+                      disabled={settings.credentials.smsManagedByEnv}
                       onChange={(e) => updateSettings('credentials', 'twilioAuthToken', e.target.value)}
                       placeholder="••••••••••••••••"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                     />
                   </div>
                 </div>
@@ -542,9 +567,10 @@ export default function AdminSettings() {
                   <input
                     type="text"
                     value={settings.credentials.twilioFromNumber}
+                    disabled={settings.credentials.smsManagedByEnv}
                     onChange={(e) => updateSettings('credentials', 'twilioFromNumber', e.target.value)}
                     placeholder="+1234567890"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                   />
                 </div>
               </div>
@@ -562,12 +588,21 @@ export default function AdminSettings() {
                     <input
                       type="checkbox"
                       checked={settings.vehicleLookup.enabled}
+                      disabled={settings.vehicleLookup.managedByEnv}
                       onChange={(e) => updateSettings('vehicleLookup', 'enabled', e.target.checked)}
                       className="sr-only peer"
                     />
                     <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
                   </label>
                 </div>
+                {settings.vehicleLookup.managedByEnv && (
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                    <strong>Managed via environment variables.</strong> These credentials come from the
+                    <code className="mx-1 px-1 py-0.5 bg-blue-100 rounded text-xs">DVSA_MOT_*</code>
+                    env vars (set in Railway) and override anything entered here. Edit them in Railway; use
+                    Test Lookup below to verify.
+                  </div>
+                )}
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -575,6 +610,7 @@ export default function AdminSettings() {
                       <input
                         type="text"
                         value={settings.vehicleLookup.motClientId}
+                        disabled={settings.vehicleLookup.managedByEnv}
                         onChange={(e) => updateSettings('vehicleLookup', 'motClientId', e.target.value)}
                         placeholder="00000000-0000-0000-0000-000000000000"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -585,6 +621,7 @@ export default function AdminSettings() {
                       <input
                         type="text"
                         value={settings.vehicleLookup.motTenantId}
+                        disabled={settings.vehicleLookup.managedByEnv}
                         onChange={(e) => updateSettings('vehicleLookup', 'motTenantId', e.target.value)}
                         placeholder="From your DVSA token URL"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -597,6 +634,7 @@ export default function AdminSettings() {
                       <input
                         type="password"
                         value={settings.vehicleLookup.motClientSecret}
+                        disabled={settings.vehicleLookup.managedByEnv}
                         onChange={(e) => updateSettings('vehicleLookup', 'motClientSecret', e.target.value)}
                         placeholder="••••••••••••••••"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -607,6 +645,7 @@ export default function AdminSettings() {
                       <input
                         type="password"
                         value={settings.vehicleLookup.motApiKey}
+                        disabled={settings.vehicleLookup.managedByEnv}
                         onChange={(e) => updateSettings('vehicleLookup', 'motApiKey', e.target.value)}
                         placeholder="••••••••••••••••"
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"

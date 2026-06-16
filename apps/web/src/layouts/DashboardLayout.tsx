@@ -7,6 +7,7 @@ import type { ModuleKey } from '../lib/modules'
 import NotificationBell from '../components/NotificationBell'
 import AILimitWarningBanner from '../components/AILimitWarningBanner'
 import OrgSwitcher from '../components/OrgSwitcher'
+import FeedbackButton from '../components/feedback/FeedbackButton'
 import { useUnreadSmsCount } from '../hooks/useUnreadSmsCount'
 import { useAttentionNotesCount } from '../hooks/useAttentionNotesCount'
 import { useFollowUpDueCount } from '../hooks/useFollowUpDueCount'
@@ -495,6 +496,9 @@ export default function DashboardLayout() {
           </Suspense>
         </div>
       </main>
+
+      {/* Floating in-app feedback / bug reporter (pushed to Ollo Dev) */}
+      <FeedbackButton />
     </div>
   )
 }

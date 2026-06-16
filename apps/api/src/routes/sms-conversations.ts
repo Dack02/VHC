@@ -144,6 +144,7 @@ smsConversations.post('/health-checks/:id/sms-reply', authorizeMinRole('service_
 
   // Log in communication_logs for consistency with existing system
   await supabaseAdmin.from('communication_logs').insert({
+    organization_id: auth.orgId,
     health_check_id: healthCheckId,
     channel: 'sms',
     recipient: customer.mobile,

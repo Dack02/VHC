@@ -435,3 +435,68 @@ export interface ScheduledJob {
   payload: Record<string, unknown>
   createdAt: Date
 }
+
+// =============================================================================
+// In-app feedback / bug reporting (Ollo Inspect → Ollo Dev integration)
+// =============================================================================
+export type FeedbackType = 'bug' | 'feature' | 'question'
+export type FeedbackPriority = 'low' | 'normal' | 'high' | 'urgent'
+// Mirror of Ollo Dev's ticket lifecycle (NOT the HealthCheckStatus workflow).
+export type FeedbackStatus = 'open' | 'pending' | 'in_progress' | 'resolved' | 'closed'
+export type FeedbackSyncState = 'pending' | 'synced' | 'failed'
+export type FeedbackCommentAuthor = 'user' | 'dev'
+export type FeedbackCommentOrigin = 'inspect' | 'ollo_dev'
+export type FeedbackSourceApp = 'web' | 'mobile'
+
+export interface FeedbackConsoleError {
+  level: string
+  message: string
+  ts: string
+}
+
+export interface FeedbackDiagnostics {
+  route?: string
+  url?: string
+  appVersion?: string
+  build?: string
+  browser?: string
+  device?: string
+  viewport?: string
+  consoleErrors?: FeedbackConsoleError[]
+  timestamp?: string
+  timezone?: string
+}
+
+export interface FeedbackAttachment {
+  id: string
+  url: string
+  contentType: string
+  width?: number | null
+  height?: number | null
+}
+
+export interface FeedbackComment {
+  id: string
+  authorType: FeedbackCommentAuthor
+  authorName: string | null
+  body: string
+  origin: FeedbackCommentOrigin
+  createdAt: string
+}
+
+export interface FeedbackTicket {
+  id: string
+  type: FeedbackType
+  subject: string
+  description: string
+  priority: FeedbackPriority
+  status: FeedbackStatus
+  syncState: FeedbackSyncState
+  olloDevTicketId: string | null
+  sourceApp: FeedbackSourceApp
+  createdAt: string
+  updatedAt: string
+  attachments?: FeedbackAttachment[]
+  comments?: FeedbackComment[]
+  commentCount?: number
+}

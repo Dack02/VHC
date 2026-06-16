@@ -46,8 +46,10 @@ interface ChannelStat {
   channel: string
   total: number
   delivered: number
+  sent: number
   failed: number
   bounced: number
+  pending: number
   successRate: number
   bounceRate: number
 }
@@ -230,6 +232,7 @@ export default function AdminCommunications() {
           {channelStats.map((s) => {
             const label = s.channel === 'sms' ? 'SMS' : s.channel.charAt(0).toUpperCase() + s.channel.slice(1)
             const failedRate = s.total > 0 ? Math.round((s.failed / s.total) * 1000) / 10 : 0
+            const dispatched = (s.delivered || 0) + (s.sent || 0)
             return (
               <div key={s.channel} className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
                 <div className="flex items-center justify-between">
@@ -238,8 +241,8 @@ export default function AdminCommunications() {
                 </div>
                 <div className="mt-3 grid grid-cols-3 gap-3 text-center">
                   <div>
-                    <p className="text-lg font-semibold text-green-600">{s.delivered.toLocaleString()}</p>
-                    <p className="text-xs text-gray-500">Delivered ({s.successRate}%)</p>
+                    <p className="text-lg font-semibold text-green-600">{dispatched.toLocaleString()}</p>
+                    <p className="text-xs text-gray-500">Sent/Delivered ({s.successRate}%)</p>
                   </div>
                   <div>
                     <p className="text-lg font-semibold text-red-600">{s.failed.toLocaleString()}</p>

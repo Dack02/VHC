@@ -76,11 +76,13 @@ import followUpTimelines from './routes/follow-up-timelines.js'
 import followUpSettings from './routes/follow-up-settings.js'
 import modulesRoute from './routes/modules.js'
 import vehicleLookup from './routes/vehicle-lookup.js'
+import feedback from './routes/feedback.js'
+import olloDevWebhookRoutes from './routes/webhooks/ollo-dev.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
 import { checkRedisConnection, updateRedisStatus } from './services/queue.js'
-import { startScheduledCleanupTasks, initializeDailySmsOverviewSchedules, initializeAutoCloseSchedules, startFollowUpSweepSchedule, startLibraryGapReportSchedule } from './services/scheduler.js'
+import { startScheduledCleanupTasks, initializeDailySmsOverviewSchedules, initializeAutoCloseSchedules, startFollowUpSweepSchedule, startLibraryGapReportSchedule, startFeedbackSyncRetrySchedule } from './services/scheduler.js'
 
 const app = new Hono()
 
@@ -170,6 +172,9 @@ app.route('/api/v1/modules', modulesRoute)
 
 // Vehicle data lookup (DVSA MOT History) — registration -> vehicle details + MOT
 app.route('/api/v1/vehicle-lookup', vehicleLookup)
+
+// In-app feedback / bug reporting (pushed to Ollo Dev)
+app.route('/api/v1/feedback', feedback)
 
 // Admin routes (Super Admin only)
 app.route('/api/v1/admin/platform', platformAdmin)
@@ -265,6 +270,7 @@ app.route('/api/public', publicRoutes)
 // Webhook routes (unauthenticated, validated by provider signature)
 app.use('/api/webhooks/*', RateLimiters.webhook())
 app.route('/api/webhooks/twilio', twilioWebhookRoutes)
+app.route('/api/webhooks/ollo-dev', olloDevWebhookRoutes)
 
 // 404 handler for unmatched routes
 app.notFound(notFoundHandler)
@@ -311,6 +317,9 @@ startFollowUpSweepSchedule()
 
 // Start the Library Gap Report scheduler (daily digest of manually-typed notes)
 startLibraryGapReportSchedule()
+
+// Start the feedback sync retry sweep (re-push unsynced feedback to Ollo Dev)
+startFeedbackSyncRetrySchedule()
 
 logger.info(`Server started`, { port, environment: process.env.NODE_ENV || 'development' })
 

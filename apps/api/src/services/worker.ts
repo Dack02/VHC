@@ -154,6 +154,17 @@ async function incrementOrgUsage(
   }
 }
 
+/** Resolve the org id for a comm-log row, falling back to the linked health check. */
+async function resolveCommOrgId(organizationId: string | undefined, healthCheckId: string): Promise<string | null> {
+  if (organizationId) return organizationId
+  const { data } = await supabaseAdmin
+    .from('health_checks')
+    .select('organization_id')
+    .eq('id', healthCheckId)
+    .single()
+  return data?.organization_id ?? null
+}
+
 /**
  * Email Worker
  */
@@ -177,6 +188,7 @@ const emailWorker = new Worker(
     // Log to database
     if (job.data.healthCheckId) {
       await supabaseAdmin.from('communication_logs').insert({
+        organization_id: await resolveCommOrgId(job.data.organizationId, job.data.healthCheckId),
         health_check_id: job.data.healthCheckId,
         channel: 'email',
         recipient: job.data.to,
@@ -221,6 +233,7 @@ const smsWorker = new Worker(
     // Log to database
     if (job.data.healthCheckId) {
       await supabaseAdmin.from('communication_logs').insert({
+        organization_id: await resolveCommOrgId(job.data.organizationId, job.data.healthCheckId),
         health_check_id: job.data.healthCheckId,
         channel: 'sms',
         recipient: job.data.to,

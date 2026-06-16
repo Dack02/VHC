@@ -6,6 +6,7 @@ import { ToastProvider } from './context/ToastContext'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Login } from './pages/Login'
 import { JobList } from './pages/JobList'
+import { FeedbackButton } from './components/feedback/FeedbackButton'
 
 const PreCheck = lazy(() => import('./pages/PreCheck').then(m => ({ default: m.PreCheck })))
 const MyBoard = lazy(() => import('./pages/MyBoard').then(m => ({ default: m.MyBoard })))
@@ -97,6 +98,9 @@ function AppRoutes() {
         {/* Catch all */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+
+      {/* Floating in-app feedback / bug reporter (authed screens only) */}
+      {session && user && <FeedbackButton />}
     </Suspense>
   )
 }

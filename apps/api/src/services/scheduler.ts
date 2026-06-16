@@ -7,6 +7,7 @@ import { supabaseAdmin } from '../lib/supabase.js'
 import { runFollowUpSweep } from './follow-up-engine.js'
 import { sendLibraryGapReport } from './library-gap-report.js'
 import { suppressAutomatedComms } from '../lib/comms-guard.js'
+import { createOlloDevTicket } from './ollo-dev.js'
 
 // Default reminder schedule (can be overridden by organization settings)
 const DEFAULT_REMINDER_SCHEDULE = [
@@ -422,4 +423,98 @@ export function startLibraryGapReportSchedule() {
   setTimeout(() => { runLibraryGapReportTick() }, 60 * 1000)
   setInterval(() => { runLibraryGapReportTick() }, LIBRARY_GAP_TICK_MS)
   console.log('[Library Gap Report] Scheduled (15-min tick, per-org send time)')
+}
+
+// =============================================================================
+// Feedback sync retry — re-push feedback_tickets that failed to reach Ollo Dev.
+// In-process so it runs whether or not the BullMQ worker / Redis are available.
+// =============================================================================
+
+const FEEDBACK_SYNC_TICK_MS = 2 * 60 * 1000
+const FEEDBACK_SYNC_MAX_ATTEMPTS = 8
+
+/**
+ * One sweep: re-send any feedback ticket still pending/failed (under the attempt
+ * cap) to Ollo Dev. Idempotent — Ollo Dev dedupes on (source_app, external_ref),
+ * so a re-send after a lost response returns the same ticket rather than a dupe.
+ */
+export async function runFeedbackSyncRetryTick() {
+  try {
+    const { data: pending, error } = await supabaseAdmin
+      .from('feedback_tickets')
+      .select('id, type, subject, description, priority, reporter_name, reporter_email, reporter_role, reporter_org_name, diagnostics, sync_attempts')
+      .in('sync_state', ['pending', 'failed'])
+      .lt('sync_attempts', FEEDBACK_SYNC_MAX_ATTEMPTS)
+      .order('created_at', { ascending: true })
+      .limit(20)
+
+    if (error || !pending || pending.length === 0) return
+
+    for (const t of pending) {
+      const { data: attachments } = await supabaseAdmin
+        .from('feedback_attachments')
+        .select('public_url, content_type, byte_size, storage_path')
+        .eq('feedback_ticket_id', t.id)
+
+      const attachmentPayload = (attachments ?? []).map((a, i) => ({
+        url: a.public_url,
+        name: (a.storage_path?.split('/').pop()) || `screenshot-${i + 1}`,
+        type: a.content_type || 'image/jpeg',
+        size: a.byte_size || 0,
+      }))
+
+      const push = await createOlloDevTicket({
+        externalRef: t.id,
+        type: t.type as 'bug' | 'feature' | 'question',
+        subject: t.subject,
+        description: t.description,
+        priority: t.priority as 'low' | 'normal' | 'high' | 'urgent',
+        reporter: {
+          email: t.reporter_email,
+          name: t.reporter_name,
+          role: t.reporter_role || undefined,
+          org: t.reporter_org_name || undefined,
+        },
+        attachments: attachmentPayload,
+        diagnostics: (t.diagnostics as Record<string, unknown>) || {},
+      })
+
+      const attempts = (t.sync_attempts || 0) + 1
+      if (push.success) {
+        await supabaseAdmin
+          .from('feedback_tickets')
+          .update({
+            ollo_dev_ticket_id: push.olloDevTicketId,
+            sync_state: 'synced',
+            sync_error: null,
+            sync_attempts: attempts,
+            last_synced_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', t.id)
+      } else {
+        await supabaseAdmin
+          .from('feedback_tickets')
+          .update({
+            sync_state: 'failed',
+            sync_error: push.error ?? 'Sync failed',
+            sync_attempts: attempts,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', t.id)
+      }
+    }
+  } catch (err) {
+    console.error('[Feedback Sync] Tick error:', err)
+  }
+}
+
+/**
+ * Start the feedback sync retry sweep: shortly after startup, then every 2 min.
+ * The attempt cap + idempotent ingest make repeated ticks and restarts safe.
+ */
+export function startFeedbackSyncRetrySchedule() {
+  setTimeout(() => { runFeedbackSyncRetryTick() }, 90 * 1000)
+  setInterval(() => { runFeedbackSyncRetryTick() }, FEEDBACK_SYNC_TICK_MS)
+  console.log('[Feedback Sync] Scheduled (2-min retry for unsynced feedback)')
 }

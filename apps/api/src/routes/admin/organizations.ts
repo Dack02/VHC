@@ -16,6 +16,19 @@ import crypto from 'crypto'
 const adminOrgRoutes = new Hono()
 
 /**
+ * `organization_subscriptions` has a UNIQUE(organization_id) constraint, so PostgREST
+ * embeds it as a single object (a to-one relationship), not an array — yet supabase-js
+ * still types the embed as an array. Indexing `[0]` therefore yields `undefined` at
+ * runtime, which is why every org rendered "No plan" despite having a subscription.
+ * Normalise either runtime shape to the one subscription record, or null.
+ */
+function firstSubscription(embed: unknown): Record<string, unknown> | null {
+  if (!embed) return null
+  if (Array.isArray(embed)) return (embed[0] as Record<string, unknown>) ?? null
+  return embed as Record<string, unknown>
+}
+
+/**
  * Best-effort: email a newly-added org user so they can get started. Two variants:
  *  - Brand-new account  → "Set your password" with a recovery link (they have no
  *    password yet).
@@ -164,31 +177,36 @@ adminOrgRoutes.get('/', async (c) => {
   let filteredOrgs = organizations || []
   if (plan) {
     filteredOrgs = filteredOrgs.filter(org =>
-      org.organization_subscriptions?.[0]?.plan_id === plan
+      firstSubscription(org.organization_subscriptions)?.plan_id === plan
     )
   }
 
   // Transform to cleaner response
-  const orgs = filteredOrgs.map(org => ({
-    id: org.id,
-    name: org.name,
-    slug: org.slug,
-    status: org.status,
-    onboardingCompleted: org.onboarding_completed,
-    createdAt: org.created_at,
-    updatedAt: org.updated_at,
-    settings: org.organization_settings?.[0] || null,
-    subscription: org.organization_subscriptions?.[0] ? {
-      planId: org.organization_subscriptions[0].plan_id,
-      planName: org.organization_subscriptions[0].plan?.name,
-      status: org.organization_subscriptions[0].status,
-      currentPeriodEnd: org.organization_subscriptions[0].current_period_end,
-      trialStartedAt: org.organization_subscriptions[0].trial_started_at,
-      trialEndsAt: org.organization_subscriptions[0].trial_ends_at
-    } : null,
-    sitesCount: org.sites?.[0]?.count || 0,
-    usersCount: org.users?.[0]?.count || 0
-  }))
+  const orgs = filteredOrgs.map(org => {
+    const sub = firstSubscription(org.organization_subscriptions)
+    const planRel = sub?.plan
+    const subPlan = (Array.isArray(planRel) ? planRel[0] : planRel) as Record<string, unknown> | null | undefined
+    return {
+      id: org.id,
+      name: org.name,
+      slug: org.slug,
+      status: org.status,
+      onboardingCompleted: org.onboarding_completed,
+      createdAt: org.created_at,
+      updatedAt: org.updated_at,
+      settings: org.organization_settings?.[0] || null,
+      subscription: sub ? {
+        planId: sub.plan_id,
+        planName: subPlan?.name ?? null,
+        status: sub.status,
+        currentPeriodEnd: sub.current_period_end,
+        trialStartedAt: sub.trial_started_at,
+        trialEndsAt: sub.trial_ends_at
+      } : null,
+      sitesCount: org.sites?.[0]?.count || 0,
+      usersCount: org.users?.[0]?.count || 0
+    }
+  })
 
   // Log activity
   await logSuperAdminActivity(
@@ -346,14 +364,16 @@ adminOrgRoutes.get('/:id', async (c) => {
       hasCustomSmsCredentials: !!(org.organization_notification_settings[0].twilio_account_sid_encrypted),
       hasCustomEmailCredentials: !!(org.organization_notification_settings[0].resend_api_key_encrypted)
     } : null,
-    subscription: org.organization_subscriptions?.[0] ? (() => {
-      const sub = org.organization_subscriptions[0]
-      const planData = sub.plan as Record<string, unknown> | null
+    subscription: (() => {
+      const sub = firstSubscription(org.organization_subscriptions)
+      if (!sub) return null
+      const planRel = sub.plan
+      const planData = (Array.isArray(planRel) ? planRel[0] : planRel) as Record<string, unknown> | null
       return {
         id: sub.id,
         planId: sub.plan_id,
         planName: planData?.name || null,
-        plan: sub.plan,
+        plan: planData,
         status: sub.status,
         currentPeriodStart: sub.current_period_start,
         currentPeriodEnd: sub.current_period_end,
@@ -366,7 +386,7 @@ adminOrgRoutes.get('/:id', async (c) => {
           maxStorageGb: planData.max_storage_gb || 0
         } : null
       }
-    })() : null,
+    })(),
     counts: {
       sites: sitesResult.count || 0,
       users: usersResult.count || 0,
@@ -786,29 +806,49 @@ adminOrgRoutes.get('/:id/usage', async (c) => {
 adminOrgRoutes.get('/:id/usage/history', async (c) => {
   const orgId = c.req.param('id')
 
-  // Get last 12 months of usage
-  const twelveMonthsAgo = new Date()
-  twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12)
+  // Last 12 months (including the current month). SMS/email/HC are counted live
+  // from communication_logs + health_checks via RPC — the organization_usage
+  // rollup counters are not maintained (only its storage_used_bytes is real,
+  // merged in below).
+  const now = new Date()
+  const fromStr = new Date(now.getFullYear(), now.getMonth() - 11, 1).toISOString().slice(0, 10)
+  const toStr = now.toISOString().slice(0, 10)
 
-  const { data: history, error } = await supabaseAdmin
-    .from('organization_usage')
-    .select('*')
-    .eq('organization_id', orgId)
-    .gte('period_start', twelveMonthsAgo.toISOString())
-    .order('period_start', { ascending: false })
+  const [historyRes, storageRes] = await Promise.all([
+    supabaseAdmin.rpc('admin_org_usage_history', { p_org: orgId, p_from: fromStr, p_to: toStr }),
+    supabaseAdmin
+      .from('organization_usage')
+      .select('period_start, storage_used_bytes')
+      .eq('organization_id', orgId)
+      .gte('period_start', fromStr)
+  ])
 
-  if (error) {
-    return c.json({ error: error.message }, 500)
+  if (historyRes.error) {
+    return c.json({ error: historyRes.error.message }, 500)
   }
 
+  // storage_used_bytes is a point-in-time gauge kept only in organization_usage
+  const storageByMonth = new Map<string, number>()
+  for (const r of (storageRes.data || []) as Array<{ period_start: string; storage_used_bytes: number | null }>) {
+    storageByMonth.set(String(r.period_start).slice(0, 7), r.storage_used_bytes || 0)
+  }
+
+  const history = (historyRes.data || []) as Array<{
+    period_start: string
+    sms_sent: number
+    emails_sent: number
+    health_checks_created: number
+    health_checks_completed: number
+  }>
+
   return c.json({
-    history: (history || []).map(period => ({
+    history: history.map(period => ({
       periodStart: period.period_start,
-      healthChecksCreated: period.health_checks_created,
-      healthChecksCompleted: period.health_checks_completed,
-      smsSent: period.sms_sent,
-      emailsSent: period.emails_sent,
-      storageUsedBytes: period.storage_used_bytes
+      healthChecksCreated: Number(period.health_checks_created) || 0,
+      healthChecksCompleted: Number(period.health_checks_completed) || 0,
+      smsSent: Number(period.sms_sent) || 0,
+      emailsSent: Number(period.emails_sent) || 0,
+      storageUsedBytes: storageByMonth.get(String(period.period_start).slice(0, 7)) || 0
     }))
   })
 })
@@ -844,9 +884,9 @@ adminOrgRoutes.get('/:id/billing', async (c) => {
     supabaseAdmin.from('platform_ai_settings').select('value').eq('key', 'ai_margin_percent').maybeSingle()
   ])
 
-  const subs = org.organization_subscriptions as unknown as Array<{ plan: Record<string, unknown> | Record<string, unknown>[] | null }> | null
-  const planRel = subs?.[0]?.plan
-  const plan = (Array.isArray(planRel) ? planRel[0] : planRel) || null
+  const sub = firstSubscription(org.organization_subscriptions)
+  const planRel = sub?.plan as Record<string, unknown> | Record<string, unknown>[] | null | undefined
+  const plan = ((Array.isArray(planRel) ? planRel[0] : planRel) as Record<string, unknown> | null) || null
 
   const billingSettings = (billingRes.data?.settings as Record<string, unknown> | null) || null
   const smsRate = Number(billingSettings?.sms_unit_cost ?? 0.04)

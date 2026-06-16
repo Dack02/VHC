@@ -1271,6 +1271,7 @@ async function sendCustomerAuthorizationConfirmation(healthCheckId: string) {
         )
 
         await supabaseAdmin.from('communication_logs').insert({
+          organization_id: hc.organization_id,
           health_check_id: healthCheckId,
           channel: 'email',
           recipient: customer.email,
@@ -1297,6 +1298,7 @@ async function sendCustomerAuthorizationConfirmation(healthCheckId: string) {
         )
 
         await supabaseAdmin.from('communication_logs').insert({
+          organization_id: hc.organization_id,
           health_check_id: healthCheckId,
           channel: 'sms',
           recipient: customer.mobile,

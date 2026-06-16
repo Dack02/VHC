@@ -371,8 +371,8 @@ interface CommLogRow {
 }
 
 const orgName = (rel: CommLogRow['organizations']): string => {
-  if (!rel) return 'Unknown'
-  return Array.isArray(rel) ? (rel[0]?.name || 'Unknown') : (rel.name || 'Unknown')
+  if (!rel) return 'Unattributed'
+  return Array.isArray(rel) ? (rel[0]?.name || 'Unattributed') : (rel.name || 'Unattributed')
 }
 
 /**
@@ -393,7 +393,7 @@ adminUsage.get('/communications/logs', async (c) => {
       .select(`
         id, organization_id, health_check_id, channel, recipient, subject,
         status, external_id, error_message, created_at,
-        organizations!inner(name)
+        organizations(name)
       `, { count: 'exact' })
 
     if (organization_id) query = query.eq('organization_id', organization_id)
@@ -434,13 +434,15 @@ adminUsage.get('/communications/logs', async (c) => {
 })
 
 interface CommsDeliveryRow {
-  organization_id: string
+  organization_id: string | null
   organization_name: string
   channel: string
   total: number | string
   delivered: number | string
+  sent: number | string
   failed: number | string
   bounced: number | string
+  pending: number | string
 }
 
 /**
@@ -463,32 +465,40 @@ adminUsage.get('/communications/stats', async (c) => {
     const byOrg = rows.map((r) => {
       const total = Number(r.total || 0)
       const delivered = Number(r.delivered || 0)
+      const sent = Number(r.sent || 0)
       const failed = Number(r.failed || 0)
       const bounced = Number(r.bounced || 0)
+      const pending = Number(r.pending || 0)
+      // "Dispatched" = handed to the provider OK. Without a delivery-receipt
+      // webhook, messages stay at 'sent' and never reach 'delivered', so both
+      // count toward success (otherwise everything reads as 0% delivered).
+      const dispatched = delivered + sent
       return {
         organizationId: r.organization_id,
         organizationName: r.organization_name,
         channel: r.channel,
-        total, delivered, failed, bounced,
-        successRate: total > 0 ? Math.round((delivered / total) * 1000) / 10 : 0,
+        total, delivered, sent, failed, bounced, pending,
+        successRate: total > 0 ? Math.round((dispatched / total) * 1000) / 10 : 0,
         bounceRate: total > 0 ? Math.round((bounced / total) * 1000) / 10 : 0
       }
     })
 
     // Platform rollup by channel
-    const channelTotals = new Map<string, { total: number; delivered: number; failed: number; bounced: number }>()
+    const channelTotals = new Map<string, { total: number; delivered: number; sent: number; failed: number; bounced: number; pending: number }>()
     for (const r of byOrg) {
-      const ex = channelTotals.get(r.channel) || { total: 0, delivered: 0, failed: 0, bounced: 0 }
+      const ex = channelTotals.get(r.channel) || { total: 0, delivered: 0, sent: 0, failed: 0, bounced: 0, pending: 0 }
       channelTotals.set(r.channel, {
         total: ex.total + r.total,
         delivered: ex.delivered + r.delivered,
+        sent: ex.sent + r.sent,
         failed: ex.failed + r.failed,
-        bounced: ex.bounced + r.bounced
+        bounced: ex.bounced + r.bounced,
+        pending: ex.pending + r.pending
       })
     }
     const byChannel = Array.from(channelTotals.entries()).map(([channel, t]) => ({
       channel, ...t,
-      successRate: t.total > 0 ? Math.round((t.delivered / t.total) * 1000) / 10 : 0,
+      successRate: t.total > 0 ? Math.round(((t.delivered + t.sent) / t.total) * 1000) / 10 : 0,
       bounceRate: t.total > 0 ? Math.round((t.bounced / t.total) * 1000) / 10 : 0
     }))
 
@@ -597,7 +607,7 @@ adminUsage.get('/communications/export', async (c) => {
         .from('communication_logs')
         .select(`
           id, organization_id, channel, recipient, status, external_id,
-          error_message, created_at, organizations!inner(name)
+          error_message, created_at, organizations(name)
         `)
       if (organization_id) query = query.eq('organization_id', organization_id)
       if (channel) query = query.eq('channel', channel)

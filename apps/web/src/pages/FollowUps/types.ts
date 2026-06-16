@@ -31,6 +31,11 @@ export interface FollowUpSummary {
   dueToday: number
   bookingFound: number
   engaged: number
+  // Automation state (org-level Follow-Up Settings). Optional so the page stays
+  // safe if the API hasn't been deployed with these fields yet.
+  enabled?: boolean
+  autoSweepEnabled?: boolean
+  simulationMode?: boolean
 }
 
 export interface FollowUpItem {

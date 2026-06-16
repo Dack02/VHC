@@ -9,9 +9,112 @@ import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/au
 import { provisionOrganization, ProvisionError } from '../../services/provisioning.js'
 import { getOrgModuleDetail } from '../../services/modules.js'
 import { MODULE_MAP, isModuleKey, type ModuleKey } from '../../lib/modules.js'
+import { sendEmail } from '../../services/email.js'
 import crypto from 'crypto'
 
 const adminOrgRoutes = new Hono()
+
+/**
+ * Best-effort: email a newly-added org user so they can get started. Two variants:
+ *  - Brand-new account  → "Set your password" with a recovery link (they have no
+ *    password yet).
+ *  - Existing account (opts.existingAccount) → the person already has a working VHC
+ *    login (they're a member of another org), so a "set your password" link would be
+ *    confusing. Instead we just tell them they've been added and point them at sign-in.
+ *
+ * Never throws — returns whether the email was actually sent so the caller can surface
+ * it (for new accounts the temp password remains the fallback when this returns false).
+ * Tries the org/platform sender first, then falls back to the platform env sender (e.g.
+ * on dev where org credentials may be missing).
+ */
+async function sendOrgUserInviteEmail(
+  orgId: string,
+  orgName: string,
+  email: string,
+  firstName: string,
+  role: string,
+  opts: { existingAccount?: boolean } = {}
+): Promise<boolean> {
+  try {
+    const roleLabel = role.replace(/_/g, ' ').replace(/\b\w/g, (ch: string) => ch.toUpperCase())
+    const loginUrl = process.env.WEB_URL || 'http://localhost:5181'
+
+    let subject: string
+    let heading: string
+    let introHtml: string
+    let ctaLabel: string
+    let ctaHref: string
+    let text: string
+
+    if (opts.existingAccount) {
+      // Already has a VHC login — notify and point at sign-in, no password CTA.
+      subject = `You've been added to ${orgName} on VHC`
+      heading = `Welcome to ${orgName}`
+      ctaLabel = 'Sign In'
+      ctaHref = loginUrl
+      introHtml = `
+        <p>Hi ${firstName},</p>
+        <p><strong>${orgName}</strong> has added you to their team as a <strong>${roleLabel}</strong> on the Vehicle Health Check platform.</p>
+        <p>You already have a VHC account, so just sign in with your existing email and password to get started — no new password needed.</p>
+      `
+      text = `You've been added to ${orgName} on VHC\n\nHi ${firstName},\n\n${orgName} has added you to their team as a ${roleLabel}.\n\nYou already have a VHC account — sign in with your existing email and password to get started: ${loginUrl}\n\nIf you've forgotten your password, use "Forgot password" on the sign-in page.`
+    } else {
+      // Brand-new account — email a "set your password" recovery link.
+      const resetRedirect = `${loginUrl}/reset-password`
+      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+        type: 'recovery',
+        email,
+        options: { redirectTo: resetRedirect }
+      })
+      const resetLink = linkData?.properties?.action_link
+      if (!resetLink) {
+        console.warn(`Failed to generate invite link for ${email}:`, linkError?.message)
+        return false
+      }
+
+      // Outside production, surface the link in logs — dev/staging often can't send
+      // outbound email (e.g. platform credentials can't be decrypted there).
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[admin/add-user] Set-password link for ${email}: ${resetLink}`)
+      }
+
+      subject = `You've been invited to join ${orgName} on VHC`
+      heading = "You've Been Invited!"
+      ctaLabel = 'Set Your Password'
+      ctaHref = resetLink
+      introHtml = `
+        <p>Hi ${firstName},</p>
+        <p><strong>${orgName}</strong> has added you to their team as a <strong>${roleLabel}</strong> on the Vehicle Health Check platform.</p>
+        <p>Click the button below to set your password and get started:</p>
+      `
+      text = `You've been invited to join ${orgName} on VHC\n\nHi ${firstName},\n\n${orgName} has added you to their team as a ${roleLabel}.\n\nSet your password to get started: ${resetLink}\n\nIf you weren't expecting this, you can safely ignore this email.`
+    }
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #1a1a1a;">${heading}</h2>
+        ${introHtml}
+        <div style="text-align: center; margin: 32px 0;">
+          <a href="${ctaHref}" style="background-color: #2563eb; color: white; padding: 12px 32px; text-decoration: none; font-weight: bold; display: inline-block; border-radius: 6px;">${ctaLabel}</a>
+        </div>
+        <p style="color: #666; font-size: 14px;">If the button doesn't work, copy and paste this link into your browser:</p>
+        <p style="color: #666; font-size: 12px; word-break: break-all;">${ctaHref}</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
+        <p style="color: #999; font-size: 12px;">This was sent by ${orgName} via Vehicle Health Check.</p>
+      </div>
+    `
+
+    const emailPayload = { to: email, subject, html, text }
+    let result = await sendEmail({ ...emailPayload, organizationId: orgId })
+    if (!result.success) {
+      result = await sendEmail(emailPayload)
+    }
+    return result.success
+  } catch (err) {
+    console.error('Failed to send org user invite email:', err)
+    return false
+  }
+}
 
 // All routes require super admin authentication
 adminOrgRoutes.use('*', superAdminMiddleware)
@@ -969,12 +1072,17 @@ adminOrgRoutes.post('/:id/users', async (c) => {
             c.req.header('User-Agent')
           )
 
+          // They already have a VHC login — notify them they've been added (no
+          // set-password link, which would confuse an existing account). Best-effort.
+          const emailSent = await sendOrgUserInviteEmail(orgId, org.name, email, firstName, role, { existingAccount: true })
+
           return c.json({
             id: user.id,
             email: user.email,
             firstName: user.first_name,
             lastName: user.last_name,
             role: user.role,
+            emailSent,
             note: 'User linked to existing auth account'
           }, 201)
         }
@@ -1015,13 +1123,18 @@ adminOrgRoutes.post('/:id/users', async (c) => {
       c.req.header('User-Agent')
     )
 
+    // Email the new user a set-password link. Best-effort; the temp password below
+    // remains the fallback the super admin can hand over if email delivery fails.
+    const emailSent = await sendOrgUserInviteEmail(orgId, org.name, email, firstName, role)
+
     return c.json({
       id: user.id,
       email: user.email,
       firstName: user.first_name,
       lastName: user.last_name,
       role: user.role,
-      temporaryPassword: tempPassword
+      temporaryPassword: tempPassword,
+      emailSent
     }, 201)
   } catch (error) {
     console.error('Admin user creation error:', error)

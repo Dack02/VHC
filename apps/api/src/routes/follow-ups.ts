@@ -6,7 +6,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
-import { runFollowUpSweep, findFutureBooking } from '../services/follow-up-engine.js'
+import { runFollowUpSweep, findFutureBooking, getFollowUpSettings } from '../services/follow-up-engine.js'
 
 const followUps = new Hono()
 followUps.use('*', authMiddleware)
@@ -88,13 +88,14 @@ followUps.get('/summary', async (c) => {
 
   const base = () => supabaseAdmin.from('follow_up_cases').select('id', { count: 'exact', head: true }).eq('organization_id', org)
 
-  const [open, manual, overdue, dueToday, bookingFound, engaged] = await Promise.all([
+  const [open, manual, overdue, dueToday, bookingFound, engaged, settings] = await Promise.all([
     base().in('status', OPEN_STATUSES),
     base().eq('status', 'manual'),
     base().in('status', OPEN_STATUSES).lt('next_action_at', startToday.toISOString()),
     base().in('status', OPEN_STATUSES).lte('next_action_at', endToday.toISOString()),
     base().eq('status', 'booking_found'),
     base().eq('status', 'engaged'),
+    getFollowUpSettings(org),
   ])
 
   return c.json({
@@ -104,6 +105,11 @@ followUps.get('/summary', async (c) => {
     dueToday: dueToday.count || 0,
     bookingFound: bookingFound.count || 0,
     engaged: engaged.count || 0,
+    // Automation state so the worklist can surface when follow-up is switched
+    // off (or running in simulation mode) rather than just showing empty zeros.
+    enabled: settings.enabled,
+    autoSweepEnabled: settings.autoSweepEnabled,
+    simulationMode: settings.simulationMode,
   })
 })
 

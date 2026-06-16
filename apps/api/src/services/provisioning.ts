@@ -226,9 +226,12 @@ export async function provisionOrganization(
       throw new ProvisionError(`Failed to initialise usage tracking: ${usageError.message}`)
     }
 
-    // 9. Best-effort seeding — failures here must NOT roll back the org
-    const starterReasonsCopied = await copyStarterReasons(org.id)
+    // 9. Best-effort seeding — failures here must NOT roll back the org.
+    //    Order matters: copy the starter TEMPLATE before the starter REASONS, so
+    //    item-specific reasons can be remapped onto the new org's freshly created
+    //    template items (copy_starter_reasons_to_org matches them by item name).
     const starterTemplateCopied = await copyStarterTemplate(org.id)
+    const starterReasonsCopied = await copyStarterReasons(org.id)
     const defaultsSeeded = await seedDefaultLibraries(org.id)
 
     // 10. Admin invite email (best-effort) — only when we generated the password
@@ -317,10 +320,12 @@ async function copyStarterTemplate(orgId: string): Promise<number> {
 
 /**
  * Seed the universal default libraries every org needs: follow-up config (outcomes,
- * dispositions, default timeline), decline/deleted outcome reasons, and HC deletion
- * reasons. Unlike starter reasons/templates these are not tied to a source org or a
- * platform toggle — every new org gets them. All three RPCs are idempotent. Best-effort:
- * failures are logged and reported via the return flag, never roll back the org.
+ * dispositions, default timeline), decline/deleted outcome reasons, HC deletion
+ * reasons, and tyre reference data (the canonical UK makes + sizes the technician
+ * tyre pickers read from). Unlike starter reasons/templates these are not tied to a
+ * source org or a platform toggle — every new org gets them. All four RPCs are
+ * idempotent. Best-effort: failures are logged and reported via the return flag,
+ * never roll back the org.
  */
 async function seedDefaultLibraries(orgId: string): Promise<boolean> {
   const p = { p_organization_id: orgId }
@@ -348,6 +353,14 @@ async function seedDefaultLibraries(orgId: string): Promise<boolean> {
   } catch (err) {
     allOk = false
     console.error('Failed to seed HC deletion reasons:', err)
+  }
+
+  try {
+    const { error } = await supabaseAdmin.rpc('seed_tyre_reference_for_org', p)
+    if (error) { allOk = false; console.error('Failed to seed tyre reference data:', error.message) }
+  } catch (err) {
+    allOk = false
+    console.error('Failed to seed tyre reference data:', err)
   }
 
   return allOk

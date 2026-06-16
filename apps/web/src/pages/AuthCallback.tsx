@@ -4,6 +4,7 @@ import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { api } from '../lib/api'
 import { useAuth } from '../contexts/AuthContext'
+import AuthBackdrop from '../components/AuthBackdrop'
 
 interface SignupConfig {
   enabled: boolean
@@ -35,9 +36,10 @@ type Tokens = { accessToken: string; refreshToken: string; expiresAt: number | u
 
 function Card({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-8">
+    <div className="relative min-h-screen bg-gray-100 flex items-center justify-center p-4 overflow-hidden">
+      <AuthBackdrop />
+      <div className="relative w-full max-w-md">
+        <div className="bg-white border border-gray-200 rounded-2xl shadow-2xl ring-1 ring-black/5 p-8">
           <div className="text-center mb-8">
             <img src="/ollo-inspect-logo.png" alt="Ollo Inspect" className="h-24 mx-auto mb-4" />
           </div>

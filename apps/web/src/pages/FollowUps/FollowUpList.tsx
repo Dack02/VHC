@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
@@ -38,6 +39,9 @@ export default function FollowUpList() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   const canSweep = user?.isOrgAdmin || user?.role === 'org_admin' || user?.role === 'super_admin'
+  const canManageFollowUp = canSweep || user?.role === 'site_admin'
+  const automationOff = summary?.enabled === false
+  const simulationOn = summary?.enabled === true && summary?.simulationMode === true
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -115,13 +119,51 @@ export default function FollowUpList() {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={refresh} className="px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">Refresh</button>
-          {canSweep && (
+          {canSweep && !automationOff && (
             <button onClick={runSweep} disabled={sweeping} className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold hover:bg-primary-dark disabled:opacity-50">
               {sweeping ? 'Running…' : 'Run sweep now'}
             </button>
           )}
         </div>
       </div>
+
+      {/* Automation is switched off in Follow-Up Settings — make it obvious the
+          page is dormant rather than just showing empty zeros. */}
+      {automationOff && (
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+          <svg className="w-5 h-5 text-amber-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <div className="flex-1">
+            <div className="text-sm font-semibold text-amber-900">Follow-Up automation is turned off</div>
+            <div className="text-sm text-amber-800 mt-0.5">
+              No follow-up cases are being created or chased for this organisation. Turn it on in Follow-Up Settings to start recovering deferred work.
+            </div>
+          </div>
+          {canManageFollowUp && (
+            <Link
+              to="/settings/follow-up-settings"
+              className="flex-shrink-0 px-3 py-2 bg-amber-600 text-white rounded-lg text-sm font-semibold hover:bg-amber-700 whitespace-nowrap text-center"
+            >
+              Open Follow-Up Settings
+            </Link>
+          )}
+        </div>
+      )}
+
+      {/* Enabled but running in simulation mode — cases advance but nothing is
+          actually sent, which is another easy-to-miss "not really live" state. */}
+      {simulationOn && (
+        <div className="mb-6 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+          <svg className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div className="text-sm text-blue-800">
+            <span className="font-semibold">Simulation mode is on.</span> Cases are created and the timeline advances, but no SMS or email is actually sent.
+            {canManageFollowUp && <> Turn it off in <Link to="/settings/follow-up-settings" className="font-semibold underline hover:text-blue-900">Follow-Up Settings</Link> to go live.</>}
+          </div>
+        </div>
+      )}
 
       {/* Summary chips */}
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-6">

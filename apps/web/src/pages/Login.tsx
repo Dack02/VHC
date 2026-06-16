@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import GoogleAuthButton from '../components/GoogleAuthButton'
+import AuthBackdrop from '../components/AuthBackdrop'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -53,9 +54,10 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-8">
+    <div className="relative min-h-screen bg-gray-100 flex items-center justify-center p-4 overflow-hidden">
+      <AuthBackdrop />
+      <div className="relative w-full max-w-md">
+        <div className="bg-white border border-gray-200 rounded-2xl shadow-2xl ring-1 ring-black/5 p-8">
           <div className="text-center mb-8">
             <img
               src="/ollo-inspect-logo.png"

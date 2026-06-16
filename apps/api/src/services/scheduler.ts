@@ -6,6 +6,7 @@ import { scheduleReminder, cancelReminders, queueNotification, scheduleDailySmsO
 import { supabaseAdmin } from '../lib/supabase.js'
 import { runFollowUpSweep } from './follow-up-engine.js'
 import { sendLibraryGapReport } from './library-gap-report.js'
+import { suppressAutomatedComms } from '../lib/comms-guard.js'
 
 // Default reminder schedule (can be overridden by organization settings)
 const DEFAULT_REMINDER_SCHEDULE = [
@@ -370,6 +371,9 @@ function hmToMinutes(hm: string): number {
  * idempotent across restarts, so it works in-process without the BullMQ worker.
  */
 export async function runLibraryGapReportTick() {
+  // Skip the automated digest when automated comms are suppressed (e.g. on dev).
+  // The manual "send now" route (routes/library-gap-report.ts) is unaffected.
+  if (suppressAutomatedComms()) return
   try {
     const { data: settings, error } = await supabaseAdmin
       .from('organization_settings')

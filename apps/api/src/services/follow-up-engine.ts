@@ -20,6 +20,7 @@ import { supabaseAdmin } from '../lib/supabase.js'
 import { logger } from '../lib/logger.js'
 import { sendSms } from './sms.js'
 import { sendEmail, getOrganizationBranding } from './email.js'
+import { suppressAutomatedComms } from '../lib/comms-guard.js'
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -76,6 +77,8 @@ function render(tpl: string | null | undefined, vars: Record<string, string>): s
  * production behaviour is unchanged. Intended for safe testing on dev.
  */
 function followUpDryRun(): boolean {
+  // The master automated-comms suppression switch also forces follow-up dry-run.
+  if (suppressAutomatedComms()) return true
   const v = (process.env.FOLLOW_UP_DRY_RUN || '').trim().toLowerCase()
   return v === 'true' || v === '1' || v === 'yes' || v === 'on'
 }

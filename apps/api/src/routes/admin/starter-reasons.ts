@@ -166,7 +166,7 @@ starterReasonsRoutes.get('/', async (c) => {
 starterReasonsRoutes.post('/mark-as-starter', async (c) => {
   const superAdmin = c.get('superAdmin')
   const body = await c.req.json()
-  const { organization_id, reason_ids, mark_all_reviewed } = body
+  const { organization_id, reason_ids, mark_all_reviewed, mark_all } = body
 
   if (!organization_id) {
     return c.json({ error: 'organization_id is required' }, 400)
@@ -175,7 +175,21 @@ starterReasonsRoutes.post('/mark-as-starter', async (c) => {
   try {
     let updateCount = 0
 
-    if (mark_all_reviewed) {
+    if (mark_all) {
+      // Mark ALL active reasons as starter, regardless of ai_reviewed. The reviewed
+      // gate is for curating AI-generated reasons; for a super-admin promoting a
+      // hand-built source org (whose reasons were never run through AI review) it just
+      // blocks everything, so this path ignores it.
+      const { count, error } = await supabaseAdmin
+        .from('item_reasons')
+        .update({ is_starter_template: true }, { count: 'exact' })
+        .eq('organization_id', organization_id)
+        .eq('is_active', true)
+        .eq('is_starter_template', false)
+
+      if (error) throw error
+      updateCount = count || 0
+    } else if (mark_all_reviewed) {
       // Mark all AI-reviewed reasons as starter
       const { count, error } = await supabaseAdmin
         .from('item_reasons')
@@ -198,7 +212,7 @@ starterReasonsRoutes.post('/mark-as-starter', async (c) => {
       if (error) throw error
       updateCount = count || 0
     } else {
-      return c.json({ error: 'Either reason_ids or mark_all_reviewed is required' }, 400)
+      return c.json({ error: 'One of reason_ids, mark_all_reviewed, or mark_all is required' }, 400)
     }
 
     // Log activity
@@ -207,7 +221,7 @@ starterReasonsRoutes.post('/mark-as-starter', async (c) => {
       'mark_starter_reasons',
       'item_reasons',
       organization_id,
-      { count: updateCount, mark_all_reviewed: !!mark_all_reviewed },
+      { count: updateCount, mark_all_reviewed: !!mark_all_reviewed, mark_all: !!mark_all },
       c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
       c.req.header('User-Agent')
     )

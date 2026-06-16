@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import { requireModule } from '../middleware/require-module.js'
 import { lookupVehicleByRegistration, persistMotHistory } from '../services/mot-history.js'
 
 const vehicles = new Hono()
@@ -152,6 +153,47 @@ vehicles.get('/:id/mot-history', authorize(['super_admin', 'org_admin', 'site_ad
   } catch (error) {
     console.error('Get MOT history error:', error)
     return c.json({ error: 'Failed to get MOT history' }, 500)
+  }
+})
+
+// POST /api/v1/vehicles/:id/mot-sync - On-demand DVSA lookup + persist for an
+// existing vehicle (e.g. a DMS-imported booking never looked up at create time).
+vehicles.post('/:id/mot-sync', requireModule('vehicle_lookup'), authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    const { data: vehicle, error: vehicleError } = await supabaseAdmin
+      .from('vehicles')
+      .select('id, registration')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    if (vehicleError || !vehicle) {
+      return c.json({ error: 'Vehicle not found' }, 404)
+    }
+
+    const result = await lookupVehicleByRegistration(vehicle.registration)
+    if (!result.success) {
+      const status =
+        result.errorCode === 'RATE_LIMITED' ? 429 :
+        result.errorCode === 'AUTH_FAILED' || result.errorCode === 'API_ERROR' || result.errorCode === 'EXCEPTION' ? 502 :
+        503 // NOT_CONFIGURED / DISABLED
+      return c.json({ error: result.error || 'MOT lookup failed', code: result.errorCode }, status)
+    }
+
+    await persistMotHistory(auth.orgId, vehicle.id, result)
+
+    return c.json({
+      success: true,
+      found: result.found,
+      motStatus: result.motStatus,
+      testCount: result.motTests.length
+    })
+  } catch (error) {
+    console.error('MOT sync error:', error)
+    return c.json({ error: 'Failed to sync MOT history' }, 500)
   }
 })
 

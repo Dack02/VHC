@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { api } from '../../../lib/api'
 
 interface MotDefect {
@@ -55,17 +55,43 @@ export function MotHistoryPanel({ vehicleId, token, registration }: {
   const [data, setData] = useState<MotHistoryResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncError, setSyncError] = useState<string | null>(null)
+
+  const loadHistory = useCallback(async (opts?: { quiet?: boolean; cancelledRef?: { cancelled: boolean } }) => {
+    if (!opts?.quiet) setLoading(true)
+    setError(null)
+    try {
+      const d = await api<MotHistoryResponse>(`/api/v1/vehicles/${vehicleId}/mot-history`, { token })
+      if (!opts?.cancelledRef?.cancelled) setData(d)
+    } catch (err) {
+      if (!opts?.cancelledRef?.cancelled) setError(err instanceof Error ? err.message : 'Failed to load MOT history')
+    } finally {
+      if (!opts?.quiet && !opts?.cancelledRef?.cancelled) setLoading(false)
+    }
+  }, [vehicleId, token])
 
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    setError(null)
-    api<MotHistoryResponse>(`/api/v1/vehicles/${vehicleId}/mot-history`, { token })
-      .then((d) => { if (!cancelled) setData(d) })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load MOT history') })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [vehicleId, token])
+    const cancelledRef = { cancelled: false }
+    loadHistory({ cancelledRef })
+    return () => { cancelledRef.cancelled = true }
+  }, [loadHistory])
+
+  const handleSync = async () => {
+    setSyncing(true)
+    setSyncError(null)
+    try {
+      await api<{ success: boolean; found: boolean }>(
+        `/api/v1/vehicles/${vehicleId}/mot-sync`,
+        { method: 'POST', token }
+      )
+      await loadHistory({ quiet: true })
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : 'MOT lookup failed')
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -98,10 +124,23 @@ export function MotHistoryPanel({ vehicleId, token, registration }: {
         {data?.motExpiryDate && (
           <span className="text-sm text-gray-500">Expires {formatDate(data.motExpiryDate)}</span>
         )}
-        {data?.lastSyncedAt && (
-          <span className="text-xs text-gray-400 ml-auto">Synced {formatDate(data.lastSyncedAt)}</span>
-        )}
+        <div className="ml-auto flex items-center gap-3">
+          {data?.lastSyncedAt && (
+            <span className="text-xs text-gray-400">Synced {formatDate(data.lastSyncedAt)}</span>
+          )}
+          <button
+            type="button"
+            onClick={handleSync}
+            disabled={syncing}
+            className="px-3 py-1.5 text-sm border border-indigo-300 text-indigo-700 rounded-lg font-medium hover:bg-indigo-50 disabled:opacity-50"
+          >
+            {syncing ? 'Looking up…' : tests.length === 0 ? 'Look up MOT' : 'Refresh'}
+          </button>
+        </div>
       </div>
+      {syncError && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-2 rounded-lg text-sm">{syncError}</div>
+      )}
 
       {tests.length === 0 ? (
         <div className="bg-gray-50 border border-gray-200 rounded-xl p-8 text-center text-gray-500">

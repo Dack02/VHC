@@ -147,7 +147,8 @@ adminOrgRoutes.post('/', async (c) => {
       site: result.site,
       inviteEmailSent: result.inviteEmailSent,
       starterReasonsCopied: result.starterReasonsCopied,
-      starterTemplateCopied: result.starterTemplateCopied
+      starterTemplateCopied: result.starterTemplateCopied,
+      defaultsSeeded: result.defaultsSeeded
     }, 201)
   } catch (error) {
     if (error instanceof ProvisionError) {

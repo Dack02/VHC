@@ -9,9 +9,9 @@
  * Guarantees:
  *  - Atomic from the caller's perspective: if any required step fails, the partially
  *    created organization (and auth user) is rolled back before throwing.
- *  - Best-effort seeding (starter reasons + starter inspection template) and the
- *    admin invite email never roll back the organization — they are reported via
- *    the result flags instead.
+ *  - Best-effort seeding (starter reasons, starter inspection template, and the default
+ *    libraries every org needs) and the admin invite email never roll back the
+ *    organization — they are reported via the result flags instead.
  *  - Never returns a plaintext password. When no password is supplied, a random one
  *    is set and the admin receives a "set your password" recovery-link email.
  */
@@ -38,6 +38,7 @@ export interface ProvisionOrganizationResult {
   site: { id: string; name: string } | null
   starterReasonsCopied: number
   starterTemplateCopied: number
+  defaultsSeeded: boolean
   inviteEmailSent: boolean
 }
 
@@ -206,6 +207,7 @@ export async function provisionOrganization(
     // 9. Best-effort seeding — failures here must NOT roll back the org
     const starterReasonsCopied = await copyStarterReasons(org.id)
     const starterTemplateCopied = await copyStarterTemplate(org.id)
+    const defaultsSeeded = await seedDefaultLibraries(org.id)
 
     // 10. Admin invite email (best-effort) — only when we generated the password
     let inviteEmailSent = false
@@ -224,6 +226,7 @@ export async function provisionOrganization(
       site: { id: site.id, name: site.name },
       starterReasonsCopied,
       starterTemplateCopied,
+      defaultsSeeded,
       inviteEmailSent
     }
   } catch (err) {
@@ -288,6 +291,44 @@ async function copyStarterTemplate(orgId: string): Promise<number> {
     console.error('Failed to copy starter template:', err)
     return 0
   }
+}
+
+/**
+ * Seed the universal default libraries every org needs: follow-up config (outcomes,
+ * dispositions, default timeline), decline/deleted outcome reasons, and HC deletion
+ * reasons. Unlike starter reasons/templates these are not tied to a source org or a
+ * platform toggle — every new org gets them. All three RPCs are idempotent. Best-effort:
+ * failures are logged and reported via the return flag, never roll back the org.
+ */
+async function seedDefaultLibraries(orgId: string): Promise<boolean> {
+  const p = { p_organization_id: orgId }
+  let allOk = true
+
+  try {
+    const { error } = await supabaseAdmin.rpc('seed_follow_up_config_for_org', p)
+    if (error) { allOk = false; console.error('Failed to seed follow-up config:', error.message) }
+  } catch (err) {
+    allOk = false
+    console.error('Failed to seed follow-up config:', err)
+  }
+
+  try {
+    const { error } = await supabaseAdmin.rpc('seed_outcome_reasons_for_org', p)
+    if (error) { allOk = false; console.error('Failed to seed outcome reasons:', error.message) }
+  } catch (err) {
+    allOk = false
+    console.error('Failed to seed outcome reasons:', err)
+  }
+
+  try {
+    const { error } = await supabaseAdmin.rpc('seed_hc_deletion_reasons_for_org', p)
+    if (error) { allOk = false; console.error('Failed to seed HC deletion reasons:', error.message) }
+  } catch (err) {
+    allOk = false
+    console.error('Failed to seed HC deletion reasons:', err)
+  }
+
+  return allOk
 }
 
 /** Send the first admin a "set your password" recovery-link email. Best-effort. */

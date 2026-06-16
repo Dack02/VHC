@@ -31,6 +31,11 @@ interface OrgUsage {
 
 type SortKey = 'sms_desc' | 'emails_desc' | 'health_checks_desc' | 'ai_cost_desc' | 'storage_desc' | 'name_asc'
 
+type FeatureState = 'active' | 'idle' | 'off'
+interface FeatureDef { key: string; label: string; gated: boolean }
+interface FeatureCell { key: string; state: FeatureState; count: number }
+interface OrgAdoption { id: string; name: string; status: string; features: FeatureCell[] }
+
 const gbp = (n: number) => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n || 0)
 const num = (n: number) => (n || 0).toLocaleString()
 const gb = (bytes: number) => `${((bytes || 0) / (1024 * 1024 * 1024)).toFixed(2)} GB`
@@ -45,14 +50,17 @@ export default function AdminUsageDashboard() {
   const [orgs, setOrgs] = useState<OrgUsage[]>([])
   const [marginPercent, setMarginPercent] = useState(0)
   const [usdToGbpRate, setUsdToGbpRate] = useState(0)
+  const [features, setFeatures] = useState<FeatureDef[]>([])
+  const [adoption, setAdoption] = useState<OrgAdoption[]>([])
   const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     if (!session?.accessToken) return
+    const token = session.accessToken
     setLoading(true)
     Promise.all([
-      api<{ totals: UsageTotals; marginPercent: number; usdToGbpRate: number }>(`/api/v1/admin/usage/summary?period=${period}`, { token: session.accessToken }),
-      api<{ organizations: OrgUsage[] }>(`/api/v1/admin/usage/by-organization?period=${period}&sort=${sort}`, { token: session.accessToken })
+      api<{ totals: UsageTotals; marginPercent: number; usdToGbpRate: number }>(`/api/v1/admin/usage/summary?period=${period}`, { token }),
+      api<{ organizations: OrgUsage[] }>(`/api/v1/admin/usage/by-organization?period=${period}&sort=${sort}`, { token })
     ])
       .then(([summary, byOrg]) => {
         setTotals(summary.totals)
@@ -62,6 +70,19 @@ export default function AdminUsageDashboard() {
       })
       .catch((err) => console.error('Failed to fetch usage data:', err))
       .finally(() => setLoading(false))
+
+    // Feature adoption loads independently: a failure (e.g. the RPC not yet
+    // deployed) degrades to an empty matrix instead of blanking the dashboard.
+    api<{ features: FeatureDef[]; organizations: OrgAdoption[] }>(`/api/v1/admin/usage/feature-adoption?period=${period}`, { token })
+      .then((adopt) => {
+        setFeatures(adopt.features || [])
+        setAdoption(adopt.organizations || [])
+      })
+      .catch((err) => {
+        console.error('Failed to fetch feature adoption:', err)
+        setFeatures([])
+        setAdoption([])
+      })
   }, [session, period, sort])
 
   const handleExport = async () => {
@@ -189,8 +210,85 @@ export default function AdminUsageDashboard() {
           chargeout is billed in GBP = cost × margin{marginPercent ? ` (+${marginPercent}%)` : ''} × USD→GBP rate{usdToGbpRate ? ` (${usdToGbpRate})` : ''}, set in AI Configuration.
         </p>
       </div>
+
+      {/* Feature adoption matrix */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between flex-wrap gap-2">
+          <h2 className="text-lg font-semibold text-gray-900">Feature adoption</h2>
+          <div className="flex items-center gap-4 text-xs text-gray-500">
+            <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500" />Active</span>
+            <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full border-[1.5px] border-gray-300" />Enabled · idle</span>
+            <span className="inline-flex items-center gap-1.5"><span className="text-gray-300 font-medium">–</span>Off</span>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Organisation</th>
+                {features.map((f) => (
+                  <th key={f.key} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">{f.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {adoption.length === 0 ? (
+                <tr>
+                  <td colSpan={features.length + 1} className="px-6 py-8 text-center text-gray-500">No feature data for this period</td>
+                </tr>
+              ) : (
+                adoption.map((o) => (
+                  <tr key={o.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4">
+                      <button
+                        onClick={() => navigate(`/admin/organizations/${o.id}`)}
+                        className="font-medium text-gray-900 hover:text-indigo-600 text-left"
+                      >
+                        {o.name}
+                      </button>
+                    </td>
+                    {o.features.map((cell) => (
+                      <td key={cell.key} className="px-4 py-4 text-center"><AdoptionCell state={cell.state} count={cell.count} /></td>
+                    ))}
+                  </tr>
+                ))
+              )}
+            </tbody>
+            {adoption.length > 0 && (
+              <tfoot>
+                <tr className="border-t border-gray-200 bg-gray-50">
+                  <td className="px-6 py-3 text-xs text-gray-500">Active orgs</td>
+                  {features.map((f) => {
+                    const active = adoption.filter((o) => o.features.find((c) => c.key === f.key)?.state === 'active').length
+                    return <td key={f.key} className="px-4 py-3 text-center text-xs text-gray-500">{active}/{adoption.length}</td>
+                  })}
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+        <p className="px-6 py-3 text-xs text-gray-400 border-t border-gray-100">
+          Active = activity in the selected period; Enabled · idle = module on but unused (the onboarding / churn signal).
+          Reporting counts report views recorded since instrumentation; Parts &amp; Packages is always-on, so it is never “off”.
+        </p>
+      </div>
     </div>
   )
+}
+
+function AdoptionCell({ state, count }: { state: FeatureState; count: number }) {
+  if (state === 'active') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-green-600 font-medium">
+        <span className="w-2 h-2 rounded-full bg-green-500" />
+        {count.toLocaleString()}
+      </span>
+    )
+  }
+  if (state === 'idle') {
+    return <span className="inline-block w-2.5 h-2.5 rounded-full border-[1.5px] border-gray-300" title="Enabled, no activity this period" />
+  }
+  return <span className="text-gray-300 font-medium" title="Module disabled">–</span>
 }
 
 function SummaryCard({ title, value }: { title: string; value: string | number }) {

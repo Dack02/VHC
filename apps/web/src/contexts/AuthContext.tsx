@@ -45,6 +45,7 @@ interface AuthContextType {
   organizations: OrgMembership[]
   activeOrgId: string | null
   login: (email: string, password: string) => Promise<void>
+  loginWithSessionData: (data: { user: User; session: Session; organizations?: OrgMembership[] }) => void
   logout: () => Promise<void>
   refreshSession: () => Promise<void>
   switchOrganization: (orgId: string) => Promise<void>
@@ -139,12 +140,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(ACTIVE_ORG_KEY)
   }
 
-  const login = async (email: string, password: string) => {
-    const data = await api<{ user: User; session: Session; organizations?: OrgMembership[] }>('/api/v1/auth/login', {
-      method: 'POST',
-      body: { email, password }
-    })
-
+  // Persist an already-fetched auth payload (same shape as the /login response).
+  // Used by password login and by the Google OAuth callback, which obtains the
+  // payload from POST /api/v1/auth/oauth/exchange rather than email + password.
+  const loginWithSessionData = (data: { user: User; session: Session; organizations?: OrgMembership[] }) => {
     setUser(data.user)
     setSession(data.session)
     localStorage.setItem(USER_KEY, JSON.stringify(data.user))
@@ -162,6 +161,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (orgId) {
       localStorage.setItem(ACTIVE_ORG_KEY, orgId)
     }
+  }
+
+  const login = async (email: string, password: string) => {
+    const data = await api<{ user: User; session: Session; organizations?: OrgMembership[] }>('/api/v1/auth/login', {
+      method: 'POST',
+      body: { email, password }
+    })
+    loginWithSessionData(data)
   }
 
   const logout = async () => {
@@ -336,6 +343,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       organizations,
       activeOrgId,
       login,
+      loginWithSessionData,
       logout,
       refreshSession,
       switchOrganization

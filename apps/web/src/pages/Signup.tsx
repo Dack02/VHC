@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
+import GoogleAuthButton from '../components/GoogleAuthButton'
 
 interface SignupConfig {
   enabled: boolean
@@ -115,6 +116,14 @@ export default function Signup() {
 
   return (
     <Card>
+      <GoogleAuthButton label="Sign up with Google" />
+
+      <div className="my-5 flex items-center gap-3">
+        <div className="h-px flex-1 bg-gray-200" />
+        <span className="text-xs text-gray-400 uppercase tracking-wide">or</span>
+        <div className="h-px flex-1 bg-gray-200" />
+      </div>
+
       <form onSubmit={handleSubmit} className="space-y-5">
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">

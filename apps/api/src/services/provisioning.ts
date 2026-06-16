@@ -29,6 +29,13 @@ export interface ProvisionOrganizationParams {
   adminLastName: string
   /** Optional. If provided, it is used as-is and NO invite email is sent (caller already knows it). If omitted, a random password is set and an invite link is emailed. */
   adminPassword?: string
+  /**
+   * Optional. An existing Supabase auth user to link to the new organization instead
+   * of creating one (used by OAuth/Google signup, where Supabase has already created a
+   * verified auth user). When set, no password is generated and no invite email is sent,
+   * and the auth user is NOT deleted on rollback (it is the user's external identity).
+   */
+  existingAuthUserId?: string
   settings?: Record<string, unknown>
 }
 
@@ -63,6 +70,7 @@ export async function provisionOrganization(
     adminFirstName,
     adminLastName,
     adminPassword,
+    existingAuthUserId,
     settings = {}
   } = params
 
@@ -155,25 +163,35 @@ export async function provisionOrganization(
       throw new ProvisionError(`Failed to create site: ${siteError?.message || 'unknown error'}`)
     }
 
-    // 6. Admin auth user
-    const willEmailInvite = !adminPassword
-    const password = adminPassword || crypto.randomBytes(16).toString('hex')
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: adminEmail,
-      password,
-      email_confirm: true,
-      user_metadata: { first_name: adminFirstName, last_name: adminLastName }
-    })
-    if (authError || !authData?.user) {
-      throw new ProvisionError(`Failed to create admin user: ${authError?.message || 'unknown error'}`)
+    // 6. Admin auth user — link an existing (e.g. Google OAuth) auth user, or create one.
+    let authUserId: string
+    let willEmailInvite = false
+    if (existingAuthUserId) {
+      // OAuth signup: Supabase already created a verified auth user for this identity.
+      // Link it as-is — no password, no invite email, and (crucially) it is left out of
+      // `createdAuthUserId` so rollback never deletes the user's external identity.
+      authUserId = existingAuthUserId
+    } else {
+      willEmailInvite = !adminPassword
+      const password = adminPassword || crypto.randomBytes(16).toString('hex')
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+        email: adminEmail,
+        password,
+        email_confirm: true,
+        user_metadata: { first_name: adminFirstName, last_name: adminLastName }
+      })
+      if (authError || !authData?.user) {
+        throw new ProvisionError(`Failed to create admin user: ${authError?.message || 'unknown error'}`)
+      }
+      authUserId = authData.user.id
+      createdAuthUserId = authData.user.id
     }
-    createdAuthUserId = authData.user.id
 
     // 7. User record
     const { data: user, error: userError } = await supabaseAdmin
       .from('users')
       .insert({
-        auth_id: authData.user.id,
+        auth_id: authUserId,
         organization_id: org.id,
         site_id: site.id,
         email: adminEmail,

@@ -19,6 +19,16 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { Tooltip } from '../../components/ui/Tooltip'
+
+/** Small muted info icon signalling that a header/label has an explanatory tooltip. */
+function InfoIcon({ className = 'text-gray-400' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" className={`w-3.5 h-3.5 flex-shrink-0 ${className}`}>
+      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+    </svg>
+  )
+}
 
 interface ReasonType {
   id: string
@@ -431,44 +441,54 @@ export default function TemplateBuilder() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => window.open(`/templates/${id}/print`, '_blank')}
-            className="px-3 py-1.5 text-sm font-medium border border-gray-300 text-gray-600 hover:bg-gray-50"
-          >
-            Print
-          </button>
-          <button
-            onClick={handleGenerateAllReasons}
-            disabled={generatingReasons}
-            className="px-3 py-1.5 text-sm font-medium border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 disabled:opacity-50"
-          >
-            {generatingReasons ? (
-              <span className="flex items-center gap-1.5">
-                <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                Generating...
-              </span>
-            ) : 'Generate All Missing Reasons'}
-          </button>
-          <button
-            onClick={() => navigate(`/settings/reason-library?templateId=${id}`)}
-            className="px-3 py-1.5 text-sm font-medium border border-gray-300 text-gray-600 hover:bg-gray-50"
-          >
-            Reason Library
-          </button>
-          <button
-            onClick={() => handleUpdateTemplate({ isDefault: !template.isDefault })}
-            disabled={saving}
-            className={`px-3 py-1.5 text-sm font-medium border ${
-              template.isDefault
-                ? 'bg-blue-50 text-blue-700 border-blue-300'
-                : 'text-gray-600 border-gray-300 hover:bg-gray-50'
-            }`}
-          >
-            {template.isDefault ? 'Default' : 'Set as Default'}
-          </button>
+          <Tooltip content="Open a printable version of this template's checklist.">
+            <button
+              onClick={() => window.open(`/templates/${id}/print`, '_blank')}
+              className="px-3 py-1.5 text-sm font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 cursor-pointer"
+            >
+              Print
+            </button>
+          </Tooltip>
+          <Tooltip content="Use AI to draft reasons for every item that doesn't have any yet. Items marked 'No AI' are skipped.">
+            <button
+              onClick={handleGenerateAllReasons}
+              disabled={generatingReasons}
+              className="px-3 py-1.5 text-sm font-medium border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 disabled:opacity-50 cursor-pointer"
+            >
+              {generatingReasons ? (
+                <span className="flex items-center gap-1.5">
+                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Generating...
+                </span>
+              ) : 'Generate All Missing Reasons'}
+            </button>
+          </Tooltip>
+          <Tooltip content="Manage the reusable library of reasons technicians pick from when an item fails its check.">
+            <button
+              onClick={() => navigate(`/settings/reason-library?templateId=${id}`)}
+              className="px-3 py-1.5 text-sm font-medium border border-gray-300 text-gray-600 hover:bg-gray-50 cursor-pointer"
+            >
+              Reason Library
+            </button>
+          </Tooltip>
+          <Tooltip content={template.isDefault
+            ? 'This is the default template pre-selected when starting a new health check. Click to remove default status.'
+            : 'Make this the default template pre-selected when starting a new health check.'}>
+            <button
+              onClick={() => handleUpdateTemplate({ isDefault: !template.isDefault })}
+              disabled={saving}
+              className={`px-3 py-1.5 text-sm font-medium border cursor-pointer ${
+                template.isDefault
+                  ? 'bg-blue-50 text-blue-700 border-blue-300'
+                  : 'text-gray-600 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              {template.isDefault ? 'Default' : 'Set as Default'}
+            </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -716,13 +736,48 @@ function SortableSection({
       {(section.items.length > 0 || isInlineAdding) && (
         <div className="hidden sm:grid grid-cols-[32px_1fr_100px_90px_48px_48px_48px_150px] gap-2 px-4 py-2 bg-gray-100 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
           <div></div>
-          <div>Item Name</div>
-          <div>Item Type</div>
-          <div>Reason Type</div>
-          <div>Req</div>
-          <div>Loc</div>
-          <div>AI</div>
-          <div className="text-right">Actions</div>
+          <div>
+            <Tooltip content="The name of the inspection item the technician checks (e.g. 'Front brake pads')." className="cursor-default inline-flex items-center gap-1 rounded outline-none focus-visible:ring-2 focus-visible:ring-primary/50" tabIndex={0}>
+              <span>Item Name</span>
+              <InfoIcon />
+            </Tooltip>
+          </div>
+          <div>
+            <Tooltip content="How the technician records this item — RAG status, a tyre or brake measurement, yes/no, free text, etc." className="cursor-default inline-flex items-center gap-1 rounded outline-none focus-visible:ring-2 focus-visible:ring-primary/50" tabIndex={0}>
+              <span>Item Type</span>
+              <InfoIcon />
+            </Tooltip>
+          </div>
+          <div>
+            <Tooltip content="Links this item to a shared set of reasons in the Reason Library. 'None' means the item uses its own unique reasons." className="cursor-default inline-flex items-center gap-1 rounded outline-none focus-visible:ring-2 focus-visible:ring-primary/50" tabIndex={0}>
+              <span>Reason Type</span>
+              <InfoIcon />
+            </Tooltip>
+          </div>
+          <div>
+            <Tooltip content="Required — the technician must record a result for this item before completing the inspection." className="cursor-default inline-flex items-center gap-1 rounded outline-none focus-visible:ring-2 focus-visible:ring-primary/50" tabIndex={0}>
+              <span>Req</span>
+              <InfoIcon />
+            </Tooltip>
+          </div>
+          <div>
+            <Tooltip content="Location — the technician must specify where the issue is (e.g. which wheel or corner) when flagging this item." className="cursor-default inline-flex items-center gap-1 rounded outline-none focus-visible:ring-2 focus-visible:ring-primary/50" tabIndex={0}>
+              <span>Loc</span>
+              <InfoIcon />
+            </Tooltip>
+          </div>
+          <div>
+            <Tooltip content="Whether AI can auto-draft reasons for this item. Items marked 'No AI' are excluded." className="cursor-default inline-flex items-center gap-1 rounded outline-none focus-visible:ring-2 focus-visible:ring-primary/50" tabIndex={0}>
+              <span>AI</span>
+              <InfoIcon />
+            </Tooltip>
+          </div>
+          <div className="text-right">
+            <Tooltip content="Edit the item, generate its reasons, manage its reasons, or delete it." className="cursor-default inline-flex items-center gap-1 rounded outline-none focus-visible:ring-2 focus-visible:ring-primary/50" tabIndex={0}>
+              <span>Actions</span>
+              <InfoIcon />
+            </Tooltip>
+          </div>
         </div>
       )}
 
@@ -901,33 +956,42 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
               </option>
             ))}
           </select>
-          <label className="flex items-center gap-1 text-xs text-gray-600 whitespace-nowrap">
-            <input
-              type="checkbox"
-              checked={editIsRequired}
-              onChange={(e) => setEditIsRequired(e.target.checked)}
-              className="w-3.5 h-3.5"
-            />
-            Req
-          </label>
-          <label className="flex items-center gap-1 text-xs text-gray-600 whitespace-nowrap">
-            <input
-              type="checkbox"
-              checked={editRequiresLocation}
-              onChange={(e) => setEditRequiresLocation(e.target.checked)}
-              className="w-3.5 h-3.5"
-            />
-            Loc
-          </label>
-          <label className="flex items-center gap-1 text-xs text-gray-600 whitespace-nowrap" title="Exclude from AI reason generation">
-            <input
-              type="checkbox"
-              checked={editExcludeFromAi}
-              onChange={(e) => setEditExcludeFromAi(e.target.checked)}
-              className="w-3.5 h-3.5"
-            />
-            No AI
-          </label>
+          <Tooltip content="Required — the technician must record a result for this item before completing the inspection." className="cursor-default">
+            <label className="flex items-center gap-1 text-xs text-gray-600 whitespace-nowrap">
+              <input
+                type="checkbox"
+                checked={editIsRequired}
+                onChange={(e) => setEditIsRequired(e.target.checked)}
+                className="w-3.5 h-3.5"
+              />
+              Req
+              <InfoIcon />
+            </label>
+          </Tooltip>
+          <Tooltip content="Location — the technician must specify where the issue is (e.g. which wheel or corner) when flagging this item." className="cursor-default">
+            <label className="flex items-center gap-1 text-xs text-gray-600 whitespace-nowrap">
+              <input
+                type="checkbox"
+                checked={editRequiresLocation}
+                onChange={(e) => setEditRequiresLocation(e.target.checked)}
+                className="w-3.5 h-3.5"
+              />
+              Loc
+              <InfoIcon />
+            </label>
+          </Tooltip>
+          <Tooltip content="Exclude this item from AI reason generation — its reasons won't be auto-drafted." className="cursor-default">
+            <label className="flex items-center gap-1 text-xs text-gray-600 whitespace-nowrap">
+              <input
+                type="checkbox"
+                checked={editExcludeFromAi}
+                onChange={(e) => setEditExcludeFromAi(e.target.checked)}
+                className="w-3.5 h-3.5"
+              />
+              No AI
+              <InfoIcon />
+            </label>
+          </Tooltip>
           <button
             onClick={handleSave}
             className="text-xs px-3 py-1.5 bg-primary text-white rounded font-medium"
@@ -1188,36 +1252,41 @@ function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
 
       {/* Required checkbox - hidden on mobile */}
       <div className="hidden sm:flex items-center justify-center">
-        <input
-          type="checkbox"
-          checked={isRequired}
-          onChange={(e) => setIsRequired(e.target.checked)}
-          className="w-3.5 h-3.5"
-          disabled={saving}
-        />
+        <Tooltip content="Required — the technician must record a result for this item before completing the inspection." className="cursor-default">
+          <input
+            type="checkbox"
+            checked={isRequired}
+            onChange={(e) => setIsRequired(e.target.checked)}
+            className="w-3.5 h-3.5"
+            disabled={saving}
+          />
+        </Tooltip>
       </div>
 
       {/* Location checkbox - hidden on mobile */}
       <div className="hidden sm:flex items-center justify-center">
-        <input
-          type="checkbox"
-          checked={requiresLocation}
-          onChange={(e) => setRequiresLocation(e.target.checked)}
-          className="w-3.5 h-3.5"
-          disabled={saving}
-        />
+        <Tooltip content="Location — the technician must specify where the issue is (e.g. which wheel or corner) when flagging this item." className="cursor-default">
+          <input
+            type="checkbox"
+            checked={requiresLocation}
+            onChange={(e) => setRequiresLocation(e.target.checked)}
+            className="w-3.5 h-3.5"
+            disabled={saving}
+          />
+        </Tooltip>
       </div>
 
       {/* Exclude from AI checkbox - hidden on mobile */}
       <div className="hidden sm:flex items-center justify-center">
-        <input
-          type="checkbox"
-          checked={excludeFromAi}
-          onChange={(e) => setExcludeFromAi(e.target.checked)}
-          className="w-3.5 h-3.5"
-          title="Exclude from AI generation"
-          disabled={saving}
-        />
+        <Tooltip content="Exclude this item from AI reason generation — its reasons won't be auto-drafted." className="cursor-default">
+          <input
+            type="checkbox"
+            checked={excludeFromAi}
+            onChange={(e) => setExcludeFromAi(e.target.checked)}
+            className="w-3.5 h-3.5"
+            disabled={saving}
+          />
+        </Tooltip>
       </div>
 
       {/* Actions */}

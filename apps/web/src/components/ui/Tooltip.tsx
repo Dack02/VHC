@@ -17,9 +17,13 @@ interface TooltipProps {
   children: React.ReactNode;
   content: string;
   disabled?: boolean;
+  /** Tailwind class(es) for the trigger wrapper. Defaults to `cursor-default`. */
+  className?: string;
+  /** When set, makes the trigger keyboard-focusable so the tooltip also opens on focus. */
+  tabIndex?: number;
 }
 
-export function Tooltip({ children, content, disabled = false }: TooltipProps) {
+export function Tooltip({ children, content, disabled = false, className = 'cursor-default', tabIndex }: TooltipProps) {
   const [isOpen, setIsOpen] = useState(false);
   const effectiveOpen = isOpen && !disabled;
 
@@ -45,7 +49,8 @@ export function Tooltip({ children, content, disabled = false }: TooltipProps) {
 
   return (
     <>
-      <span ref={refs.setReference} {...getReferenceProps()} className="cursor-help">
+      <span ref={refs.setReference} {...getReferenceProps()} tabIndex={tabIndex} className={className}>
+
         {children}
       </span>
       {effectiveOpen && (

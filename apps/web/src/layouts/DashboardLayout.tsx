@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { Link, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useModules } from '../contexts/ModulesContext'
@@ -480,8 +480,19 @@ export default function DashboardLayout() {
           </div>
         </header>
 
+        {/* Inner Suspense keeps the sidebar/header mounted while a lazy route
+            chunk loads — without it, route chunks suspend against the app-level
+            boundary and the whole layout flashes out on navigation. */}
         <div className="flex-1 p-6 overflow-auto">
-          <Outlet />
+          <Suspense
+            fallback={
+              <div className="flex min-h-[60vh] items-center justify-center">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+              </div>
+            }
+          >
+            <Outlet />
+          </Suspense>
         </div>
       </main>
     </div>

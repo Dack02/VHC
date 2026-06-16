@@ -7,43 +7,48 @@ import crypto from 'crypto'
 
 const auth = new Hono()
 
-// POST /api/v1/auth/login
-auth.post('/login', async (c) => {
-  try {
-    const { email, password } = await c.req.json()
+interface SessionTokens {
+  accessToken: string
+  refreshToken: string
+  expiresAt: number | undefined
+}
 
-    if (!email || !password) {
-      return c.json({ error: 'Email and password are required' }, 400)
+type ResolvedSession =
+  | { type: 'super_admin'; body: Record<string, unknown> }
+  | { type: 'user'; body: Record<string, unknown> }
+  | { type: 'deactivated' }
+  | { type: 'no_profile' }
+
+/**
+ * Resolve the app session payload for an authenticated Supabase auth user.
+ *
+ * Shared by password login and Google OAuth exchange so both produce an identical
+ * response shape ({ user, organizations, session } for org users; { user, session }
+ * for super admins). Handles the super-admin bridge, multi-org membership resolution,
+ * active-org preference, and the last_login_at touch.
+ */
+async function resolveSession(authUserId: string, tokens: SessionTokens): Promise<ResolvedSession> {
+  // First check if this is a super admin
+  const { data: superAdmin } = await supabaseAdmin
+    .from('super_admins')
+    .select('*')
+    .eq('auth_user_id', authUserId)
+    .single()
+
+  if (superAdmin) {
+    if (!superAdmin.is_active) {
+      return { type: 'deactivated' }
     }
 
-    const { data, error } = await supabaseAuth.auth.signInWithPassword({
-      email,
-      password
-    })
-
-    if (error) {
-      return c.json({ error: error.message }, 401)
-    }
-
-    // First check if this is a super admin
-    const { data: superAdmin } = await supabaseAdmin
+    // Update last login
+    await supabaseAdmin
       .from('super_admins')
-      .select('*')
-      .eq('auth_user_id', data.user.id)
-      .single()
+      .update({ last_login_at: new Date().toISOString() })
+      .eq('id', superAdmin.id)
 
-    if (superAdmin) {
-      if (!superAdmin.is_active) {
-        return c.json({ error: 'Account is deactivated' }, 403)
-      }
-
-      // Update last login
-      await supabaseAdmin
-        .from('super_admins')
-        .update({ last_login_at: new Date().toISOString() })
-        .eq('id', superAdmin.id)
-
-      return c.json({
+    return {
+      type: 'super_admin',
+      body: {
         user: {
           id: superAdmin.id,
           email: superAdmin.email,
@@ -56,73 +61,72 @@ auth.post('/login', async (c) => {
           organization: null,
           site: null
         },
-        session: {
-          accessToken: data.session.access_token,
-          refreshToken: data.session.refresh_token,
-          expiresAt: data.session.expires_at
-        }
-      })
-    }
-
-    // Get ALL user records for this auth_id (multi-org support)
-    const { data: allUsers, error: userError } = await supabaseAdmin
-      .from('users')
-      .select(`
-        *,
-        organization:organizations(id, name, slug, status, onboarding_completed, onboarding_step),
-        site:sites(id, name)
-      `)
-      .eq('auth_id', data.user.id)
-      .eq('is_active', true)
-
-    if (userError || !allUsers || allUsers.length === 0) {
-      return c.json({ error: 'User profile not found' }, 404)
-    }
-
-    // Determine which org to use as the active one
-    let user = allUsers[0]
-    if (allUsers.length > 1) {
-      const { data: prefs } = await supabaseAdmin
-        .from('user_preferences')
-        .select('last_active_organization_id')
-        .eq('auth_id', data.user.id)
-        .single()
-
-      if (prefs?.last_active_organization_id) {
-        const preferred = allUsers.find((u: Record<string, unknown>) => u.organization_id === prefs.last_active_organization_id)
-        if (preferred) user = preferred
+        session: tokens
       }
     }
+  }
 
-    // Update last login for the active user
-    await supabaseAdmin
-      .from('users')
-      .update({ last_login_at: new Date().toISOString() })
-      .eq('id', user.id)
+  // Get ALL user records for this auth_id (multi-org support)
+  const { data: allUsers, error: userError } = await supabaseAdmin
+    .from('users')
+    .select(`
+      *,
+      organization:organizations(id, name, slug, status, onboarding_completed, onboarding_step),
+      site:sites(id, name)
+    `)
+    .eq('auth_id', authUserId)
+    .eq('is_active', true)
 
-    // Transform organization data to include onboarding fields
-    const org = user.organization as {
-      id: string
-      name: string
-      slug: string
-      status: string
-      onboarding_completed: boolean
-      onboarding_step: number
-    } | null
+  if (userError || !allUsers || allUsers.length === 0) {
+    return { type: 'no_profile' }
+  }
 
-    // Build organizations array for multi-org switcher
-    const organizations = allUsers.map((u: Record<string, unknown>) => {
-      const uOrg = u.organization as { id: string; name: string; slug: string } | null
-      return {
-        id: uOrg?.id || u.organization_id,
-        name: uOrg?.name || 'Unknown',
-        slug: uOrg?.slug || '',
-        role: u.role as string,
-        userId: u.id as string
-      }
-    })
+  // Determine which org to use as the active one
+  let user = allUsers[0]
+  if (allUsers.length > 1) {
+    const { data: prefs } = await supabaseAdmin
+      .from('user_preferences')
+      .select('last_active_organization_id')
+      .eq('auth_id', authUserId)
+      .single()
 
-    return c.json({
+    if (prefs?.last_active_organization_id) {
+      const preferred = allUsers.find((u: Record<string, unknown>) => u.organization_id === prefs.last_active_organization_id)
+      if (preferred) user = preferred
+    }
+  }
+
+  // Update last login for the active user
+  await supabaseAdmin
+    .from('users')
+    .update({ last_login_at: new Date().toISOString() })
+    .eq('id', user.id)
+
+  // Transform organization data to include onboarding fields
+  const org = user.organization as {
+    id: string
+    name: string
+    slug: string
+    status: string
+    onboarding_completed: boolean
+    onboarding_step: number
+  } | null
+
+  // Build organizations array for multi-org switcher
+  const organizations = allUsers.map((u: Record<string, unknown>) => {
+    const uOrg = u.organization as { id: string; name: string; slug: string } | null
+    return {
+      id: uOrg?.id || u.organization_id,
+      name: uOrg?.name || 'Unknown',
+      slug: uOrg?.slug || '',
+      role: u.role as string,
+      userId: u.id as string
+    }
+  })
+
+  return {
+    type: 'user',
+    body: {
       user: {
         id: user.id,
         email: user.email,
@@ -143,12 +147,38 @@ auth.post('/login', async (c) => {
         site: user.site
       },
       organizations,
-      session: {
-        accessToken: data.session.access_token,
-        refreshToken: data.session.refresh_token,
-        expiresAt: data.session.expires_at
-      }
+      session: tokens
+    }
+  }
+}
+
+// POST /api/v1/auth/login
+auth.post('/login', async (c) => {
+  try {
+    const { email, password } = await c.req.json()
+
+    if (!email || !password) {
+      return c.json({ error: 'Email and password are required' }, 400)
+    }
+
+    const { data, error } = await supabaseAuth.auth.signInWithPassword({
+      email,
+      password
     })
+
+    if (error) {
+      return c.json({ error: error.message }, 401)
+    }
+
+    const resolved = await resolveSession(data.user.id, {
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
+      expiresAt: data.session.expires_at
+    })
+
+    if (resolved.type === 'deactivated') return c.json({ error: 'Account is deactivated' }, 403)
+    if (resolved.type === 'no_profile') return c.json({ error: 'User profile not found' }, 404)
+    return c.json(resolved.body)
   } catch (error) {
     console.error('Login error:', error)
     return c.json({ error: 'Login failed' }, 500)
@@ -561,6 +591,146 @@ auth.post('/signup', async (c) => {
   } catch (error) {
     console.error('Signup error:', error)
     return c.json({ error: 'Something went wrong. Please try again.' }, 500)
+  }
+})
+
+// POST /api/v1/auth/oauth/exchange
+// Completes a Google (Supabase OAuth) sign-in/sign-up. The browser runs the OAuth dance
+// with Supabase and POSTs the resulting Supabase session here. We verify the token, then:
+//   - existing account  → return an app session (same shape as /login)
+//   - brand-new identity → provision an organization once a business name is supplied
+//     (Google gives us name + verified email but no business name; the /auth/callback
+//     page collects it and re-submits). Guarded by the same allowSelfSignup kill-switch.
+// Rate-limited via the /api/v1/auth/* limiter mounted in index.ts.
+auth.post('/oauth/exchange', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}))
+    const accessToken = String(body.accessToken || '')
+    const refreshToken = String(body.refreshToken || '')
+    const expiresAt = typeof body.expiresAt === 'number' ? body.expiresAt : undefined
+    const organizationName = String(body.organizationName || '').trim()
+    const acceptTerms = body.acceptTerms === true
+
+    if (!accessToken) {
+      return c.json({ error: 'Missing sign-in token' }, 400)
+    }
+
+    // Verify the Supabase-issued OAuth token and pull the underlying identity.
+    const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(accessToken)
+    if (userErr || !userData?.user) {
+      return c.json({ error: 'Invalid or expired sign-in session' }, 401)
+    }
+    const authUser = userData.user
+
+    // Only Google, and only verified emails (Google always verifies, but be defensive).
+    const provider = authUser.app_metadata?.provider
+    const providers = (authUser.app_metadata?.providers as string[] | undefined) || []
+    const isGoogle = provider === 'google' || providers.includes('google')
+    if (!isGoogle) {
+      return c.json({ error: 'Unsupported sign-in provider' }, 400)
+    }
+    if (!authUser.email) {
+      return c.json({ error: 'Your Google account has no email address' }, 400)
+    }
+    const email = authUser.email.toLowerCase()
+    const emailVerified = Boolean(authUser.email_confirmed_at) || authUser.user_metadata?.email_verified === true
+    if (!emailVerified) {
+      return c.json({ error: 'Your Google email address is not verified' }, 400)
+    }
+
+    const tokens: SessionTokens = { accessToken, refreshToken, expiresAt }
+
+    // 1. Existing account, matched by auth_id.
+    let resolved = await resolveSession(authUser.id, tokens)
+
+    // 2. Defensive fallback: a user with this (Google-verified) email exists but under a
+    //    different auth_id — e.g. they first signed up with email/password and Supabase
+    //    identity-linking is off. Re-point their membership(s) to this auth user so
+    //    token-based requests resolve, then retry. Safe: Google has proven email ownership.
+    if (resolved.type === 'no_profile') {
+      const { data: byEmail } = await supabaseAdmin
+        .from('users')
+        .select('id, auth_id')
+        .eq('email', email)
+        .eq('is_active', true)
+      const mismatched = (byEmail || []).filter((u: { id: string; auth_id: string }) => u.auth_id !== authUser.id)
+      if (mismatched.length > 0) {
+        console.warn(`[oauth] Re-linking ${mismatched.length} membership(s) for ${email} to Google auth user ${authUser.id}`)
+        await supabaseAdmin
+          .from('users')
+          .update({ auth_id: authUser.id })
+          .eq('email', email)
+          .eq('is_active', true)
+        resolved = await resolveSession(authUser.id, tokens)
+      }
+    }
+
+    if (resolved.type === 'deactivated') return c.json({ error: 'Account is deactivated' }, 403)
+    if (resolved.type === 'super_admin' || resolved.type === 'user') return c.json(resolved.body)
+
+    // 3. No active account. If an account exists for this email but is deactivated,
+    //    don't silently spin up a brand-new org — surface it like login's "not found".
+    const { data: anyByEmail } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .limit(1)
+      .maybeSingle()
+    if (anyByEmail) {
+      return c.json({ error: 'This account is not active. Please contact support.' }, 403)
+    }
+
+    // 4. Brand-new identity → self-service signup via Google. Honour the kill-switch.
+    const features = await readPlatformSettings('features')
+    if (features.allowSelfSignup !== true) {
+      return c.json({ status: 'signup_disabled' })
+    }
+
+    // Derive a name from the Google profile metadata.
+    const meta = (authUser.user_metadata || {}) as Record<string, unknown>
+    const fullName = String(meta.full_name || meta.name || '').trim()
+    const firstName = (String(meta.given_name || '').trim() || fullName.split(' ')[0] || '').trim() || 'there'
+    const lastName = (String(meta.family_name || '').trim() || fullName.split(' ').slice(1).join(' ') || '').trim()
+
+    // Business name is collected by the callback page; ask for it if not yet provided.
+    if (!organizationName) {
+      return c.json({ status: 'needs_signup', email, firstName, lastName })
+    }
+    if (!acceptTerms) {
+      return c.json({ error: 'You must accept the terms to continue' }, 400)
+    }
+
+    const defaults = await readPlatformSettings('defaults')
+    const planId = (defaults.defaultPlanId as string) || 'starter'
+
+    // Collision-safe slug — same approach as the email signup route.
+    const base = slugify(organizationName) || 'org'
+    let slug = base
+    const { data: clash } = await supabaseAdmin
+      .from('organizations')
+      .select('id')
+      .eq('slug', slug)
+      .maybeSingle()
+    if (clash) {
+      slug = `${base}-${crypto.randomBytes(3).toString('hex')}`
+    }
+
+    await provisionOrganization({
+      name: organizationName,
+      slug,
+      planId,
+      adminEmail: email,
+      adminFirstName: firstName,
+      adminLastName: lastName,
+      existingAuthUserId: authUser.id
+    })
+
+    resolved = await resolveSession(authUser.id, tokens)
+    if (resolved.type === 'super_admin' || resolved.type === 'user') return c.json(resolved.body)
+    return c.json({ error: 'Account setup failed. Please try again.' }, 500)
+  } catch (error) {
+    console.error('OAuth exchange error:', error)
+    return c.json({ error: 'Sign-in failed. Please try again.' }, 500)
   }
 })
 

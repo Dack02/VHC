@@ -19,6 +19,7 @@ import Login from './pages/Login'
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'))
 const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const Signup = lazy(() => import('./pages/Signup'))
+const AuthCallback = lazy(() => import('./pages/AuthCallback'))
 
 // Lazy: All other page components
 const Dashboard = lazy(() => import('./pages/Dashboard'))
@@ -138,6 +139,7 @@ function App() {
                     <Route path="/forgot-password" element={<ForgotPassword />} />
                     <Route path="/reset-password" element={<ResetPassword />} />
                     <Route path="/signup" element={<Signup />} />
+                    <Route path="/auth/callback" element={<AuthCallback />} />
 
                     {/* Super Admin Portal routes */}
                     <Route path="/admin/login" element={<AdminLogin />} />

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import GoogleAuthButton from '../components/GoogleAuthButton'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -62,6 +63,14 @@ export default function Login() {
               className="h-24 mx-auto mb-4"
             />
             <p className="text-gray-600">Sign in to your account</p>
+          </div>
+
+          <GoogleAuthButton label="Sign in with Google" />
+
+          <div className="my-5 flex items-center gap-3">
+            <div className="h-px flex-1 bg-gray-200" />
+            <span className="text-xs text-gray-400 uppercase tracking-wide">or</span>
+            <div className="h-px flex-1 bg-gray-200" />
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">

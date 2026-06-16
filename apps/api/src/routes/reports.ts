@@ -5,6 +5,7 @@ import { requireModule } from '../middleware/require-module.js'
 import { aggregateRepairItemsByHc, computeHcConversion, isHcPresented } from '../lib/metrics.js'
 import { buildItemList, buildItemDetail } from '../services/item-report-service.js'
 import { chunkIds, type GroupBy } from '../services/hc-period-service.js'
+import { logAudit, getRequestContext } from '../services/audit.js'
 
 const reports = new Hono()
 
@@ -13,6 +14,31 @@ const parseGroupBy = (g: string | undefined): GroupBy =>
 
 reports.use('*', authMiddleware)
 reports.use('*', requireModule('reports'))
+
+// Reporting-adoption signal: record one event per report view/export. Runs after
+// the module gate (a disabled tenant 403s before this) and is best-effort and
+// non-blocking — logAudit swallows its own errors and we never await it, so it
+// adds no latency to the report response. Counted per-org by admin_feature_adoption.
+reports.use('*', async (c, next) => {
+  if (c.req.method === 'GET') {
+    const auth = c.get('auth')
+    if (auth?.orgId) {
+      const { ipAddress, userAgent } = getRequestContext(c)
+      void logAudit({
+        action: c.req.path.endsWith('/export') ? 'report.export' : 'report.view',
+        actorId: auth.user?.id,
+        actorType: 'user',
+        organizationId: auth.orgId,
+        resourceType: 'report',
+        resourceId: c.req.path,
+        metadata: { path: c.req.path },
+        ipAddress,
+        userAgent,
+      })
+    }
+  }
+  await next()
+})
 
 // GET /api/v1/reports - Reporting data with metrics
 reports.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {

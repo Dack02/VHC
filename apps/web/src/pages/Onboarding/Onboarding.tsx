@@ -10,6 +10,7 @@ import StepPricing from './steps/StepPricing'
 import Step3InviteTeam from './steps/Step3InviteTeam'
 import Step4Notifications from './steps/Step4Notifications'
 import StepDailySms from './steps/StepDailySms'
+import StepTechnicianApp from './steps/StepTechnicianApp'
 import Step5Ready from './steps/Step5Ready'
 
 interface OnboardingStatus {
@@ -38,7 +39,8 @@ const STEPS = [
   { id: 5, title: 'Team', description: 'Invite your team' },
   { id: 6, title: 'Notifications', description: 'Customer comms' },
   { id: 7, title: 'Daily SMS', description: 'Daily overview' },
-  { id: 8, title: 'Ready!', description: 'You\'re all set' }
+  { id: 8, title: 'Technician App', description: 'Get techs on mobile' },
+  { id: 9, title: 'Ready!', description: 'You\'re all set' }
 ]
 
 export default function Onboarding() {
@@ -257,6 +259,12 @@ export default function Onboarding() {
             />
           )}
           {currentStep === 8 && (
+            <StepTechnicianApp
+              onNext={handleNext}
+              onBack={handleBack}
+            />
+          )}
+          {currentStep === 9 && (
             <Step5Ready
               status={status}
               onComplete={handleComplete}

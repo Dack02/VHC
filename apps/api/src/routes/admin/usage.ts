@@ -13,6 +13,8 @@ import { logger } from '../../lib/logger.js'
 import { phoneVariants, findCustomerMatches } from '../../services/inbound-sms.js'
 import { formatPhoneNumber } from '../../services/sms.js'
 import { emitToOrganization, WS_EVENTS } from '../../services/websocket.js'
+import { getEffectiveModulesForOrgs } from '../../services/modules.js'
+import type { ModuleKey } from '../../lib/modules.js'
 
 const adminUsage = new Hono()
 
@@ -266,6 +268,86 @@ adminUsage.get('/usage/export', async (c) => {
   } catch (error) {
     logger.error('Error exporting usage', { error })
     const message = error instanceof Error ? error.message : 'Failed to export usage'
+    return c.json({ error: message }, 500)
+  }
+})
+
+interface FeatureAdoptionRow {
+  organization_id: string
+  organization_name: string
+  status: string
+  follow_up_count: number | string
+  workshop_count: number | string
+  reports_count: number | string
+  parts_count: number | string
+}
+
+// Columns of the feature-adoption matrix. moduleKey gates the off/idle/active
+// state — null means always-on functionality (Parts & Packages isn't a module),
+// so it is never "off". count() pulls that feature's per-org signal from the RPC.
+const ADOPTION_FEATURES: Array<{
+  key: string
+  label: string
+  moduleKey: ModuleKey | null
+  count: (r: FeatureAdoptionRow) => number
+}> = [
+  { key: 'follow_up',      label: 'Follow-Up',        moduleKey: 'follow_up',      count: (r) => Number(r.follow_up_count || 0) },
+  { key: 'workshop_board', label: 'Workshop',         moduleKey: 'workshop_board', count: (r) => Number(r.workshop_count || 0) },
+  { key: 'reports',        label: 'Reporting',        moduleKey: 'reports',        count: (r) => Number(r.reports_count || 0) },
+  { key: 'parts',          label: 'Parts & Packages', moduleKey: null,             count: (r) => Number(r.parts_count || 0) }
+]
+
+/**
+ * GET /api/v1/admin/usage/feature-adoption?period=30d
+ * Per-org feature-adoption matrix for the four headline modules. Each cell is
+ * active (used in the window) / idle (module enabled but unused — the onboarding
+ * & churn signal) / off (module disabled). Pairs the admin_feature_adoption RPC
+ * counts with each org's effective module enablement.
+ */
+adminUsage.get('/usage/feature-adoption', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const period = c.req.query('period') || '30d'
+
+  try {
+    const { start, end } = getPeriodDates(period)
+    const p_from = toDateStr(start)
+    const p_to = toDateStr(end)
+
+    const { data, error } = await supabaseAdmin.rpc('admin_feature_adoption', { p_from, p_to })
+    if (error) throw new Error(`Failed to fetch feature adoption: ${error.message}`)
+    const rows = (data as FeatureAdoptionRow[] | null) || []
+
+    const moduleMap = await getEffectiveModulesForOrgs(rows.map((r) => r.organization_id))
+
+    const organizations = rows.map((r) => {
+      const modules = moduleMap.get(r.organization_id)
+      const features = ADOPTION_FEATURES.map((f) => {
+        const count = f.count(r)
+        const enabled = f.moduleKey ? (modules ? modules[f.moduleKey] : true) : true
+        const state = (!enabled ? 'off' : count > 0 ? 'active' : 'idle') as 'off' | 'idle' | 'active'
+        return { key: f.key, state, count }
+      })
+      return { id: r.organization_id, name: r.organization_name, status: r.status, features }
+    })
+
+    // Most-engaged first (active feature count desc, then name) — the "who's adopting" view.
+    organizations.sort((a, b) => {
+      const av = a.features.filter((f) => f.state === 'active').length
+      const bv = b.features.filter((f) => f.state === 'active').length
+      return bv - av || a.name.localeCompare(b.name)
+    })
+
+    const [ip, ua] = ipUa(c)
+    await logSuperAdminActivity(superAdmin.id, 'view_feature_adoption', 'organization_usage', undefined, { period }, ip, ua)
+
+    return c.json({
+      period: { start: p_from, end: p_to },
+      features: ADOPTION_FEATURES.map((f) => ({ key: f.key, label: f.label, gated: f.moduleKey !== null })),
+      organizations
+    })
+  } catch (error) {
+    logger.error('Error fetching feature adoption', { error })
+    const message = error instanceof Error ? error.message : 'Failed to fetch feature adoption'
     return c.json({ error: message }, 500)
   }
 })

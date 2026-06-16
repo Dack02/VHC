@@ -59,6 +59,36 @@ export async function getEffectiveModulesCached(c: Context, orgId: string): Prom
 }
 
 /**
+ * Bulk resolver for the super-admin feature-adoption matrix: effective module
+ * set for many orgs in two queries (vs the per-org pair above). Missing settings
+ * / subscription rows resolve to plan-less defaults, same as the single-org path.
+ */
+export async function getEffectiveModulesForOrgs(orgIds: string[]): Promise<Map<string, EffectiveModules>> {
+  const result = new Map<string, EffectiveModules>()
+  if (orgIds.length === 0) return result
+
+  const [{ data: settings }, { data: subs }] = await Promise.all([
+    supabaseAdmin.from('organization_settings').select('organization_id, module_overrides').in('organization_id', orgIds),
+    supabaseAdmin.from('organization_subscriptions').select('organization_id, plan:subscription_plans(features)').in('organization_id', orgIds)
+  ])
+
+  const overridesByOrg = new Map<string, JsonMap>()
+  for (const s of (settings as Array<{ organization_id: string; module_overrides?: JsonMap }> | null) || []) {
+    overridesByOrg.set(s.organization_id, s.module_overrides)
+  }
+  const planByOrg = new Map<string, JsonMap>()
+  for (const sub of (subs as Array<{ organization_id: string; plan?: unknown }> | null) || []) {
+    const planRow = Array.isArray(sub.plan) ? sub.plan[0] : sub.plan
+    planByOrg.set(sub.organization_id, (planRow as { features?: JsonMap } | null)?.features)
+  }
+
+  for (const orgId of orgIds) {
+    result.set(orgId, resolve(planByOrg.get(orgId), overridesByOrg.get(orgId)))
+  }
+  return result
+}
+
+/**
  * Detailed per-module view for the admin UI: effective state, the raw override
  * (true/false/null=inherit) and the plan default.
  */

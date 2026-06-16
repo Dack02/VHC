@@ -18,6 +18,7 @@
 
 import crypto from 'crypto'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { buildResetPasswordLink } from '../lib/authLinks.js'
 import { sendEmail } from './email.js'
 
 export interface ProvisionOrganizationParams {
@@ -379,7 +380,7 @@ async function sendAdminInviteEmail(
       email,
       options: { redirectTo: `${process.env.WEB_URL || 'http://localhost:5181'}/reset-password` }
     })
-    const resetLink = linkData?.properties?.action_link
+    const resetLink = buildResetPasswordLink(linkData?.properties)
     if (!resetLink) {
       console.warn(`Failed to generate admin invite link for ${email}:`, linkError?.message)
       return false

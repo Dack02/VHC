@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
-import { api, Vehicle, Template, User, Site } from '../../lib/api'
+import { api, Vehicle, Customer, Template, User, Site } from '../../lib/api'
 import { useModules } from '../../contexts/ModulesContext'
 
 interface VehicleLookupResponse {
@@ -35,6 +35,14 @@ interface VehicleLookupDraft {
   motTestCount: number
 }
 
+interface CustomerSearchResult {
+  id: string
+  firstName: string
+  lastName: string
+  email: string | null
+  mobile: string | null
+}
+
 export default function NewHealthCheck() {
   const { session } = useAuth()
   const navigate = useNavigate()
@@ -59,6 +67,18 @@ export default function NewHealthCheck() {
   })
 
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null)
+
+  // Customer requirement — a health check must belong to a customer. Vehicles can
+  // be created customer-less (walk-in / DVSA lookup), so when the selected vehicle
+  // has no customer we require one to be searched/created and linked before submit.
+  const [customerSearch, setCustomerSearch] = useState('')
+  const [customerResults, setCustomerResults] = useState<CustomerSearchResult[]>([])
+  const [customerSearching, setCustomerSearching] = useState(false)
+  const [showNewCustomer, setShowNewCustomer] = useState(false)
+  const [changingCustomer, setChangingCustomer] = useState(false)
+  const [newCustomer, setNewCustomer] = useState({ firstName: '', lastName: '', mobile: '', email: '' })
+  const [linkingCustomer, setLinkingCustomer] = useState(false)
+  const [customerError, setCustomerError] = useState<string | null>(null)
 
   // DVSA vehicle lookup (gated by the vehicle_lookup module)
   const { isEnabled } = useModules()
@@ -134,16 +154,52 @@ export default function NewHealthCheck() {
     return () => clearTimeout(debounce)
   }, [searchQuery, session?.accessToken])
 
+  // Search existing customers (only relevant while attaching one to the vehicle)
+  useEffect(() => {
+    const searchCustomers = async () => {
+      if (!session?.accessToken || customerSearch.trim().length < 2) {
+        setCustomerResults([])
+        return
+      }
+      setCustomerSearching(true)
+      try {
+        const data = await api<{ customers: CustomerSearchResult[] }>(
+          `/api/v1/customers/search?q=${encodeURIComponent(customerSearch.trim())}`,
+          { token: session.accessToken }
+        )
+        setCustomerResults(data.customers || [])
+      } catch (err) {
+        console.error('Customer search failed:', err)
+      } finally {
+        setCustomerSearching(false)
+      }
+    }
+
+    const debounce = setTimeout(searchCustomers, 300)
+    return () => clearTimeout(debounce)
+  }, [customerSearch, session?.accessToken])
+
+  const resetCustomerUi = () => {
+    setCustomerSearch('')
+    setCustomerResults([])
+    setShowNewCustomer(false)
+    setChangingCustomer(false)
+    setCustomerError(null)
+    setNewCustomer({ firstName: '', lastName: '', mobile: '', email: '' })
+  }
+
   const selectVehicle = (vehicle: Vehicle) => {
     setSelectedVehicle(vehicle)
     setForm({ ...form, vehicleId: vehicle.id })
     setSearchQuery('')
     setSearchResults([])
+    resetCustomerUi()
   }
 
   const clearVehicle = () => {
     setSelectedVehicle(null)
     setForm({ ...form, vehicleId: '' })
+    resetCustomerUi()
   }
 
   const handleLookup = async () => {
@@ -227,12 +283,87 @@ export default function NewHealthCheck() {
     }
   }
 
+  // Link a customer to the selected vehicle and reflect it locally so the
+  // requirement is satisfied (the health check inherits the vehicle's customer).
+  const linkCustomerToVehicle = async (customerId: string, customer: Customer) => {
+    if (!session?.accessToken || !selectedVehicle) return
+    await api(`/api/v1/vehicles/${selectedVehicle.id}`, {
+      method: 'PATCH',
+      token: session.accessToken,
+      body: { customerId }
+    })
+    setSelectedVehicle(v => (v ? { ...v, customer_id: customerId, customer } : v))
+    resetCustomerUi()
+  }
+
+  const handleSelectCustomer = async (result: CustomerSearchResult) => {
+    if (!session?.accessToken || !selectedVehicle) return
+    setLinkingCustomer(true)
+    setCustomerError(null)
+    try {
+      await linkCustomerToVehicle(result.id, {
+        id: result.id,
+        first_name: result.firstName,
+        last_name: result.lastName,
+        email: result.email,
+        mobile: result.mobile,
+        external_id: null
+      })
+    } catch (err) {
+      setCustomerError(err instanceof Error ? err.message : 'Failed to link customer')
+    } finally {
+      setLinkingCustomer(false)
+    }
+  }
+
+  const handleCreateCustomer = async () => {
+    if (!session?.accessToken || !selectedVehicle) return
+    if (!newCustomer.firstName.trim() || !newCustomer.lastName.trim()) {
+      setCustomerError('First and last name are required')
+      return
+    }
+    setLinkingCustomer(true)
+    setCustomerError(null)
+    try {
+      const created = await api<{ id: string; firstName: string; lastName: string; email: string | null; mobile: string | null }>(
+        '/api/v1/customers',
+        {
+          method: 'POST',
+          token: session.accessToken,
+          body: {
+            firstName: newCustomer.firstName.trim(),
+            lastName: newCustomer.lastName.trim(),
+            mobile: newCustomer.mobile.trim() || undefined,
+            email: newCustomer.email.trim() || undefined,
+            siteId: form.siteId || undefined
+          }
+        }
+      )
+      await linkCustomerToVehicle(created.id, {
+        id: created.id,
+        first_name: created.firstName,
+        last_name: created.lastName,
+        email: created.email,
+        mobile: created.mobile,
+        external_id: null
+      })
+    } catch (err) {
+      setCustomerError(err instanceof Error ? err.message : 'Failed to create customer')
+    } finally {
+      setLinkingCustomer(false)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!session?.accessToken) return
 
     if (!form.vehicleId) {
       setError('Please select a vehicle')
+      return
+    }
+    if (!selectedVehicle?.customer_id) {
+      setError('Please add a customer for this vehicle before creating the health check')
       return
     }
     if (!form.templateId) {
@@ -488,6 +619,144 @@ export default function NewHealthCheck() {
             )}
           </div>
 
+          {/* Customer (required — a health check must belong to a customer) */}
+          {selectedVehicle && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Customer *
+              </label>
+              {selectedVehicle.customer && !changingCustomer ? (
+                <div className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                  <div>
+                    <div className="font-medium">
+                      {selectedVehicle.customer.first_name} {selectedVehicle.customer.last_name}
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      {selectedVehicle.customer.mobile || selectedVehicle.customer.email || 'No contact details'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setChangingCustomer(true); setCustomerError(null) }}
+                    className="text-sm font-medium text-primary hover:underline"
+                  >
+                    Change
+                  </button>
+                </div>
+              ) : (
+                <div className="border border-amber-200 bg-amber-50/40 rounded-xl p-4 space-y-3">
+                  <p className="text-xs text-amber-700">
+                    This vehicle has no customer yet. Search for an existing customer or add a new one —
+                    a health check can&rsquo;t be created without one.
+                  </p>
+                  {!showNewCustomer ? (
+                    <>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={customerSearch}
+                          onChange={(e) => setCustomerSearch(e.target.value)}
+                          placeholder="Search by name, email or mobile..."
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                        {customerSearching && (
+                          <div className="absolute right-3 top-2.5">
+                            <div className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full" />
+                          </div>
+                        )}
+                        {customerResults.length > 0 && (
+                          <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-auto">
+                            {customerResults.map(rc => (
+                              <button
+                                key={rc.id}
+                                type="button"
+                                onClick={() => handleSelectCustomer(rc)}
+                                disabled={linkingCustomer}
+                                className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 last:border-0 disabled:opacity-50"
+                              >
+                                <div className="font-medium">{rc.firstName} {rc.lastName}</div>
+                                <div className="text-sm text-gray-500">{rc.mobile || rc.email || '—'}</div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <button
+                          type="button"
+                          onClick={() => { setShowNewCustomer(true); setCustomerError(null) }}
+                          className="text-sm font-medium text-primary hover:underline"
+                        >
+                          + Add new customer
+                        </button>
+                        {selectedVehicle.customer && (
+                          <button
+                            type="button"
+                            onClick={() => { setChangingCustomer(false); setCustomerError(null) }}
+                            className="text-sm text-gray-500 hover:underline"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <input
+                          type="text"
+                          value={newCustomer.firstName}
+                          onChange={(e) => setNewCustomer(n => ({ ...n, firstName: e.target.value }))}
+                          placeholder="First name *"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                        <input
+                          type="text"
+                          value={newCustomer.lastName}
+                          onChange={(e) => setNewCustomer(n => ({ ...n, lastName: e.target.value }))}
+                          placeholder="Last name *"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                        <input
+                          type="text"
+                          value={newCustomer.mobile}
+                          onChange={(e) => setNewCustomer(n => ({ ...n, mobile: e.target.value }))}
+                          placeholder="Mobile"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                        <input
+                          type="email"
+                          value={newCustomer.email}
+                          onChange={(e) => setNewCustomer(n => ({ ...n, email: e.target.value }))}
+                          placeholder="Email"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={handleCreateCustomer}
+                          disabled={linkingCustomer || !newCustomer.firstName.trim() || !newCustomer.lastName.trim()}
+                          className="px-4 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50"
+                        >
+                          {linkingCustomer ? 'Saving...' : 'Save & link customer'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setShowNewCustomer(false); setCustomerError(null) }}
+                          className="px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50"
+                        >
+                          Back to search
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {customerError && <p className="text-xs text-red-600">{customerError}</p>}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Template Selection */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -564,7 +833,7 @@ export default function NewHealthCheck() {
         <div className="mt-6 flex gap-3">
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || !selectedVehicle?.customer_id}
             className="px-6 py-2 bg-primary text-white font-medium hover:bg-primary-dark disabled:opacity-50"
           >
             {submitting ? 'Creating...' : 'Create Health Check'}

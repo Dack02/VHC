@@ -7,6 +7,7 @@
 
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
+import { buildResetPasswordLink } from '../../lib/authLinks.js'
 import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
 import { sendEmail } from '../../services/email.js'
 import crypto from 'crypto'
@@ -26,7 +27,7 @@ async function sendSuperAdminInviteEmail(email: string, name: string): Promise<b
       email,
       options: { redirectTo: `${process.env.WEB_URL || 'http://localhost:5181'}/reset-password` }
     })
-    const resetLink = linkData?.properties?.action_link
+    const resetLink = buildResetPasswordLink(linkData?.properties)
     if (!resetLink) {
       console.warn(`Failed to generate super-admin invite link for ${email}:`, linkError?.message)
       return false

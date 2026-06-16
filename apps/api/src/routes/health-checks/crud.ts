@@ -141,6 +141,14 @@ crud.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_adv
       return c.json({ error: 'Vehicle not found' }, 404)
     }
 
+    // A health check must belong to a customer — the entire downstream workflow
+    // (sending the quote, the customer portal, follow-ups) depends on one. Vehicles
+    // are allowed to exist without a customer (walk-in / DVSA reg lookup), so the
+    // check is enforced here rather than via a NOT NULL column.
+    if (!vehicle.customer_id) {
+      return c.json({ error: 'A customer must be linked to the vehicle before creating a health check.' }, 400)
+    }
+
     // Verify template belongs to org
     const { data: template } = await supabaseAdmin
       .from('check_templates')

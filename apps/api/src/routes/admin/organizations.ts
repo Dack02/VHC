@@ -5,6 +5,7 @@
 
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
+import { buildResetPasswordLink } from '../../lib/authLinks.js'
 import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
 import { provisionOrganization, ProvisionError } from '../../services/provisioning.js'
 import { getOrgModuleDetail } from '../../services/modules.js'
@@ -66,7 +67,7 @@ async function sendOrgUserInviteEmail(
         email,
         options: { redirectTo: resetRedirect }
       })
-      const resetLink = linkData?.properties?.action_link
+      const resetLink = buildResetPasswordLink(linkData?.properties)
       if (!resetLink) {
         console.warn(`Failed to generate invite link for ${email}:`, linkError?.message)
         return false

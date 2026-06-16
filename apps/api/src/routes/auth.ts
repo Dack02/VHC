@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { supabaseAuth, supabaseAdmin } from '../lib/supabase.js'
+import { buildResetPasswordLink } from '../lib/authLinks.js'
 import { authMiddleware } from '../middleware/auth.js'
 import { sendEmail } from '../services/email.js'
 import { provisionOrganization } from '../services/provisioning.js'
@@ -411,7 +412,7 @@ auth.post('/forgot-password', async (c) => {
       options: { redirectTo }
     })
 
-    const resetLink = linkData?.properties?.action_link
+    const resetLink = buildResetPasswordLink(linkData?.properties)
     if (resetLink) {
       // Look up the user for a friendly greeting + branded email credentials.
       const { data: userRow } = await supabaseAdmin

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import type { EmailOtpType } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 
 export default function ResetPassword() {
@@ -12,9 +13,23 @@ export default function ResetPassword() {
   const [saving, setSaving] = useState(false)
   const [done, setDone] = useState(false)
 
+  // Prefetch-safe recovery flow: the email links here with ?token_hash=…&type=recovery.
+  // We hold that token and only exchange it on submit (see handleSubmit), so mail
+  // scanners / browser link preloaders that merely GET this page never consume it.
+  const params = new URLSearchParams(window.location.search)
+  const tokenHash = params.get('token_hash')
+  const otpType = (params.get('type') as EmailOtpType) || 'recovery'
+
   // A valid recovery link establishes a Supabase session (parsed from the URL hash
   // by supabase-js). We wait for that session before allowing a password change.
   useEffect(() => {
+    // token_hash flow: present the form immediately; verification happens on submit.
+    if (tokenHash) {
+      setReady(true)
+      setChecking(false)
+      return
+    }
+
     let active = true
 
     supabase.auth.getSession().then(({ data }) => {
@@ -43,6 +58,7 @@ export default function ResetPassword() {
       sub.subscription.unsubscribe()
       clearTimeout(timeout)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -60,6 +76,20 @@ export default function ResetPassword() {
 
     setSaving(true)
     try {
+      // Prefetch-safe flow: exchange the one-time token now — on a real user action,
+      // not on page load — so automated link fetches can't burn it first.
+      if (tokenHash) {
+        const { error: verifyError } = await supabase.auth.verifyOtp({
+          type: otpType,
+          token_hash: tokenHash,
+        })
+        if (verifyError) {
+          // Token is spent, expired, or invalid — drop to the "request a new link" state.
+          setReady(false)
+          return
+        }
+      }
+
       const { error: updateError } = await supabase.auth.updateUser({ password })
       if (updateError) throw updateError
       // Clear the temporary recovery session so it doesn't linger.

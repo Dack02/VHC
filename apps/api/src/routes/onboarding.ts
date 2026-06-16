@@ -5,6 +5,7 @@
 
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { buildResetPasswordLink } from '../lib/authLinks.js'
 import { authMiddleware, requireOrgAdmin } from '../middleware/auth.js'
 import { sendEmail } from '../services/email.js'
 
@@ -506,7 +507,7 @@ onboarding.post('/invite-team', async (c) => {
           options: { redirectTo: resetRedirect }
         })
 
-        const resetLink = linkData?.properties?.action_link
+        const resetLink = buildResetPasswordLink(linkData?.properties)
         if (resetLink) {
           const roleLabel = role.replace('_', ' ').replace(/\b\w/g, (ch: string) => ch.toUpperCase())
           const result = await sendEmail({

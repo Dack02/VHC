@@ -8,7 +8,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorizeMinRole } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
-import { sendSms } from '../services/sms.js'
+import { sendSms, formatPhoneNumber } from '../services/sms.js'
 import { emitToHealthCheck, emitToOrganization, WS_EVENTS } from '../services/websocket.js'
 import { logger } from '../lib/logger.js'
 import { chunkIds } from '../services/hc-period-service.js'
@@ -317,6 +317,130 @@ messages.get('/conversations/:phoneNumber', async (c) => {
     customer,
     healthChecks,
     messages: threadMessages
+  })
+})
+
+// ──────────────────────────────────────────────
+// POST /conversations
+// Start a NEW conversation with a customer, deliberately NOT linked to a
+// health check. Used by the "New message" affordance in the Messages page and
+// the "Send Message" action in the Customers area.
+// ──────────────────────────────────────────────
+messages.post('/conversations', async (c) => {
+  const auth = c.get('auth')
+  const orgId = auth.orgId
+  const { customerId, phoneNumber: rawPhone, message } = await c.req.json<{
+    customerId?: string
+    phoneNumber?: string
+    message: string
+  }>()
+
+  if (!message?.trim()) {
+    return c.json({ error: 'Message body is required' }, 400)
+  }
+
+  // Resolve the recipient: prefer an explicit customer, else a raw phone number.
+  let customer: { id: string; mobile: string | null; first_name: string; last_name: string } | null = null
+  let toNumber = rawPhone?.trim() || ''
+
+  if (customerId) {
+    const { data, error } = await supabaseAdmin
+      .from('customers')
+      .select('id, mobile, first_name, last_name')
+      .eq('organization_id', orgId)
+      .eq('id', customerId)
+      .maybeSingle()
+    if (error || !data) {
+      return c.json({ error: 'Customer not found' }, 404)
+    }
+    customer = data
+    if (!toNumber) toNumber = data.mobile?.trim() || ''
+  } else if (toNumber) {
+    // Best-effort: attach a customer if this number already matches one in the org.
+    const variants = phoneVariants(formatPhoneNumber(toNumber))
+    const { data } = await supabaseAdmin
+      .from('customers')
+      .select('id, mobile, first_name, last_name')
+      .eq('organization_id', orgId)
+      .in('mobile', variants)
+      .limit(1)
+      .maybeSingle()
+    customer = data || null
+  }
+
+  if (!toNumber) {
+    return c.json({ error: 'A mobile number is required to send a message' }, 400)
+  }
+
+  // Normalise to E.164 so the thread keys consistently with any inbound replies.
+  const normalizedTo = formatPhoneNumber(toNumber)
+
+  // Send via Twilio (no health_check_id — this is a standalone conversation).
+  const smsResult = await sendSms(normalizedTo, message.trim(), orgId)
+  if (!smsResult.success) {
+    logger.error('Failed to send new-conversation SMS', { error: smsResult.error, toNumber: normalizedTo })
+    return c.json({ error: smsResult.error || 'Failed to send SMS' }, 500)
+  }
+
+  // Resolve the FROM number for the stored row.
+  let fromNumber = smsResult.from || ''
+  if (!fromNumber) {
+    const { getSmsCredentials } = await import('../services/credentials.js')
+    const creds = await getSmsCredentials(orgId)
+    if (creds.credentials) fromNumber = creds.credentials.phoneNumber
+  }
+
+  // Store the outbound message — health_check_id stays null (unlinked conversation).
+  const { data: storedMessage, error: insertError } = await supabaseAdmin
+    .from('sms_messages')
+    .insert({
+      organization_id: orgId,
+      health_check_id: null,
+      customer_id: customer?.id || null,
+      direction: 'outbound',
+      from_number: fromNumber,
+      to_number: normalizedTo,
+      body: message.trim(),
+      twilio_sid: smsResult.messageId || null,
+      twilio_status: 'sent',
+      is_read: true,
+      sent_by: auth.user.id,
+      metadata: { source: smsResult.source, sentFrom: 'compose' }
+    })
+    .select()
+    .single()
+
+  if (insertError) {
+    logger.error('Failed to store outbound SMS from compose', { error: insertError.message })
+  }
+
+  // Emit to the org room so the Messages page surfaces the new thread live.
+  emitToOrganization(orgId, WS_EVENTS.SMS_SENT, {
+    message: {
+      id: storedMessage?.id,
+      direction: 'outbound',
+      from_number: fromNumber,
+      to_number: normalizedTo,
+      body: message.trim(),
+      twilio_sid: smsResult.messageId,
+      twilio_status: 'sent',
+      is_read: true,
+      sent_by: auth.user.id,
+      sender: {
+        id: auth.user.id,
+        first_name: auth.user.firstName,
+        last_name: auth.user.lastName
+      },
+      created_at: storedMessage?.created_at || new Date().toISOString()
+    }
+  })
+
+  return c.json({
+    success: true,
+    message: storedMessage,
+    phoneNumber: normalizedTo,
+    customer: customer ? { id: customer.id, firstName: customer.first_name, lastName: customer.last_name } : null,
+    messageId: smsResult.messageId
   })
 })
 

@@ -336,7 +336,7 @@ vehicles.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'ser
     const body = await c.req.json()
     const {
       registration, vin, make, model, year,
-      color, fuelType, engineSize
+      color, fuelType, engineSize, customerId
     } = body
 
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() }
@@ -348,6 +348,22 @@ vehicles.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'ser
     if (color !== undefined) updateData.color = color
     if (fuelType !== undefined) updateData.fuel_type = fuelType
     if (engineSize !== undefined) updateData.engine_size = engineSize
+
+    // Allow (re)linking a customer to the vehicle. Validate ownership when provided;
+    // null/empty is ignored so this endpoint never silently unlinks a customer.
+    if (customerId) {
+      const { data: customer } = await supabaseAdmin
+        .from('customers')
+        .select('id')
+        .eq('id', customerId)
+        .eq('organization_id', auth.orgId)
+        .single()
+
+      if (!customer) {
+        return c.json({ error: 'Customer not found' }, 404)
+      }
+      updateData.customer_id = customerId
+    }
 
     const { data: vehicle, error } = await supabaseAdmin
       .from('vehicles')

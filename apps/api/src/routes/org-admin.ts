@@ -5,6 +5,7 @@
 
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { buildResetPasswordLink } from '../lib/authLinks.js'
 import { authMiddleware, requireOrgAdmin } from '../middleware/auth.js'
 import {
   checkSiteLimit,
@@ -645,7 +646,7 @@ orgAdminRoutes.post('/:id/users/:userId/resend-invite', requireOrgAdmin(), async
     success: true,
     message: 'Invite resent',
     // In production, don't return this - send via email
-    resetLink: linkData.properties?.action_link
+    resetLink: buildResetPasswordLink(linkData.properties)
   })
 })
 

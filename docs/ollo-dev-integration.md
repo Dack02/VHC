@@ -28,11 +28,21 @@ is the local `feedback_tickets.id`, so retries never duplicate. Inbound comments
 dedupe on the Ollo Dev comment id; replies that originated in Inspect are never
 echoed back (`metadata.origin = 'ingest'` on the Ollo Dev side).
 
+**Where it appears in Ollo Dev:** feedback lands as a **project ticket** in the
+project bound to the API key (`permissions.project_id`) — visible on that
+project's **Tickets** tab and the Overview "Open tickets" counter. (Internally
+it's a `discussions` row with `category='tickets'`; a dev can use Ollo Dev's
+existing "convert to bug" flow.) Status mirrored back is coarse — **open /
+closed** — since project tickets only have open/closed/archived. Dev replies
+reach the reporter only when sent **client-facing** (the same "reply to
+requester" action that emails an external requester); internal notes stay
+internal.
+
 ## One-time setup
 
 ### 1. Deploy the migrations (via the normal pipelines)
 - **Ollo Dev:** `supabase/migrations/20260406000000_ticket_integration.sql`
-  (adds `tickets.source_app/external_ref`, `ticket_comments.metadata`,
+  (adds `discussions.source_app/external_ref`, `discussion_replies.metadata`,
   `webhooks.source_app`, `webhook_deliveries` outbox).
 - **Ollo Inspect (VHC):** `supabase/migrations/20260617000000_feedback_tickets.sql`
   (feedback tables, `ollo-feedback` storage bucket, `platform_settings` id=`ollo_dev`).
@@ -47,7 +57,7 @@ With an org admin/owner JWT against the Ollo Dev API (replace `:orgId`):
 # Create an API key scoped to this product (returns the raw key ONCE)
 curl -X POST "$OLLO_DEV/api/v1/orgs/:orgId/api-keys" \
   -H "Authorization: Bearer <admin-jwt>" -H "Content-Type: application/json" \
-  -d '{"name":"Ollo Inspect feedback","permissions":{"source_app":"ollo-inspect"}}'
+  -d '{"name":"Ollo Inspect feedback","permissions":{"source_app":"ollo-inspect","project_id":"<ollo-inspect-project-uuid>"}}'
 
 # Register the callback webhook (use the SAME secret you set on Inspect below)
 curl -X POST "$OLLO_DEV/api/v1/orgs/:orgId/webhooks" \

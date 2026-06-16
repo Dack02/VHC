@@ -87,7 +87,8 @@ olloDevWebhookRoutes.post('/', async (c) => {
         updated_at: new Date().toISOString(),
         last_synced_at: new Date().toISOString(),
       }
-      if (status) update.status = status
+      // Project tickets are discussions (open/closed/archived); map archived to 'closed'.
+      if (status) update.status = status === 'archived' ? 'closed' : status
       // Backfill the Ollo Dev id if the create response was lost.
       if (!ticket.ollo_dev_ticket_id && payload.ticket?.id) update.ollo_dev_ticket_id = payload.ticket.id
 

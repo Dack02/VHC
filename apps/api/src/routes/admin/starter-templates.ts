@@ -7,7 +7,7 @@
 
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
-import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
+import { superAdminMiddleware, logSuperAdminActivity, getClientIp } from '../../middleware/auth.js'
 
 const starterTemplatesRoutes = new Hono()
 
@@ -99,7 +99,7 @@ starterTemplatesRoutes.post('/mark-as-starter', async (c) => {
       'check_templates',
       organization_id,
       { count: count || template_ids.length, template_ids },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -138,7 +138,7 @@ starterTemplatesRoutes.post('/unmark', async (c) => {
       'check_templates',
       organization_id,
       { count: count || template_ids.length, template_ids },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -177,7 +177,7 @@ starterTemplatesRoutes.post('/organizations/:id/copy', async (c) => {
       'check_templates',
       targetOrgId,
       { copied: data, source_org_id: source_organization_id },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -252,7 +252,7 @@ starterTemplatesRoutes.patch('/platform/starter-settings', async (c) => {
       'platform_settings',
       undefined,
       settings,
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 

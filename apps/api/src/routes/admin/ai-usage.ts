@@ -5,7 +5,7 @@
 
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
-import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
+import { superAdminMiddleware, logSuperAdminActivity, getClientIp } from '../../middleware/auth.js'
 import { logger } from '../../lib/logger.js'
 
 const aiUsage = new Hono()
@@ -136,7 +136,7 @@ aiUsage.get('/summary', async (c) => {
       'ai_usage_logs',
       undefined,
       { period },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -271,7 +271,7 @@ aiUsage.get('/by-organization', async (c) => {
       'ai_usage_logs',
       undefined,
       { period, sort },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -395,7 +395,7 @@ aiUsage.get('/logs', async (c) => {
       'ai_usage_logs',
       undefined,
       { filters: { organization_id, action, from, to }, page: pageNum },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -482,7 +482,7 @@ aiUsage.get('/export', async (c) => {
       'ai_usage_logs',
       undefined,
       { period, format, rowCount: rows.length },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -599,7 +599,7 @@ aiUsage.post('/alerts/:id/acknowledge', async (c) => {
       'ai_cost_alerts',
       id,
       {},
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 

@@ -308,6 +308,36 @@ export function requireSiteAdmin() {
 }
 
 /**
+ * Normalise a client IP for storage in a Postgres `inet` column.
+ *
+ * Behind Cloudflare + Railway the `X-Forwarded-For` header is a comma-separated proxy
+ * chain ("client, proxy1, proxy2"). A Postgres `inet` column only accepts a single
+ * address, so storing the raw header throws `invalid input syntax for type inet` and
+ * the write is lost. Take the first hop (the originating client) and reject anything
+ * that isn't IP-shaped, so a malformed value becomes NULL rather than failing the insert.
+ */
+export function normalizeIpForInet(ip?: string | null): string | null {
+  if (!ip) return null
+  const first = ip.split(',')[0]?.trim()
+  if (!first) return null
+  return /^[0-9a-fA-F:.]+$/.test(first) ? first : null
+}
+
+/**
+ * Read the originating client IP from a Hono request, sanitised for storage in a
+ * Postgres `inet` column (a single address, or `undefined` when absent/malformed).
+ *
+ * Always prefer this over reading `X-Forwarded-For` / `X-Real-IP` directly: behind
+ * Cloudflare + Railway those headers are a comma-separated proxy chain, and inserting
+ * the raw value into an `inet` column throws `invalid input syntax for type inet`.
+ */
+export function getClientIp(c: {
+  req: { header: (name: string) => string | undefined }
+}): string | undefined {
+  return normalizeIpForInet(c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP')) ?? undefined
+}
+
+/**
  * Log super admin activity
  */
 export async function logSuperAdminActivity(
@@ -326,7 +356,7 @@ export async function logSuperAdminActivity(
       target_type: targetType,
       target_id: targetId,
       details,
-      ip_address: ipAddress,
+      ip_address: normalizeIpForInet(ipAddress),
       user_agent: userAgent
     })
   } catch (error) {

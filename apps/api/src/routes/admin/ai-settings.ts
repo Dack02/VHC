@@ -6,7 +6,7 @@
 import { Hono } from 'hono'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '../../lib/supabase.js'
-import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
+import { superAdminMiddleware, logSuperAdminActivity, getClientIp } from '../../middleware/auth.js'
 import { encrypt, decrypt, isEncryptionConfigured } from '../../lib/encryption.js'
 import { logger } from '../../lib/logger.js'
 import { clearSettingsCache } from '../../services/ai-reasons.js'
@@ -75,7 +75,7 @@ aiSettings.get('/', async (c) => {
       'platform_ai_settings',
       undefined,
       {},
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -284,7 +284,7 @@ aiSettings.patch('/', async (c) => {
       'platform_ai_settings',
       undefined,
       { updated },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -371,7 +371,7 @@ aiSettings.post('/test', async (c) => {
       'platform_ai_settings',
       undefined,
       { success: true, model, duration },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -423,7 +423,7 @@ aiSettings.post('/test', async (c) => {
       'platform_ai_settings',
       undefined,
       { success: false, error: errorMessage, errorCode },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 

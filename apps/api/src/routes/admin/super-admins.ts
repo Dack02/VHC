@@ -8,7 +8,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { buildResetPasswordLink } from '../../lib/authLinks.js'
-import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
+import { superAdminMiddleware, logSuperAdminActivity, getClientIp } from '../../middleware/auth.js'
 import { sendEmail } from '../../services/email.js'
 import crypto from 'crypto'
 
@@ -17,7 +17,7 @@ const adminSuperAdmins = new Hono()
 adminSuperAdmins.use('*', superAdminMiddleware)
 
 const ipUa = (c: { req: { header: (k: string) => string | undefined } }) =>
-  [c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'), c.req.header('User-Agent')] as const
+  [getClientIp(c), c.req.header('User-Agent')] as const
 
 /** Send a super admin a "set your password" recovery-link email. Best-effort. */
 async function sendSuperAdminInviteEmail(email: string, name: string): Promise<boolean> {

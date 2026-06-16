@@ -75,8 +75,12 @@ export async function provisionOrganization(
     settings = {}
   } = params
 
-  if (!name || !adminEmail || !adminFirstName || !adminLastName) {
-    throw new ProvisionError('Name, adminEmail, adminFirstName, and adminLastName are required', 400)
+  // Last name is intentionally NOT required: Google (and other OAuth) profiles are
+  // frequently mononyms (a single display name, no family_name), and a blank surname
+  // is a valid value for the users table. Requiring it here previously broke
+  // self-service Google signup for single-word names with a generic "Sign-in failed".
+  if (!name || !adminEmail || !adminFirstName) {
+    throw new ProvisionError('Name, adminEmail, and adminFirstName are required', 400)
   }
 
   const orgSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')

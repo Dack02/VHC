@@ -7,7 +7,7 @@
 
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
-import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
+import { superAdminMiddleware, logSuperAdminActivity, getClientIp } from '../../middleware/auth.js'
 import { logger } from '../../lib/logger.js'
 
 const adminAudit = new Hono()
@@ -15,7 +15,7 @@ const adminAudit = new Hono()
 adminAudit.use('*', superAdminMiddleware)
 
 const ipUa = (c: { req: { header: (k: string) => string | undefined } }) =>
-  [c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'), c.req.header('User-Agent')] as const
+  [getClientIp(c), c.req.header('User-Agent')] as const
 
 interface AuditRow {
   id: string

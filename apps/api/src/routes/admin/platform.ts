@@ -5,7 +5,7 @@
 
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
-import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
+import { superAdminMiddleware, logSuperAdminActivity, getClientIp } from '../../middleware/auth.js'
 import { encrypt, decrypt, maskString, isEncryptionConfigured } from '../../lib/encryption.js'
 import { testSmsWithCredentials } from '../../services/sms.js'
 import { testEmailWithCredentials } from '../../services/email.js'
@@ -341,7 +341,7 @@ platformRoutes.patch('/settings', async (c) => {
       'platform_settings',
       'all',
       { sections: Object.keys(body) },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -418,7 +418,7 @@ platformRoutes.patch('/settings/:id', async (c) => {
     'platform_settings',
     id,
     { setting_key: id },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -567,7 +567,7 @@ platformRoutes.patch('/notifications', async (c) => {
       twilio_updated: !!body.twilio_auth_token,
       resend_updated: !!body.resend_api_key
     },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -602,7 +602,7 @@ platformRoutes.post('/notifications/test-sms', async (c) => {
       'platform_settings',
       'notifications',
       { success: result.success, to: body.to },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -643,7 +643,7 @@ platformRoutes.post('/notifications/test-email', async (c) => {
       'platform_settings',
       'notifications',
       { success: result.success, to: body.to },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -674,7 +674,7 @@ platformRoutes.post('/vehicle-lookup/test', async (c) => {
       'platform_settings',
       'vehicle_lookup',
       { success: result.success, sampleReg: sampleReg || null },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 

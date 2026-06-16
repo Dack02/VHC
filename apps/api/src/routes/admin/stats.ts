@@ -4,7 +4,7 @@
 
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
-import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
+import { superAdminMiddleware, logSuperAdminActivity, getClientIp } from '../../middleware/auth.js'
 
 const adminStatsRoutes = new Hono()
 
@@ -119,7 +119,7 @@ adminStatsRoutes.get('/stats', async (c) => {
     'platform',
     undefined,
     undefined,
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -271,7 +271,7 @@ adminStatsRoutes.get('/activity/export', async (c) => {
   await logSuperAdminActivity(
     superAdmin.id, 'export_admin_activity', 'super_admin_activity_log', undefined,
     { filters: { action, from, to, q }, rowCount: rows.length },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'), c.req.header('User-Agent')
+    getClientIp(c), c.req.header('User-Agent')
   )
 
   const filename = `admin-activity-${new Date().toISOString().split('T')[0]}.csv`
@@ -381,7 +381,7 @@ adminStatsRoutes.patch('/plans/:id', async (c) => {
     'subscription_plans',
     planId,
     { changes: Object.keys(updateData).filter(k => k !== 'updated_at') },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -462,7 +462,7 @@ adminStatsRoutes.delete('/plans/:id', async (c) => {
     'subscription_plans',
     planId,
     { name: existing.name },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -519,7 +519,7 @@ adminStatsRoutes.post('/impersonate/:userId', async (c) => {
       organizationName: user.organization?.name,
       reason
     },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -532,7 +532,7 @@ adminStatsRoutes.post('/impersonate/:userId', async (c) => {
       target_user_id: user.id,
       organization_id: user.organization_id,
       reason,
-      ip_address: c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      ip_address: getClientIp(c),
       user_agent: c.req.header('User-Agent'),
       expires_at: expiresAt
     })
@@ -589,7 +589,7 @@ adminStatsRoutes.delete('/impersonate', async (c) => {
     'users',
     undefined,
     { sessionId },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -652,7 +652,7 @@ adminStatsRoutes.post('/impersonate/sessions/:id/revoke', async (c) => {
 
   await logSuperAdminActivity(
     superAdmin.id, 'revoke_impersonation', 'impersonation_sessions', id, {},
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'), c.req.header('User-Agent')
+    getClientIp(c), c.req.header('User-Agent')
   )
   return c.json({ success: true })
 })

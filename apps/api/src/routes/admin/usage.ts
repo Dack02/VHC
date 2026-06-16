@@ -8,7 +8,7 @@
 
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
-import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
+import { superAdminMiddleware, logSuperAdminActivity, getClientIp } from '../../middleware/auth.js'
 import { logger } from '../../lib/logger.js'
 import { phoneVariants, findCustomerMatches } from '../../services/inbound-sms.js'
 import { formatPhoneNumber } from '../../services/sms.js'
@@ -90,7 +90,7 @@ async function getUsdToGbpRate(): Promise<number> {
 }
 
 const ipUa = (c: { req: { header: (k: string) => string | undefined } }) =>
-  [c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'), c.req.header('User-Agent')] as const
+  [getClientIp(c), c.req.header('User-Agent')] as const
 
 // =============================================================================
 // USAGE

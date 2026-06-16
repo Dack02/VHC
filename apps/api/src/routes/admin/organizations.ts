@@ -6,7 +6,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { buildResetPasswordLink } from '../../lib/authLinks.js'
-import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
+import { superAdminMiddleware, logSuperAdminActivity, getClientIp } from '../../middleware/auth.js'
 import { provisionOrganization, ProvisionError } from '../../services/provisioning.js'
 import { getOrgModuleDetail } from '../../services/modules.js'
 import { MODULE_MAP, isModuleKey, type ModuleKey } from '../../lib/modules.js'
@@ -215,7 +215,7 @@ adminOrgRoutes.get('/', async (c) => {
     'organizations',
     undefined,
     { filters: { status, plan, search }, count: orgs.length },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -261,7 +261,7 @@ adminOrgRoutes.post('/', async (c) => {
         planId: body.planId || 'starter',
         adminEmail: body.adminEmail
       },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -342,7 +342,7 @@ adminOrgRoutes.get('/:id', async (c) => {
     'organizations',
     orgId,
     { name: org.name },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -462,7 +462,7 @@ adminOrgRoutes.patch('/:id', async (c) => {
     'organizations',
     orgId,
     { changes: Object.keys(updateData).filter(k => k !== 'updated_at') },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -523,7 +523,7 @@ adminOrgRoutes.delete('/:id', async (c) => {
     'organizations',
     orgId,
     { name: org.name },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -574,7 +574,7 @@ adminOrgRoutes.post('/:id/suspend', async (c) => {
     'organizations',
     orgId,
     { name: org.name, reason, previousStatus: org.status },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -623,7 +623,7 @@ adminOrgRoutes.post('/:id/activate', async (c) => {
     'organizations',
     orgId,
     { name: org.name, previousStatus: org.status },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -735,7 +735,7 @@ adminOrgRoutes.patch('/:id/subscription', async (c) => {
       previousStatus: currentSub.status,
       newStatus: status || currentSub.status
     },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -1113,7 +1113,7 @@ adminOrgRoutes.post('/:id/users', async (c) => {
             'users',
             user.id,
             { email, organizationId: orgId, organizationName: org.name, role, note: 'Linked to existing auth account' },
-            c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+            getClientIp(c),
             c.req.header('User-Agent')
           )
 
@@ -1164,7 +1164,7 @@ adminOrgRoutes.post('/:id/users', async (c) => {
       'users',
       user.id,
       { email, organizationId: orgId, organizationName: org.name, role },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -1318,7 +1318,7 @@ adminOrgRoutes.get('/:id/ai-settings', async (c) => {
       'organization_ai_settings',
       orgId,
       {},
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -1414,7 +1414,7 @@ adminOrgRoutes.patch('/:id/ai-settings', async (c) => {
       'organization_ai_settings',
       orgId,
       { changes: Object.keys(updateData).filter(k => k !== 'updated_at'), organizationName: org.name },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -1483,7 +1483,7 @@ adminOrgRoutes.post('/:id/ai-settings/reset-period', async (c) => {
       'organization_ai_settings',
       orgId,
       { organizationName: org.name, previous },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -1533,7 +1533,7 @@ adminOrgRoutes.get('/:id/modules', async (c) => {
     'organization_settings',
     orgId,
     {},
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -1608,7 +1608,7 @@ adminOrgRoutes.patch('/:id/modules', async (c) => {
     'organization_settings',
     orgId,
     { organizationName: org.name, changes: Object.keys(overrides) },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 

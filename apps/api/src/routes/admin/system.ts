@@ -7,7 +7,7 @@
 
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
-import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
+import { superAdminMiddleware, logSuperAdminActivity, getClientIp } from '../../middleware/auth.js'
 import { isEncryptionConfigured } from '../../lib/encryption.js'
 import {
   checkRedisConnection,
@@ -133,7 +133,7 @@ adminSystem.get('/health', async (c) => {
 
   await logSuperAdminActivity(
     superAdmin.id, 'view_system_health', 'platform', undefined, { include },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'), c.req.header('User-Agent')
+    getClientIp(c), c.req.header('User-Agent')
   )
 
   return c.json(result)

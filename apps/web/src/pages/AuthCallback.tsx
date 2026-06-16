@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { api } from '../lib/api'
@@ -49,7 +49,6 @@ function Card({ children }: { children: React.ReactNode }) {
 }
 
 export default function AuthCallback() {
-  const navigate = useNavigate()
   const { loginWithSessionData } = useAuth()
 
   const [phase, setPhase] = useState<'working' | 'needs_signup' | 'disabled' | 'error'>('working')
@@ -63,14 +62,22 @@ export default function AuthCallback() {
   const tokensRef = useRef<Tokens | null>(null)
   const ranRef = useRef(false)
 
-  // Store the app session and route exactly like the password login page does.
+  // Adopt the OAuth session as the app session, then hard-redirect to the destination.
+  //
+  // We deliberately do NOT sign out of the Supabase client: the app reuses these exact
+  // tokens as its own session (and refreshes them via the API), so revoking them would
+  // kill the session we just created.
+  //
+  // A full-page redirect (not client-side navigate) re-boots the app with the freshly
+  // persisted session — AuthProvider hydrates `user` from localStorage on its first
+  // render, so there's no timing window where ProtectedLayout sees a null user and
+  // bounces to /login, and every top-level provider (branding, socket, modules)
+  // initialises cleanly. Mirrors the full reload switchOrganization already relies on.
   const finishAuthenticated = (data: AuthenticatedPayload) => {
     loginWithSessionData(data as Parameters<typeof loginWithSessionData>[0])
-    // Drop the transient Supabase session (local only — must NOT revoke the refresh
-    // token, which our API still uses to refresh the app session).
-    supabase.auth.signOut({ scope: 'local' }).catch(() => {})
 
     const user = data.user
+    let target = '/'
     if (user?.isSuperAdmin) {
       const sessionStr = localStorage.getItem('vhc_session')
       if (sessionStr) {
@@ -85,14 +92,11 @@ export default function AuthCallback() {
           })
         )
       }
-      navigate('/', { replace: true })
-      return
+    } else if (user?.isOrgAdmin && user.organization?.onboardingCompleted === false) {
+      target = '/onboarding'
     }
-    if (user?.isOrgAdmin && user.organization?.onboardingCompleted === false) {
-      navigate('/onboarding', { replace: true })
-      return
-    }
-    navigate('/', { replace: true })
+
+    window.location.replace(target)
   }
 
   const runExchange = async (extra?: { organizationName: string; acceptTerms: boolean }) => {

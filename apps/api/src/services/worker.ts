@@ -25,6 +25,7 @@ import { runDmsImport } from '../jobs/dms-import.js'
 import { sendEmail, sendHealthCheckReadyEmail, sendReminderEmail, sendCustomerResponseNotification, sendWorkflowStatusNotification, RepairItemResponse } from './email.js'
 import { sendSms, sendHealthCheckReadySms, sendReminderSms, sendCustomerResponseNotificationSms, recordOutboundSms } from './sms.js'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { suppressAutomatedComms } from '../lib/comms-guard.js'
 import { WS_EVENTS } from './websocket.js'
 import { sendPushNotification } from './web-push.js'
 
@@ -764,6 +765,12 @@ async function processStaffNotification(data: StaffNotificationJob) {
  * Process reminder
  */
 async function processReminder(data: SendReminderJob) {
+  // Skip scheduled reminders when automated comms are suppressed (e.g. on dev).
+  if (suppressAutomatedComms()) {
+    console.log('[Reminder] Suppressed via SUPPRESS_AUTOMATED_COMMS — skipping scheduled reminder send')
+    return
+  }
+
   // Get health check details
   const { data: healthCheck } = await supabaseAdmin
     .from('health_checks')
@@ -1107,6 +1114,11 @@ const dailySmsOverviewWorker = new Worker(
   QUEUE_NAMES.DAILY_SMS_OVERVIEW,
   async (job: Job<DailySmsOverviewJob>) => {
     console.log(`Processing daily SMS overview job ${job.id}: org ${job.data.organizationId}`)
+
+    if (suppressAutomatedComms()) {
+      console.log(`[Daily SMS Overview] Suppressed via SUPPRESS_AUTOMATED_COMMS — skipping send for org ${job.data.organizationId}`)
+      return
+    }
 
     const { sendDailySmsOverview } = await import('./daily-sms-overview.js')
     await sendDailySmsOverview(job.data.organizationId)

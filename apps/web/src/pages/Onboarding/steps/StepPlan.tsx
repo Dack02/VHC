@@ -27,14 +27,6 @@ interface PlansResponse {
   trialEndsAt: string | null
 }
 
-const CURRENCY_SYMBOLS: Record<string, string> = { GBP: '£', USD: '$', EUR: '€' }
-
-function formatPrice(amount: number | null, currency: string): string {
-  if (amount === null || amount === undefined) return '—'
-  const symbol = CURRENCY_SYMBOLS[currency] || `${currency} `
-  return `${symbol}${Number(amount).toFixed(0)}`
-}
-
 function formatLimit(value: number | null): string {
   if (value === null || value === undefined || value < 0) return 'Unlimited'
   return value.toLocaleString()
@@ -90,8 +82,8 @@ export default function StepPlan({ token, onNext }: Props) {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-900">Choose your plan</h2>
-        <p className="text-gray-500 mt-1">Pick the plan that fits your business. You can change it later in Settings.</p>
+        <h2 className="text-xl font-semibold text-gray-900">Choose your plan to try</h2>
+        <p className="text-gray-500 mt-1">Your free trial is already active — just pick the plan you'd like to explore. You won't be charged, and you can change it anytime in Settings.</p>
       </div>
 
       {/* Free-trial banner */}
@@ -100,9 +92,9 @@ export default function StepPlan({ token, onNext }: Props) {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
         </svg>
         <div className="text-sm text-green-800">
-          <p className="font-medium">Every plan starts with a 1-month free trial</p>
+          <p className="font-medium">1-month free trial — no credit card required</p>
           <p className="mt-0.5">
-            You won't be charged today{trialDate ? <> — your free trial runs until <strong>{trialDate}</strong></> : ''}.
+            You won't be charged{trialDate ? <> — your free trial runs until <strong>{trialDate}</strong></> : ' today'}.
           </p>
         </div>
       </div>
@@ -143,8 +135,7 @@ export default function StepPlan({ token, onNext }: Props) {
                 </div>
                 {plan.description && <p className="text-sm text-gray-500 mt-1">{plan.description}</p>}
                 <div className="mt-3">
-                  <span className="text-2xl font-bold text-gray-900">{formatPrice(plan.priceMonthly, plan.currency)}</span>
-                  <span className="text-gray-500 text-sm"> /mo after trial</span>
+                  <span className="text-lg font-semibold text-green-700">Free for 1 month</span>
                 </div>
                 <ul className="mt-4 space-y-1.5 text-sm text-gray-600">
                   <li className="flex justify-between"><span>Sites</span><span className="font-medium text-gray-900">{formatLimit(plan.maxSites)}</span></li>
@@ -169,7 +160,7 @@ export default function StepPlan({ token, onNext }: Props) {
         </button>
       </div>
 
-      <p className="mt-4 text-center text-xs text-gray-400">You can change or cancel your plan anytime from Settings → Subscription.</p>
+      <p className="mt-4 text-center text-xs text-gray-400">No credit card required. You can change or cancel anytime from Settings → Subscription.</p>
     </div>
   )
 }

@@ -3,6 +3,8 @@
  * Visual display of tyre tread depth and specifications for PDF generation
  */
 
+import { tyrePositionHeading } from '../../utils/positions.js'
+
 interface TyreCardOptions {
   itemName?: string
   value: Record<string, unknown> | null | undefined
@@ -85,33 +87,6 @@ function getBarWidth(value: number | null): number {
 }
 
 /**
- * Parse tyre position from item name
- */
-function parsePosition(itemName?: string): string {
-  if (!itemName) return 'TYRE'
-
-  const lower = itemName.toLowerCase()
-
-  // Check for specific positions
-  if (lower.includes('front') && lower.includes('left')) return 'FRONT LEFT TYRE'
-  if (lower.includes('front') && lower.includes('right')) return 'FRONT RIGHT TYRE'
-  if (lower.includes('rear') && lower.includes('left')) return 'REAR LEFT TYRE'
-  if (lower.includes('rear') && lower.includes('right')) return 'REAR RIGHT TYRE'
-
-  // Check for N/S O/S naming
-  if (lower.includes('n/s') && lower.includes('front')) return 'N/S FRONT TYRE'
-  if (lower.includes('o/s') && lower.includes('front')) return 'O/S FRONT TYRE'
-  if (lower.includes('n/s') && lower.includes('rear')) return 'N/S REAR TYRE'
-  if (lower.includes('o/s') && lower.includes('rear')) return 'O/S REAR TYRE'
-
-  // Generic front/rear
-  if (lower.includes('front')) return 'FRONT TYRE'
-  if (lower.includes('rear')) return 'REAR TYRE'
-
-  return itemName.toUpperCase()
-}
-
-/**
  * Render tread depth bar
  */
 function renderTreadBar(
@@ -150,7 +125,7 @@ export function renderTyreMeasurementCard(options: TyreCardOptions): string {
   // Check if we have any measurements
   if (data.outer === null && data.middle === null && data.inner === null) return ''
 
-  const positionLabel = parsePosition(itemName)
+  const positionLabel = tyrePositionHeading(itemName)
 
   // Calculate lowest reading and remaining legal tread
   const readings = [data.outer, data.middle, data.inner].filter((v): v is number => v !== null)

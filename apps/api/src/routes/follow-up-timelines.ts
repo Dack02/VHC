@@ -5,11 +5,15 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import { renderFollowUpSampleFromTemplates } from '../services/follow-up-engine.js'
+import { sendSms } from '../services/sms.js'
+import { sendEmail } from '../services/email.js'
 
 const timelines = new Hono()
 timelines.use('*', authMiddleware)
 
 const VALID_ACTIONS = ['send_sms', 'send_email', 'send_both', 'manual_call', 'auto_close']
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const mapStep = (s: any) => ({
@@ -180,6 +184,64 @@ timelines.delete('/:id', authorize(['super_admin', 'org_admin', 'site_admin']), 
     .eq('id', id)
   if (error) return c.json({ error: error.message }, 500)
   return c.json({ success: true })
+})
+
+// POST /:id/preview — render a branded sample of the message being edited.
+// Templates come from the body so the preview reflects unsaved edits; blank
+// templates fall back to the seeded sample copy. Read-only (no message sent).
+timelines.post('/:id/preview', async (c) => {
+  const auth = c.get('auth')
+  const orgId = c.req.param('orgId')
+  if (orgId !== auth.orgId) return c.json({ error: 'Organisation not found' }, 404)
+
+  const body = await c.req.json().catch(() => ({}))
+  const channel = body.channel === 'email' ? 'email' : 'sms'
+  const sample = await renderFollowUpSampleFromTemplates(orgId, channel, {
+    smsBody: typeof body.sms_body === 'string' ? body.sms_body : null,
+    emailSubject: typeof body.email_subject === 'string' ? body.email_subject : null,
+    emailBody: typeof body.email_body === 'string' ? body.email_body : null,
+  })
+  return c.json(sample)
+})
+
+// POST /:id/test-send — send a rendered sample of this timeline's message to a
+// recipient, using the templates passed in (reflects unsaved edits).
+timelines.post('/:id/test-send', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
+  const auth = c.get('auth')
+  const orgId = c.req.param('orgId')
+  if (orgId !== auth.orgId) return c.json({ error: 'Organisation not found' }, 404)
+
+  const body = await c.req.json().catch(() => ({}))
+  const channel = body.channel === 'email' ? 'email' : 'sms'
+  const to = (body.to || '').trim()
+  if (!to) return c.json({ error: 'A recipient is required' }, 400)
+
+  const templates = {
+    smsBody: typeof body.sms_body === 'string' ? body.sms_body : null,
+    emailSubject: typeof body.email_subject === 'string' ? body.email_subject : null,
+    emailBody: typeof body.email_body === 'string' ? body.email_body : null,
+  }
+
+  if (channel === 'sms') {
+    const sample = await renderFollowUpSampleFromTemplates(orgId, 'sms', templates)
+    const result = await sendSms(to, sample.sms || '', orgId)
+    return result.success
+      ? c.json({ success: true, message: `Sample SMS sent to ${to}` })
+      : c.json({ success: false, error: result.error || 'Failed to send test SMS' })
+  }
+
+  if (!EMAIL_RE.test(to)) return c.json({ error: 'A valid email address is required' }, 400)
+  const sample = await renderFollowUpSampleFromTemplates(orgId, 'email', templates)
+  const result = await sendEmail({
+    to,
+    subject: sample.subject || 'Sample follow-up',
+    html: sample.html || '',
+    text: sample.text || '',
+    organizationId: orgId,
+  })
+  return result.success
+    ? c.json({ success: true, message: `Sample email sent to ${to}` })
+    : c.json({ success: false, error: result.error || 'Failed to send test email' })
 })
 
 export default timelines

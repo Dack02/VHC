@@ -141,7 +141,7 @@ export default function WorkshopStatuses() {
         <Link to="/settings" className="text-sm text-gray-500 hover:text-gray-700">← Settings</Link>
         <div className="flex items-center justify-between mt-2">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Workshop Statuses</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Job Statuses</h1>
             <p className="text-gray-600 mt-1">
               Operational statuses shown as coloured flags on workshop board cards.
             </p>

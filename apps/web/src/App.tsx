@@ -1,10 +1,11 @@
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { AuthProvider } from './contexts/AuthContext'
+import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { SuperAdminProvider } from './contexts/SuperAdminContext'
 import { BrandingProvider } from './contexts/BrandingContext'
 import { SocketProvider } from './contexts/SocketContext'
 import { ToastProvider } from './contexts/ToastContext'
+import { useModules } from './contexts/ModulesContext'
 import { PageErrorBoundary } from './components/ErrorBoundary'
 import ProtectedLayout from './layouts/ProtectedLayout'
 import DashboardLayout from './layouts/DashboardLayout'
@@ -101,6 +102,7 @@ const ServicePackages = lazy(() => import('./pages/ServicePackages/ServicePackag
 const DailySmsOverview = lazy(() => import('./pages/Settings/DailySmsOverview'))
 const LibraryGapReport = lazy(() => import('./pages/Settings/LibraryGapReport'))
 const WorkshopBoard = lazy(() => import('./pages/WorkshopBoard/WorkshopBoard'))
+const TileStatus = lazy(() => import('./pages/TileStatus/TileStatusPage'))
 const WorkshopStatuses = lazy(() => import('./pages/Settings/WorkshopStatuses'))
 const WorkshopBoardSettings = lazy(() => import('./pages/Settings/WorkshopBoardSettings'))
 const TimeTrackingSettings = lazy(() => import('./pages/Settings/TimeTrackingSettings'))
@@ -117,6 +119,20 @@ function PageLoader() {
       <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
     </div>
   )
+}
+
+// Landing: send advisors/managers to the Tile Status page (the role-centre
+// overview) when the Workshop Board module is on; everyone else (and technicians)
+// to the classic Dashboard. Waits for modules to resolve to avoid a flash.
+function HomeLanding() {
+  const { isEnabled, loading } = useModules()
+  const { user } = useAuth()
+  if (loading) return <PageLoader />
+  const role = user?.role || ''
+  const canSeeTiles =
+    isEnabled('workshop_board') &&
+    ['super_admin', 'org_admin', 'site_admin', 'service_advisor'].includes(role)
+  return <Navigate to={canSeeTiles ? '/tiles' : '/dashboard'} replace />
 }
 
 function App() {
@@ -171,7 +187,9 @@ function App() {
                     {/* Main app routes */}
                     <Route element={<ProtectedLayout />}>
                       <Route element={<DashboardLayout />}>
-                        <Route path="/" element={<Dashboard />} />
+                        <Route path="/" element={<HomeLanding />} />
+                        <Route path="/dashboard" element={<Dashboard />} />
+                        <Route path="/tiles" element={<RequireModule module="workshop_board"><TileStatus /></RequireModule>} />
                         <Route path="/dashboard/technicians" element={<TechnicianWorkload />} />
                         <Route path="/today" element={<Today />} />
                         <Route path="/upcoming" element={<Upcoming />} />

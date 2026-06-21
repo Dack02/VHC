@@ -160,7 +160,7 @@ export default function WorkshopBoardSettings() {
         <h1 className="text-2xl font-bold text-gray-900 mt-2">Workshop Planner</h1>
         <p className="text-gray-600 mt-1">
           Working day, columns and capacity for this site's board ({user?.site?.name || 'your site'}). Statuses are managed in{' '}
-          <Link to="/settings/workshop-statuses" className="text-primary hover:underline">Workshop Statuses</Link>.
+          <Link to="/settings/workshop-statuses" className="text-primary hover:underline">Job Statuses</Link>.
         </p>
       </div>
 

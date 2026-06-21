@@ -325,19 +325,32 @@ followUps.get('/:id', async (c) => {
   }
 })
 
-// POST /api/v1/follow-ups/:id/log-call — record a manual call attempt
+// POST /api/v1/follow-ups/:id/log-call — log a manual contact, note, or defer.
+//
+// Two distinct behaviours, chosen by channel + whether a defer was requested:
+//   • A plain NOTE (channel 'note', no call-back) is an internal annotation —
+//     it records a 'note' event and leaves the case exactly where it is in the
+//     cadence (no status change, no attempt count, no reschedule).
+//   • A contact attempt (channel phone/sms/email) — or any save that carries a
+//     call-back/snooze — takes the case over for manual follow-up and reschedules
+//     next_action_at (e.g. "left a voicemail, chase again in 3 days").
+// Closing with an outcome is the separate /close action.
 followUps.post('/:id/log-call', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
   try {
     const auth = c.get('auth')
     const id = c.req.param('id')
     const body = await c.req.json()
-    const { disposition_id, notes, callback_date } = body
+    const { channel, disposition_id, notes, callback_date, snooze_days } = body
+
+    const channels = ['phone', 'sms', 'email', 'note']
+    const ch = channels.includes(channel) ? channel : 'phone'
+    const isNote = ch === 'note'
 
     const caseRow = await getCaseForOrg(id, auth.orgId)
     if (!caseRow) return c.json({ error: 'Follow-up case not found' }, 404)
 
-    // Resolve disposition + snooze
-    let snoozeDays: number | null = null
+    // Resolve disposition (may carry a configured snooze for contact attempts).
+    let dispSnoozeDays: number | null = null
     let dispositionName = ''
     if (disposition_id) {
       const { data: disp } = await supabaseAdmin
@@ -348,45 +361,73 @@ followUps.post('/:id/log-call', authorize(['super_admin', 'org_admin', 'site_adm
         .eq('is_active', true)
         .maybeSingle()
       if (!disp) return c.json({ error: 'Disposition not found' }, 404)
-      snoozeDays = disp.snooze_days
+      dispSnoozeDays = disp.snooze_days
       dispositionName = disp.name
     }
 
+    // Work out an optional defer target: explicit call-back date wins, then an
+    // explicit snooze in days, then the disposition's configured snooze.
     const now = new Date()
-    let nextActionAt: Date = now
+    const explicitSnooze = Number(snooze_days)
+    let deferTo: Date | null = null
     if (callback_date) {
       const cb = new Date(callback_date)
-      if (!isNaN(cb.getTime())) nextActionAt = cb
-    } else if (snoozeDays && snoozeDays > 0) {
-      nextActionAt = new Date(now.getTime() + snoozeDays * 86400000)
+      if (!isNaN(cb.getTime())) deferTo = cb
+    } else if (Number.isFinite(explicitSnooze) && explicitSnooze > 0) {
+      deferTo = new Date(now.getTime() + explicitSnooze * 86400000)
+    } else if (dispSnoozeDays && dispSnoozeDays > 0) {
+      deferTo = new Date(now.getTime() + dispSnoozeDays * 86400000)
     }
 
-    await supabaseAdmin
-      .from('follow_up_cases')
-      .update({
-        status: 'manual',
-        manual_attempts: (caseRow.manual_attempts || 0) + 1,
-        last_contacted_at: now.toISOString(),
-        next_action_at: nextActionAt.toISOString(),
-        updated_at: now.toISOString(),
+    // Pure note: annotate and leave the cadence untouched.
+    if (isNote && !deferTo) {
+      await supabaseAdmin.from('follow_up_events').insert({
+        case_id: id,
+        organization_id: auth.orgId,
+        event_type: 'note',
+        channel: 'note',
+        body: notes?.trim() || null,
+        metadata: { channel: 'note' },
+        created_by: auth.user.id,
       })
-      .eq('id', id)
+      return c.json({ success: true })
+    }
+
+    // Contact attempt and/or explicit defer: take the case over for manual
+    // follow-up and reschedule. A note that also defers reschedules but is not
+    // counted as a contact attempt.
+    const nextActionAt = deferTo ?? now
+    const update: Record<string, unknown> = {
+      status: 'manual',
+      next_action_at: nextActionAt.toISOString(),
+      updated_at: now.toISOString(),
+    }
+    if (!isNote) {
+      update.manual_attempts = (caseRow.manual_attempts || 0) + 1
+      update.last_contacted_at = now.toISOString()
+    }
+    await supabaseAdmin.from('follow_up_cases').update(update).eq('id', id)
 
     await supabaseAdmin.from('follow_up_events').insert({
       case_id: id,
       organization_id: auth.orgId,
-      event_type: 'call_logged',
-      channel: 'phone',
+      event_type: isNote ? 'note' : 'contact_logged',
+      channel: ch,
       disposition_id: disposition_id || null,
       body: notes?.trim() || null,
-      metadata: { disposition: dispositionName, callbackDate: callback_date || null },
+      metadata: {
+        channel: ch,
+        disposition: dispositionName || null,
+        callbackDate: callback_date || null,
+        snoozedTo: deferTo ? deferTo.toISOString() : null,
+      },
       created_by: auth.user.id,
     })
 
     return c.json({ success: true, nextActionAt: nextActionAt.toISOString() })
   } catch (err) {
-    console.error('Log call error:', err)
-    return c.json({ error: 'Failed to log call' }, 500)
+    console.error('Log contact error:', err)
+    return c.json({ error: 'Failed to log contact' }, 500)
   }
 })
 

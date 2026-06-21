@@ -10,7 +10,7 @@ import {
   relativeDue,
   STATUS_META,
 } from './types'
-import FollowUpDetailDrawer from './FollowUpDetailDrawer'
+import FollowUpDetailModal from './FollowUpDetailModal'
 
 const PAGE_SIZE = 50
 
@@ -274,7 +274,7 @@ export default function FollowUpList() {
       )}
 
       {selectedId && (
-        <FollowUpDetailDrawer
+        <FollowUpDetailModal
           caseId={selectedId}
           onClose={() => setSelectedId(null)}
           onChanged={refresh}

@@ -220,7 +220,7 @@ export function MyBoard() {
 
         {expanded && !completed && (
           <div className="mt-3 pt-3 border-t border-gray-100 space-y-3">
-            {/* Workshop status picker */}
+            {/* Job status picker */}
             <div>
               <p className="text-xs font-medium text-gray-500 mb-1.5">Set status</p>
               <div className="flex flex-wrap gap-1.5">

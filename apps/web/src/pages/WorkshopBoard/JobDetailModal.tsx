@@ -313,7 +313,7 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
                     board column) and the read-only VHC pipeline stage. */}
                 <div className="space-y-2">
                   <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Job state</label>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Vehicle status</label>
                     <select
                       value={card.jobState}
                       onChange={e => handleJobStateChange(e.target.value)}
@@ -341,10 +341,10 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
                   </div>
                 </div>
 
-                {/* Workshop status + priority + hours */}
+                {/* Job status + priority + hours */}
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Workshop status</label>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Job status</label>
                     <div className="flex items-center gap-2">
                       {currentStatus && (
                         <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: currentStatus.colour }} />

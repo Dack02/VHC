@@ -18,8 +18,10 @@
 import crypto from 'node:crypto'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { logger } from '../lib/logger.js'
-import { sendSms } from './sms.js'
+import { sendSms, formatPhoneNumber } from './sms.js'
 import { sendEmail, getOrganizationBranding } from './email.js'
+import { getSmsCredentials } from './credentials.js'
+import { emitToOrganization, emitToHealthCheck, WS_EVENTS } from './websocket.js'
 import { suppressAutomatedComms } from '../lib/comms-guard.js'
 
 // ---------------------------------------------------------------------------
@@ -53,6 +55,21 @@ function addDays(date: Date, days: number): Date {
 
 function todayStart(): Date {
   return startOfDay(new Date())
+}
+
+// Treat a date-only "due"/"deferral" value as a plain calendar date pinned to UTC
+// midnight. Date-only strings ('2026-06-25') parse as UTC midnight, but snapping
+// them to *local* midnight and re-serialising via toISOString() rolled the date
+// back a day whenever the process ran ahead of UTC (e.g. UK summer time) — the
+// anchor_date drift bug. Working in UTC keeps a calendar date stable regardless
+// of the server timezone.
+function calendarDate(d: string | Date): Date {
+  const dt = new Date(d)
+  return new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()))
+}
+// Serialise a Date to a plain 'YYYY-MM-DD' calendar string (UTC).
+function dateStr(d: Date): string {
+  return d.toISOString().slice(0, 10)
 }
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -315,7 +332,13 @@ function computeStepDate(
   minOffset: number
 ): Date {
   if (anchor === 'due_date' && anchorDate) {
-    return startOfDay(addDays(anchorDate, step.offset_days))
+    // Calendar-date math in UTC so the scheduled day matches the anchor exactly,
+    // independent of the server's timezone.
+    return new Date(Date.UTC(
+      anchorDate.getUTCFullYear(),
+      anchorDate.getUTCMonth(),
+      anchorDate.getUTCDate() + step.offset_days
+    ))
   }
   // No due date (or deferral-date timeline): normalise so the earliest step
   // starts at creation, preserving the spacing between steps.
@@ -461,7 +484,7 @@ function itemValue(it: DeferredItem): number {
 
 function itemAnchor(it: DeferredItem): Date | null {
   const d = it.deferred_until || it.follow_up_date
-  return d ? startOfDay(new Date(d)) : null
+  return d ? calendarDate(d) : null
 }
 
 async function createCasesForOrg(organizationId: string): Promise<number> {
@@ -572,7 +595,7 @@ async function createCasesForOrg(organizationId: string): Promise<number> {
         timeline_id: tlRow.id,
         status: 'active',
         current_step_order: 0,
-        anchor_date: anchorDate ? anchorDate.toISOString().slice(0, 10) : null,
+        anchor_date: anchorDate ? dateStr(anchorDate) : null,
         next_action_at: nextActionAt.toISOString(),
         deferred_value_snapshot: value,
         item_count: hcItems.length,
@@ -603,7 +626,7 @@ async function createCasesForOrg(organizationId: string): Promise<number> {
 
     await logEvent(caseRow.id, organizationId, 'system', {
       body: `Follow-up case created from ${hcItems.length} deferred item(s) — ${gbp(value)}`,
-      metadata: { healthCheckId: hc.id, anchorDate: anchorDate ? anchorDate.toISOString().slice(0, 10) : null },
+      metadata: { healthCheckId: hc.id, anchorDate: anchorDate ? dateStr(anchorDate) : null },
     })
     created++
   }
@@ -699,6 +722,70 @@ async function buildContext(c: CaseRow): Promise<{
 // Execute one timeline step for a case
 // ---------------------------------------------------------------------------
 
+/**
+ * Mirror a successfully-sent follow-up SMS into the two-way conversation store
+ * (sms_messages) and emit the same socket event the rest of the app uses, so the
+ * automated reminder shows up in the customer conversation (Follow-Up modal +
+ * Messages page) — not just the activity log. Best-effort: failures are logged,
+ * never thrown, so they can't break the sweep.
+ */
+async function recordOutboundSms(
+  c: CaseRow,
+  toMobile: string,
+  body: string,
+  res: { success: boolean; messageId?: string; from?: string }
+): Promise<void> {
+  try {
+    const toNumber = formatPhoneNumber(toMobile)
+    let fromNumber = res.from || ''
+    if (!fromNumber) {
+      const creds = await getSmsCredentials(c.organization_id)
+      if (creds.credentials) fromNumber = creds.credentials.phoneNumber
+    }
+    const { data: stored } = await supabaseAdmin
+      .from('sms_messages')
+      .insert({
+        organization_id: c.organization_id,
+        health_check_id: c.health_check_id,
+        customer_id: c.customer_id,
+        direction: 'outbound',
+        from_number: fromNumber,
+        to_number: toNumber,
+        body,
+        twilio_sid: res.messageId || null,
+        twilio_status: 'sent',
+        is_read: true,
+        sent_by: null,
+        metadata: { source: 'follow_up' },
+      })
+      .select()
+      .single()
+
+    const payload = {
+      message: {
+        id: stored?.id,
+        direction: 'outbound',
+        from_number: fromNumber,
+        to_number: toNumber,
+        body,
+        twilio_sid: res.messageId || null,
+        twilio_status: 'sent',
+        is_read: true,
+        sent_by: null,
+        sender: null,
+        created_at: stored?.created_at || new Date().toISOString(),
+      },
+    }
+    emitToOrganization(c.organization_id, WS_EVENTS.SMS_SENT, payload)
+    if (c.health_check_id) emitToHealthCheck(c.health_check_id, WS_EVENTS.SMS_SENT, payload)
+  } catch (err) {
+    logger.error('Failed to record follow-up SMS to conversation thread', {
+      error: err instanceof Error ? err.message : String(err),
+      caseId: c.id,
+    })
+  }
+}
+
 async function executeStep(c: CaseRow, step: TimelineStep, allSteps: TimelineStep[], timeline: Timeline, simulate = false): Promise<void> {
   const org = c.organization_id
   const now = new Date().toISOString()
@@ -753,7 +840,11 @@ async function executeStep(c: CaseRow, step: TimelineStep, allSteps: TimelineSte
         const res = await sendSms(ctx.customer.mobile, body, org)
         await logComm(c.health_check_id, org, 'sms', ctx.customer.mobile, null, body, res)
         await logEvent(c.id, org, 'step_sent', { channel: 'sms', stepOrder: step.step_order, body, metadata: { success: res.success, error: res.error } })
-        if (res.success) contacted = true
+        if (res.success) {
+          contacted = true
+          // Mirror the reminder into the two-way conversation thread.
+          await recordOutboundSms(c, ctx.customer.mobile, body, res)
+        }
       }
     }
   }
@@ -1077,6 +1168,24 @@ export async function renderFollowUpSample(
     }
   }
 
+  return renderFollowUpSampleFromTemplates(organizationId, channel, {
+    smsBody: smsTpl,
+    emailSubject: emailSubjectTpl,
+    emailBody: emailBodyTpl,
+  })
+}
+
+/**
+ * Render a sample of an explicit set of templates with the org's branding and
+ * sample data. Used by the timeline editor's live email preview + per-timeline
+ * test send, so the preview reflects the step the admin is editing (including
+ * unsaved edits). Falls back to the seeded sample copy when a template is blank.
+ */
+export async function renderFollowUpSampleFromTemplates(
+  organizationId: string,
+  channel: 'sms' | 'email',
+  templates: { smsBody?: string | null; emailSubject?: string | null; emailBody?: string | null }
+): Promise<{ sms?: string; subject?: string; html?: string; text?: string }> {
   const branding = await getOrganizationBranding(organizationId)
   const base = process.env.PUBLIC_APP_URL || 'http://localhost:5183'
   const sampleDue = fmtDate(addDays(new Date(), 21))
@@ -1094,7 +1203,7 @@ export async function renderFollowUpSample(
   }
 
   if (channel === 'sms') {
-    return { sms: render(smsTpl || SAMPLE_SMS, vars) }
+    return { sms: render(templates.smsBody || SAMPLE_SMS, vars) }
   }
 
   const sampleItems: CaseItemSnapshot[] = [
@@ -1102,7 +1211,7 @@ export async function renderFollowUpSample(
     { name_snapshot: 'Air filter', value_snapshot: 45, due_date_snapshot: null },
     { name_snapshot: 'Wiper blades (pair)', value_snapshot: 115, due_date_snapshot: null },
   ]
-  const subject = render(emailSubjectTpl || SAMPLE_EMAIL_SUBJECT, vars)
-  const { html, text } = buildEmail(emailBodyTpl || SAMPLE_EMAIL_BODY, vars, sampleItems, branding)
+  const subject = render(templates.emailSubject || SAMPLE_EMAIL_SUBJECT, vars)
+  const { html, text } = buildEmail(templates.emailBody || SAMPLE_EMAIL_BODY, vars, sampleItems, branding)
   return { subject, html, text }
 }

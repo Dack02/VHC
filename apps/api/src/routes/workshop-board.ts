@@ -419,6 +419,175 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
 // Card moves and metadata
 // ============================================================================
 
+// ============================================================================
+// GET /tiles - Tile Status page aggregate (count + ageing per Job Status)
+// ============================================================================
+// One tile per active Job Status (always shown, even at 0), plus a "No job
+// status" tile for active jobs with none set. Each carries the live count, the
+// oldest job's calendar-days in that status, and breakdowns by Vehicle Status
+// (job_state) and VHC pipeline state. Aggregated in the DB (workshop_status_tiles).
+type WorkshopTile = {
+  statusId: string | null
+  name: string
+  colour: string | null
+  icon: string | null
+  sortOrder: number
+  count: number
+  oldestDays: number | null
+  vehicleStatus: Record<string, number>
+  vhcState: Record<string, number>
+}
+type TileAggRow = {
+  status_id: string | null
+  name: string
+  colour: string | null
+  icon: string | null
+  sort_order: number
+  count: number | string
+  oldest_days: number | null
+  vehicle_status: Record<string, number> | null
+  vhc_state: Record<string, number> | null
+}
+
+workshopBoard.get('/tiles', authorize([...ADVISOR_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const siteId = await resolveSiteId(c)
+    if (!siteId) return c.json({ error: 'No site available' }, 400)
+
+    await ensureStatusesSeeded(auth.orgId)
+    const advisorId = c.req.query('advisorId') || null
+
+    const { data: agg, error } = await supabaseAdmin.rpc('workshop_status_tiles', {
+      p_org_id: auth.orgId,
+      p_site_id: siteId,
+      p_advisor_id: advisorId
+    })
+    if (error) {
+      console.error('Workshop tiles aggregate error:', error)
+      return c.json({ error: 'Failed to load tiles' }, 500)
+    }
+
+    const aggById = new Map<string, TileAggRow>()
+    for (const row of (agg as TileAggRow[] | null) || []) {
+      aggById.set(row.status_id ?? '__none__', row)
+    }
+
+    // Every active status shows as a tile (empty ones at 0), in sort order.
+    const { data: statusRows } = await supabaseAdmin
+      .from('workshop_statuses')
+      .select('id, name, colour, icon, sort_order')
+      .eq('organization_id', auth.orgId)
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true })
+
+    const tiles: WorkshopTile[] = (statusRows || []).map((s): WorkshopTile => {
+      const a = aggById.get(s.id)
+      aggById.delete(s.id)
+      return {
+        statusId: s.id,
+        name: a?.name ?? s.name,
+        colour: a?.colour ?? s.colour,
+        icon: a?.icon ?? s.icon,
+        sortOrder: a?.sort_order ?? s.sort_order,
+        count: a ? Number(a.count) : 0,
+        oldestDays: a?.oldest_days ?? null,
+        vehicleStatus: a?.vehicle_status ?? {},
+        vhcState: a?.vhc_state ?? {}
+      }
+    })
+
+    // Leftover aggregate buckets have active jobs but aren't an active status:
+    // the null "No job status" bucket, or a status deactivated while still
+    // holding jobs. Keep them so no active job is hidden.
+    for (const a of aggById.values()) {
+      tiles.push({
+        statusId: a.status_id,
+        name: a.name,
+        colour: a.colour,
+        icon: a.icon,
+        sortOrder: a.sort_order,
+        count: Number(a.count),
+        oldestDays: a.oldest_days ?? null,
+        vehicleStatus: a.vehicle_status ?? {},
+        vhcState: a.vhc_state ?? {}
+      })
+    }
+
+    tiles.sort((x, y) => x.sortOrder - y.sortOrder)
+    return c.json({ siteId, tiles })
+  } catch (error) {
+    console.error('Workshop tiles error:', error)
+    return c.json({ error: 'Failed to load tiles' }, 500)
+  }
+})
+
+// GET /tiles/jobs - the active jobs behind one tile (drill-in list).
+// ?status=<uuid> for a Job Status, ?status=none for the "No job status" bucket.
+type TileJobRow = {
+  health_check_id: string
+  registration: string | null
+  make: string | null
+  model: string | null
+  customer_name: string | null
+  advisor_name: string | null
+  technician_name: string | null
+  job_state: string
+  vhc_status: string
+  days_in_status: number
+  promise_time: string | null
+  due_date: string | null
+}
+
+workshopBoard.get('/tiles/jobs', authorize([...ADVISOR_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const siteId = await resolveSiteId(c)
+    if (!siteId) return c.json({ error: 'No site available' }, 400)
+
+    const statusParam = c.req.query('status')
+    const noStatus = statusParam === 'none'
+    const statusId = noStatus || !statusParam ? null : statusParam
+    if (!noStatus && !statusId) {
+      return c.json({ error: 'A status query param is required (a status id or "none")' }, 400)
+    }
+    const advisorId = c.req.query('advisorId') || null
+
+    const { data, error } = await supabaseAdmin.rpc('workshop_status_tile_jobs', {
+      p_org_id: auth.orgId,
+      p_site_id: siteId,
+      p_status_id: statusId,
+      p_no_status: noStatus,
+      p_advisor_id: advisorId,
+      p_limit: 200
+    })
+    if (error) {
+      console.error('Workshop tile jobs aggregate error:', error)
+      return c.json({ error: 'Failed to load jobs' }, 500)
+    }
+
+    const jobs = ((data as TileJobRow[] | null) || []).map(j => ({
+      healthCheckId: j.health_check_id,
+      registration: j.registration,
+      make: j.make,
+      model: j.model,
+      customerName: j.customer_name,
+      advisorName: j.advisor_name,
+      technicianName: j.technician_name,
+      jobState: j.job_state,
+      vhcStatus: j.vhc_status,
+      daysInStatus: j.days_in_status,
+      promiseTime: j.promise_time,
+      dueDate: j.due_date
+    }))
+
+    return c.json({ siteId, jobs })
+  } catch (error) {
+    console.error('Workshop tile jobs error:', error)
+    return c.json({ error: 'Failed to load jobs' }, 500)
+  }
+})
+
 async function getHealthCheckForBoard(healthCheckId: string, orgId: string) {
   const { data } = await supabaseAdmin
     .from('health_checks')
@@ -683,6 +852,18 @@ workshopBoard.patch('/cards/:healthCheckId', authorize([...ALL_ROLES]), async (c
         if (!status) return c.json({ error: 'Workshop status not found' }, 404)
       }
       fields.workshop_status_id = body.workshopStatusId
+      // Stamp when the job ENTERS this status, so the Tile Status page's
+      // "days in status" ageing reflects the status change only - not unrelated
+      // card edits, nor re-selecting the same status.
+      const { data: existingCard } = await supabaseAdmin
+        .from('workshop_cards')
+        .select('workshop_status_id')
+        .eq('organization_id', auth.orgId)
+        .eq('health_check_id', healthCheckId)
+        .maybeSingle()
+      if (!existingCard || existingCard.workshop_status_id !== body.workshopStatusId) {
+        fields.workshop_status_changed_at = new Date().toISOString()
+      }
     }
     if ('priority' in body) {
       if (!['normal', 'high', 'urgent'].includes(body.priority)) {
@@ -1427,7 +1608,12 @@ workshopBoard.delete('/statuses/:id', authorize([...ADMIN_ROLES]), async (c) => 
     // deleting it, toggle it inactive via PATCH instead.)
     await supabaseAdmin
       .from('workshop_cards')
-      .update({ workshop_status_id: null, updated_at: new Date().toISOString() })
+      .update({
+        workshop_status_id: null,
+        // Reset the "entered status" stamp so a cleared card's ageing starts now.
+        workshop_status_changed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
       .eq('organization_id', auth.orgId)
       .eq('workshop_status_id', id)
 

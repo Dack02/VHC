@@ -67,7 +67,7 @@ const jobStateColors: Record<string, string> = {
   collected: 'bg-gray-100 text-gray-500'
 }
 
-// Job state shown on the working document - editable (a dropdown) for users who
+// Vehicle status (the job_state field) shown on the working document - editable (a dropdown) for users who
 // can change it, otherwise a read-only badge. Writes go through the same
 // workshop-board endpoint the Kanban board uses.
 function JobStateControl({ jobState, editable, onChange }: { jobState: string; editable: boolean; onChange?: (value: string) => void }) {
@@ -419,7 +419,7 @@ export default function HealthCheckDetail() {
     }
   }
 
-  // Workshop job state - reuses the same endpoint the workshop board uses, so
+  // Vehicle status (job_state) - reuses the same endpoint the workshop board uses, so
   // the board updates live too. Server enforces the technician-own-job rule.
   const handleJobStateChange = async (jobState: string) => {
     if (!session?.accessToken || !id) return
@@ -430,9 +430,9 @@ export default function HealthCheckDetail() {
         body: { jobState }
       })
       await fetchData({ silent: true })
-      toast.success(`Job state set to ${jobStateLabels[jobState] || jobState}`)
+      toast.success(`Vehicle status set to ${jobStateLabels[jobState] || jobState}`)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update job state')
+      toast.error(err instanceof Error ? err.message : 'Failed to update vehicle status')
     }
   }
 
@@ -1393,9 +1393,9 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
           </div>
         </div>
 
-        {/* Workshop job state - the workshop lifecycle, separate from the VHC status above */}
+        {/* Vehicle status (job_state) - the workshop lifecycle, separate from the VHC status above */}
         <div>
-          <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Workshop</div>
+          <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Vehicle Status</div>
           <JobStateControl
             jobState={healthCheck.job_state || 'arrived'}
             editable={!!canEditJobState}

@@ -263,6 +263,16 @@ export default function Dashboard() {
   const initialLoading = loading && !overview
   const statusEntries = Object.entries(overview?.statusCounts || {})
 
+  // Header date + scope sub-line, e.g. "22 June 2026 · today at a glance"
+  const dateLabel = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+  const scopeLabel =
+    dateRange === 'today' ? 'today at a glance'
+    : dateRange === 'week' ? 'last 7 days at a glance'
+    : 'last 30 days at a glance'
+
+  const btnSecondary = 'inline-flex items-center gap-[7px] text-[13px] font-semibold text-[#5f636c] bg-white border border-[#e6e6e3] rounded-[10px] px-[14px] py-2 hover:bg-[#f7f7f5] transition-colors'
+  const btnPrimary = 'inline-flex items-center gap-[7px] text-[13px] font-semibold text-white bg-[#16181d] border border-[#16181d] rounded-[10px] px-[14px] py-2 hover:bg-[#16181d]/90 transition-colors'
+
   return (
     <div className="space-y-6">
       {/* Onboarding Reminder Banner */}
@@ -295,24 +305,27 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Header: title, live status, scope + quick links */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <span className={`flex items-center gap-1 text-xs ${isConnected ? 'text-rag-green' : 'text-gray-400'}`}>
-            <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-rag-green' : 'bg-gray-400'}`} />
-            {isConnected ? 'Live' : 'Offline'}
-          </span>
+      {/* Page header: title, live status, scope control + actions */}
+      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-[30px] font-extrabold tracking-[-0.025em] text-[#16181d] leading-none">Dashboard</h1>
+            <span className={`inline-flex items-center gap-1.5 text-[12px] font-semibold ${isConnected ? 'text-[#2c9367]' : 'text-[#a4a8b0]'}`}>
+              <span className={`w-[7px] h-[7px] rounded-full ${isConnected ? 'bg-[#2c9367]' : 'bg-[#a4a8b0]'}`} />
+              {isConnected ? 'Live' : 'Offline'}
+            </span>
+          </div>
+          <div className="text-[13.5px] text-[#7b7f88] mt-[5px]">{dateLabel} · {scopeLabel}</div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-          {/* Date Range Filter — scopes the flow KPIs */}
-          <div className="flex items-center rounded-lg overflow-hidden border border-gray-200">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Date-range segmented control — scopes the flow KPIs */}
+          <div className="flex items-center bg-white border border-[#e6e6e3] rounded-[10px] p-[3px] gap-[2px]">
             {([['today', 'Today'], ['week', '7 Days'], ['month', '30 Days']] as Array<[DateRange, string]>).map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => setDateRange(key)}
-                className={`px-3 py-1.5 text-sm font-medium ${
-                  dateRange === key ? 'bg-primary text-white' : 'bg-white text-gray-700 hover:bg-gray-100'
+                className={`text-[13px] rounded-[7px] px-[15px] py-[6px] transition-colors ${
+                  dateRange === key ? 'bg-[#16181d] text-white font-semibold' : 'text-[#7b7f88] font-medium hover:text-[#16181d]'
                 }`}
               >
                 {label}
@@ -320,36 +333,43 @@ export default function Dashboard() {
             ))}
           </div>
           {dmsEnabled && (
-            <button
-              onClick={() => setShowDmsModal(true)}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 rounded-lg flex items-center gap-2"
-            >
+            <button onClick={() => setShowDmsModal(true)} className={btnSecondary}>
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
               DMS Import
             </button>
           )}
-          <Link to="/health-checks" className="px-4 py-2 bg-primary text-white text-sm font-medium hover:bg-primary/90 rounded-lg">
-            Kanban Board
+          <Link to="/health-checks" className={btnSecondary}>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+              <rect width="18" height="18" x="3" y="3" rx="2" />
+              <path d="M9 3v18" />
+              <path d="M15 3v18" />
+            </svg>
+            Kanban
           </Link>
-          <Link to="/today" className="px-4 py-2 bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 rounded-lg">
+          <Link to="/today" className={btnPrimary}>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+              <path d="M8 2v4" />
+              <path d="M16 2v4" />
+              <rect width="18" height="18" x="3" y="4" rx="2" />
+              <path d="M3 10h18" />
+              <path d="m9 16 2 2 4-4" />
+            </svg>
             Today View
           </Link>
-          <Link to="/reports" className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200 rounded-lg">
-            Reports
-          </Link>
+          <Link to="/reports" className={btnSecondary}>Reports</Link>
         </div>
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700">
+        <div className="bg-[#fbeceb] border border-[#efc9c7] rounded-[14px] px-[22px] py-4 text-[13px] text-[#cf4a45]">
           {error}
-          <button onClick={fetchOverview} className="ml-4 underline">Retry</button>
+          <button onClick={fetchOverview} className="ml-4 underline font-semibold">Retry</button>
         </div>
       )}
 
-      {/* Zone 1: what needs a human right now */}
+      {/* Action Center — what needs a human right now (full width) */}
       {!initialLoading && (
         <ActionCenter
           awaitingCheckin={awaitingCheckin}
@@ -367,19 +387,21 @@ export default function Dashboard() {
         />
       )}
 
-      {/* Zone 2: how work is flowing */}
+      {/* Today + This month */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        <TodayKpis
+          metrics={overview?.metrics || null}
+          todayRag={overview?.todayRag || null}
+          dateRange={dateRange}
+          loading={initialLoading}
+        />
+        <MonthlyKpis data={overview?.monthlyKpis || null} loading={initialLoading} />
+      </div>
+
+      {/* Health check pipeline (full width) */}
       <PipelineStrip counts={overview?.columnCounts || null} loading={initialLoading} />
-      <TodayKpis
-        metrics={overview?.metrics || null}
-        todayRag={overview?.todayRag || null}
-        dateRange={dateRange}
-        loading={initialLoading}
-      />
 
-      {/* Zone 3: are we on track this month */}
-      <MonthlyKpis data={overview?.monthlyKpis || null} loading={initialLoading} />
-
-      {/* Zone 4: the team */}
+      {/* Technician workload + With customer */}
       <TeamPanel
         technicians={overview?.technicians || []}
         customerQueue={overview?.queues.customerQueue || null}
@@ -387,15 +409,15 @@ export default function Dashboard() {
 
       {/* Status breakdown — diagnostic detail, collapsed by default */}
       {statusEntries.length > 0 && (
-        <details className="bg-white border border-gray-200 rounded-xl shadow-sm">
-          <summary className="p-4 cursor-pointer select-none text-sm font-medium text-gray-700 hover:text-gray-900">
-            Status Breakdown ({statusEntries.reduce((sum, [, count]) => sum + count, 0)} health checks in period)
+        <details className="bg-white border border-[#ededeb] rounded-[18px]">
+          <summary className="p-5 cursor-pointer select-none text-[13px] font-semibold text-[#5f636c] hover:text-[#16181d]">
+            Status breakdown ({statusEntries.reduce((sum, [, count]) => sum + count, 0)} health checks in period)
           </summary>
-          <div className="px-4 pb-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          <div className="px-5 pb-5 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
             {statusEntries.map(([status, count]) => (
               <div key={status} className="text-center">
-                <div className="text-xl font-bold text-gray-900 tabular-nums">{count}</div>
-                <div className="text-xs text-gray-500 capitalize">{formatStatusLabel(status)}</div>
+                <div className="text-xl font-extrabold text-[#16181d] tabular-nums">{count}</div>
+                <div className="text-[11px] text-[#a4a8b0] capitalize mt-0.5">{formatStatusLabel(status)}</div>
               </div>
             ))}
           </div>

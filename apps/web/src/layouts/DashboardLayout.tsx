@@ -94,7 +94,7 @@ export default function DashboardLayout() {
       to: '/tiles',
       label: 'Tiles',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
         </svg>
       ),
@@ -105,7 +105,7 @@ export default function DashboardLayout() {
       to: '/dashboard',
       label: 'Dashboard',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
         </svg>
       ),
@@ -115,7 +115,7 @@ export default function DashboardLayout() {
       to: '/health-checks',
       label: 'Health Checks',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
         </svg>
       ),
@@ -125,7 +125,7 @@ export default function DashboardLayout() {
       to: '/workshop-board',
       label: 'Workshop',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
         </svg>
       ),
@@ -136,7 +136,7 @@ export default function DashboardLayout() {
       to: '/notes',
       label: 'Notes',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
         </svg>
       ),
@@ -147,7 +147,7 @@ export default function DashboardLayout() {
       to: '/upcoming',
       label: 'Upcoming',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
       ),
@@ -157,7 +157,7 @@ export default function DashboardLayout() {
       to: '/customers',
       label: 'Customers',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
         </svg>
       ),
@@ -167,7 +167,7 @@ export default function DashboardLayout() {
       to: '/follow-ups',
       label: 'Follow-Ups',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
         </svg>
       ),
@@ -179,7 +179,7 @@ export default function DashboardLayout() {
       to: '/messages',
       label: 'Messages',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
         </svg>
       ),
@@ -191,7 +191,7 @@ export default function DashboardLayout() {
       to: '/parts',
       label: 'Parts',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
         </svg>
       ),
@@ -201,7 +201,7 @@ export default function DashboardLayout() {
       to: '/reports',
       label: 'Reports',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
         </svg>
       ),
@@ -212,7 +212,7 @@ export default function DashboardLayout() {
       to: '/templates',
       label: 'Templates',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
         </svg>
       ),
@@ -222,7 +222,7 @@ export default function DashboardLayout() {
       to: '/service-packages',
       label: 'Packages',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
         </svg>
       ),
@@ -232,7 +232,7 @@ export default function DashboardLayout() {
       to: '/users',
       label: 'Users',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
         </svg>
       ),
@@ -242,7 +242,7 @@ export default function DashboardLayout() {
       to: '/settings',
       label: 'Settings',
       icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
@@ -263,21 +263,16 @@ export default function DashboardLayout() {
 
   const navLinkClass = (path: string) => {
     const active = isActive(path)
-    const base = 'flex items-center py-2 text-sm font-medium rounded-lg transition-all duration-150'
+    const base = 'flex items-center text-[13.5px] rounded-[9px] transition-colors duration-150'
+    const tone = active
+      ? 'bg-primary/10 text-primary font-semibold'
+      : 'text-[#5f636c] font-medium hover:bg-[#f3f3f1]'
 
     if (isCollapsed) {
-      return `${base} justify-center px-2 ${
-        active
-          ? 'bg-primary text-white'
-          : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-      }`
+      return `${base} justify-center px-2 py-[9px] ${tone}`
     }
 
-    return `${base} px-3 ${
-      active
-        ? 'bg-primary text-white'
-        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-    }`
+    return `${base} gap-[11px] px-[11px] py-[9px] ${tone}`
   }
 
   // Tooltip component for collapsed nav
@@ -293,11 +288,18 @@ export default function DashboardLayout() {
   )
 
   // Sidebar width classes
-  const sidebarWidth = isCollapsed ? 'w-16' : 'w-52'
-  const mainMargin = isCollapsed ? 'md:ml-16' : 'md:ml-52'
+  const sidebarWidth = isCollapsed ? 'w-16' : 'w-[234px]'
+  const mainMargin = isCollapsed ? 'md:ml-16' : 'md:ml-[234px]'
+
+  // Brand monogram initials, e.g. "Central Garage" -> "CG"
+  const orgName = branding?.organizationName || user?.organization?.name || 'VHC'
+  const orgInitials =
+    orgName.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'V'
+  const userInitials =
+    `${user?.firstName?.charAt(0) || ''}${user?.lastName?.charAt(0) || ''}`.toUpperCase() || 'U'
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-[#f4f4f2]">
       {/* Mobile menu overlay */}
       {isMobileMenuOpen && (
         <div
@@ -320,33 +322,38 @@ export default function DashboardLayout() {
       {/* Sidebar */}
       <aside
         className={`
-          fixed top-0 left-0 h-full bg-white border-r border-gray-200 shadow-sm
+          fixed top-0 left-0 h-full bg-white border-r border-[#ededeb]
           flex flex-col z-50 transition-all duration-200 ease-in-out
           ${sidebarWidth}
           ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
         `}
       >
-        {/* Logo/Header area */}
-        <div className={`p-4 border-b border-gray-100 ${isCollapsed ? 'flex justify-center' : ''}`}>
+        {/* Brand area */}
+        <div className={`pt-5 pb-4 ${isCollapsed ? 'px-2 flex justify-center' : 'px-4'}`}>
           {isCollapsed ? (
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">
-                {(branding?.organizationName || user?.organization?.name || 'V').charAt(0)}
-              </span>
+            <div className="w-8 h-8 rounded-[9px] bg-[#16181d] text-white flex items-center justify-center font-extrabold text-[13px]">
+              {orgInitials.charAt(0)}
             </div>
+          ) : branding?.logoUrl ? (
+            <>
+              <img
+                src={branding.logoUrl}
+                alt={orgName}
+                className="h-10 w-auto max-w-full object-contain"
+              />
+              <OrgSwitcher />
+            </>
           ) : (
             <>
-              {branding?.logoUrl ? (
-                <img
-                  src={branding.logoUrl}
-                  alt={branding.organizationName}
-                  className="h-16 w-auto max-w-full object-contain"
-                />
-              ) : (
-                <h1 className="text-xl font-bold text-primary">
-                  {branding?.organizationName || user?.organization?.name || 'VHC'}
-                </h1>
-              )}
+              <div className="flex items-center gap-[11px] px-[7px]">
+                <div className="w-8 h-8 rounded-[9px] bg-[#16181d] text-white flex items-center justify-center font-extrabold text-[13px] tracking-wide flex-none">
+                  {orgInitials}
+                </div>
+                <div className="leading-tight min-w-0">
+                  <div className="text-[14px] font-bold text-[#16181d] truncate">{orgName}</div>
+                  <div className="text-[11px] font-medium text-[#a4a8b0]">Ollo Inspect</div>
+                </div>
+              </div>
               <OrgSwitcher />
             </>
           )}
@@ -365,25 +372,25 @@ export default function DashboardLayout() {
 
         {/* Navigation with scroll fade */}
         <div className="relative flex-1 overflow-hidden">
-          <nav ref={navRef} className={`h-full overflow-y-auto ${isCollapsed ? 'p-2' : 'p-4'} space-y-1`}>
+          <nav ref={navRef} className={`h-full overflow-y-auto ${isCollapsed ? 'p-2 space-y-1' : 'px-3 py-2 space-y-0.5'}`}>
             {/* Main Navigation */}
             {visibleMainNav.map(item => (
               <NavTooltip key={item.to} label={item.label}>
                 <Link to={item.to} className={navLinkClass(item.to)}>
-                  <span className={`relative ${isCollapsed ? '' : 'mr-3'}`}>
+                  <span className="relative flex items-center justify-center">
                     {item.icon}
                     {isCollapsed && item.badge != null && item.badge > 0 && (
-                      <span className="absolute -top-1.5 -right-1.5 bg-red-500 rounded-full h-2.5 w-2.5" />
+                      <span className="absolute -top-1.5 -right-1.5 bg-[#cf4a45] rounded-full h-2.5 w-2.5" />
                     )}
                   </span>
                   {!isCollapsed && (
                     <>
                       <span className="flex-1">{item.label}</span>
                       {item.badge != null && item.badge > 0 && (
-                        <span className={`ml-auto text-xs font-bold rounded-full h-5 min-w-5 flex items-center justify-center px-1 ${
+                        <span className={`text-[11px] font-semibold rounded-full min-w-[21px] text-center px-2 py-px ${
                           isActive(item.to)
-                            ? 'bg-white/20 text-white'
-                            : 'bg-red-500 text-white'
+                            ? 'bg-primary/15 text-primary'
+                            : 'bg-[#f0f0ee] text-[#7b7f88]'
                         }`}>
                           {item.badge > 99 ? '99+' : item.badge}
                         </span>
@@ -402,29 +409,25 @@ export default function DashboardLayout() {
         </div>
 
         {/* User Section */}
-        <div className={`border-t border-gray-100 ${isCollapsed ? 'p-2' : 'p-4'}`}>
+        <div className={`border-t border-[#f0f0ee] ${isCollapsed ? 'p-2' : 'px-3 py-3'}`}>
           {isCollapsed ? (
             <NavTooltip label={`${user?.firstName} ${user?.lastName}`}>
               <div className="flex justify-center mb-2">
-                <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
-                  <span className="text-white text-sm font-medium">
-                    {user?.firstName?.charAt(0) || 'U'}
-                  </span>
+                <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[13px] font-bold">
+                  {userInitials}
                 </div>
               </div>
             </NavTooltip>
           ) : (
-            <div className="flex items-center space-x-3 mb-3">
-              <div className="w-10 h-10 bg-primary rounded-full flex items-center justify-center flex-shrink-0">
-                <span className="text-white font-medium">
-                  {user?.firstName?.charAt(0) || 'U'}
-                </span>
+            <div className="flex items-center gap-[11px] px-[6px] mb-1.5">
+              <div className="w-[34px] h-[34px] rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-[13px] flex-none">
+                {userInitials}
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-gray-900 truncate">
+              <div className="leading-tight min-w-0">
+                <div className="text-[13px] font-semibold text-[#16181d] truncate">
                   {user?.firstName} {user?.lastName}
                 </div>
-                <div className="text-xs text-gray-400 capitalize">
+                <div className="text-[11px] text-[#a4a8b0] capitalize">
                   {user?.role?.replace('_', ' ')}
                 </div>
               </div>
@@ -433,9 +436,9 @@ export default function DashboardLayout() {
           <NavTooltip label="Sign out">
             <button
               onClick={handleLogout}
-              className={`w-full flex items-center ${isCollapsed ? 'justify-center' : ''} px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg transition-all duration-150`}
+              className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'gap-[11px]'} px-[11px] py-2 text-[13px] text-[#7b7f88] hover:bg-[#f3f3f1] rounded-[9px] transition-colors duration-150`}
             >
-              <svg className={`w-5 h-5 ${isCollapsed ? '' : 'mr-3'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
               </svg>
               {!isCollapsed && 'Sign out'}
@@ -446,7 +449,7 @@ export default function DashboardLayout() {
         {/* Collapse toggle button */}
         <button
           onClick={toggleCollapsed}
-          className="hidden md:flex items-center justify-center p-2 border-t border-gray-100 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-all duration-150"
+          className="hidden md:flex items-center justify-center p-2 border-t border-[#f0f0ee] text-[#a4a8b0] hover:text-[#5f636c] hover:bg-[#f7f7f5] transition-colors duration-150"
           aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
           <svg
@@ -465,24 +468,24 @@ export default function DashboardLayout() {
         {/* AI Limit Warning Banner */}
         <AILimitWarningBanner />
 
-        <header className="bg-white border-b border-gray-200 px-6 py-4 sticky top-0 z-20">
-          <div className="flex items-center justify-between">
+        <header className="bg-white border-b border-[#ededeb] h-[60px] flex items-center px-4 md:px-10 sticky top-0 z-20">
+          <div className="flex items-center justify-between w-full">
             <div className="flex items-center">
               {/* Spacer for mobile hamburger button */}
               <div className="w-10 md:hidden" />
-              {user?.site && (
-                <span className="text-sm text-gray-500">{user.site.name}</span>
-              )}
+              <span className="text-[13px] font-medium text-[#a4a8b0]">
+                {user?.site?.name ?? `${orgName} workspace`}
+              </span>
             </div>
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center gap-3.5">
               {/* Role badge */}
               {isOrgAdmin && (
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                <span className="inline-flex items-center px-3 py-[5px] rounded-full text-[12px] font-semibold text-primary bg-primary/10">
                   Org Admin
                 </span>
               )}
               {isSiteAdmin && !isOrgAdmin && (
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                <span className="inline-flex items-center px-3 py-[5px] rounded-full text-[12px] font-semibold text-[#3f7fd1] bg-[#3f7fd1]/10">
                   Site Admin
                 </span>
               )}
@@ -495,16 +498,18 @@ export default function DashboardLayout() {
         {/* Inner Suspense keeps the sidebar/header mounted while a lazy route
             chunk loads — without it, route chunks suspend against the app-level
             boundary and the whole layout flashes out on navigation. */}
-        <div className="flex-1 p-6 overflow-auto">
-          <Suspense
-            fallback={
-              <div className="flex min-h-[60vh] items-center justify-center">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-              </div>
-            }
-          >
-            <Outlet />
-          </Suspense>
+        <div className="flex-1 overflow-auto">
+          <div className="px-4 md:px-10 pt-6 md:pt-[34px] pb-10 md:pb-11 w-full">
+            <Suspense
+              fallback={
+                <div className="flex min-h-[60vh] items-center justify-center">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                </div>
+              }
+            >
+              <Outlet />
+            </Suspense>
+          </div>
         </div>
       </main>
 

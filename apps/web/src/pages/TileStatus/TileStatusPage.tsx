@@ -24,68 +24,66 @@ function ClockIcon() {
   )
 }
 
-function Chip({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 whitespace-nowrap">
-      {children}
-    </span>
-  )
+// "4 in workshop · 2 arrived" — top entries by count, with a "+N" overflow.
+function summarizeCounts(pairs: Array<{ label: string; count: number }>, max = 2): string {
+  const shown = pairs.slice(0, max).map(p => `${p.count} ${p.label.toLowerCase()}`)
+  const extra = pairs.length - max
+  if (extra > 0) shown.push(`+${extra}`)
+  return shown.join(' · ')
 }
 
 function TileCard({ tile, onClick }: { tile: Tile; onClick: () => void }) {
   const colour = tile.colour || GRAY
   const age = daysLabel(tile.oldestDays)
 
-  const vehicleEntries = VEHICLE_STATUS_ORDER
-    .filter(k => (tile.vehicleStatus?.[k] || 0) > 0)
-    .map(k => ({ label: vehicleStatusLabels[k] || k, count: tile.vehicleStatus[k] }))
-
-  const vhcEntries = Object.entries(tile.vhcState || {})
-    .filter(([, n]) => n > 0)
-    .sort((a, b) => b[1] - a[1])
-    .map(([k, n]) => ({ label: labelForVhc(k), count: n }))
+  const vehicle = summarizeCounts(
+    VEHICLE_STATUS_ORDER
+      .map(k => ({ label: vehicleStatusLabels[k] || k, count: tile.vehicleStatus?.[k] || 0 }))
+      .filter(p => p.count > 0)
+      .sort((a, b) => b.count - a.count)
+  )
+  const vhc = summarizeCounts(
+    Object.entries(tile.vhcState || {})
+      .map(([k, n]) => ({ label: labelForVhc(k), count: n }))
+      .filter(p => p.count > 0)
+      .sort((a, b) => b.count - a.count)
+  )
 
   return (
     <button
       onClick={onClick}
-      className="text-left bg-white border border-gray-200 rounded-xl shadow-sm p-4 hover:border-gray-300 hover:shadow transition-all w-full"
+      className="flex w-full text-left overflow-hidden bg-white border border-gray-200 rounded-xl shadow-sm hover:border-gray-300 hover:shadow transition-all"
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: colour }} />
-          <span className="font-medium text-gray-900 truncate">{tile.name}</span>
+      {/* Colour accent = the Job Status identity; text stays neutral so the count leads */}
+      <span className="w-1 self-stretch flex-shrink-0" style={{ backgroundColor: colour }} aria-hidden="true" />
+      <div className="flex-1 min-w-0 p-4">
+        <p className="text-sm font-medium text-gray-900 truncate mb-2.5">{tile.name}</p>
+        <div className="flex items-end justify-between gap-2 mb-3">
+          <span className="text-3xl font-medium text-gray-900 leading-none">{tile.count}</span>
+          {age && (
+            <span className="inline-flex items-center gap-1 text-xs text-gray-400 whitespace-nowrap">
+              <ClockIcon />
+              {age}
+            </span>
+          )}
         </div>
-        <span className="text-2xl font-bold text-gray-900 leading-none">{tile.count}</span>
+        {(vehicle || vhc) && (
+          <div className="border-t border-gray-100 pt-2.5 flex flex-col gap-1.5">
+            {vehicle && (
+              <div className="flex gap-2.5 items-baseline">
+                <span className="text-[11px] text-gray-400 w-12 flex-shrink-0">Vehicle</span>
+                <span className="text-[13px] text-gray-600 truncate">{vehicle}</span>
+              </div>
+            )}
+            {vhc && (
+              <div className="flex gap-2.5 items-baseline">
+                <span className="text-[11px] text-gray-400 w-12 flex-shrink-0">VHC</span>
+                <span className="text-[13px] text-gray-600 truncate">{vhc}</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
-
-      {age && (
-        <span className="inline-flex items-center gap-1 mt-2 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
-          <ClockIcon />
-          {age}
-        </span>
-      )}
-
-      {(vehicleEntries.length > 0 || vhcEntries.length > 0) && (
-        <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
-          {vehicleEntries.length > 0 && (
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-1">Vehicle status</div>
-              <div className="flex flex-wrap gap-1.5">
-                {vehicleEntries.map(e => <Chip key={e.label}>{e.label} {e.count}</Chip>)}
-              </div>
-            </div>
-          )}
-          {vhcEntries.length > 0 && (
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-1">VHC state</div>
-              <div className="flex flex-wrap gap-1.5">
-                {vhcEntries.slice(0, 4).map(e => <Chip key={e.label}>{e.label} {e.count}</Chip>)}
-                {vhcEntries.length > 4 && <Chip>+{vhcEntries.length - 4} more</Chip>}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
     </button>
   )
 }

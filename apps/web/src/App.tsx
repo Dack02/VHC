@@ -33,6 +33,11 @@ const CustomerDetail = lazy(() => import('./pages/Customers/CustomerDetail'))
 const HealthCheckList = lazy(() => import('./pages/HealthChecks/HealthCheckList'))
 const HealthCheckDetail = lazy(() => import('./pages/HealthChecks/HealthCheckDetail'))
 const NewHealthCheck = lazy(() => import('./pages/HealthChecks/NewHealthCheck'))
+const JobsheetList = lazy(() => import('./pages/Jobsheets/JobsheetList'))
+const NewJobsheet = lazy(() => import('./pages/Jobsheets/NewJobsheet'))
+const JobsheetDetail = lazy(() => import('./pages/Jobsheets/JobsheetDetail'))
+const BookingCodes = lazy(() => import('./pages/Settings/BookingCodes'))
+const ServiceTypes = lazy(() => import('./pages/Settings/ServiceTypes'))
 const TyreManufacturers = lazy(() => import('./pages/Admin/TyreManufacturers'))
 const TyreSizes = lazy(() => import('./pages/Admin/TyreSizes'))
 const InspectionThresholds = lazy(() => import('./pages/Admin/InspectionThresholds'))
@@ -211,6 +216,9 @@ function App() {
                         <Route path="/health-checks" element={<HealthCheckList />} />
                         <Route path="/health-checks/new" element={<NewHealthCheck />} />
                         <Route path="/health-checks/:id" element={<HealthCheckDetail />} />
+                        <Route path="/jobsheets" element={<RequireModule module="jobsheets"><JobsheetList /></RequireModule>} />
+                        <Route path="/jobsheets/new" element={<RequireModule module="jobsheets"><NewJobsheet /></RequireModule>} />
+                        <Route path="/jobsheets/:id" element={<RequireModule module="jobsheets"><JobsheetDetail /></RequireModule>} />
                         <Route path="/customers" element={<CustomerList />} />
                         <Route path="/customers/:id" element={<CustomerDetail />} />
                         <Route path="/messages" element={<RequireModule module="customer_comms"><Messages /></RequireModule>} />
@@ -256,6 +264,8 @@ function App() {
                         <Route path="/settings/daily-sms-overview" element={<DailySmsOverview />} />
                         <Route path="/settings/library-gap-report" element={<LibraryGapReport />} />
                         <Route path="/settings/workshop-statuses" element={<WorkshopStatuses />} />
+                        <Route path="/settings/booking-codes" element={<BookingCodes />} />
+                        <Route path="/settings/service-types" element={<ServiceTypes />} />
                         <Route path="/settings/workshop-board" element={<WorkshopBoardSettings />} />
                         <Route path="/settings/time-tracking" element={<TimeTrackingSettings />} />
                       </Route>

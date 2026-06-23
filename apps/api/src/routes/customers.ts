@@ -151,7 +151,7 @@ customers.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
   try {
     const auth = c.get('auth')
     const body = await c.req.json()
-    const { firstName, lastName, email, mobile, address, externalId, siteId } = body
+    const { firstName, lastName, email, mobile, phone, contactName, address, externalId, siteId } = body
 
     if (!firstName || !lastName) {
       return c.json({ error: 'First name and last name are required' }, 400)
@@ -166,6 +166,8 @@ customers.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         last_name: lastName,
         email,
         mobile,
+        phone,
+        contact_name: contactName,
         address,
         external_id: externalId
       })
@@ -182,6 +184,8 @@ customers.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
       lastName: customer.last_name,
       email: customer.email,
       mobile: customer.mobile,
+      phone: customer.phone,
+      contactName: customer.contact_name,
       address: customer.address,
       externalId: customer.external_id,
       createdAt: customer.created_at
@@ -438,13 +442,15 @@ customers.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     const auth = c.get('auth')
     const { id } = c.req.param()
     const body = await c.req.json()
-    const { firstName, lastName, email, mobile, address, externalId, notes } = body
+    const { firstName, lastName, email, mobile, phone, contactName, address, externalId, notes } = body
 
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (firstName !== undefined) updateData.first_name = firstName
     if (lastName !== undefined) updateData.last_name = lastName
     if (email !== undefined) updateData.email = email
     if (mobile !== undefined) updateData.mobile = mobile
+    if (phone !== undefined) updateData.phone = phone
+    if (contactName !== undefined) updateData.contact_name = contactName
     if (address !== undefined) updateData.address = address
     if (externalId !== undefined) updateData.external_id = externalId
     if (notes !== undefined) {

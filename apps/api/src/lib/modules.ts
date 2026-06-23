@@ -22,6 +22,7 @@ export type ModuleKey =
   | 'reports'
   | 'ai_generation'
   | 'vehicle_lookup'
+  | 'jobsheets'
 
 export interface ModuleDefinition {
   key: ModuleKey
@@ -42,7 +43,8 @@ export const MODULES: ModuleDefinition[] = [
   { key: 'customer_comms',     label: 'Customer Messaging', description: 'SMS & email customer communications', defaultOn: true },
   { key: 'reports',            label: 'Reports',            description: 'Reporting & analytics dashboards', defaultOn: true },
   { key: 'ai_generation',      label: 'AI Generation',      description: 'AI-assisted reason & note generation', defaultOn: true },
-  { key: 'vehicle_lookup',     label: 'Vehicle Data Lookup', description: 'DVSA MOT history & vehicle lookup by registration', defaultOn: true }
+  { key: 'vehicle_lookup',     label: 'Vehicle Data Lookup', description: 'DVSA MOT history & vehicle lookup by registration', defaultOn: true },
+  { key: 'jobsheets',          label: 'Jobsheets (GMS)',    description: 'Top-level booking document with attached health checks', defaultOn: false }
 ]
 
 export const MODULE_KEYS: ModuleKey[] = MODULES.map((m) => m.key)

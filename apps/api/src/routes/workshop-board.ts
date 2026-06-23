@@ -464,6 +464,7 @@ async function loadVhcLessFutureJobsheets(orgId: string, siteId: string, advisor
     .eq('organization_id', orgId)
     .eq('site_id', siteId)
     .eq('job_state', 'due_in')
+    .eq('is_draft', false)
     .is('deleted_at', null)
   if (advisorId) q = q.eq('advisor_id', advisorId)
   const { data, error } = await q

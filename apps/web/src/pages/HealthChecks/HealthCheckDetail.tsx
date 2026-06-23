@@ -28,6 +28,7 @@ import { InspectionTimer } from '../../components/InspectionTimer'
 import { JobTimeSummary, type JobTimeData } from '../../components/JobTimeSummary'
 import WorkshopNotesPanel from '../../components/WorkshopNotesPanel'
 import { MotHistoryPanel } from './components/MotHistoryPanel'
+import BookedWorkPanel from './components/BookedWorkPanel'
 import { useModules } from '../../contexts/ModulesContext'
 
 // Hook for online/offline detection
@@ -854,13 +855,16 @@ export default function HealthCheckDetail() {
       {/* Tab Content */}
       <div className="p-6">
         {activeTab === 'summary' && (
-          <SummaryTab
-            healthCheckId={id!}
-            sentAt={healthCheck.sent_at ?? null}
-            bookedRepairs={healthCheck.booked_repairs}
-            bookingNotes={healthCheck.notes}
-            onUpdate={silentRefresh}
-          />
+          <>
+            <BookedWorkPanel healthCheckId={id!} />
+            <SummaryTab
+              healthCheckId={id!}
+              sentAt={healthCheck.sent_at ?? null}
+              bookedRepairs={healthCheck.booked_repairs}
+              bookingNotes={healthCheck.notes}
+              onUpdate={silentRefresh}
+            />
+          </>
         )}
         {activeTab === 'mot' && (
           <MotHistoryPanel

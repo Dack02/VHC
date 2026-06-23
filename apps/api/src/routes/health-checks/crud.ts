@@ -236,6 +236,75 @@ crud.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_adv
 })
 
 // GET /:id - Get full details
+// GET /:id/booked-work - read-only booked work from the linked jobsheet (GMS).
+// Booked work lives on the jobsheet (repair_items.jobsheet_id, source='booking');
+// this surfaces it on the VHC as read-only context for whoever is inspecting/pricing.
+// Returns empty for a check with no jobsheet, so non-GMS checks are unaffected.
+crud.get('/:id/booked-work', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    const { data: hc } = await supabaseAdmin
+      .from('health_checks')
+      .select('id, jobsheet_id')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+    if (!hc) return c.json({ error: 'Health check not found' }, 404)
+    if (!hc.jobsheet_id) return c.json({ jobsheetId: null, jobsheetReference: null, workLines: [] })
+
+    const { data: js } = await supabaseAdmin
+      .from('jobsheets')
+      .select('id, reference')
+      .eq('id', hc.jobsheet_id)
+      .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .maybeSingle()
+
+    const { data: items } = await supabaseAdmin
+      .from('repair_items')
+      .select(`
+        id, name, total_inc_vat,
+        labour:repair_labour!repair_labour_repair_item_id_fkey(id, hours, total, labour_code:labour_codes(code)),
+        parts:repair_parts!repair_parts_repair_item_id_fkey(id, description, quantity, line_total)
+      `)
+      .eq('jobsheet_id', hc.jobsheet_id)
+      .eq('source', 'booking')
+      .is('parent_repair_item_id', null)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true })
+
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const workLines = ((items as any[]) || []).map((it) => ({
+      id: it.id,
+      name: it.name,
+      totalIncVat: parseFloat(it.total_inc_vat) || 0,
+      labour: (it.labour || []).map((l: any) => ({
+        id: l.id,
+        label: `${l.labour_code?.code || 'Labour'} ${parseFloat(l.hours) || 0}h`,
+        total: parseFloat(l.total) || 0
+      })),
+      parts: (it.parts || []).map((p: any) => ({
+        id: p.id,
+        description: p.description,
+        quantity: parseFloat(p.quantity) || 0,
+        lineTotal: parseFloat(p.line_total) || 0
+      }))
+    }))
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+
+    return c.json({
+      jobsheetId: js?.id ?? hc.jobsheet_id,
+      jobsheetReference: js?.reference ?? null,
+      workLines
+    })
+  } catch (error) {
+    console.error('Get booked work error:', error)
+    return c.json({ error: 'Failed to load booked work' }, 500)
+  }
+})
+
 crud.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {
     const auth = c.get('auth')

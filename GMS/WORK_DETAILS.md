@@ -24,6 +24,13 @@ Packages picker, booking-notes box, document totals); `JobsheetDetail.tsx` rende
 from the jobsheet (works with no VHC, "No VHC" chip); `NewJobsheet.tsx` gains the **Requires VHC** toggle +
 Booking Notes + package pre-load; `TileStatus/{types,TileStatusPage}` open jobsheet rows from Future Bookings.
 
+**Booked work on the VHC (read-only)** — booked work stays owned by the jobsheet, but the VHC now shows it as
+read-only context: new `GET /api/v1/health-checks/:id/booked-work` (in `health-checks/crud.ts`; returns the
+linked jobsheet's `source='booking'` lines + reference, empty when there's no jobsheet) + a
+`pages/HealthChecks/components/BookedWorkPanel.tsx` at the top of the VHC **Summary** tab (links to the
+jobsheet; hidden when there's no booked work). Reuses migration `20260623180000`'s `source`/`jobsheet_id` —
+**no new migration**.
+
 **Verified** — `tsc --noEmit` passes for API + web; web production build succeeds. Live verification pending
 deploy (dev DB lacks the new columns until the migration is pushed) + the `jobsheets` module being enabled.
 

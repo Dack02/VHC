@@ -60,6 +60,31 @@ API router + a Work Details panel reusing existing labour/parts/package/margin U
 > This **revises §7 below**: the linked VHC is now created **unless** `vhc_required=false` (opt-out at
 > booking), instead of always. Booked work survives a cancelled VHC because it lives on the jobsheet.
 
+### Phase 2.1 — One-screen booking + work via drafts (BUILT uncommitted, 2026-06-23)
+
+The New Jobsheet page now builds the booking **and** the priced work (labour/parts/packages) on a
+**single screen** (booking form left, live `WorkDetailsPanel` right) instead of "create → land on detail
+→ add work". Because a work line is a `repair_item` that needs a parent jobsheet id, the jobsheet is
+created as a **draft** the moment a vehicle + customer are chosen. Migration
+`20260623200000_jobsheet_drafts.sql` adds `jobsheets.is_draft` and makes the reference trigger fire on
+`INSERT OR UPDATE`, assigning `JS0000N` only when `reference IS NULL AND is_draft = false`.
+
+- **A draft is invisible + cheap:** no JS reference, no linked VHC, excluded from the jobsheets list and
+  the Future Bookings tile/drill-in. Abandoned drafts never burn a number or hit the workshop board.
+- **Commit** (`POST /jobsheets/:id/commit`, on "Create Jobsheet"): sets the booking fields, flips
+  `is_draft=false` (trigger assigns the reference), attaches booking codes, and kicks off the VHC
+  (shared `kickOffJobsheetVhc` helper). **Create** (`POST /jobsheets/draft`) takes just a vehicle.
+- **Discard** (`POST /jobsheets/:id/discard`, service-advisor accessible): hard-deletes a draft, cascading
+  to its work lines. Fired on **Cancel** and on in-app navigate-away. **Decision (Leo, 2026-06-23):
+  Cancel-discards only — no background sweep** (a closed tab may leave a draft, but it's invisible and
+  number-free). The old `POST /jobsheets` (create active directly) stays for back-compat.
+- Booking Notes + packages now live in the Work Details panel (removed from the New form). The form keeps
+  the "Requires VHC" toggle. `due_in_date` (NOT NULL) gets a `today()` placeholder on draft; the real
+  due-in is set at commit.
+
+> **Deploy dependency:** the new endpoints need the `is_draft` column, so browser testing is blocked until
+> `20260623200000` deploys to dev (via the pipeline push — **not** out-of-band MCP SQL).
+
 ---
 
 ## 1. Purpose & vision

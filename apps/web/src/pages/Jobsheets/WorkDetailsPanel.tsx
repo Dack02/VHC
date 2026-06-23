@@ -28,13 +28,14 @@ const ZERO: Totals = { labourTotal: 0, partsTotal: 0, subtotal: 0, vatAmount: 0,
 const money = (n: number) => `£${(n || 0).toFixed(2)}`
 
 export default function WorkDetailsPanel({
-  jobsheetId, token, organizationId, initialBookingNotes, onChange
+  jobsheetId, token, organizationId, initialBookingNotes, onChange, className = 'lg:col-span-2'
 }: {
   jobsheetId: string
   token: string
   organizationId: string | undefined
   initialBookingNotes: string | null
   onChange?: () => void
+  className?: string
 }) {
   const toast = useToast()
   const [lines, setLines] = useState<WorkLine[]>([])
@@ -142,7 +143,7 @@ export default function WorkDetailsPanel({
   const inspection = lines.filter(l => l.origin === 'inspection')
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 lg:col-span-2">
+    <div className={`bg-white border border-gray-200 rounded-xl shadow-sm p-5 ${className}`}>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-semibold text-gray-900">Work Details</h2>
         <div className="text-right">

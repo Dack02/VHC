@@ -102,6 +102,7 @@ jobsheets.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
       .from('jobsheets')
       .select(SELECT, { count: 'exact' })
       .eq('organization_id', auth.orgId)
+      .eq('is_draft', false)
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1)
@@ -190,6 +191,49 @@ function combineDueIn(dueInDate?: string, dueInTime?: string | null): string | n
   const time = typeof dueInTime === 'string' && dueInTime.trim() ? dueInTime.trim().slice(0, 5) : '08:00'
   const d = new Date(`${dueInDate}T${time}`)
   return isNaN(d.getTime()) ? null : d.toISOString()
+}
+
+// Today's date as YYYY-MM-DD — a placeholder due-in for drafts (due_in_date is NOT NULL;
+// the real value is set on commit). Drafts are invisible so the placeholder never surfaces.
+function todayDate(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+// Create the linked VHC for a jobsheet (status awaiting_arrival → job_state due_in) plus
+// its initial status-history row. Shared by direct create (POST /) and draft commit.
+async function kickOffJobsheetVhc(params: {
+  orgId: string; siteId: string | null; vehicleId: string; customerId: string
+  templateId: string | null; advisorId: string; mileage: number | null
+  dueInDate: string; dueInTime: string | null | undefined; userId: string
+  jobsheetId: string; jobsheetReference: string
+}): Promise<{ hc: { id: string; status: string; job_state: string; vhc_reference: string | null } | null; error: string | null }> {
+  const { data: hcRow, error: hcError } = await supabaseAdmin
+    .from('health_checks')
+    .insert({
+      organization_id: params.orgId,
+      site_id: params.siteId,
+      vehicle_id: params.vehicleId,
+      customer_id: params.customerId,
+      template_id: params.templateId,
+      advisor_id: params.advisorId,
+      mileage_in: params.mileage,
+      status: 'awaiting_arrival',
+      due_date: combineDueIn(params.dueInDate, params.dueInTime),
+      jobsheet_id: params.jobsheetId
+    })
+    .select('id, status, job_state, vhc_reference')
+    .single()
+  if (hcError || !hcRow) return { hc: null, error: hcError?.message || 'VHC creation failed' }
+
+  await supabaseAdmin.from('health_check_status_history').insert({
+    health_check_id: hcRow.id,
+    from_status: null,
+    to_status: hcRow.status,
+    changed_by: params.userId,
+    change_source: 'user',
+    notes: `Created from jobsheet ${params.jobsheetReference}`
+  })
+  return { hc: hcRow, error: null }
 }
 
 // POST / - create jobsheet + kick off the VHC
@@ -290,41 +334,19 @@ jobsheets.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
     //    the workshop "Due In" column on the right day.
     let hc: { id: string; status: string; job_state: string; vhc_reference: string | null } | null = null
     if (wantVhc) {
-      const { data: hcRow, error: hcError } = await supabaseAdmin
-        .from('health_checks')
-        .insert({
-          organization_id: auth.orgId,
-          site_id: resolvedSite,
-          vehicle_id: vehicleId,
-          customer_id: vehicle.customer_id,
-          template_id: templateIdResolved,
-          advisor_id: resolvedAdvisor,
-          mileage_in: mileage ?? null,
-          status: 'awaiting_arrival',
-          due_date: combineDueIn(dueInDate, dueInTime),
-          jobsheet_id: js.id
-        })
-        .select('id, status, job_state, vhc_reference')
-        .single()
-
+      const { hc: hcRow, error: hcError } = await kickOffJobsheetVhc({
+        orgId: auth.orgId, siteId: resolvedSite, vehicleId, customerId: vehicle.customer_id,
+        templateId: templateIdResolved, advisorId: resolvedAdvisor, mileage: mileage ?? null,
+        dueInDate, dueInTime, userId: auth.user.id, jobsheetId: js.id, jobsheetReference: js.reference
+      })
       if (hcError) {
         console.error('Jobsheet VHC creation failed:', hcError)
         return c.json(
-          { error: `Jobsheet ${js.reference} created, but starting its health check failed: ${hcError.message}`, jobsheetId: js.id },
+          { error: `Jobsheet ${js.reference} created, but starting its health check failed: ${hcError}`, jobsheetId: js.id },
           500
         )
       }
       hc = hcRow
-
-      // Initial status history for the VHC
-      await supabaseAdmin.from('health_check_status_history').insert({
-        health_check_id: hc.id,
-        from_status: null,
-        to_status: hc.status,
-        changed_by: auth.user.id,
-        change_source: 'user',
-        notes: `Created from jobsheet ${js.reference}`
-      })
     }
 
     // 4. Pre-load booked work from any selected packages (menu pricing at booking).
@@ -350,6 +372,195 @@ jobsheets.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
   } catch (error) {
     console.error('Create jobsheet error:', error)
     return c.json({ error: 'Failed to create jobsheet' }, 500)
+  }
+})
+
+// POST /draft - create a DRAFT jobsheet so the one-screen New page can attach work
+// lines (repair_items need a parent id). A draft has no reference and no VHC; both are
+// created on commit. Requires only a vehicle with a linked customer.
+jobsheets.post('/draft', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const body = await c.req.json().catch(() => ({}))
+    const { vehicleId, dueInDate, siteId, advisorId } = body
+
+    if (!vehicleId) return c.json({ error: 'Vehicle is required' }, 400)
+
+    const { data: vehicle } = await supabaseAdmin
+      .from('vehicles')
+      .select('id, customer_id')
+      .eq('id', vehicleId)
+      .eq('organization_id', auth.orgId)
+      .single()
+    if (!vehicle) return c.json({ error: 'Vehicle not found' }, 404)
+    if (!vehicle.customer_id) {
+      return c.json({ error: 'A customer must be linked to the vehicle before creating a jobsheet.' }, 400)
+    }
+
+    const { data: js, error } = await supabaseAdmin
+      .from('jobsheets')
+      .insert({
+        organization_id: auth.orgId,
+        site_id: siteId || auth.user.siteId || null,
+        customer_id: vehicle.customer_id,
+        vehicle_id: vehicleId,
+        advisor_id: advisorId || auth.user.id,
+        // Placeholder; the real due-in is set on commit (due_in_date is NOT NULL).
+        due_in_date: (typeof dueInDate === 'string' && dueInDate) ? dueInDate : todayDate(),
+        is_draft: true,
+        created_by: auth.user.id
+      })
+      .select('id')
+      .single()
+    if (error) return c.json({ error: error.message }, 500)
+
+    return c.json({ id: js.id }, 201)
+  } catch (error) {
+    console.error('Create jobsheet draft error:', error)
+    return c.json({ error: 'Failed to create jobsheet draft' }, 500)
+  }
+})
+
+// POST /:id/commit - finalise a draft: set the booking fields, flip is_draft -> false
+// (the trigger assigns the JS reference), attach booking codes, and kick off the VHC.
+jobsheets.post('/:id/commit', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const body = await c.req.json()
+    const {
+      dueInDate, dueInTime, serviceTypeId, advisorId, mileage, requestedDeliveryAt,
+      courtesyVehicleRequired, collectionAndDelivery, vehicleOnSite, customerContactNotes,
+      bookingCodeIds, templateId, siteId, vhcRequired, bookingNotes
+    } = body
+
+    if (!dueInDate) return c.json({ error: 'Due-in date is required' }, 400)
+
+    const { data: draft } = await supabaseAdmin
+      .from('jobsheets')
+      .select('id, vehicle_id, customer_id, site_id, advisor_id, is_draft')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .single()
+    if (!draft) return c.json({ error: 'Jobsheet not found' }, 404)
+    if (!draft.is_draft) return c.json({ error: 'This jobsheet has already been created', id }, 400)
+
+    const wantVhc = vhcRequired !== false
+    const resolvedSite = siteId || draft.site_id || auth.user.siteId || null
+    const resolvedAdvisor = advisorId || draft.advisor_id || auth.user.id
+
+    // Resolve the VHC template up front so we fail before committing if none exists.
+    let templateIdResolved: string | null = null
+    if (wantVhc) {
+      templateIdResolved = await resolveTemplateId(auth.orgId, templateId)
+      if (!templateIdResolved) {
+        return c.json({ error: 'No check template configured for this organisation. Add a template, or untick "Requires VHC".' }, 400)
+      }
+    }
+
+    // 1. Update booking fields + commit (is_draft -> false triggers reference assignment).
+    //    booking_notes is only touched when provided — the Work Details panel may have
+    //    already saved it on the draft.
+    const updateData: Record<string, unknown> = {
+      site_id: resolvedSite,
+      service_type_id: serviceTypeId || null,
+      advisor_id: resolvedAdvisor,
+      due_in_date: dueInDate,
+      due_in_time: (typeof dueInTime === 'string' && dueInTime.trim()) ? dueInTime.trim() : null,
+      mileage: mileage ?? null,
+      requested_delivery_at: requestedDeliveryAt || null,
+      courtesy_vehicle_required: !!courtesyVehicleRequired,
+      collection_and_delivery: !!collectionAndDelivery,
+      vehicle_on_site: !!vehicleOnSite,
+      customer_contact_notes: customerContactNotes || null,
+      vhc_required: wantVhc,
+      is_draft: false
+    }
+    if (bookingNotes !== undefined) updateData.booking_notes = bookingNotes || null
+
+    const { data: js, error: updError } = await supabaseAdmin
+      .from('jobsheets')
+      .update(updateData)
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .select()
+      .single()
+    if (updError || !js) return c.json({ error: updError?.message || 'Failed to commit jobsheet' }, 500)
+
+    // 2. Attach booking codes (org-validated)
+    const codeIds = await validBookingCodeIds(auth.orgId, bookingCodeIds)
+    if (codeIds.length) {
+      await supabaseAdmin
+        .from('jobsheet_booking_codes')
+        .insert(codeIds.map((bid) => ({ jobsheet_id: id, booking_code_id: bid })))
+    }
+
+    // 3. Kick off the linked VHC (unless opted out).
+    let hc: { id: string; status: string; job_state: string; vhc_reference: string | null } | null = null
+    if (wantVhc) {
+      const { hc: hcRow, error: hcError } = await kickOffJobsheetVhc({
+        orgId: auth.orgId, siteId: resolvedSite, vehicleId: draft.vehicle_id, customerId: draft.customer_id,
+        templateId: templateIdResolved, advisorId: resolvedAdvisor, mileage: mileage ?? null,
+        dueInDate, dueInTime, userId: auth.user.id, jobsheetId: id, jobsheetReference: js.reference
+      })
+      if (hcError) {
+        console.error('Jobsheet VHC creation failed:', hcError)
+        return c.json(
+          { error: `Jobsheet ${js.reference} created, but starting its health check failed: ${hcError}`, jobsheetId: id },
+          500
+        )
+      }
+      hc = hcRow
+    }
+
+    return c.json(
+      {
+        id: js.id,
+        reference: js.reference,
+        healthCheckId: hc?.id ?? null,
+        vehicleStatus: hc?.job_state ?? js.job_state ?? 'due_in',
+        status: hc?.status ?? null,
+        createdAt: js.created_at
+      },
+      200
+    )
+  } catch (error) {
+    console.error('Commit jobsheet error:', error)
+    return c.json({ error: 'Failed to commit jobsheet' }, 500)
+  }
+})
+
+// POST /:id/discard - hard-delete a draft (and its work lines, via cascade). Advisor-
+// accessible so the person building the booking can cancel it. Only drafts; committed
+// jobsheets use DELETE /:id (soft delete, higher role).
+jobsheets.post('/:id/discard', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    const { data: existing } = await supabaseAdmin
+      .from('jobsheets')
+      .select('id, is_draft')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+    if (!existing) return c.json({ error: 'Jobsheet not found' }, 404)
+    if (!existing.is_draft) return c.json({ error: 'Only draft jobsheets can be discarded' }, 400)
+
+    // Hard delete — repair_items (work lines) cascade off jobsheet_id, and
+    // repair_labour / repair_parts cascade off repair_items. A draft has no VHC.
+    const { error } = await supabaseAdmin
+      .from('jobsheets')
+      .delete()
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+    if (error) return c.json({ error: error.message }, 500)
+
+    return c.json({ message: 'Draft discarded' })
+  } catch (error) {
+    console.error('Discard jobsheet draft error:', error)
+    return c.json({ error: 'Failed to discard draft' }, 500)
   }
 })
 

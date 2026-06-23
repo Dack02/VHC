@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useModules } from '../../contexts/ModulesContext'
 import { api, Vehicle, Customer, User, Site } from '../../lib/api'
+import WorkDetailsPanel from './WorkDetailsPanel'
 
 interface VehicleLookupResponse {
   found: boolean
@@ -60,15 +61,21 @@ export default function NewJobsheet() {
   // jobsheet fields
   const [form, setForm] = useState({
     siteId: '', serviceTypeId: '', advisorId: '', mileage: '', dueInDate: '', dueInTime: '', requestedDeliveryAt: '',
-    courtesyVehicleRequired: false, collectionAndDelivery: false, vehicleOnSite: false, customerContactNotes: '', bookingNotes: ''
+    courtesyVehicleRequired: false, collectionAndDelivery: false, vehicleOnSite: false, customerContactNotes: ''
   })
   const [bookingCodeIds, setBookingCodeIds] = useState<string[]>([])
 
   // work required
   const [requiresVhc, setRequiresVhc] = useState(true)
-  const [packages, setPackages] = useState<{ id: string; name: string }[]>([])
-  const [selectedPackageIds, setSelectedPackageIds] = useState<string[]>([])
-  const togglePackage = (id: string) => setSelectedPackageIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id])
+
+  // Draft jobsheet — created once a vehicle + customer exist so the Work Details
+  // panel can attach priced work lines on this same screen. Committed on submit,
+  // discarded on cancel / navigate-away (no reference or VHC until commit).
+  const [draftId, setDraftId] = useState<string | null>(null)
+  const draftIdRef = useRef<string | null>(null)
+  const committedRef = useRef(false)
+  const creatingDraftRef = useRef(false)
+  useEffect(() => { draftIdRef.current = draftId }, [draftId])
 
   // inline-add state
   const [addingServiceType, setAddingServiceType] = useState(false)
@@ -105,14 +112,6 @@ export default function NewJobsheet() {
     load()
   }, [token, user?.id])
 
-  // service packages (for the optional "Work Required" pre-load)
-  useEffect(() => {
-    const orgId = user?.organization?.id
-    if (!token || !orgId) return
-    api<{ servicePackages: { id: string; name: string }[] }>(`/api/v1/organizations/${orgId}/service-packages`, { token })
-      .then(d => setPackages(d.servicePackages || [])).catch(() => {})
-  }, [token, user?.organization?.id])
-
   // vehicle search
   useEffect(() => {
     const run = async () => {
@@ -141,6 +140,49 @@ export default function NewJobsheet() {
     return () => clearTimeout(debounce)
   }, [customerSearch, token])
 
+  // --- draft lifecycle -----------------------------------------------------
+  const createDraft = useCallback(async (): Promise<string | null> => {
+    if (!token || !selectedVehicle?.id || !selectedVehicle.customer_id) return null
+    if (draftIdRef.current) return draftIdRef.current
+    if (creatingDraftRef.current) return null
+    creatingDraftRef.current = true
+    try {
+      const res = await api<{ id: string }>('/api/v1/jobsheets/draft', {
+        method: 'POST', token,
+        body: {
+          vehicleId: selectedVehicle.id,
+          dueInDate: form.dueInDate || undefined,
+          siteId: form.siteId || undefined,
+          advisorId: form.advisorId || undefined
+        }
+      })
+      setDraftId(res.id); draftIdRef.current = res.id
+      return res.id
+    } catch {
+      return null
+    } finally {
+      creatingDraftRef.current = false
+    }
+  }, [token, selectedVehicle?.id, selectedVehicle?.customer_id, form.dueInDate, form.siteId, form.advisorId])
+
+  const discardDraft = useCallback((jid: string) => {
+    if (!token) return
+    api(`/api/v1/jobsheets/${jid}/discard`, { method: 'POST', token }).catch(() => {})
+  }, [token])
+
+  // Create the draft as soon as a vehicle has a linked customer.
+  useEffect(() => {
+    if (selectedVehicle?.customer_id && !draftIdRef.current && !creatingDraftRef.current) createDraft()
+  }, [selectedVehicle?.customer_id, selectedVehicle?.id, createDraft])
+
+  // Discard an uncommitted draft when leaving the page (in-app navigation).
+  useEffect(() => {
+    return () => {
+      const jid = draftIdRef.current
+      if (jid && !committedRef.current) discardDraft(jid)
+    }
+  }, [discardDraft])
+
   const resetCustomerUi = () => {
     setCustomerSearch(''); setCustomerResults([]); setShowNewCustomer(false); setChangingCustomer(false)
     setCustomerError(null); setNewCustomer({ firstName: '', lastName: '', mobile: '', phone: '', contactName: '', email: '' })
@@ -148,7 +190,11 @@ export default function NewJobsheet() {
   const selectVehicle = (vehicle: Vehicle) => {
     setSelectedVehicle(vehicle); setSearchQuery(''); setSearchResults([]); resetCustomerUi()
   }
-  const clearVehicle = () => { setSelectedVehicle(null); resetCustomerUi() }
+  const clearVehicle = () => {
+    const jid = draftIdRef.current
+    if (jid) { discardDraft(jid); setDraftId(null); draftIdRef.current = null }
+    setSelectedVehicle(null); resetCustomerUi()
+  }
 
   const handleLookup = async () => {
     if (!token) return
@@ -261,10 +307,14 @@ export default function NewJobsheet() {
     if (!form.dueInDate) { setError('Please set a due-in date'); return }
     setSubmitting(true); setError(null)
     try {
-      const res = await api<{ id: string }>('/api/v1/jobsheets', {
+      // The draft normally exists already (created when the customer was linked); create it
+      // now if a race left it unset. Commit assigns the JS reference + kicks off the VHC.
+      let jid = draftIdRef.current
+      if (!jid) jid = await createDraft()
+      if (!jid) throw new Error('Could not start the jobsheet — please try again.')
+      const res = await api<{ id: string }>(`/api/v1/jobsheets/${jid}/commit`, {
         method: 'POST', token,
         body: {
-          vehicleId: selectedVehicle.id,
           dueInDate: form.dueInDate,
           dueInTime: form.dueInTime || undefined,
           siteId: form.siteId || undefined,
@@ -277,15 +327,22 @@ export default function NewJobsheet() {
           vehicleOnSite: form.vehicleOnSite,
           customerContactNotes: form.customerContactNotes || undefined,
           bookingCodeIds,
-          vhcRequired: requiresVhc,
-          bookingNotes: form.bookingNotes || undefined,
-          servicePackageIds: selectedPackageIds.length ? selectedPackageIds : undefined
+          vhcRequired: requiresVhc
+          // bookingNotes is owned by the Work Details panel (saved on the draft as you type)
         }
       })
+      committedRef.current = true
       navigate(`/jobsheets/${res.id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create jobsheet')
     } finally { setSubmitting(false) }
+  }
+
+  const handleCancel = () => {
+    const jid = draftIdRef.current
+    if (jid && !committedRef.current) discardDraft(jid)
+    draftIdRef.current = null // prevent the unmount cleanup discarding again
+    navigate('/jobsheets')
   }
 
   if (loading) {
@@ -296,7 +353,7 @@ export default function NewJobsheet() {
   const labelCls = 'block text-sm font-medium text-gray-700 mb-1.5'
 
   return (
-    <div>
+    <div className="max-w-7xl">
       <div className="flex items-center gap-3 mb-6">
         <Link to="/jobsheets" className="text-gray-500 hover:text-gray-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
@@ -306,7 +363,8 @@ export default function NewJobsheet() {
 
       {error && <div className="bg-red-50 text-red-700 p-4 mb-6 rounded-lg text-sm">{error}</div>}
 
-      <form onSubmit={handleSubmit} className="max-w-2xl space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
+        <form onSubmit={handleSubmit} className="lg:col-span-3 space-y-4">
         {/* Vehicle */}
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
           <label className={labelCls}>Vehicle Registration No. *</label>
@@ -530,46 +588,39 @@ export default function NewJobsheet() {
         </div>
 
         {/* Work Required */}
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-4">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-3">
           <h2 className="text-sm font-semibold text-gray-900">Work Required</h2>
-
-          <div>
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" checked={requiresVhc} onChange={(e) => setRequiresVhc(e.target.checked)} className="rounded border-gray-300 text-primary focus:ring-primary" />
-              Requires VHC (health check)
-            </label>
-            <p className="text-xs text-gray-400 mt-1">A health check is created with the booking by default. Untick if this job doesn’t need an inspection — booked work stays on the jobsheet either way.</p>
-          </div>
-
-          <div>
-            <label className={labelCls}>Booking Notes</label>
-            <textarea value={form.bookingNotes} onChange={(e) => setForm({ ...form, bookingNotes: e.target.value })} rows={2} placeholder="Overview of the job / customer concern…" className={inputCls} />
-          </div>
-
-          <div>
-            <label className={labelCls}>Add Packages <span className="text-gray-400 font-normal">(optional — pre-loads booked work)</span></label>
-            <div className="flex flex-wrap gap-2">
-              {packages.map(p => {
-                const on = selectedPackageIds.includes(p.id)
-                return (
-                  <button type="button" key={p.id} onClick={() => togglePackage(p.id)}
-                    className={`px-2.5 py-1 rounded-full text-xs font-medium border ${on ? 'bg-primary text-white border-transparent' : 'text-gray-600 border-gray-300 bg-white'}`}>
-                    {p.name}
-                  </button>
-                )
-              })}
-              {packages.length === 0 && <span className="text-xs text-gray-400">No service packages configured.</span>}
-            </div>
-          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" checked={requiresVhc} onChange={(e) => setRequiresVhc(e.target.checked)} className="rounded border-gray-300 text-primary focus:ring-primary" />
+            Requires VHC (health check)
+          </label>
+          <p className="text-xs text-gray-400">A health check is created with the booking by default. Untick if this job doesn’t need an inspection — booked work stays on the jobsheet either way. Add labour, parts and packages under <span className="font-medium text-gray-500">Work Details</span> →</p>
         </div>
 
         <div className="flex gap-3">
           <button type="submit" disabled={submitting || !selectedVehicle?.customer_id || !form.dueInDate} className="px-6 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50">
             {submitting ? 'Creating…' : 'Create Jobsheet'}
           </button>
-          <Link to="/jobsheets" className="px-6 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50">Cancel</Link>
+          <button type="button" onClick={handleCancel} className="px-6 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50">Cancel</button>
         </div>
-      </form>
+        </form>
+
+        {/* Right: priced work built live on the draft jobsheet */}
+        {draftId && token ? (
+          <WorkDetailsPanel
+            className="lg:col-span-2"
+            jobsheetId={draftId}
+            token={token}
+            organizationId={user?.organization?.id}
+            initialBookingNotes={null}
+          />
+        ) : (
+          <div className="lg:col-span-2 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+            <h2 className="text-sm font-semibold text-gray-900 mb-2">Work Details</h2>
+            <p className="text-sm text-gray-400">Select a vehicle and customer to start adding labour, parts and packages — they’ll be saved to this booking as you go.</p>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

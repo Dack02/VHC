@@ -20,6 +20,7 @@ export interface TilesResponse {
 export interface TileJob {
   healthCheckId: string | null
   jobsheetId?: string | null   // set for VHC-less jobsheets (open the jobsheet, not a VHC)
+  jobNumber: string | null     // jobsheet ref / DMS job number — the workshop identifier
   registration: string | null
   make: string | null
   model: string | null

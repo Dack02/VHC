@@ -457,7 +457,7 @@ type TileAggRow = {
 async function loadVhcLessFutureJobsheets(orgId: string, siteId: string, advisorId: string | null): Promise<any[]> {
   let q = supabaseAdmin
     .from('jobsheets')
-    .select(`id, due_in_date, due_in_time, created_at, job_state,
+    .select(`id, reference, due_in_date, due_in_time, created_at, job_state,
       vehicle:vehicles(registration, make, model),
       customer:customers(first_name, last_name),
       advisor:users!jobsheets_advisor_id_fkey(first_name, last_name)`)
@@ -582,6 +582,7 @@ workshopBoard.get('/tiles', authorize([...ADVISOR_ROLES]), async (c) => {
 // ?status=<uuid> for a Job Status, ?status=none for the "No job status" bucket.
 type TileJobRow = {
   health_check_id: string
+  job_number: string | null
   registration: string | null
   make: string | null
   model: string | null
@@ -613,7 +614,7 @@ workshopBoard.get('/tiles/jobs', authorize([...ADVISOR_ROLES]), async (c) => {
     if (statusParam === 'future') {
       let fq = supabaseAdmin
         .from('health_checks')
-        .select(`id, job_state, status, promise_time, due_date, created_at,
+        .select(`id, job_state, status, promise_time, due_date, created_at, jobsheet_number, job_number,
           vehicle:vehicles(registration, make, model),
           customer:customers(first_name, last_name),
           advisor:users!health_checks_advisor_id_fkey(first_name, last_name),
@@ -635,6 +636,7 @@ workshopBoard.get('/tiles/jobs', authorize([...ADVISOR_ROLES]), async (c) => {
       const hcJobs = ((fdata as any[]) || []).map((j) => ({
         healthCheckId: j.id,
         jobsheetId: null,
+        jobNumber: j.jobsheet_number || j.job_number || null,
         registration: j.vehicle?.registration ?? null,
         make: j.vehicle?.make ?? null,
         model: j.vehicle?.model ?? null,
@@ -654,6 +656,7 @@ workshopBoard.get('/tiles/jobs', authorize([...ADVISOR_ROLES]), async (c) => {
         return {
           healthCheckId: null,
           jobsheetId: j.id,
+          jobNumber: j.reference || null,
           registration: j.vehicle?.registration ?? null,
           make: j.vehicle?.make ?? null,
           model: j.vehicle?.model ?? null,
@@ -691,6 +694,7 @@ workshopBoard.get('/tiles/jobs', authorize([...ADVISOR_ROLES]), async (c) => {
 
     const jobs = ((data as TileJobRow[] | null) || []).map(j => ({
       healthCheckId: j.health_check_id,
+      jobNumber: j.job_number,
       registration: j.registration,
       make: j.make,
       model: j.model,

@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useModules } from '../../contexts/ModulesContext'
 import { api, Vehicle, Customer, User, Site } from '../../lib/api'
 import WorkDetailsPanel from './WorkDetailsPanel'
+import CustomerCardModal from './components/CustomerCardModal'
 
 interface VehicleLookupResponse {
   found: boolean
@@ -54,6 +55,7 @@ export default function NewJobsheet() {
   const [customerSearching, setCustomerSearching] = useState(false)
   const [showNewCustomer, setShowNewCustomer] = useState(false)
   const [changingCustomer, setChangingCustomer] = useState(false)
+  const [showCustomerCard, setShowCustomerCard] = useState(false)
   const [newCustomer, setNewCustomer] = useState({ firstName: '', lastName: '', mobile: '', phone: '', contactName: '', email: '' })
   const [linkingCustomer, setLinkingCustomer] = useState(false)
   const [customerError, setCustomerError] = useState<string | null>(null)
@@ -363,8 +365,8 @@ export default function NewJobsheet() {
 
       {error && <div className="bg-red-50 text-red-700 p-4 mb-6 rounded-lg text-sm">{error}</div>}
 
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
-        <form onSubmit={handleSubmit} className="lg:col-span-3 space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <form onSubmit={handleSubmit} className="lg:col-span-1 space-y-4">
         {/* Vehicle */}
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
           <label className={labelCls}>Vehicle Registration No. *</label>
@@ -437,11 +439,11 @@ export default function NewJobsheet() {
             <label className={labelCls}>Customer *</label>
             {selectedVehicle.customer && !changingCustomer ? (
               <div className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-lg">
-                <div>
-                  <div className="font-medium">{selectedVehicle.customer.first_name} {selectedVehicle.customer.last_name}</div>
-                  <div className="text-sm text-gray-500">{selectedVehicle.customer.mobile || selectedVehicle.customer.email || 'No contact details'}</div>
-                </div>
-                <button type="button" onClick={() => { setChangingCustomer(true); setCustomerError(null) }} className="text-sm font-medium text-primary hover:underline">Change</button>
+                <button type="button" onClick={() => setShowCustomerCard(true)} className="text-left group min-w-0" title="View customer card">
+                  <div className="font-medium text-gray-900 group-hover:text-primary group-hover:underline truncate">{selectedVehicle.customer.first_name} {selectedVehicle.customer.last_name}</div>
+                  <div className="text-sm text-gray-500 truncate">{selectedVehicle.customer.mobile || selectedVehicle.customer.email || 'No contact details'}</div>
+                </button>
+                <button type="button" onClick={() => { setChangingCustomer(true); setCustomerError(null) }} className="text-sm font-medium text-primary hover:underline shrink-0 ml-3">Change</button>
               </div>
             ) : (
               <div className="border border-amber-200 bg-amber-50/40 rounded-xl p-4 space-y-3">
@@ -608,19 +610,23 @@ export default function NewJobsheet() {
         {/* Right: priced work built live on the draft jobsheet */}
         {draftId && token ? (
           <WorkDetailsPanel
-            className="lg:col-span-2"
+            className="lg:col-span-1 lg:sticky lg:top-6"
             jobsheetId={draftId}
             token={token}
             organizationId={user?.organization?.id}
             initialBookingNotes={null}
           />
         ) : (
-          <div className="lg:col-span-2 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+          <div className="lg:col-span-1 lg:sticky lg:top-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
             <h2 className="text-sm font-semibold text-gray-900 mb-2">Work Details</h2>
             <p className="text-sm text-gray-400">Select a vehicle and customer to start adding labour, parts and packages — they’ll be saved to this booking as you go.</p>
           </div>
         )}
       </div>
+
+      {showCustomerCard && selectedVehicle?.customer?.id && (
+        <CustomerCardModal customerId={selectedVehicle.customer.id} onClose={() => setShowCustomerCard(false)} />
+      )}
     </div>
   )
 }

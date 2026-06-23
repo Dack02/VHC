@@ -121,6 +121,7 @@ function JobList({ tile, jobs, loading, error, onOpenJob }: {
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
+              <th className="px-4 py-2.5 font-medium">Job no.</th>
               <th className="px-4 py-2.5 font-medium">Vehicle</th>
               <th className="px-4 py-2.5 font-medium">Customer</th>
               <th className="px-4 py-2.5 font-medium">Advisor</th>
@@ -138,6 +139,7 @@ function JobList({ tile, jobs, loading, error, onOpenJob }: {
                 onClick={() => onOpenJob(job)}
                 className="hover:bg-gray-50 cursor-pointer"
               >
+                <td className="px-4 py-2.5 font-medium text-gray-900 whitespace-nowrap">{job.jobNumber || '—'}</td>
                 <td className="px-4 py-2.5">
                   <div className="font-medium text-gray-900">{job.registration || '—'}</div>
                   {(job.make || job.model) && (

@@ -15,7 +15,7 @@ interface LabourCode { id: string; code: string; description: string; hourlyRate
 interface SupplierOpt { id: string; name: string }
 interface PackageOpt { id: string; name: string; description?: string | null }
 
-interface WLLabour { id: string; labourCode: { code: string; description: string } | null; hours: number; rate: number; total: number; isVatExempt: boolean }
+interface WLLabour { id: string; labourCode: { code: string; description: string } | null; hours: number; rate: number; total: number; isVatExempt: boolean; notes: string | null }
 interface WLPart { id: string; partNumber: string | null; description: string; quantity: number; sellPrice: number; costPrice: number; lineTotal: number; marginPercent: number | null; supplierName: string | null }
 interface WorkLine {
   id: string; name: string; description: string | null; origin: 'booking' | 'inspection'
@@ -120,8 +120,8 @@ export default function WorkDetailsPanel({
     catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to remove line') }
   }
 
-  const addLabour = async (lineId: string, labourCodeId: string, hours: number) => {
-    try { await api(`/api/v1/repair-items/${lineId}/labour`, { method: 'POST', token, body: { labour_code_id: labourCodeId, hours } }); await refresh(); return true }
+  const addLabour = async (lineId: string, labourCodeId: string, hours: number, description: string) => {
+    try { await api(`/api/v1/repair-items/${lineId}/labour`, { method: 'POST', token, body: { labour_code_id: labourCodeId, hours, notes: description || undefined } }); await refresh(); return true }
     catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to add labour'); return false }
   }
   const deleteLabour = async (id: string) => {
@@ -261,12 +261,13 @@ function WorkLineCard({
   suppliers: SupplierOpt[]
   onToggle: () => void
   onDeleteLine: () => void
-  onAddLabour: (lineId: string, labourCodeId: string, hours: number) => Promise<boolean>
+  onAddLabour: (lineId: string, labourCodeId: string, hours: number, description: string) => Promise<boolean>
   onDeleteLabour: (id: string) => Promise<void>
   onAddPart: (lineId: string, body: Record<string, unknown>) => Promise<boolean>
   onDeletePart: (id: string) => Promise<void>
 }) {
   const [labCode, setLabCode] = useState('')
+  const [labDesc, setLabDesc] = useState('')
   const [labHours, setLabHours] = useState('')
   const [savingLab, setSavingLab] = useState(false)
   const [part, setPart] = useState({ description: '', quantity: '1', costPrice: '', sellPrice: '', supplierId: '' })
@@ -282,11 +283,11 @@ function WorkLineCard({
 
   const submitLabour = async () => {
     const h = parseFloat(labHours)
-    if (!labCode || isNaN(h) || h <= 0) return
+    if (!labCode || !labDesc.trim() || isNaN(h) || h <= 0) return
     setSavingLab(true)
-    const ok = await onAddLabour(line.id, labCode, h)
+    const ok = await onAddLabour(line.id, labCode, h, labDesc.trim())
     setSavingLab(false)
-    if (ok) setLabHours('')
+    if (ok) { setLabHours(''); setLabDesc('') }
   }
   const submitPart = async () => {
     if (!part.description.trim() || part.sellPrice === '' || isNaN(parseFloat(part.sellPrice))) return
@@ -326,7 +327,7 @@ function WorkLineCard({
             {line.labour.length === 0 && <p className="text-xs text-gray-400">No labour.</p>}
             {line.labour.map(l => (
               <div key={l.id} className="flex items-center justify-between text-sm py-0.5">
-                <span className="text-gray-700 truncate">{l.labourCode?.code || 'Labour'} · {l.hours}h @ {money(l.rate)}{l.isVatExempt ? ' · VAT exempt' : ''}</span>
+                <span className="text-gray-700 truncate">{l.labourCode?.code || 'Labour'}{l.notes ? ` · ${l.notes}` : ''} · {l.hours}h @ {money(l.rate)}{l.isVatExempt ? ' · VAT exempt' : ''}</span>
                 <span className="flex items-center gap-2 shrink-0">
                   <span className="text-gray-900">{money(l.total)}</span>
                   {editable && <button onClick={() => onDeleteLabour(l.id)} className="text-gray-400 hover:text-red-600" title="Delete">✕</button>}
@@ -334,13 +335,15 @@ function WorkLineCard({
               </div>
             ))}
             {editable && (
-              <div className="flex items-center gap-2 mt-1.5">
+              <div className="flex flex-wrap items-center gap-2 mt-1.5">
                 <select value={labCode} onChange={e => setLabCode(e.target.value)} className={inputCls}>
                   {labourCodes.map(c => <option key={c.id} value={c.id}>{c.code}</option>)}
                 </select>
+                <input value={labDesc} onChange={e => setLabDesc(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') submitLabour() }} placeholder="Description" className={`${inputCls} flex-1 min-w-[8rem]`} />
                 <input type="number" step="0.1" min="0" value={labHours} onChange={e => setLabHours(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') submitLabour() }} placeholder="hrs" className={`${inputCls} w-20 text-right`} />
-                <button onClick={submitLabour} disabled={savingLab || !labCode || !labHours} className="px-2.5 py-1 bg-gray-100 text-gray-700 text-sm rounded hover:bg-gray-200 disabled:opacity-50">Add labour</button>
+                <button onClick={submitLabour} disabled={savingLab || !labCode || !labDesc.trim() || !labHours} className="px-2.5 py-1 bg-gray-100 text-gray-700 text-sm rounded hover:bg-gray-200 disabled:opacity-50">Add labour</button>
               </div>
             )}
           </div>

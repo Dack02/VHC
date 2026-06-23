@@ -449,6 +449,36 @@ type TileAggRow = {
   vhc_state: Record<string, number> | null
 }
 
+// VHC-less future jobsheets (Option 2): a jobsheet whose VHC was opted out at booking
+// has no health_check, so it never reaches the health_check-based board/tiles. Surface
+// those in Future Bookings straight from the jobsheet. Excludes jobsheets that DO have a
+// linked (non-deleted) VHC — those are already counted via health_checks, so no double count.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+async function loadVhcLessFutureJobsheets(orgId: string, siteId: string, advisorId: string | null): Promise<any[]> {
+  let q = supabaseAdmin
+    .from('jobsheets')
+    .select(`id, due_in_date, due_in_time, created_at, job_state,
+      vehicle:vehicles(registration, make, model),
+      customer:customers(first_name, last_name),
+      advisor:users!jobsheets_advisor_id_fkey(first_name, last_name)`)
+    .eq('organization_id', orgId)
+    .eq('site_id', siteId)
+    .eq('job_state', 'due_in')
+    .is('deleted_at', null)
+  if (advisorId) q = q.eq('advisor_id', advisorId)
+  const { data, error } = await q
+  if (error || !data || data.length === 0) return []
+  const ids = (data as any[]).map((r) => r.id)
+  const { data: linked } = await supabaseAdmin
+    .from('health_checks')
+    .select('jobsheet_id')
+    .in('jobsheet_id', ids)
+    .is('deleted_at', null)
+  const hasHc = new Set((linked || []).map((l: any) => l.jobsheet_id))
+  return (data as any[]).filter((r) => !hasHc.has(r.id))
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 workshopBoard.get('/tiles', authorize([...ADVISOR_ROLES]), async (c) => {
   try {
     const auth = c.get('auth')
@@ -514,6 +544,31 @@ workshopBoard.get('/tiles', authorize([...ADVISOR_ROLES]), async (c) => {
       })
     }
 
+    // Future Bookings — not-yet-arrived jobs (job_state = due_in). Shown as their own
+    // tile and EXCLUDED from the Job-Status tiles above (RPC) so nothing double-counts.
+    let futureQuery = supabaseAdmin
+      .from('health_checks')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', auth.orgId)
+      .eq('site_id', siteId)
+      .eq('job_state', 'due_in')
+      .is('deleted_at', null)
+    if (advisorId) futureQuery = futureQuery.eq('advisor_id', advisorId)
+    const { count: futureCount } = await futureQuery
+    // …plus VHC-less jobsheets (opted out of an inspection) that have no health_check.
+    const vhcLessFuture = await loadVhcLessFutureJobsheets(auth.orgId, siteId, advisorId)
+    tiles.push({
+      statusId: 'future',
+      name: 'Future Bookings',
+      colour: '#6366F1',
+      icon: null,
+      sortOrder: -1, // sorts ahead of all Job Statuses
+      count: (futureCount || 0) + vhcLessFuture.length,
+      oldestDays: null,
+      vehicleStatus: {}, // the whole tile is due_in — no breakdown line needed
+      vhcState: {}
+    })
+
     tiles.sort((x, y) => x.sortOrder - y.sortOrder)
     return c.json({ siteId, tiles })
   } catch (error) {
@@ -552,6 +607,73 @@ workshopBoard.get('/tiles/jobs', authorize([...ADVISOR_ROLES]), async (c) => {
       return c.json({ error: 'A status query param is required (a status id or "none")' }, 400)
     }
     const advisorId = c.req.query('advisorId') || null
+
+    // Future Bookings drill-in — not-yet-arrived jobs (job_state = due_in), soonest due first.
+    if (statusParam === 'future') {
+      let fq = supabaseAdmin
+        .from('health_checks')
+        .select(`id, job_state, status, promise_time, due_date, created_at,
+          vehicle:vehicles(registration, make, model),
+          customer:customers(first_name, last_name),
+          advisor:users!health_checks_advisor_id_fkey(first_name, last_name),
+          technician:users!health_checks_technician_id_fkey(first_name, last_name)`)
+        .eq('organization_id', auth.orgId)
+        .eq('site_id', siteId)
+        .eq('job_state', 'due_in')
+        .is('deleted_at', null)
+        .order('due_date', { ascending: true, nullsFirst: false })
+        .limit(200)
+      if (advisorId) fq = fq.eq('advisor_id', advisorId)
+      const { data: fdata, error: ferror } = await fq
+      if (ferror) {
+        console.error('Future bookings drill-in error:', ferror)
+        return c.json({ error: 'Failed to load jobs' }, 500)
+      }
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const nameOf = (p: any) => (p ? (`${p.first_name || ''} ${p.last_name || ''}`.trim() || null) : null)
+      const hcJobs = ((fdata as any[]) || []).map((j) => ({
+        healthCheckId: j.id,
+        jobsheetId: null,
+        registration: j.vehicle?.registration ?? null,
+        make: j.vehicle?.make ?? null,
+        model: j.vehicle?.model ?? null,
+        customerName: nameOf(j.customer),
+        advisorName: nameOf(j.advisor),
+        technicianName: nameOf(j.technician),
+        jobState: j.job_state,
+        vhcStatus: j.status,
+        daysInStatus: Math.max(0, Math.floor((Date.now() - new Date(j.created_at).getTime()) / 86400000)),
+        promiseTime: j.promise_time,
+        dueDate: j.due_date
+      }))
+      // VHC-less jobsheets (no health check) — link these rows to the jobsheet, not a VHC.
+      const jsRows = await loadVhcLessFutureJobsheets(auth.orgId, siteId, advisorId)
+      const jsJobs = jsRows.map((j) => {
+        const time = (typeof j.due_in_time === 'string' && j.due_in_time) ? String(j.due_in_time).slice(0, 5) : '08:00'
+        return {
+          healthCheckId: null,
+          jobsheetId: j.id,
+          registration: j.vehicle?.registration ?? null,
+          make: j.vehicle?.make ?? null,
+          model: j.vehicle?.model ?? null,
+          customerName: nameOf(j.customer),
+          advisorName: nameOf(j.advisor),
+          technicianName: null,
+          jobState: j.job_state || 'due_in',
+          vhcStatus: null,
+          daysInStatus: Math.max(0, Math.floor((Date.now() - new Date(j.created_at).getTime()) / 86400000)),
+          promiseTime: null,
+          dueDate: j.due_in_date ? `${j.due_in_date}T${time}:00` : null
+        }
+      })
+      const jobs = [...hcJobs, ...jsJobs].sort((a, b) => {
+        const da = a.dueDate ? new Date(a.dueDate).getTime() : Infinity
+        const db = b.dueDate ? new Date(b.dueDate).getTime() : Infinity
+        return da - db
+      })
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+      return c.json({ siteId, jobs })
+    }
 
     const { data, error } = await supabaseAdmin.rpc('workshop_status_tile_jobs', {
       p_org_id: auth.orgId,

@@ -243,6 +243,8 @@ export function formatRepairItem(item: Record<string, unknown>) {
   return {
     id: item.id,
     healthCheckId: item.health_check_id,
+    jobsheetId: item.jobsheet_id ?? null,
+    source: item.source ?? null,
     name: item.name,
     description: item.description,
     isGroup: item.is_group,

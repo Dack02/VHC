@@ -16,6 +16,12 @@ import {
 
 const GRAY = '#9CA3AF'
 
+function formatDue(iso: string): string {
+  const d = new Date(iso)
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) +
+    ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+}
+
 function ClockIcon() {
   return (
     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -101,7 +107,7 @@ function JobList({ tile, jobs, loading, error, onOpenJob }: {
   jobs: TileJob[] | null
   loading: boolean
   error: string | null
-  onOpenJob: (id: string) => void
+  onOpenJob: (job: TileJob) => void
 }) {
   if (loading) return <Spinner />
   if (error) return <div className="bg-rag-red/10 border border-rag-red/30 text-rag-red rounded-xl px-4 py-3 text-sm">{error}</div>
@@ -121,14 +127,15 @@ function JobList({ tile, jobs, loading, error, onOpenJob }: {
               <th className="px-4 py-2.5 font-medium">Technician</th>
               <th className="px-4 py-2.5 font-medium">Vehicle status</th>
               <th className="px-4 py-2.5 font-medium">VHC state</th>
+              <th className="px-4 py-2.5 font-medium">Due in</th>
               <th className="px-4 py-2.5 font-medium text-right">In status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {jobs.map(job => (
               <tr
-                key={job.healthCheckId}
-                onClick={() => onOpenJob(job.healthCheckId)}
+                key={job.jobsheetId || job.healthCheckId}
+                onClick={() => onOpenJob(job)}
                 className="hover:bg-gray-50 cursor-pointer"
               >
                 <td className="px-4 py-2.5">
@@ -141,7 +148,8 @@ function JobList({ tile, jobs, loading, error, onOpenJob }: {
                 <td className="px-4 py-2.5 text-gray-600">{job.advisorName || '—'}</td>
                 <td className="px-4 py-2.5 text-gray-600">{job.technicianName || '—'}</td>
                 <td className="px-4 py-2.5 text-gray-600">{labelForVehicle(job.jobState)}</td>
-                <td className="px-4 py-2.5 text-gray-600">{labelForVhc(job.vhcStatus)}</td>
+                <td className="px-4 py-2.5 text-gray-600">{job.vhcStatus ? labelForVhc(job.vhcStatus) : '—'}</td>
+                <td className="px-4 py-2.5 text-gray-600">{job.dueDate ? formatDue(job.dueDate) : '—'}</td>
                 <td className="px-4 py-2.5 text-right">
                   <span className="inline-flex items-center gap-1 text-gray-600">
                     <ClockIcon />
@@ -208,7 +216,7 @@ export default function TileStatusPage() {
           jobs={jobs}
           loading={jobsLoading}
           error={jobsError}
-          onOpenJob={(id) => navigate(`/health-checks/${id}`)}
+          onOpenJob={(job) => navigate(job.jobsheetId ? `/jobsheets/${job.jobsheetId}` : `/health-checks/${job.healthCheckId}`)}
         />
       </div>
     )

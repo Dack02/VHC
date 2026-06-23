@@ -18,7 +18,8 @@ export interface TilesResponse {
 }
 
 export interface TileJob {
-  healthCheckId: string
+  healthCheckId: string | null
+  jobsheetId?: string | null   // set for VHC-less jobsheets (open the jobsheet, not a VHC)
   registration: string | null
   make: string | null
   model: string | null
@@ -26,7 +27,7 @@ export interface TileJob {
   advisorName: string | null
   technicianName: string | null
   jobState: string
-  vhcStatus: string
+  vhcStatus: string | null
   daysInStatus: number
   promiseTime: string | null
   dueDate: string | null

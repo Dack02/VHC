@@ -7,6 +7,8 @@ interface JobsheetRow {
   id: string
   reference: string
   createdAt: string
+  dueInDate: string
+  dueInTime: string | null
   mileage: number | null
   customer: { firstName: string; lastName: string } | null
   vehicle: { registration: string; make: string | null; model: string | null } | null
@@ -32,10 +34,10 @@ const VEHICLE_STATUS_STYLES: Record<string, string> = {
   collected: 'bg-gray-100 text-gray-500'
 }
 
-function formatDate(iso: string): string {
-  const d = new Date(iso)
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) +
-    ' · ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+function formatDueIn(dateStr: string, time: string | null): string {
+  if (!dateStr) return '—'
+  const d = new Date(`${dateStr}T00:00:00`)
+  return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }) + (time ? ` · ${time}` : '')
 }
 
 export default function JobsheetList() {
@@ -98,9 +100,9 @@ export default function JobsheetList() {
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm divide-y divide-gray-100">
           {rows.map(row => (
             <Link key={row.id} to={`/jobsheets/${row.id}`} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-50">
-              <div className="w-24 shrink-0">
+              <div className="w-32 shrink-0">
                 <div className="text-sm font-semibold text-gray-900">{row.reference}</div>
-                <div className="text-xs text-gray-400">{formatDate(row.createdAt)}</div>
+                <div className="text-xs text-gray-500">Due {formatDueIn(row.dueInDate, row.dueInTime)}</div>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-gray-900 truncate">

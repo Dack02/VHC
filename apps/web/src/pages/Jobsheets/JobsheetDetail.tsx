@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api, User } from '../../lib/api'
+import WorkDetailsPanel from './WorkDetailsPanel'
 
 interface LookupOption { id: string; code: string; colour: string }
 
@@ -10,6 +11,8 @@ interface Jobsheet {
   id: string
   reference: string
   createdAt: string
+  dueInDate: string
+  dueInTime: string | null
   mileage: number | null
   requestedDeliveryAt: string | null
   courtesyVehicleRequired: boolean
@@ -17,6 +20,9 @@ interface Jobsheet {
   vehicleOnSite: boolean
   customerContactNotes: string | null
   jobsheetComplete: boolean
+  vhcRequired: boolean
+  bookingNotes: string | null
+  vehicleStatus: string
   customer: { id: string; firstName: string; lastName: string; mobile: string | null; email: string | null; phone: string | null; contactName: string | null } | null
   vehicle: { id: string; registration: string; make: string | null; model: string | null; year: number | null; fuelType: string | null } | null
   serviceType: { id: string; code: string; colour: string } | null
@@ -41,6 +47,13 @@ function formatDate(iso: string | null): string {
     ' · ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 }
 
+function formatDueIn(dateStr: string, time: string | null): string {
+  if (!dateStr) return '—'
+  const d = new Date(`${dateStr}T00:00:00`)
+  const datePart = d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })
+  return `${datePart} · ${time ? time : 'time flexible'}`
+}
+
 // datetime-local needs "YYYY-MM-DDTHH:mm"
 function toLocalInput(iso: string | null): string {
   if (!iso) return ''
@@ -51,7 +64,7 @@ function toLocalInput(iso: string | null): string {
 
 export default function JobsheetDetail() {
   const { id } = useParams<{ id: string }>()
-  const { session } = useAuth()
+  const { session, user } = useAuth()
   const toast = useToast()
   const navigate = useNavigate()
   const token = session?.accessToken
@@ -67,7 +80,7 @@ export default function JobsheetDetail() {
 
   // editable form
   const [form, setForm] = useState({
-    serviceTypeId: '', advisorId: '', mileage: '', requestedDeliveryAt: '',
+    dueInDate: '', dueInTime: '', serviceTypeId: '', advisorId: '', mileage: '', requestedDeliveryAt: '',
     courtesyVehicleRequired: false, collectionAndDelivery: false, vehicleOnSite: false,
     customerContactNotes: '', jobsheetComplete: false, bookingCodeIds: [] as string[]
   })
@@ -78,6 +91,8 @@ export default function JobsheetDetail() {
       const data = await api<Jobsheet>(`/api/v1/jobsheets/${id}`, { token })
       setJs(data)
       setForm({
+        dueInDate: data.dueInDate || '',
+        dueInTime: data.dueInTime || '',
         serviceTypeId: data.serviceType?.id || '',
         advisorId: data.advisor?.id || '',
         mileage: data.mileage != null ? String(data.mileage) : '',
@@ -126,6 +141,8 @@ export default function JobsheetDetail() {
       const updated = await api<Jobsheet>(`/api/v1/jobsheets/${id}`, {
         method: 'PATCH', token,
         body: {
+          dueInDate: form.dueInDate || undefined,
+          dueInTime: form.dueInTime || null,
           serviceTypeId: form.serviceTypeId || null,
           advisorId: form.advisorId || null,
           mileage: form.mileage ? parseInt(form.mileage, 10) : null,
@@ -179,10 +196,13 @@ export default function JobsheetDetail() {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold text-gray-900">{js.reference}</h1>
-              {js.healthCheck && (
-                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${VEHICLE_STATUS_STYLES[js.healthCheck.vehicleStatus] || 'bg-gray-100 text-gray-700'}`}>
-                  {VEHICLE_STATUS_LABELS[js.healthCheck.vehicleStatus] || js.healthCheck.vehicleStatus}
+              {js.vehicleStatus && (
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${VEHICLE_STATUS_STYLES[js.vehicleStatus] || 'bg-gray-100 text-gray-700'}`}>
+                  {VEHICLE_STATUS_LABELS[js.vehicleStatus] || js.vehicleStatus}
                 </span>
+              )}
+              {!js.healthCheck && (
+                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">No VHC</span>
               )}
             </div>
             <p className="text-xs text-gray-400 mt-1">Document date: {formatDate(js.createdAt)}{js.createdBy && ` · by ${js.createdBy.firstName} ${js.createdBy.lastName}`}</p>
@@ -239,6 +259,8 @@ export default function JobsheetDetail() {
 
           {!editing ? (
             <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2.5 text-sm">
+              <div className="flex justify-between"><dt className="text-gray-500">Due in</dt><dd className="text-gray-900 font-medium">{formatDueIn(js.dueInDate, js.dueInTime)}</dd></div>
+              <div className="flex justify-between"><dt className="text-gray-500">Vehicle Status</dt><dd><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${VEHICLE_STATUS_STYLES[js.vehicleStatus] || 'bg-gray-100 text-gray-700'}`}>{VEHICLE_STATUS_LABELS[js.vehicleStatus] || js.vehicleStatus}</span></dd></div>
               <div className="flex justify-between"><dt className="text-gray-500">Service Type</dt><dd>{js.serviceType ? <span className="px-2 py-0.5 rounded-full text-xs font-medium text-white" style={{ backgroundColor: js.serviceType.colour }}>{js.serviceType.code}</span> : '—'}</dd></div>
               <div className="flex justify-between"><dt className="text-gray-500">Service Advisor</dt><dd className="text-gray-900">{js.advisor ? `${js.advisor.firstName} ${js.advisor.lastName}` : '—'}</dd></div>
               <div className="flex justify-between"><dt className="text-gray-500">Mileage</dt><dd className="text-gray-900">{js.mileage != null ? js.mileage.toLocaleString() : '—'}</dd></div>
@@ -264,6 +286,14 @@ export default function JobsheetDetail() {
             </dl>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className={labelCls}>Due In Date *</label>
+                <input type="date" value={form.dueInDate} onChange={e => setForm({ ...form, dueInDate: e.target.value })} className={inputCls} required />
+              </div>
+              <div>
+                <label className={labelCls}>Due In Time <span className="text-gray-400 font-normal">(optional)</span></label>
+                <input type="time" value={form.dueInTime} onChange={e => setForm({ ...form, dueInTime: e.target.value })} className={inputCls} />
+              </div>
               <div>
                 <label className={labelCls}>Service Type</label>
                 <select value={form.serviceTypeId} onChange={e => setForm({ ...form, serviceTypeId: e.target.value })} className={inputCls}>
@@ -322,6 +352,17 @@ export default function JobsheetDetail() {
             </div>
           )}
         </div>
+
+        {/* Work Details — labour + parts + packages + booking notes */}
+        {token && (
+          <WorkDetailsPanel
+            jobsheetId={js.id}
+            token={token}
+            organizationId={user?.organization?.id}
+            initialBookingNotes={js.bookingNotes}
+            onChange={load}
+          />
+        )}
       </div>
 
       {/* Danger zone */}

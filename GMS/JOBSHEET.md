@@ -22,8 +22,43 @@ POST/PATCH extended for `phone` + `contactName`.
 `RequireModule`); nav item in `DashboardLayout.tsx`; cards + "Jobsheets (GMS)" group in `SettingsHub.tsx`.
 
 **Verified** — `tsc --noEmit` passes for API + web; web production build (`tsc && vite build`) succeeds.
-**Not yet done** — migration not deployed to dev; no live in-browser test (needs migration applied +
-module enabled for the org). Go-live: deploy migration → super-admin enables the `jobsheets` module for the org.
+
+### Phase 1.1 — Due-In date/time (added 2026-06-23, supersedes the "deferred booking date" decision)
+
+Migration `20260623140000_jobsheet_due_in.sql`: `jobsheets.due_in_date` (DATE, **NOT NULL**, mandatory)
++ `jobsheets.due_in_time` (TIME, nullable — NULL = flexible/TBC). The linked `health_checks.due_date`
+is now **derived** from these (date + time, default **08:00** when flexible), so the VHC flows into the
+Upcoming view and the workshop "Due In" column on the right day. Enforced mandatory at DB (NOT NULL),
+API (400), and the form (required field). Wired through jobsheets create/update/list/detail.
+
+> This brings the booking date **into the jobsheet now** rather than a later Booking module — it's
+> required for the health-check process. A separate Booking module is no longer needed for the date;
+> only the calendar/diary view + DMS-booking unification remain future work.
+
+### Phase 1.2 — Future Bookings tile + Vehicle Status on jobsheet (2026-06-23)
+
+Migration `20260623160000_future_bookings_tile.sql`: the Tile Status RPCs (`workshop_status_tiles`,
+`workshop_status_tile_jobs`) now **exclude `due_in`**; a synthesised **"Future Bookings"** tile (count of
+`due_in` jobs, sorts first) is added in the API (`/tiles` + a `status=future` drill-in branch). The
+drill-in gained a **"Due in"** column. The jobsheet detail now **states the Vehicle Status** explicitly
+(labelled field + header badge). So JS00001 (Due In) shows under **Future Bookings**, not "No job status".
+
+### Phase 2 + 3 — Work Details + jobsheet-aware Tile page — BUILT (uncommitted, 2026-06-23)
+
+Plan + build status in [`WORK_DETAILS.md`](./WORK_DETAILS.md). Migration `20260623180000_jobsheet_work_details.sql`
+(pending deploy). Phase 2: booked work lines on the jobsheet (labour + parts + Packages + booking notes,
+pre-authorised), VHC opt-out toggle, jobsheet carries Vehicle Status. Phase 3: Future Bookings tile + drill-in
+now include VHC-less jobsheets (open the jobsheet, not a VHC). tsc + web build pass. Locked decisions (Leo, 2026-06-23):
+**(1) reuse the VHC repair engine** (a jobsheet work line *is* a `repair_item`, not parallel tables);
+**(2) booked work belongs to the jobsheet** (`repair_items.jobsheet_id`; `health_check_id` made nullable) —
+structurally separate from VHC inspection findings; **(3) the VHC is optional, default-ON, opt-out at
+booking** ("Requires VHC" toggle / `jobsheets.vhc_required`); **(4) the jobsheet is the visit/workshop
+entity** (Option 2; `jobsheets.job_state`) with the board/tile migration **staged to Phase 3**;
+**(5) booked work is pre-authorised**. Net new schema = 5 additive columns; rest is a thin `work-lines`
+API router + a Work Details panel reusing existing labour/parts/package/margin UIs.
+
+> This **revises §7 below**: the linked VHC is now created **unless** `vhc_required=false` (opt-out at
+> booking), instead of always. Booked work survives a cancelled VHC because it lives on the jobsheet.
 
 ---
 
@@ -107,6 +142,8 @@ No admin-UI changes needed — the Modules tab auto-detects new keys from the re
 | `vehicle_id` | UUID FK → vehicles | Resolved from registration. |
 | `service_type_id` | UUID FK → service_types | NULL allowed (see §4.4). |
 | `advisor_id` | UUID FK → users | **Service Advisor.** |
+| `due_in_date` | DATE **NOT NULL** | **Due In Date** — mandatory (customer due in). Drives the VHC `due_date`. (Phase 1.1) |
+| `due_in_time` | TIME | **Due In Time** — optional; NULL = flexible/TBC. Defaults to 08:00 when deriving the VHC `due_date`. (Phase 1.1) |
 | `mileage` | INTEGER | Booking mileage — **fully optional, never required at any stage**. |
 | `requested_delivery_at` | TIMESTAMPTZ | Requested delivery date/time. |
 | `courtesy_vehicle_required` | BOOLEAN | Default `false`. |
@@ -202,6 +239,7 @@ Every boxed field from the Garage Hive jobsheet, where it lives, and whether it'
 |---|---|---|---|
 | Jobsheet no. (DS006029) | `jobsheets.reference` (e.g. JS00001) | jobsheets | **New** (seq trigger) |
 | Document Date/Time | `jobsheets.created_at` | jobsheets | **New** — automated backend (DB default `NOW()`) |
+| Due In Date (mandatory) + Time (optional) | `jobsheets.due_in_date` (NOT NULL) + `due_in_time` → derives `health_checks.due_date` | jobsheets + health_checks | **New (Phase 1.1)** |
 | **Service Type** (MOT) | `jobsheets.service_type_id` → `service_types` | jobsheets + lookup | **New** |
 | **Vehicle Registration No.** (H3XOL) | `vehicles.registration` | vehicles | Reuse (+ reg lookup) |
 | Vehicle No. (VN0042984) | — (DMS external id) | n/a | Skip (DMS-only) |
@@ -270,10 +308,10 @@ find-or-create logic and the existing health-check creation path:
 This is consistent with how DMS bookings already create `awaiting_arrival` health checks — we're just
 adding the jobsheet parent in front of it.
 
-> **No booking/due-in date in Phase 1.** The VHC's `due_date` (which drives the day-of "Upcoming" view) is
-> **not** set when a jobsheet is created — the **Booking Date ("customer due in") arrives later as a
-> dedicated Booking module** (§10). Until then a Phase-1 jobsheet is an unscheduled forward document and
-> won't surface in Upcoming. The jobsheet's own **Document Date** (`created_at`) is always set automatically.
+> **Due-in date drives the VHC `due_date` (Phase 1.1).** The mandatory **Due In Date** (+ optional time)
+> is combined into the VHC's `due_date` (default 08:00 when the time is flexible), so the inspection flows
+> into the day-of "Upcoming" view and the workshop "Due In" column on the right day. The jobsheet's own
+> **Document Date** (`created_at`) is still set automatically and is separate from the due-in date.
 
 ---
 
@@ -331,7 +369,7 @@ issue we've hit before.
 - Capture the §5 boxed fields. Vehicle Status read from the linked VHC.
 
 **Explicitly out of scope for Phase 1 (future GMS phases):**
-- **Booking Date ("customer due in") + scheduling** — owned by a future **Booking module**; it sets the VHC `due_date` and powers the day-of / Upcoming view.
+- ~~Booking Date ("customer due in")~~ — **done in Phase 1.1** (mandatory due-in date + optional time on the jobsheet, drives the VHC `due_date`). A **calendar/diary view** of forward bookings remains future.
 - DMS import creating jobsheets (instead of bare health checks).
 - Jobsheet → multiple children (estimates, parts orders, invoices).
 - Courtesy-vehicle booking records & collection/delivery scheduling (we store the *flags* now, not the legos).

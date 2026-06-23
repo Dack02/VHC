@@ -59,10 +59,16 @@ export default function NewJobsheet() {
 
   // jobsheet fields
   const [form, setForm] = useState({
-    siteId: '', serviceTypeId: '', advisorId: '', mileage: '', requestedDeliveryAt: '',
-    courtesyVehicleRequired: false, collectionAndDelivery: false, vehicleOnSite: false, customerContactNotes: ''
+    siteId: '', serviceTypeId: '', advisorId: '', mileage: '', dueInDate: '', dueInTime: '', requestedDeliveryAt: '',
+    courtesyVehicleRequired: false, collectionAndDelivery: false, vehicleOnSite: false, customerContactNotes: '', bookingNotes: ''
   })
   const [bookingCodeIds, setBookingCodeIds] = useState<string[]>([])
+
+  // work required
+  const [requiresVhc, setRequiresVhc] = useState(true)
+  const [packages, setPackages] = useState<{ id: string; name: string }[]>([])
+  const [selectedPackageIds, setSelectedPackageIds] = useState<string[]>([])
+  const togglePackage = (id: string) => setSelectedPackageIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id])
 
   // inline-add state
   const [addingServiceType, setAddingServiceType] = useState(false)
@@ -98,6 +104,14 @@ export default function NewJobsheet() {
     }
     load()
   }, [token, user?.id])
+
+  // service packages (for the optional "Work Required" pre-load)
+  useEffect(() => {
+    const orgId = user?.organization?.id
+    if (!token || !orgId) return
+    api<{ servicePackages: { id: string; name: string }[] }>(`/api/v1/organizations/${orgId}/service-packages`, { token })
+      .then(d => setPackages(d.servicePackages || [])).catch(() => {})
+  }, [token, user?.organization?.id])
 
   // vehicle search
   useEffect(() => {
@@ -244,12 +258,15 @@ export default function NewJobsheet() {
     if (!token) return
     if (!selectedVehicle) { setError('Please select a vehicle'); return }
     if (!selectedVehicle.customer_id) { setError('Please add a customer for this vehicle'); return }
+    if (!form.dueInDate) { setError('Please set a due-in date'); return }
     setSubmitting(true); setError(null)
     try {
       const res = await api<{ id: string }>('/api/v1/jobsheets', {
         method: 'POST', token,
         body: {
           vehicleId: selectedVehicle.id,
+          dueInDate: form.dueInDate,
+          dueInTime: form.dueInTime || undefined,
           siteId: form.siteId || undefined,
           serviceTypeId: form.serviceTypeId || undefined,
           advisorId: form.advisorId || undefined,
@@ -259,7 +276,10 @@ export default function NewJobsheet() {
           collectionAndDelivery: form.collectionAndDelivery,
           vehicleOnSite: form.vehicleOnSite,
           customerContactNotes: form.customerContactNotes || undefined,
-          bookingCodeIds
+          bookingCodeIds,
+          vhcRequired: requiresVhc,
+          bookingNotes: form.bookingNotes || undefined,
+          servicePackageIds: selectedPackageIds.length ? selectedPackageIds : undefined
         }
       })
       navigate(`/jobsheets/${res.id}`)
@@ -416,6 +436,15 @@ export default function NewJobsheet() {
         {/* Booking details */}
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
+            <label className={labelCls}>Due In Date *</label>
+            <input type="date" value={form.dueInDate} onChange={(e) => setForm({ ...form, dueInDate: e.target.value })} className={inputCls} required />
+          </div>
+          <div>
+            <label className={labelCls}>Due In Time <span className="text-gray-400 font-normal">(optional — blank = flexible)</span></label>
+            <input type="time" value={form.dueInTime} onChange={(e) => setForm({ ...form, dueInTime: e.target.value })} className={inputCls} />
+          </div>
+
+          <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-sm font-medium text-gray-700">Service Type</label>
               <button type="button" onClick={() => setAddingServiceType(v => !v)} className="text-xs text-primary hover:underline">+ New</button>
@@ -500,8 +529,42 @@ export default function NewJobsheet() {
           </div>
         </div>
 
+        {/* Work Required */}
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-4">
+          <h2 className="text-sm font-semibold text-gray-900">Work Required</h2>
+
+          <div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input type="checkbox" checked={requiresVhc} onChange={(e) => setRequiresVhc(e.target.checked)} className="rounded border-gray-300 text-primary focus:ring-primary" />
+              Requires VHC (health check)
+            </label>
+            <p className="text-xs text-gray-400 mt-1">A health check is created with the booking by default. Untick if this job doesn’t need an inspection — booked work stays on the jobsheet either way.</p>
+          </div>
+
+          <div>
+            <label className={labelCls}>Booking Notes</label>
+            <textarea value={form.bookingNotes} onChange={(e) => setForm({ ...form, bookingNotes: e.target.value })} rows={2} placeholder="Overview of the job / customer concern…" className={inputCls} />
+          </div>
+
+          <div>
+            <label className={labelCls}>Add Packages <span className="text-gray-400 font-normal">(optional — pre-loads booked work)</span></label>
+            <div className="flex flex-wrap gap-2">
+              {packages.map(p => {
+                const on = selectedPackageIds.includes(p.id)
+                return (
+                  <button type="button" key={p.id} onClick={() => togglePackage(p.id)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium border ${on ? 'bg-primary text-white border-transparent' : 'text-gray-600 border-gray-300 bg-white'}`}>
+                    {p.name}
+                  </button>
+                )
+              })}
+              {packages.length === 0 && <span className="text-xs text-gray-400">No service packages configured.</span>}
+            </div>
+          </div>
+        </div>
+
         <div className="flex gap-3">
-          <button type="submit" disabled={submitting || !selectedVehicle?.customer_id} className="px-6 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50">
+          <button type="submit" disabled={submitting || !selectedVehicle?.customer_id || !form.dueInDate} className="px-6 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50">
             {submitting ? 'Creating…' : 'Create Jobsheet'}
           </button>
           <Link to="/jobsheets" className="px-6 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50">Cancel</Link>

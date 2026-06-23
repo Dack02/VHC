@@ -441,7 +441,9 @@ export default function NewJobsheet() {
               <div className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-lg">
                 <button type="button" onClick={() => setShowCustomerCard(true)} className="text-left group min-w-0" title="View customer card">
                   <div className="font-medium text-gray-900 group-hover:text-primary group-hover:underline truncate">{selectedVehicle.customer.first_name} {selectedVehicle.customer.last_name}</div>
-                  <div className="text-sm text-gray-500 truncate">{selectedVehicle.customer.mobile || selectedVehicle.customer.email || 'No contact details'}</div>
+                  {selectedVehicle.customer.mobile && <div className="text-sm text-gray-500 truncate">{selectedVehicle.customer.mobile}</div>}
+                  {selectedVehicle.customer.email && <div className="text-sm text-gray-500 truncate">{selectedVehicle.customer.email}</div>}
+                  {!selectedVehicle.customer.mobile && !selectedVehicle.customer.email && <div className="text-sm text-gray-500">No contact details</div>}
                 </button>
                 <button type="button" onClick={() => { setChangingCustomer(true); setCustomerError(null) }} className="text-sm font-medium text-primary hover:underline shrink-0 ml-3">Change</button>
               </div>
@@ -625,7 +627,13 @@ export default function NewJobsheet() {
       </div>
 
       {showCustomerCard && selectedVehicle?.customer?.id && (
-        <CustomerCardModal customerId={selectedVehicle.customer.id} onClose={() => setShowCustomerCard(false)} />
+        <CustomerCardModal
+          customerId={selectedVehicle.customer.id}
+          onClose={() => setShowCustomerCard(false)}
+          onUpdated={(c) => setSelectedVehicle(v => (v && v.customer)
+            ? { ...v, customer: { ...v.customer, first_name: c.firstName, last_name: c.lastName, mobile: c.mobile, email: c.email } }
+            : v)}
+        />
       )}
     </div>
   )

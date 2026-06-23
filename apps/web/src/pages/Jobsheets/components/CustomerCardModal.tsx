@@ -14,13 +14,23 @@ import type { CustomerDetail, CustomerStats } from '../../../lib/api'
 const money = (n: number) => new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n || 0)
 const fmtDate = (s: string | null) => (s ? new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—')
 
-export default function CustomerCardModal({ customerId, onClose }: { customerId: string; onClose: () => void }) {
+export default function CustomerCardModal({ customerId, onClose, onUpdated }: {
+  customerId: string
+  onClose: () => void
+  onUpdated?: (customer: CustomerDetail) => void
+}) {
   const { session } = useAuth()
   const token = session?.accessToken
   const [customer, setCustomer] = useState<CustomerDetail | null>(null)
   const [stats, setStats] = useState<CustomerStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // inline edit of contact details (fix a number/email without leaving the booking)
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [edit, setEdit] = useState({ firstName: '', lastName: '', email: '', mobile: '', address: '' })
 
   useEffect(() => {
     if (!token) return
@@ -35,6 +45,41 @@ export default function CustomerCardModal({ customerId, onClose }: { customerId:
       .catch(() => { /* stats are non-critical */ })
     return () => { cancelled = true }
   }, [token, customerId])
+
+  const startEdit = () => {
+    if (!customer) return
+    setEdit({
+      firstName: customer.firstName, lastName: customer.lastName,
+      email: customer.email || '', mobile: customer.mobile || '', address: customer.address || ''
+    })
+    setSaveError(null)
+    setEditing(true)
+  }
+
+  const handleSave = async () => {
+    if (!token || !customer) return
+    if (!edit.firstName.trim() || !edit.lastName.trim()) { setSaveError('First and last name are required'); return }
+    setSaving(true); setSaveError(null)
+    try {
+      const updated = await api<CustomerDetail>(`/api/v1/customers/${customer.id}`, {
+        method: 'PATCH', token,
+        body: {
+          firstName: edit.firstName.trim(), lastName: edit.lastName.trim(),
+          email: edit.email.trim() || null, mobile: edit.mobile.trim() || null, address: edit.address.trim() || null
+        }
+      })
+      const merged = { ...customer, ...updated }
+      setCustomer(merged)
+      onUpdated?.(merged)
+      setEditing(false)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save customer')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const inputCls = 'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary'
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-start justify-center p-4 z-50 overflow-y-auto" onClick={onClose}>
@@ -65,13 +110,35 @@ export default function CustomerCardModal({ customerId, onClose }: { customerId:
             <>
               {/* Contact */}
               <div>
-                <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Contact</h3>
-                <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
-                  <div><dt className="text-gray-500">Mobile</dt><dd className="text-gray-900 font-medium">{customer.mobile || '—'}</dd></div>
-                  <div className="min-w-0"><dt className="text-gray-500">Email</dt><dd className="text-gray-900 font-medium break-words">{customer.email || '—'}</dd></div>
-                  <div className="sm:col-span-2"><dt className="text-gray-500">Address</dt><dd className="text-gray-900 font-medium whitespace-pre-wrap">{customer.address || '—'}</dd></div>
-                  {customer.externalId && <div><dt className="text-gray-500">External ID (DMS)</dt><dd className="text-gray-900 font-medium">{customer.externalId}</dd></div>}
-                </dl>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide">Contact</h3>
+                  {!editing && <button type="button" onClick={startEdit} className="text-sm font-medium text-primary hover:underline">Edit</button>}
+                </div>
+                {editing ? (
+                  <div className="space-y-3">
+                    {saveError && <p className="text-xs text-red-600">{saveError}</p>}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <input value={edit.firstName} onChange={e => setEdit({ ...edit, firstName: e.target.value })} placeholder="First name *" className={inputCls} />
+                      <input value={edit.lastName} onChange={e => setEdit({ ...edit, lastName: e.target.value })} placeholder="Last name *" className={inputCls} />
+                      <input value={edit.mobile} onChange={e => setEdit({ ...edit, mobile: e.target.value })} placeholder="Mobile" className={inputCls} />
+                      <input type="email" value={edit.email} onChange={e => setEdit({ ...edit, email: e.target.value })} placeholder="Email" className={inputCls} />
+                    </div>
+                    <textarea value={edit.address} onChange={e => setEdit({ ...edit, address: e.target.value })} rows={2} placeholder="Address" className={inputCls} />
+                    <div className="flex gap-2">
+                      <button type="button" onClick={handleSave} disabled={saving || !edit.firstName.trim() || !edit.lastName.trim()}
+                        className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50">{saving ? 'Saving…' : 'Save'}</button>
+                      <button type="button" onClick={() => { setEditing(false); setSaveError(null) }}
+                        className="px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5 text-sm">
+                    <div><dt className="text-gray-500">Mobile</dt><dd className="text-gray-900 font-medium">{customer.mobile || '—'}</dd></div>
+                    <div className="min-w-0"><dt className="text-gray-500">Email</dt><dd className="text-gray-900 font-medium break-words">{customer.email || '—'}</dd></div>
+                    <div className="sm:col-span-2"><dt className="text-gray-500">Address</dt><dd className="text-gray-900 font-medium whitespace-pre-wrap">{customer.address || '—'}</dd></div>
+                    {customer.externalId && <div><dt className="text-gray-500">External ID (DMS)</dt><dd className="text-gray-900 font-medium">{customer.externalId}</dd></div>}
+                  </dl>
+                )}
               </div>
 
               {/* Stats */}

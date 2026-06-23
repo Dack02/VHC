@@ -582,6 +582,7 @@ workshopBoard.get('/tiles', authorize([...ADVISOR_ROLES]), async (c) => {
 // ?status=<uuid> for a Job Status, ?status=none for the "No job status" bucket.
 type TileJobRow = {
   health_check_id: string
+  jobsheet_id: string | null
   job_number: string | null
   registration: string | null
   make: string | null
@@ -614,7 +615,8 @@ workshopBoard.get('/tiles/jobs', authorize([...ADVISOR_ROLES]), async (c) => {
     if (statusParam === 'future') {
       let fq = supabaseAdmin
         .from('health_checks')
-        .select(`id, job_state, status, promise_time, due_date, created_at, jobsheet_number, job_number,
+        .select(`id, job_state, status, promise_time, due_date, created_at, jobsheet_number, job_number, jobsheet_id,
+          jobsheet:jobsheets!health_checks_jobsheet_id_fkey(reference),
           vehicle:vehicles(registration, make, model),
           customer:customers(first_name, last_name),
           advisor:users!health_checks_advisor_id_fkey(first_name, last_name),
@@ -635,8 +637,9 @@ workshopBoard.get('/tiles/jobs', authorize([...ADVISOR_ROLES]), async (c) => {
       const nameOf = (p: any) => (p ? (`${p.first_name || ''} ${p.last_name || ''}`.trim() || null) : null)
       const hcJobs = ((fdata as any[]) || []).map((j) => ({
         healthCheckId: j.id,
-        jobsheetId: null,
-        jobNumber: j.jobsheet_number || j.job_number || null,
+        // A health check spawned from a job card opens the job card (parent), not the VHC.
+        jobsheetId: j.jobsheet_id ?? null,
+        jobNumber: j.jobsheet?.reference || j.jobsheet_number || j.job_number || null,
         registration: j.vehicle?.registration ?? null,
         make: j.vehicle?.make ?? null,
         model: j.vehicle?.model ?? null,
@@ -694,6 +697,7 @@ workshopBoard.get('/tiles/jobs', authorize([...ADVISOR_ROLES]), async (c) => {
 
     const jobs = ((data as TileJobRow[] | null) || []).map(j => ({
       healthCheckId: j.health_check_id,
+      jobsheetId: j.jobsheet_id,
       jobNumber: j.job_number,
       registration: j.registration,
       make: j.make,

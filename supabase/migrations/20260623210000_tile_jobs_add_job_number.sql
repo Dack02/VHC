@@ -1,12 +1,20 @@
 -- =============================================================================
--- Tile Status drill-in: surface the job / jobsheet number in the job list.
+-- Tile Status drill-in: surface the job / jobsheet number AND route job-card rows
+-- to their parent job card.
 --
--- The drill-in table (and the Workshop Board) identify a job by its jobsheet
--- number, falling back to the DMS job number. The Tile Status drill-in RPC didn't
--- return either, so the list had no "Job no." column. Add a single coalesced
--- `job_number` column = jobsheet_number ?: job_number.
+-- A booking can be a plain (DMS/manual) health check, or a job card (jobsheet)
+-- from the GMS module with a VHC attached via health_checks.jobsheet_id. The
+-- drill-in RPC returned neither the number nor the jobsheet link, so:
+--   * the "Job no." column was blank for job-card rows (their number, e.g. JS00001,
+--     lives on the parent jobsheet, not on the health check), and
+--   * clicking a job-card row opened the VHC instead of the job card.
 --
--- Adding a column to a RETURNS TABLE changes the function's output type, which
+-- This returns:
+--   * jobsheet_id  — the parent job card (NULL for plain health checks) so the UI
+--                    can open the job card rather than the VHC.
+--   * job_number   — jobsheet reference ?: hc.jobsheet_number ?: hc.job_number.
+--
+-- Adding columns to a RETURNS TABLE changes the function's output type, which
 -- CREATE OR REPLACE cannot do — so DROP then CREATE. Dropping a function is not
 -- destructive (no data), and it's recreated immediately below.
 -- =============================================================================
@@ -23,6 +31,7 @@ CREATE FUNCTION workshop_status_tile_jobs(
 )
 RETURNS TABLE (
   health_check_id uuid,
+  jobsheet_id uuid,
   job_number text,
   registration text,
   make text,
@@ -42,7 +51,8 @@ STABLE
 AS $$
   SELECT
     hc.id,
-    COALESCE(NULLIF(hc.jobsheet_number, ''), NULLIF(hc.job_number, '')),
+    hc.jobsheet_id,
+    COALESCE(NULLIF(js.reference, ''), NULLIF(hc.jobsheet_number, ''), NULLIF(hc.job_number, '')),
     v.registration,
     v.make,
     v.model,
@@ -57,6 +67,7 @@ AS $$
     COALESCE(wc.workshop_status_changed_at, wc.created_at, hc.created_at)
   FROM health_checks hc
   LEFT JOIN workshop_cards wc ON wc.health_check_id = hc.id AND wc.organization_id = p_org_id
+  LEFT JOIN jobsheets js ON js.id = hc.jobsheet_id
   LEFT JOIN vehicles v ON v.id = hc.vehicle_id
   LEFT JOIN customers c ON c.id = hc.customer_id
   LEFT JOIN users ua ON ua.id = hc.advisor_id

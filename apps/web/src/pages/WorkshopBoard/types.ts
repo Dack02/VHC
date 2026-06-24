@@ -64,6 +64,8 @@ export interface BoardCard {
   customerWaiting: boolean
   loanCarRequired: boolean
   isInternal: boolean
+  jobsheetId: string | null
+  jobsheetReference: string | null
   jobsheetNumber: string | null
   jobNumber: string | null
   mileageIn: number | null

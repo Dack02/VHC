@@ -25,7 +25,7 @@ const SELECT = `
   service_type:service_types(id, code, label, colour),
   advisor:users!jobsheets_advisor_id_fkey(id, first_name, last_name),
   created_by_user:users!jobsheets_created_by_fkey(id, first_name, last_name),
-  linked_checks:health_checks!health_checks_jobsheet_id_fkey(id, status, job_state, vhc_reference, deleted_at),
+  linked_checks:health_checks!health_checks_jobsheet_id_fkey(id, status, job_state, vhc_reference, deleted_at, arrived_at, checked_in_at, mileage_in, key_location, time_required, customer_waiting, checkin_notes, checked_in_by_user:users!health_checks_checked_in_by_fkey(id, first_name, last_name)),
   codes:jobsheet_booking_codes(booking_code:booking_codes(id, code, label, colour))
 `
 
@@ -82,6 +82,23 @@ function shapeJobsheet(row: any) {
     createdBy: row.created_by_user ? { id: row.created_by_user.id, firstName: row.created_by_user.first_name, lastName: row.created_by_user.last_name } : null,
     // Vehicle Status ("Work Status Code") is read through from the linked VHC
     healthCheck: hc ? { id: hc.id, status: hc.status, vehicleStatus: hc.job_state, vhcReference: hc.vhc_reference } : null,
+    // Check-in details read through from the linked VHC (arrival → check-in happens on the VHC;
+    // the check-in form writes these fields). null when no VHC or not yet arrived/checked in.
+    checkIn: hc
+      ? {
+          status: hc.status,
+          arrivedAt: hc.arrived_at ?? null,
+          checkedInAt: hc.checked_in_at ?? null,
+          checkedInBy: hc.checked_in_by_user
+            ? { id: hc.checked_in_by_user.id, firstName: hc.checked_in_by_user.first_name, lastName: hc.checked_in_by_user.last_name }
+            : null,
+          mileageIn: hc.mileage_in ?? null,
+          keyLocation: hc.key_location ?? null,
+          timeRequired: hc.time_required ? String(hc.time_required).slice(0, 5) : null,
+          customerWaiting: hc.customer_waiting ?? null,
+          checkinNotes: hc.checkin_notes ?? null
+        }
+      : null,
     bookingCodes: Array.isArray(row.codes)
       ? row.codes
           .map((c: any) => c.booking_code)

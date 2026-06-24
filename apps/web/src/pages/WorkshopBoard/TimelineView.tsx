@@ -1,10 +1,10 @@
 import { useMemo, useRef, useState, useEffect, useCallback } from 'react'
-import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, useDraggable, useDroppable, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core'
+import { DndContext, DragOverlay, PointerSensor, TouchSensor, useSensor, useSensors, useDraggable, useDroppable, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from '@dnd-kit/core'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
-import { api } from '../../lib/api'
 import type { BoardCard, BoardData } from './types'
 import { timeToMinutes, actualWorkedMinutes, isClockStale } from './types'
+import { moveCard, patchCard as patchCardApi } from './boardActions'
 import { promiseCountdown } from './JobCard'
 
 const PX_PER_MIN = 88 / 60 // 88px per hour
@@ -19,6 +19,15 @@ interface TimelineViewProps {
   canDrag: boolean
   onOpenCard: (healthCheckId: string) => void
   refresh: (silent?: boolean) => void
+  /** Pause/resume background refetches around a drag (shared with the kanban) */
+  onDragActive?: (active: boolean) => void
+}
+
+// Snap minutes-since-midnight to the 15-min grid, clamped to the working day.
+function snapMinToDay(min: number, dayStartMin: number, dayEndMin: number): number {
+  let m = Math.round(min / SNAP_MIN) * SNAP_MIN
+  m = Math.min(Math.max(m, dayStartMin), dayEndMin - SNAP_MIN)
+  return m
 }
 
 interface PlacedBlock {
@@ -62,7 +71,7 @@ function layoutLane(blocks: Omit<PlacedBlock, 'subCol' | 'subColCount'>[]): Plac
   return placed.map(b => ({ ...b, subColCount: count }))
 }
 
-export default function TimelineView({ board, cards, date, now, canDrag, onOpenCard, refresh }: TimelineViewProps) {
+export default function TimelineView({ board, cards, date, now, canDrag, onOpenCard, refresh, onDragActive }: TimelineViewProps) {
   const { session } = useAuth()
   const toast = useToast()
   const token = session?.accessToken
@@ -71,9 +80,16 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
   const laneRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const recentDragRef = useRef(false)
   const [activeDragCard, setActiveDragCard] = useState<BoardCard | null>(null)
+  // Live snap preview while dragging onto a lane (the dashed ghost block).
+  const [ghost, setGhost] = useState<{ laneId: string; startMin: number; durationMin: number } | null>(null)
   const [resizing, setResizing] = useState<{ id: string; hours: number } | null>(null)
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+  // Mouse keeps the instant 6px lift; touch needs a long-press so a tap opens
+  // the card and a swipe still scrolls the grid (tablets / wall TVs).
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } })
+  )
 
   const dayStartMin = timeToMinutes(board.config.dayStartTime)
   const dayEndMin = timeToMinutes(board.config.dayEndTime)
@@ -140,7 +156,7 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
   const patchCard = useCallback(async (healthCheckId: string, body: Record<string, unknown>) => {
     if (!token) return false
     try {
-      await api(`/api/v1/workshop-board/cards/${healthCheckId}`, { method: 'PATCH', token, body })
+      await patchCardApi(token, healthCheckId, body)
       return true
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Update failed')
@@ -151,11 +167,7 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
   const moveToTech = useCallback(async (healthCheckId: string, columnId: string) => {
     if (!token) return false
     try {
-      await api(`/api/v1/workshop-board/cards/${healthCheckId}/move`, {
-        method: 'POST',
-        token,
-        body: { target: 'technician', columnId }
-      })
+      await moveCard(token, healthCheckId, { target: 'technician', columnId })
       return true
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not assign technician')
@@ -163,54 +175,83 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
     }
   }, [token, toast])
 
+  // Snapped start (minutes since midnight) from the dragged element's live top
+  // edge over a lane. translated.top already follows the grab point, so this is
+  // where the block's top will land.
+  const snapStartForLane = useCallback((laneId: string, translatedTop: number | undefined): number | null => {
+    const laneEl = laneRefs.current[laneId]
+    if (!laneEl || translatedTop == null) return null
+    const offsetPx = translatedTop - laneEl.getBoundingClientRect().top
+    return snapMinToDay(dayStartMin + offsetPx / PX_PER_MIN, dayStartMin, dayEndMin)
+  }, [dayStartMin, dayEndMin])
+
   const handleDragStart = (event: DragStartEvent) => {
     recentDragRef.current = true
+    onDragActive?.(true)
     const card = cards.find(c => c.healthCheckId === event.active.id)
     setActiveDragCard(card || null)
   }
 
+  // Live preview: project a dashed ghost block onto the hovered lane at the
+  // snapped 15-min slot as the user drags.
+  const handleDragMove = (event: DragMoveEvent) => {
+    const { active, over } = event
+    const card = activeDragCard || cards.find(c => c.healthCheckId === active.id)
+    const overId = over?.id as string | undefined
+    const lane = overId ? techColumns.find(c => c.id === overId) : undefined
+    if (!card || !lane) { if (ghost) setGhost(null); return }
+    const startMin = snapStartForLane(lane.id, active.rect.current.translated?.top)
+    if (startMin == null) { if (ghost) setGhost(null); return }
+    const durationMin = Math.max((card.estimatedHours ?? 1) * 60, SNAP_MIN)
+    setGhost({ laneId: lane.id, startMin, durationMin })
+  }
+
+  const handleDragCancel = () => {
+    setActiveDragCard(null)
+    setGhost(null)
+    onDragActive?.(false)
+    setTimeout(() => { recentDragRef.current = false }, 150)
+  }
+
   const handleDragEnd = async (event: DragEndEvent) => {
     setActiveDragCard(null)
-    setTimeout(() => { recentDragRef.current = false }, 100)
-    const { active, over } = event
-    if (!over || !canDrag) return
+    setGhost(null)
+    setTimeout(() => { recentDragRef.current = false }, 150)
+    try {
+      const { active, over } = event
+      if (!over || !canDrag) return
 
-    const card = cards.find(c => c.healthCheckId === active.id)
-    if (!card) return
+      const card = cards.find(c => c.healthCheckId === active.id)
+      if (!card) return
 
-    const overId = over.id as string
+      const overId = over.id as string
 
-    // Drop back on the tray = unschedule
-    if (overId === 'timeline_tray') {
-      if (card.plannedStartAt) {
-        const ok = await patchCard(card.healthCheckId, { plannedStartAt: null })
-        if (ok) refresh(true)
+      // Drop back on the tray = unschedule
+      if (overId === 'timeline_tray') {
+        if (card.plannedStartAt) {
+          const ok = await patchCard(card.healthCheckId, { plannedStartAt: null })
+          if (ok) refresh(true)
+        }
+        return
       }
-      return
+
+      const lane = techColumns.find(c => c.id === overId)
+      if (!lane?.technicianId) return
+
+      const startMin = snapStartForLane(lane.id, active.rect.current.translated?.top)
+      if (startMin == null) return
+      const plannedStartAt = new Date(`${date}T${fmtMin(startMin)}:00`).toISOString()
+
+      // Reassign first if dropped on a different technician's lane
+      if (card.technician?.id !== lane.technicianId) {
+        const moved = await moveToTech(card.healthCheckId, lane.id)
+        if (!moved) return
+      }
+      const ok = await patchCard(card.healthCheckId, { plannedStartAt })
+      if (ok) refresh(true)
+    } finally {
+      onDragActive?.(false)
     }
-
-    const lane = techColumns.find(c => c.id === overId)
-    if (!lane?.technicianId) return
-
-    // Compute the snapped drop time from the dragged element's top edge
-    const laneEl = laneRefs.current[lane.id]
-    const translatedTop = active.rect.current.translated?.top
-    if (!laneEl || translatedTop == null) return
-    const laneTop = laneEl.getBoundingClientRect().top
-    const offsetPx = translatedTop - laneTop
-    let startMin = dayStartMin + offsetPx / PX_PER_MIN
-    startMin = Math.round(startMin / SNAP_MIN) * SNAP_MIN
-    startMin = Math.min(Math.max(startMin, dayStartMin), dayEndMin - SNAP_MIN)
-
-    const plannedStartAt = new Date(`${date}T${fmtMin(startMin)}:00`).toISOString()
-
-    // Reassign first if dropped on a different technician's lane
-    if (card.technician?.id !== lane.technicianId) {
-      const moved = await moveToTech(card.healthCheckId, lane.id)
-      if (!moved) return
-    }
-    const ok = await patchCard(card.healthCheckId, { plannedStartAt })
-    if (ok) refresh(true)
   }
 
   // ---- Block resize (bottom edge = re-estimate) ---------------------------
@@ -270,7 +311,14 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
   }
 
   return (
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      autoScroll={{ threshold: { x: 0.2, y: 0.2 } }}
+      onDragStart={handleDragStart}
+      onDragMove={handleDragMove}
+      onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
+    >
       <div className="flex-1 flex gap-3 min-h-0">
         {/* Unscheduled tray */}
         <TrayDropZone>
@@ -370,6 +418,21 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
                     </div>
                   )}
 
+                  {/* Live drop preview */}
+                  {ghost && ghost.laneId === col.id && (
+                    <div
+                      className="absolute left-1 right-1 z-20 rounded-lg border-2 border-dashed border-primary bg-indigo-50/70 pointer-events-none flex items-start justify-between px-2 py-1"
+                      style={{
+                        top: (ghost.startMin - dayStartMin) * PX_PER_MIN,
+                        height: Math.max(ghost.durationMin * PX_PER_MIN, MIN_BLOCK_PX)
+                      }}
+                    >
+                      <span className="text-[10px] font-bold text-primary">
+                        {fmtMin(ghost.startMin)}–{fmtMin(ghost.startMin + ghost.durationMin)}
+                      </span>
+                    </div>
+                  )}
+
                   {/* Blocks */}
                   {(lanes.get(col.technicianId!) || []).map(block => (
                     <TimelineBlock
@@ -406,10 +469,10 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
 
       <DragOverlay>
         {activeDragCard && (
-          <div className="bg-white border-2 border-primary rounded-lg shadow-lg px-3 py-2 w-48 opacity-95">
+          <div className="bg-white border-2 border-primary rounded-lg shadow-lg px-3 py-2 w-48 opacity-95 cursor-grabbing">
             <div className="text-sm font-bold text-gray-900">{activeDragCard.vehicle?.registration}</div>
             <div className="text-xs text-gray-500">
-              {fmtHours(activeDragCard.estimatedHours ?? 1)}
+              {ghost ? `${fmtMin(ghost.startMin)}–${fmtMin(ghost.startMin + ghost.durationMin)}` : fmtHours(activeDragCard.estimatedHours ?? 1)}
               {activeDragCard.customerWaiting && <span className="ml-1.5 text-red-600 font-bold">WAITING</span>}
             </div>
           </div>

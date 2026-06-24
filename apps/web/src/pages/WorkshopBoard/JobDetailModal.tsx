@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api, type TimelineEvent } from '../../lib/api'
+import { jobPath, jobRecordLabel } from '../../lib/jobLink'
 import type { BoardCard, BoardColumnDef, BoardStatus, CardPriority } from './types'
 import { pipelineStage, renderSmsTemplate, actualWorkedMinutes } from './types'
 import SmsConfirmModal from './SmsConfirmModal'
@@ -242,10 +243,10 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <Link
-                to={`/health-checks/${card.healthCheckId}`}
+                to={jobPath(card)}
                 className="px-3.5 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90"
               >
-                Open health check
+                Open {jobRecordLabel(card)}
               </Link>
               <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg" aria-label="Close">
                 <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -272,7 +273,7 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
                   </div>
                   <div className="bg-gray-50 rounded-lg p-3">
                     <div className="text-xs text-gray-400 mb-0.5">Jobsheet</div>
-                    <div className="font-medium text-gray-800">{card.jobsheetNumber || card.jobNumber || '—'}</div>
+                    <div className="font-medium text-gray-800">{card.jobsheetReference || card.jobsheetNumber || card.jobNumber || '—'}</div>
                   </div>
                   <div className="bg-gray-50 rounded-lg p-3">
                     <div className="text-xs text-gray-400 mb-0.5">Service advisor</div>
@@ -563,10 +564,10 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
               Text customer
             </button>
             <Link
-              to={`/health-checks/${card.healthCheckId}`}
+              to={jobPath(card)}
               className="text-sm font-medium text-primary hover:underline"
             >
-              Open full health check →
+              Open full {jobRecordLabel(card)} →
             </Link>
           </div>
         </div>

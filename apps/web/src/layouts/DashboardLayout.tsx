@@ -123,6 +123,17 @@ export default function DashboardLayout() {
       module: 'jobsheets'
     },
     {
+      to: '/arrivals',
+      label: 'Arrivals',
+      icon: (
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12h13m0 0l-4-4m4 4l-4 4M21 4v16" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor'],
+      module: 'jobsheets'
+    },
+    {
       to: '/health-checks',
       label: 'Health Checks',
       icon: (

@@ -29,6 +29,17 @@ interface Jobsheet {
   advisor: { id: string; firstName: string; lastName: string } | null
   createdBy: { id: string; firstName: string; lastName: string } | null
   healthCheck: { id: string; status: string; vehicleStatus: string; vhcReference: string | null } | null
+  checkIn: {
+    status: string
+    arrivedAt: string | null
+    checkedInAt: string | null
+    checkedInBy: { id: string; firstName: string; lastName: string } | null
+    mileageIn: number | null
+    keyLocation: string | null
+    timeRequired: string | null
+    customerWaiting: boolean | null
+    checkinNotes: string | null
+  } | null
   bookingCodes: LookupOption[]
 }
 
@@ -73,6 +84,7 @@ export default function JobsheetDetail() {
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [checkinBusy, setCheckinBusy] = useState(false)
 
   const [serviceTypes, setServiceTypes] = useState<LookupOption[]>([])
   const [bookingCodeOptions, setBookingCodeOptions] = useState<LookupOption[]>([])
@@ -174,6 +186,28 @@ export default function JobsheetDetail() {
       navigate('/jobsheets')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete jobsheet')
+    }
+  }
+
+  // Bring the vehicle into the workshop: mark its VHC arrived, then jump to the check-in form
+  // (if the org requires check-in). Mirrors the Arrivals hub action.
+  const handleCheckInVehicle = async () => {
+    if (!token || !js?.healthCheck) return
+    setCheckinBusy(true)
+    try {
+      const res = await api<{ healthCheck: { requiresCheckin: boolean } }>(
+        `/api/v1/health-checks/${js.healthCheck.id}/mark-arrived`, { method: 'POST', token }
+      )
+      if (res.healthCheck?.requiresCheckin) {
+        navigate(`/health-checks/${js.healthCheck.id}?tab=checkin`)
+        return
+      }
+      toast.success('Vehicle marked as arrived')
+      load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to check in vehicle')
+    } finally {
+      setCheckinBusy(false)
     }
   }
 
@@ -352,6 +386,59 @@ export default function JobsheetDetail() {
             </div>
           )}
         </div>
+
+        {/* Check-in — read-through from the linked VHC; the form lives on the VHC's Check-In tab */}
+        {js.healthCheck && (
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 lg:col-span-2">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-gray-900">Check-in</h2>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                js.checkIn?.checkedInAt ? 'bg-green-100 text-green-700'
+                : js.healthCheck.status === 'awaiting_checkin' ? 'bg-amber-100 text-amber-700'
+                : js.healthCheck.status === 'awaiting_arrival' ? 'bg-gray-100 text-gray-600'
+                : 'bg-blue-100 text-blue-700'}`}>
+                {js.checkIn?.checkedInAt ? 'Checked in'
+                  : js.healthCheck.status === 'awaiting_checkin' ? 'Awaiting check-in'
+                  : js.healthCheck.status === 'awaiting_arrival' ? 'Not arrived' : 'Arrived'}
+              </span>
+            </div>
+
+            {js.healthCheck.status === 'awaiting_arrival' ? (
+              <div className="flex items-center justify-between gap-4">
+                <p className="text-sm text-gray-500">Vehicle has not arrived yet. Check it in when it’s on site.</p>
+                <button onClick={handleCheckInVehicle} disabled={checkinBusy}
+                  className="shrink-0 px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg disabled:opacity-50">
+                  {checkinBusy ? 'Working…' : 'Check in vehicle'}
+                </button>
+              </div>
+            ) : (
+              <>
+                <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2.5 text-sm">
+                  <div className="flex justify-between"><dt className="text-gray-500">Arrived</dt><dd className="text-gray-900">{js.checkIn?.arrivedAt ? formatDate(js.checkIn.arrivedAt) : '—'}</dd></div>
+                  <div className="flex justify-between"><dt className="text-gray-500">Checked in</dt><dd className="text-gray-900">{js.checkIn?.checkedInAt ? formatDate(js.checkIn.checkedInAt) : '—'}</dd></div>
+                  <div className="flex justify-between"><dt className="text-gray-500">Checked in by</dt><dd className="text-gray-900">{js.checkIn?.checkedInBy ? `${js.checkIn.checkedInBy.firstName} ${js.checkIn.checkedInBy.lastName}` : '—'}</dd></div>
+                  <div className="flex justify-between"><dt className="text-gray-500">Mileage in</dt><dd className="text-gray-900">{js.checkIn?.mileageIn != null ? js.checkIn.mileageIn.toLocaleString() : '—'}</dd></div>
+                  <div className="flex justify-between"><dt className="text-gray-500">Key location</dt><dd className="text-gray-900">{js.checkIn?.keyLocation || '—'}</dd></div>
+                  <div className="flex justify-between"><dt className="text-gray-500">Customer waiting</dt><dd className="text-gray-900">{js.checkIn?.customerWaiting == null ? '—' : js.checkIn.customerWaiting ? 'Yes' : 'No'}</dd></div>
+                  <div className="flex justify-between"><dt className="text-gray-500">Needs vehicle by</dt><dd className="text-gray-900">{js.checkIn?.timeRequired || '—'}</dd></div>
+                </dl>
+                {js.checkIn?.checkinNotes && (
+                  <div className="pt-3 mt-3 border-t border-gray-100 text-sm">
+                    <div className="text-gray-500 mb-1">Check-in notes</div>
+                    <div className="text-gray-900 whitespace-pre-wrap">{js.checkIn.checkinNotes}</div>
+                  </div>
+                )}
+                {js.healthCheck.status === 'awaiting_checkin' && (
+                  <div className="mt-4">
+                    <Link to={`/health-checks/${js.healthCheck.id}?tab=checkin`} className="inline-block px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg">
+                      Continue check-in
+                    </Link>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         {/* Work Details — labour + parts + packages + booking notes */}
         {token && (

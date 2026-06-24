@@ -1,7 +1,24 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
+
+interface ArrivalLite {
+  id: string
+  healthCheckId: string | null
+  hasVhc: boolean
+  status: 'awaiting_arrival' | 'awaiting_checkin'
+  origin: 'dms' | 'jobsheet' | 'manual'
+  jobsheetId: string | null
+  jobsheetReference: string | null
+  registration: string
+  make: string
+  model: string
+  customerName: string
+  customerWaiting: boolean
+  dueDate: string | null
+}
 
 interface JobsheetRow {
   id: string
@@ -42,10 +59,58 @@ function formatDueIn(dateStr: string, time: string | null): string {
 
 export default function JobsheetList() {
   const { session } = useAuth()
+  const toast = useToast()
+  const navigate = useNavigate()
   const [rows, setRows] = useState<JobsheetRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [arrivals, setArrivals] = useState<ArrivalLite[]>([])
+  const [busyId, setBusyId] = useState<string | null>(null)
   const token = session?.accessToken
+
+  // Jobsheet bookings due in soon (today + overdue) that still need arrival / check-in.
+  const fetchArrivals = useCallback(async () => {
+    if (!token) return
+    try {
+      const data = await api<{ arrivals: ArrivalLite[] }>('/api/v1/arrivals?window=soon', { token })
+      setArrivals((data.arrivals || []).filter(a => a.origin === 'jobsheet'))
+    } catch {
+      setArrivals([])
+    }
+  }, [token])
+
+  useEffect(() => { fetchArrivals() }, [fetchArrivals])
+
+  // Inline check-in from the list: mark arrived (VHC) then jump to the check-in form, or
+  // continue an in-progress check-in. No-VHC jobsheets just get marked on site.
+  const handleCheckIn = async (item: ArrivalLite) => {
+    if (!token) return
+    if (item.status === 'awaiting_checkin' && item.healthCheckId) {
+      navigate(`/health-checks/${item.healthCheckId}?tab=checkin`)
+      return
+    }
+    setBusyId(item.id)
+    try {
+      if (item.hasVhc && item.healthCheckId) {
+        const res = await api<{ healthCheck: { requiresCheckin: boolean } }>(
+          `/api/v1/health-checks/${item.healthCheckId}/mark-arrived`, { method: 'POST', token }
+        )
+        if (res.healthCheck?.requiresCheckin) {
+          navigate(`/health-checks/${item.healthCheckId}?tab=checkin`)
+          return
+        }
+        toast.success('Vehicle marked as arrived')
+      } else if (item.jobsheetId) {
+        await api(`/api/v1/jobsheets/${item.jobsheetId}`, { method: 'PATCH', token, body: { jobState: 'arrived', vehicleOnSite: true } })
+        toast.success('Vehicle marked on site')
+      }
+      fetchArrivals()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to check in')
+    } finally {
+      setBusyId(null)
+    }
+  }
 
   const fetchRows = useCallback(async (q: string) => {
     if (!token) return
@@ -77,6 +142,44 @@ export default function JobsheetList() {
           + New Jobsheet
         </Link>
       </div>
+
+      {/* Due in — today + overdue jobsheet bookings still needing arrival / check-in */}
+      {arrivals.length > 0 && (
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm mb-4 overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 bg-gray-50">
+            <span className="w-2 h-2 rounded-full bg-blue-500" />
+            <h2 className="text-sm font-semibold text-gray-800">Due in</h2>
+            <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-500">{arrivals.length}</span>
+            <Link to="/arrivals" className="ml-auto text-xs font-semibold text-primary hover:underline">Open arrivals</Link>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {arrivals.map(item => (
+              <div key={item.id} className={`flex items-center justify-between gap-3 px-4 py-2.5 ${item.customerWaiting ? 'bg-red-50/50' : ''}`}>
+                <Link to={item.jobsheetId ? `/jobsheets/${item.jobsheetId}` : '/arrivals'} className="flex items-center gap-3 min-w-0">
+                  <span className="font-mono text-[11.5px] bg-[#fdf6dd] border border-[#efe2a8] text-[#796a1f] rounded-[5px] px-[7px] py-0.5 whitespace-nowrap">{item.registration || '—'}</span>
+                  <div className="min-w-0">
+                    <div className="text-sm text-gray-900 truncate">
+                      {item.make} {item.model}
+                      {item.jobsheetReference && <span className="text-gray-400"> · {item.jobsheetReference}</span>}
+                    </div>
+                    <div className="text-xs text-gray-500 truncate">{item.customerName || 'No customer'}</div>
+                  </div>
+                  {item.customerWaiting && <span className="px-2 py-0.5 text-[10px] font-bold text-white bg-rag-red rounded-full">WAITING</span>}
+                </Link>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${item.status === 'awaiting_checkin' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>
+                    {item.status === 'awaiting_checkin' ? 'Awaiting check-in' : 'Due in'}
+                  </span>
+                  <button onClick={() => handleCheckIn(item)} disabled={busyId === item.id}
+                    className="px-3 py-1.5 bg-primary text-white text-sm font-medium rounded-lg disabled:opacity-50">
+                    {busyId === item.id ? '…' : item.status === 'awaiting_checkin' ? 'Check in' : item.hasVhc ? 'Arrived' : 'On site'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mb-4">
         <input

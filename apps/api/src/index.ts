@@ -77,6 +77,7 @@ import followUpSettings from './routes/follow-up-settings.js'
 import modulesRoute from './routes/modules.js'
 import vehicleLookup from './routes/vehicle-lookup.js'
 import jobsheetsRoute from './routes/jobsheets.js'
+import arrivalsRoute from './routes/arrivals.js'
 import bookingCodes from './routes/booking-codes.js'
 import serviceTypes from './routes/service-types.js'
 import feedback from './routes/feedback.js'
@@ -179,6 +180,8 @@ app.route('/api/v1/vehicle-lookup', vehicleLookup)
 // Jobsheets (GMS) — top-level booking document + booking-code / service-type lookups
 app.route('/api/v1/jobsheets', jobsheetsRoute)
 app.route('/api/v1/booking-codes', bookingCodes)
+// Unified arrivals queue (DMS + jobsheet bookings) — feeds the Arrivals hub + dashboard widget
+app.route('/api/v1/arrivals', arrivalsRoute)
 app.route('/api/v1/service-types', serviceTypes)
 
 // In-app feedback / bug reporting (pushed to Ollo Dev)

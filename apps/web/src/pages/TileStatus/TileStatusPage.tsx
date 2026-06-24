@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { api } from '../../lib/api'
+import { jobPath } from '../../lib/jobLink'
 import { useTileData } from './useTileData'
 import {
   type Tile,
@@ -218,7 +219,7 @@ export default function TileStatusPage() {
           jobs={jobs}
           loading={jobsLoading}
           error={jobsError}
-          onOpenJob={(job) => navigate(job.jobsheetId ? `/jobsheets/${job.jobsheetId}` : `/health-checks/${job.healthCheckId}`)}
+          onOpenJob={(job) => navigate(jobPath(job))}
         />
       </div>
     )

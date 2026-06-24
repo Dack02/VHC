@@ -20,6 +20,8 @@ interface BoardColumnProps {
   isClockedOn?: boolean
   tvMode?: boolean
   droppable: boolean
+  /** Live drop affordance for the card being dragged: 'blocked' = illegal here */
+  dropState?: 'ok' | 'blocked' | null
   children: ReactNode
 }
 
@@ -33,9 +35,14 @@ export default function BoardColumn({
   isClockedOn,
   tvMode,
   droppable,
+  dropState,
   children
 }: BoardColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id, disabled: !droppable })
+  const blocked = dropState === 'blocked'
+  const frame = isOver
+    ? blocked ? 'border-rag-red bg-red-50/60' : 'border-primary bg-indigo-50/60'
+    : blocked ? 'border-red-200 bg-gray-50' : 'border-gray-200 bg-gray-50'
 
   const booked = capacity ? capacity.done + capacity.active + capacity.dueIn : 0
   const loadPercent = capacity && capacity.available > 0
@@ -51,9 +58,7 @@ export default function BoardColumn({
 
   return (
     <div
-      className={`flex flex-col flex-shrink-0 ${tvMode ? 'w-80' : 'w-72'} max-h-full rounded-xl border ${
-        isOver ? 'border-primary bg-indigo-50/60' : 'border-gray-200 bg-gray-50'
-      } transition-colors`}
+      className={`flex flex-col flex-shrink-0 ${tvMode ? 'w-80' : 'w-72'} max-h-full rounded-xl border ${frame} transition-colors`}
     >
       {/* Header */}
       <div
@@ -115,8 +120,8 @@ export default function BoardColumn({
       <div ref={setNodeRef} className="flex-1 overflow-y-auto p-2 space-y-2 min-h-[80px]">
         {children}
         {count === 0 && (
-          <div className={`text-center text-gray-300 py-6 ${tvMode ? 'text-sm' : 'text-xs'}`}>
-            {droppable ? 'Drop a job here' : 'No jobs'}
+          <div className={`text-center py-6 ${tvMode ? 'text-sm' : 'text-xs'} ${blocked ? 'text-rag-red font-medium' : 'text-gray-300'}`}>
+            {blocked ? 'Can’t drop here' : droppable ? 'Drop a job here' : 'No jobs'}
           </div>
         )}
       </div>

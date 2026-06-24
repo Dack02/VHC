@@ -36,6 +36,7 @@ const NewHealthCheck = lazy(() => import('./pages/HealthChecks/NewHealthCheck'))
 const JobsheetList = lazy(() => import('./pages/Jobsheets/JobsheetList'))
 const NewJobsheet = lazy(() => import('./pages/Jobsheets/NewJobsheet'))
 const JobsheetDetail = lazy(() => import('./pages/Jobsheets/JobsheetDetail'))
+const ArrivalsHub = lazy(() => import('./pages/Arrivals/ArrivalsHub'))
 const BookingCodes = lazy(() => import('./pages/Settings/BookingCodes'))
 const ServiceTypes = lazy(() => import('./pages/Settings/ServiceTypes'))
 const TyreManufacturers = lazy(() => import('./pages/Admin/TyreManufacturers'))
@@ -219,6 +220,7 @@ function App() {
                         <Route path="/jobsheets" element={<RequireModule module="jobsheets"><JobsheetList /></RequireModule>} />
                         <Route path="/jobsheets/new" element={<RequireModule module="jobsheets"><NewJobsheet /></RequireModule>} />
                         <Route path="/jobsheets/:id" element={<RequireModule module="jobsheets"><JobsheetDetail /></RequireModule>} />
+                        <Route path="/arrivals" element={<RequireModule module="jobsheets"><ArrivalsHub /></RequireModule>} />
                         <Route path="/customers" element={<CustomerList />} />
                         <Route path="/customers/:id" element={<CustomerDetail />} />
                         <Route path="/messages" element={<RequireModule module="customer_comms"><Messages /></RequireModule>} />

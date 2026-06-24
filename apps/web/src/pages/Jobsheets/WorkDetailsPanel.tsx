@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../../lib/api'
 import { useToast } from '../../contexts/ToastContext'
+import PackagePickerModal from './components/PackagePickerModal'
 
 /**
  * Work Details — the jobsheet's labour + parts lines.
@@ -102,13 +103,15 @@ export default function WorkDetailsPanel({
     } finally { setBusy(false) }
   }
 
-  const addFromPackage = async (pkgId: string) => {
+  const addPackages = async (pkgIds: string[]) => {
+    if (pkgIds.length === 0) return
     setBusy(true)
     try {
-      await api(`/api/v1/jobsheets/${jobsheetId}/work-lines/from-package`, { method: 'POST', token, body: { servicePackageId: pkgId } })
-      setShowPackages(false)
+      for (const pkgId of pkgIds) {
+        await api(`/api/v1/jobsheets/${jobsheetId}/work-lines/from-package`, { method: 'POST', token, body: { servicePackageId: pkgId } })
+      }
       await refresh()
-      toast.success('Package added')
+      toast.success(pkgIds.length === 1 ? 'Package added' : `${pkgIds.length} packages added`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to add package')
     } finally { setBusy(false) }
@@ -198,24 +201,17 @@ export default function WorkDetailsPanel({
                   <span className="text-base leading-none">+</span> Add work line
                 </button>
               )}
-              <div className="relative">
-                <button onClick={() => setShowPackages(v => !v)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary border border-indigo-200 rounded-lg hover:bg-indigo-50">
-                  <span className="text-base leading-none">+</span> Add from package
-                </button>
-                {showPackages && (
-                  <div className="absolute z-10 mt-1 w-72 bg-white border border-gray-200 rounded-xl shadow-lg max-h-72 overflow-auto">
-                    {packages.length === 0 ? (
-                      <p className="px-4 py-3 text-sm text-gray-400">No service packages configured.</p>
-                    ) : packages.map(p => (
-                      <button key={p.id} disabled={busy} onClick={() => addFromPackage(p.id)}
-                        className="w-full text-left px-4 py-2.5 hover:bg-gray-50 border-b border-gray-100 last:border-0 disabled:opacity-50">
-                        <div className="font-medium text-sm text-gray-900">{p.name}</div>
-                        {p.description && <div className="text-xs text-gray-500 truncate">{p.description}</div>}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <button onClick={() => setShowPackages(true)} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary border border-indigo-200 rounded-lg hover:bg-indigo-50 disabled:opacity-50">
+                <span className="text-base leading-none">+</span> Add from package
+              </button>
+              {showPackages && (
+                <PackagePickerModal
+                  packages={packages}
+                  selectedIds={[]}
+                  onClose={() => setShowPackages(false)}
+                  onConfirm={addPackages}
+                />
+              )}
             </div>
           </div>
 

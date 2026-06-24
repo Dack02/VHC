@@ -66,17 +66,49 @@ export default function Dashboard() {
     }
   }, [token, dateRange])
 
-  // Awaiting arrival health checks (from DMS imports)
+  // Awaiting arrival — unified across DMS imports AND jobsheet bookings (see /api/v1/arrivals).
+  // We show only VHC-backed rows here so the existing Arrived/No-show/Delete actions (which act
+  // on a health check id) work unchanged; no-VHC jobsheets are actioned from the Arrivals hub.
   const fetchAwaitingArrival = useCallback(async () => {
     if (!token) return
     try {
       setAwaitingArrivalLoading(true)
-      const response = await api<{ healthChecks: AwaitingArrivalItem[]; pagination: { total: number } }>(
-        '/api/v1/dms-settings/unactioned?limit=200',
-        { token }
-      )
-      setAwaitingArrival(response.healthChecks || [])
-      setAwaitingArrivalTotal(response.pagination?.total ?? response.healthChecks?.length ?? 0)
+      const response = await api<{
+        arrivals: Array<{
+          healthCheckId: string | null
+          hasVhc: boolean
+          registration: string
+          make: string
+          model: string
+          customerName: string
+          promiseTime: string | null
+          dueDate: string | null
+          importedAt: string | null
+          customerWaiting: boolean
+          loanCarRequired: boolean
+          bookedRepairs: Array<{ code?: string; description?: string; notes?: string }>
+          jobsheetReference: string | null
+        }>
+      }>('/api/v1/arrivals?status=awaiting_arrival', { token })
+
+      const items: AwaitingArrivalItem[] = (response.arrivals || [])
+        .filter(a => a.hasVhc && a.healthCheckId)
+        .map(a => ({
+          id: a.healthCheckId as string,
+          registration: a.registration,
+          make: a.make,
+          model: a.model,
+          customerName: a.customerName,
+          promiseTime: a.promiseTime,
+          dueDate: a.dueDate,
+          importedAt: a.importedAt || '',
+          customerWaiting: a.customerWaiting,
+          loanCarRequired: a.loanCarRequired,
+          bookedRepairs: a.bookedRepairs || [],
+          jobsheetNumber: a.jobsheetReference
+        }))
+      setAwaitingArrival(items)
+      setAwaitingArrivalTotal(items.length)
     } catch (err) {
       console.error('Failed to fetch awaiting arrival:', err)
     } finally {

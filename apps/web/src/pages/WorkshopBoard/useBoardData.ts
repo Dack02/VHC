@@ -20,11 +20,18 @@ export function useBoardData(date: string) {
   const [error, setError] = useState<string | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inFlightRef = useRef(false)
+  // While a drag is in flight we pause background (socket/poll) refetches so an
+  // incoming update can't clobber the optimistic board and yank the card from
+  // under the cursor. A refetch that arrives while paused is deferred and
+  // flushed once on drag end.
+  const pauseRef = useRef(false)
+  const pendingRef = useRef(false)
 
   const siteId = user?.site?.id
 
   const fetchBoard = useCallback(async (silent = false) => {
     if (!session?.accessToken) return
+    if (silent && pauseRef.current) { pendingRef.current = true; return }
     if (inFlightRef.current) return
     inFlightRef.current = true
     if (!silent) setLoading(true)
@@ -78,7 +85,17 @@ export function useBoardData(date: string) {
     return () => clearInterval(interval)
   }, [fetchBoard])
 
-  return { board, setBoard, loading, error, refresh: fetchBoard }
+  // Pause/resume background refetches around a drag. Resuming flushes a single
+  // refetch if any socket/poll event was suppressed while paused.
+  const setPaused = useCallback((paused: boolean) => {
+    pauseRef.current = paused
+    if (!paused && pendingRef.current) {
+      pendingRef.current = false
+      fetchBoard(true)
+    }
+  }, [fetchBoard])
+
+  return { board, setBoard, loading, error, refresh: fetchBoard, setPaused }
 }
 
 /** Ticks every `intervalMs` - drives promise-time countdowns */

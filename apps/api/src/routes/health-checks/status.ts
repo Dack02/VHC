@@ -7,6 +7,37 @@ import { createNotification } from '../notifications.js'
 
 const status = new Hono()
 
+/**
+ * When a health check that belongs to a jobsheet arrives / is checked in, reflect that on
+ * the parent jobsheet: the vehicle is now on site, and the jobsheet's own Vehicle Status
+ * advances Due In → Arrived (forward-only — never regresses a job already further along).
+ *
+ * The linked VHC's own job_state is advanced automatically by the health_check_job_state_sync
+ * trigger when status leaves awaiting_arrival; this keeps the jobsheet row in step for the
+ * no-VHC fallback (shapeJobsheet reads the jobsheet's job_state when no VHC exists) and tidiness.
+ * Best-effort and idempotent: a failure here must not fail the arrival/check-in itself.
+ */
+async function syncJobsheetOnArrival(jobsheetId: string | null | undefined, orgId: string): Promise<void> {
+  if (!jobsheetId) return
+  try {
+    // Vehicle is on site now (always set).
+    await supabaseAdmin
+      .from('jobsheets')
+      .update({ vehicle_on_site: true })
+      .eq('id', jobsheetId)
+      .eq('organization_id', orgId)
+    // Advance the jobsheet's Vehicle Status forward-only (Due In → Arrived).
+    await supabaseAdmin
+      .from('jobsheets')
+      .update({ job_state: 'arrived' })
+      .eq('id', jobsheetId)
+      .eq('organization_id', orgId)
+      .eq('job_state', 'due_in')
+  } catch (err) {
+    console.error('Failed to sync jobsheet on arrival:', err)
+  }
+}
+
 // POST /:id/status - Change status
 status.post('/:id/status', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {
@@ -146,6 +177,10 @@ status.post('/:id/mark-arrived', authorize(['super_admin', 'org_admin', 'site_ad
       return c.json({ error: updateError.message }, 500)
     }
 
+    // If this VHC belongs to a jobsheet, reflect arrival on the parent (vehicle on site,
+    // Vehicle Status → Arrived). The VHC's own job_state is advanced by the job_state trigger.
+    await syncJobsheetOnArrival(healthCheck.jobsheet_id, auth.orgId)
+
     // Record status change in history
     await supabaseAdmin
       .from('health_check_status_history')
@@ -264,6 +299,10 @@ status.post('/:id/complete-checkin', authorize(['super_admin', 'org_admin', 'sit
     if (updateError) {
       return c.json({ error: updateError.message }, 500)
     }
+
+    // Reflect arrival/check-in on the parent jobsheet (if any): vehicle on site, Vehicle
+    // Status → Arrived. Idempotent — mark-arrived may already have done this.
+    await syncJobsheetOnArrival(healthCheck.jobsheet_id, auth.orgId)
 
     // Mark MRI scan as complete (set completed_at on all MRI results)
     // This ensures the mobile app shows MRI results instead of "Awaiting MRI Scan"

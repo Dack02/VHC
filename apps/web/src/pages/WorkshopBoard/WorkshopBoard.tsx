@@ -1,9 +1,9 @@
 import { useState, useMemo, useRef, useCallback } from 'react'
-import { DndContext, DragOverlay, PointerSensor, closestCorners, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core'
-import { SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { DndContext, DragOverlay, PointerSensor, TouchSensor, KeyboardSensor, MeasuringStrategy, closestCorners, useSensor, useSensors, type DragEndEvent, type DragOverEvent, type DragStartEvent } from '@dnd-kit/core'
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { moveCard, reorderCards, type MoveTarget, type SortPositionUpdate } from './boardActions'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
-import { api } from '../../lib/api'
 import { useBoardData, useNow } from './useBoardData'
 import { sortCards, type BoardCard, type BoardData } from './types'
 import BoardColumn from './BoardColumn'
@@ -37,13 +37,95 @@ interface ViewColumn {
 
 const EMPTY_LOAD = { done: 0, active: 0, dueIn: 0 }
 
+// Which view-column does an id belong to? An id is either a card's
+// healthCheckId (→ the column holding it) or a column key itself.
+function findContainerKey(viewColumns: ViewColumn[], id: string): string | null {
+  if (viewColumns.some(vc => vc.key === id)) return id
+  const col = viewColumns.find(vc => vc.cards.some(c => c.healthCheckId === id))
+  return col?.key ?? null
+}
+
+// Translate a target column key into the move target + optional columnId, or
+// null when the column isn't a real move destination (e.g. Due In / Checked In
+// in the status view). View-aware: the same key means different things per view.
+function resolveTarget(
+  view: BoardView,
+  board: BoardData,
+  colKey: string,
+  queueNameById: Map<string, string>
+): { target: MoveTarget; columnId?: string } | null {
+  if (view === 'status') {
+    if (colKey === 'work_complete') return { target: 'work_complete' }
+    if (colKey === 'in_workshop') return { target: 'workshop' }
+    if (queueNameById.has(colKey)) return { target: 'queue', columnId: colKey }
+    return null
+  }
+  if (colKey === 'work_complete') return { target: 'work_complete' }
+  if (colKey === 'checked_in') return { target: 'checked_in' }
+  const col = board.columns.find(c => c.id === colKey && c.columnType === 'technician')
+  if (col) return { target: 'technician', columnId: col.id }
+  return null
+}
+
+// Is moving this card to `target` legal? Mirrors the backend guards so we never
+// preview or commit a move the server will reject.
+function canDropCard(card: BoardCard, target: { target: MoveTarget }): boolean {
+  // Due In bookings can only be pre-allocated to a technician (kept due_in by
+  // the backend); never pushed into the workshop flow before they arrive.
+  if (card.position === 'due_in') return target.target === 'technician'
+  // A checked-in-but-not-arrived booking can't be assigned (CHECKIN_REQUIRED).
+  if (card.status === 'awaiting_checkin' && target.target === 'technician') return false
+  // A clocked-on / in-progress job may be re-ordered but not unassigned or
+  // completed out from under the technician working it.
+  const locked = card.isClockedOn || card.status === 'in_progress'
+  if (locked && (target.target === 'checked_in' || target.target === 'work_complete')) return false
+  return true
+}
+
+// The card-field patch that visually lands a card in a resolved target column,
+// used for the live cross-column drag preview. Only the fields the column
+// bucketing reads need to change; jobState is left intact so a pre-allocated
+// Due In booking keeps its "Due In" badge while being dragged onto a tech.
+function previewPatch(
+  card: BoardCard,
+  resolved: { target: MoveTarget; columnId?: string },
+  board: BoardData
+): Partial<BoardCard> {
+  switch (resolved.target) {
+    case 'queue':
+      return { position: 'column', columnId: resolved.columnId! }
+    case 'work_complete':
+      return { position: 'work_complete', columnId: null }
+    case 'checked_in':
+      return { position: 'checked_in', columnId: null, technician: null }
+    case 'workshop':
+      return { position: 'in_workshop', columnId: null }
+    case 'technician': {
+      const col = board.columns.find(c => c.id === resolved.columnId)
+      const technician = col?.technician
+        ? { id: col.technician.id, first_name: col.technician.first_name, last_name: col.technician.last_name }
+        : card.technician
+      return { position: 'column', columnId: resolved.columnId!, technician }
+    }
+  }
+}
+
+// True when the card already reflects the preview patch (so onDragOver can bail
+// without producing a new board object - this is what stops drag thrash).
+function matchesPreview(card: BoardCard, patch: Partial<BoardCard>): boolean {
+  return (Object.keys(patch) as (keyof BoardCard)[]).every(k => {
+    if (k === 'technician') return (card.technician?.id ?? null) === (patch.technician?.id ?? null)
+    return card[k] === patch[k]
+  })
+}
+
 export default function WorkshopBoard() {
   const { user, session } = useAuth()
   const toast = useToast()
   const now = useNow(30000)
 
   const [date, setDate] = useState(() => dateForOffset(0))
-  const { board, setBoard, loading, error, refresh } = useBoardData(date)
+  const { board, setBoard, loading, error, refresh, setPaused } = useBoardData(date)
 
   const [view, setView] = useState<BoardView>(() => (localStorage.getItem(VIEW_KEY) as BoardView) || 'status')
   const [techMode, setTechMode] = useState<TechMode>(() => (localStorage.getItem(TECH_MODE_KEY) as TechMode) || 'cards')
@@ -58,8 +140,21 @@ export default function WorkshopBoard() {
   const boardRef = useRef<HTMLDivElement>(null)
   // Browsers fire a click on the card right after a drag ends - suppress it
   const recentDragRef = useRef(false)
+  // Pristine board captured at drag start - the rollback point if a move fails
+  // (the live board carries the optimistic cross-column preview by then).
+  const dragSnapshotRef = useRef<BoardData | null>(null)
+  // The card's column at drag start, so the commit can tell a same-column
+  // reorder from a cross-column move even after the preview moved the card.
+  const dragOriginColRef = useRef<string | null>(null)
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+  // Mouse keeps the instant 6px lift; touch needs a long-press so a tap still
+  // opens the card and a swipe still scrolls the column (tablets/TVs); keyboard
+  // gives the sortable cards accessible drag.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
 
   const role = user?.role || 'technician'
   const canDrag = ['super_admin', 'org_admin', 'site_admin', 'service_advisor'].includes(role)
@@ -87,6 +182,7 @@ export default function WorkshopBoard() {
           card.vehicle?.registration,
           card.customer?.first_name,
           card.customer?.last_name,
+          card.jobsheetReference,
           card.jobsheetNumber,
           card.jobNumber
         ].filter(Boolean).join(' ').toLowerCase()
@@ -172,7 +268,12 @@ export default function WorkshopBoard() {
     // Technician view (cards): Checked In → tech columns → Work Complete.
     // A job parked in a queue stays visible in its technician's column.
     for (const card of filteredCards) {
-      if (card.position === 'due_in') continue
+      if (card.position === 'due_in') {
+        // Pre-allocated bookings ride in their technician's column (re-allocate
+        // by drag); unassigned Due In has no home here - plan it on the timeline.
+        if (card.technician && techColumnByUserId.has(card.technician.id)) push(techColumnByUserId.get(card.technician.id)!, card)
+        continue
+      }
       if (card.position === 'work_complete') push('work_complete', card)
       else if (card.technician && techColumnByUserId.has(card.technician.id)) push(techColumnByUserId.get(card.technician.id)!, card)
       else push('checked_in', card)
@@ -228,6 +329,9 @@ export default function WorkshopBoard() {
   // ---- Drag and drop (kanban views) ---------------------------------------
   const handleDragStart = (event: DragStartEvent) => {
     recentDragRef.current = true
+    setPaused(true)
+    dragSnapshotRef.current = board
+    dragOriginColRef.current = findContainerKey(viewColumns, event.active.id as string)
     const card = board?.cards.find(c => c.healthCheckId === event.active.id)
     setActiveDragCard(card || null)
   }
@@ -237,140 +341,166 @@ export default function WorkshopBoard() {
     setSelectedCardId(healthCheckId)
   }
 
+  // Live cross-column preview: while the card hovers a different, legal column,
+  // move it there in local state so the board makes room under the cursor. The
+  // idempotence guard returns the same board reference when nothing changed,
+  // which is what stops the continuous onDragOver firing from thrashing.
+  const handleDragOver = (event: DragOverEvent) => {
+    if (!board) return
+    const { active, over } = event
+    if (!over) return
+    const activeId = active.id as string
+    const overId = over.id as string
+    if (activeId === overId) return
+    const activeCol = findContainerKey(viewColumns, activeId)
+    const overCol = findContainerKey(viewColumns, overId)
+    if (!activeCol || !overCol || activeCol === overCol) return
+    const targetCol = viewColumns.find(vc => vc.key === overCol)
+    if (!targetCol?.droppable) return
+    const card = board.cards.find(c => c.healthCheckId === activeId)
+    if (!card) return
+    const resolved = resolveTarget(view, board, overCol, queueNameById)
+    if (!resolved || !canDropCard(card, resolved)) return
+    const patch = previewPatch(card, resolved, board)
+    setBoard(prev => {
+      if (!prev) return prev
+      const cur = prev.cards.find(c => c.healthCheckId === activeId)
+      if (!cur || matchesPreview(cur, patch)) return prev
+      return { ...prev, cards: prev.cards.map(c => (c.healthCheckId === activeId ? { ...c, ...patch } : c)) }
+    })
+  }
+
+  const handleDragCancel = () => {
+    setActiveDragCard(null)
+    setTimeout(() => { recentDragRef.current = false }, 150)
+    if (dragSnapshotRef.current) setBoard(dragSnapshotRef.current)
+    dragSnapshotRef.current = null
+    dragOriginColRef.current = null
+    setPaused(false)
+  }
+
   const handleDragEnd = async (event: DragEndEvent) => {
     setActiveDragCard(null)
-    setTimeout(() => { recentDragRef.current = false }, 100)
-    const { active, over } = event
-    if (!over || !board || !session?.accessToken) return
-
-    const card = board.cards.find(c => c.healthCheckId === active.id)
-    if (!card) return
-
-    const overId = over.id as string
-    // The drop target is either another card (sortable) or a column body
-    const overCard = overId !== card.healthCheckId ? board.cards.find(c => c.healthCheckId === overId) || null : null
-    const sourceCol = viewColumns.find(vc => vc.cards.some(c => c.healthCheckId === card.healthCheckId))
-    const targetCol = overCard
-      ? viewColumns.find(vc => vc.cards.some(c => c.healthCheckId === overCard.healthCheckId))
-      : viewColumns.find(vc => vc.key === overId)
-    if (!sourceCol || !targetCol) return
-
-    // Dropped onto a card in the same column: set the manual work order
-    if (overCard && targetCol.key === sourceCol.key) {
-      const oldIndex = sourceCol.cards.findIndex(c => c.healthCheckId === card.healthCheckId)
-      const newIndex = sourceCol.cards.findIndex(c => c.healthCheckId === overCard.healthCheckId)
-      if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) return
-      const positions = arrayMove(sourceCol.cards, oldIndex, newIndex)
-        .map((c, i) => ({ healthCheckId: c.healthCheckId, sortPosition: (i + 1) * 10 }))
-
-      const previous = board
-      const posById = new Map(positions.map(p => [p.healthCheckId, p.sortPosition]))
-      setBoard({
-        ...board,
-        cards: board.cards.map(c =>
-          posById.has(c.healthCheckId) ? { ...c, sortPosition: posById.get(c.healthCheckId)! } : c
-        )
-      })
-      try {
-        await api('/api/v1/workshop-board/cards/reorder', {
-          method: 'POST',
-          token: session.accessToken,
-          body: { positions }
-        })
-      } catch (err) {
-        setBoard(previous)
-        toast.error(err instanceof Error ? err.message : 'Could not reorder jobs')
-      }
-      return
-    }
-
-    if (!targetCol.droppable) return
-    if (targetCol.key === sourceCol.key && !overCard && card.position !== 'column') return
-
-    let target: 'checked_in' | 'technician' | 'queue' | 'work_complete' | 'workshop'
-    let columnId: string | undefined
-
-    if (view === 'status') {
-      if (targetCol.key === 'work_complete') target = 'work_complete'
-      else if (targetCol.key === 'in_workshop') target = 'workshop'
-      else if (queueNameById.has(targetCol.key)) {
-        target = 'queue'
-        columnId = targetCol.key
-      } else return
-    } else {
-      if (targetCol.key === 'work_complete') target = 'work_complete'
-      else if (targetCol.key === 'checked_in') target = 'checked_in'
-      else {
-        const column = board.columns.find(c => c.id === targetCol.key && c.columnType === 'technician')
-        if (!column) return
-        target = 'technician'
-        columnId = column.id
-      }
-    }
-
-    // Dropped onto a card in another column: land exactly there, renumbering
-    // the target column. Dropped onto the column body: clear any manual
-    // position so the auto rules (waiters, priority, promise time) place it.
-    let movedPosition = 0
-    let positions: Array<{ healthCheckId: string; sortPosition: number }> = []
-    if (overCard) {
-      const insertIndex = targetCol.cards.findIndex(c => c.healthCheckId === overCard.healthCheckId)
-      const newOrder = targetCol.cards.filter(c => c.healthCheckId !== card.healthCheckId)
-      newOrder.splice(insertIndex < 0 ? newOrder.length : insertIndex, 0, card)
-      positions = newOrder.map((c, i) => ({ healthCheckId: c.healthCheckId, sortPosition: (i + 1) * 10 }))
-      movedPosition = positions.find(p => p.healthCheckId === card.healthCheckId)!.sortPosition
-    }
-    const posById = new Map(positions.map(p => [p.healthCheckId, p.sortPosition]))
-
-    // Optimistic update: placement + order
-    const previous = board
-    const optimistic: BoardData = {
-      ...board,
-      cards: board.cards.map(c => {
-        const sortPosition = posById.get(c.healthCheckId) ?? (c.healthCheckId === card.healthCheckId ? 0 : c.sortPosition)
-        if (c.healthCheckId !== card.healthCheckId) {
-          return sortPosition !== c.sortPosition ? { ...c, sortPosition } : c
-        }
-        if (target === 'queue') return { ...c, sortPosition, position: 'column', columnId: columnId! }
-        if (target === 'work_complete') return { ...c, sortPosition, position: 'work_complete', columnId: null }
-        if (target === 'checked_in') return { ...c, sortPosition, position: 'checked_in', columnId: null, technician: null }
-        if (target === 'technician') {
-          const col = board.columns.find(x => x.id === columnId)
-          return {
-            ...c,
-            sortPosition,
-            position: 'column',
-            columnId: columnId!,
-            technician: col?.technician ? { id: col.technician.id, first_name: col.technician.first_name, last_name: col.technician.last_name } : c.technician
-          }
-        }
-        // workshop: back to derived tech column / checked in
-        const techColId = c.technician ? techColumnByUserId.get(c.technician.id) : undefined
-        return techColId
-          ? { ...c, sortPosition, position: 'column', columnId: techColId }
-          : { ...c, sortPosition, position: 'checked_in', columnId: null }
-      })
-    }
-    setBoard(optimistic)
-
+    setTimeout(() => { recentDragRef.current = false }, 150)
+    const snapshot = dragSnapshotRef.current
+    const originCol = dragOriginColRef.current
+    dragSnapshotRef.current = null
+    dragOriginColRef.current = null
     try {
-      await api(`/api/v1/workshop-board/cards/${card.healthCheckId}/move`, {
-        method: 'POST',
-        token: session.accessToken,
-        body: { target, columnId, sortPosition: movedPosition }
-      })
-      // Renumber the rest of the target column so the drop slot sticks
+      const { active, over } = event
+      if (!over || !board || !session?.accessToken) {
+        if (snapshot) setBoard(snapshot)
+        return
+      }
+      const card = board.cards.find(c => c.healthCheckId === active.id)
+      if (!card) { if (snapshot) setBoard(snapshot); return }
+
+      const overId = over.id as string
+      // The drop target is either another card (sortable) or a column body
+      const overCard = overId !== card.healthCheckId ? board.cards.find(c => c.healthCheckId === overId) || null : null
+      const targetKey = findContainerKey(viewColumns, overId)
+      const targetCol = targetKey ? viewColumns.find(vc => vc.key === targetKey) : null
+      if (!targetCol) { if (snapshot) setBoard(snapshot); return }
+
+      // Same original column → set the manual work order only (restore any
+      // mid-drag preview if the drop doesn't actually reorder anything)
+      if (originCol && targetCol.key === originCol) {
+        if (!overCard) { if (snapshot) setBoard(snapshot); return }
+        const oldIndex = targetCol.cards.findIndex(c => c.healthCheckId === card.healthCheckId)
+        const newIndex = targetCol.cards.findIndex(c => c.healthCheckId === overCard.healthCheckId)
+        if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) { if (snapshot) setBoard(snapshot); return }
+        const positions = arrayMove(targetCol.cards, oldIndex, newIndex)
+          .map((c, i) => ({ healthCheckId: c.healthCheckId, sortPosition: (i + 1) * 10 }))
+        const posById = new Map(positions.map(p => [p.healthCheckId, p.sortPosition]))
+        setBoard({
+          ...board,
+          cards: board.cards.map(c => (posById.has(c.healthCheckId) ? { ...c, sortPosition: posById.get(c.healthCheckId)! } : c))
+        })
+        try {
+          await reorderCards(session.accessToken, positions)
+        } catch (err) {
+          if (snapshot) setBoard(snapshot)
+          toast.error(err instanceof Error ? err.message : 'Could not reorder jobs')
+        }
+        return
+      }
+
+      // Cross-column move
+      if (!targetCol.droppable) { if (snapshot) setBoard(snapshot); return }
+      const resolved = resolveTarget(view, board, targetCol.key, queueNameById)
+      if (!resolved) { if (snapshot) setBoard(snapshot); return }
+      if (!canDropCard(card, resolved)) {
+        if (snapshot) setBoard(snapshot)
+        toast.error('That job can’t be moved there')
+        return
+      }
+      const { target, columnId } = resolved
+
+      // Dropped onto a card in another column: land exactly there, renumbering
+      // the target column. Dropped onto the column body: clear any manual
+      // position so the auto rules (waiters, priority, promise time) place it.
+      let movedPosition = 0
+      let positions: SortPositionUpdate[] = []
+      if (overCard) {
+        const insertIndex = targetCol.cards.findIndex(c => c.healthCheckId === overCard.healthCheckId)
+        const newOrder = targetCol.cards.filter(c => c.healthCheckId !== card.healthCheckId)
+        newOrder.splice(insertIndex < 0 ? newOrder.length : insertIndex, 0, card)
+        positions = newOrder.map((c, i) => ({ healthCheckId: c.healthCheckId, sortPosition: (i + 1) * 10 }))
+        movedPosition = positions.find(p => p.healthCheckId === card.healthCheckId)!.sortPosition
+      }
+      const posById = new Map(positions.map(p => [p.healthCheckId, p.sortPosition]))
+
+      // Optimistic update: placement + order (the preview already moved the
+      // card; this re-asserts its fields and the surrounding sort order)
+      const optimistic: BoardData = {
+        ...board,
+        cards: board.cards.map(c => {
+          const sortPosition = posById.get(c.healthCheckId) ?? (c.healthCheckId === card.healthCheckId ? 0 : c.sortPosition)
+          if (c.healthCheckId !== card.healthCheckId) {
+            return sortPosition !== c.sortPosition ? { ...c, sortPosition } : c
+          }
+          if (target === 'queue') return { ...c, sortPosition, position: 'column', columnId: columnId! }
+          if (target === 'work_complete') return { ...c, sortPosition, position: 'work_complete', columnId: null }
+          if (target === 'checked_in') return { ...c, sortPosition, position: 'checked_in', columnId: null, technician: null }
+          if (target === 'technician') {
+            const col = board.columns.find(x => x.id === columnId)
+            return {
+              ...c,
+              sortPosition,
+              position: 'column',
+              columnId: columnId!,
+              technician: col?.technician ? { id: col.technician.id, first_name: col.technician.first_name, last_name: col.technician.last_name } : c.technician
+            }
+          }
+          // workshop: back to derived tech column / checked in
+          const techColId = c.technician ? techColumnByUserId.get(c.technician.id) : undefined
+          return techColId
+            ? { ...c, sortPosition, position: 'column', columnId: techColId }
+            : { ...c, sortPosition, position: 'checked_in', columnId: null }
+        })
+      }
+      setBoard(optimistic)
+
+      // The move carries the moved card's own slot, so a failed neighbour
+      // renumber leaves the move correct - re-pull instead of reverting it.
+      try {
+        await moveCard(session.accessToken, card.healthCheckId, { target, columnId, sortPosition: movedPosition })
+      } catch (err) {
+        if (snapshot) setBoard(snapshot)
+        toast.error(err instanceof Error ? err.message : 'Could not move card')
+        return
+      }
       const neighbourPositions = positions.filter(p => p.healthCheckId !== card.healthCheckId)
       if (neighbourPositions.length > 0) {
-        await api('/api/v1/workshop-board/cards/reorder', {
-          method: 'POST',
-          token: session.accessToken,
-          body: { positions: neighbourPositions }
-        })
+        try {
+          await reorderCards(session.accessToken, neighbourPositions)
+        } catch {
+          toast.error('Moved, but couldn’t save the new order — refreshing')
+          refresh(true)
+        }
       }
-    } catch (err) {
-      setBoard(previous)
-      toast.error(err instanceof Error ? err.message : 'Could not move card')
+    } finally {
+      setPaused(false)
     }
   }
 
@@ -395,6 +525,17 @@ export default function WorkshopBoard() {
   }
 
   const selectedCard = selectedCardId ? board?.cards.find(c => c.healthCheckId === selectedCardId) || null : null
+
+  // Drop affordance for a column while a card is being dragged: 'blocked' when
+  // the move is illegal (red, not-allowed), 'ok' when legal, null otherwise.
+  const columnDropState = (colKey: string): 'ok' | 'blocked' | null => {
+    if (!activeDragCard || !board || dragOriginColRef.current === colKey) return null
+    const col = viewColumns.find(vc => vc.key === colKey)
+    if (!col?.droppable) return null
+    const resolved = resolveTarget(view, board, colKey, queueNameById)
+    if (!resolved) return null
+    return canDropCard(activeDragCard, resolved) ? 'ok' : 'blocked'
+  }
 
   const dateOptions = [
     { label: 'Today', value: dateForOffset(0) },
@@ -584,9 +725,19 @@ export default function WorkshopBoard() {
             canDrag={canDrag}
             onOpenCard={setSelectedCardId}
             refresh={refresh}
+            onDragActive={setPaused}
           />
         ) : (
-          <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCorners}
+            measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+            autoScroll={{ threshold: { x: 0.2, y: 0.2 } }}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
+          >
             <div className="flex-1 flex gap-3 overflow-x-auto pb-4 items-stretch min-h-0">
               {viewColumns.map(col => (
                 <BoardColumn
@@ -599,6 +750,7 @@ export default function WorkshopBoard() {
                   isClockedOn={col.isClockedOn}
                   count={col.cards.length}
                   droppable={col.droppable}
+                  dropState={columnDropState(col.key)}
                   tvMode={tvMode}
                 >
                   <SortableContext items={col.cards.map(c => c.healthCheckId)} strategy={verticalListSortingStrategy}>
@@ -608,7 +760,7 @@ export default function WorkshopBoard() {
                         card={card}
                         statuses={board.statuses}
                         now={now}
-                        draggable={canDrag && card.position !== 'due_in'}
+                        draggable={canDrag && (view === 'tech' || card.position !== 'due_in')}
                         tvMode={tvMode}
                         showTechChip={view === 'status'}
                         queueChipName={
@@ -626,7 +778,7 @@ export default function WorkshopBoard() {
 
             <DragOverlay>
               {activeDragCard && (
-                <div className="rotate-2 opacity-95 w-64">
+                <div className="rotate-2 opacity-95 w-64 scale-105 drop-shadow-xl cursor-grabbing">
                   <JobCard
                     card={activeDragCard}
                     statuses={board.statuses}

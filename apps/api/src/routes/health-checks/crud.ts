@@ -22,6 +22,9 @@ crud.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advi
       `, { count: 'exact' })
       .eq('organization_id', auth.orgId)
       .is('deleted_at', null) // Exclude soft-deleted records
+      // Exclude no-inspection "visit" shells (no-VHC jobsheet check-ins) — they're managed
+      // from the jobsheet + Arrivals, not the inspection list. Real VHCs are inspection_required=true.
+      .eq('inspection_required', true)
       .order('created_at', { ascending: false })
       .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1)
 

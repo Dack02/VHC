@@ -1,7 +1,51 @@
 # GMS — Check-in ↔ Jobsheet integration (Plan + build status)
 
-> Branch: `dev` · Status: **Built (uncommitted), 2026-06-23** · Author: Leo + Claude
+> Branch: `dev` · Status: **Phase A–C committed; Option-1 + tabs built (uncommitted), 2026-06-24** · Author: Leo + Claude
 > Builds on [`JOBSHEET.md`](./JOBSHEET.md) and [`WORK_DETAILS.md`](./WORK_DETAILS.md).
+
+---
+
+## ⭐ Update 2026-06-24 — No-VHC check-in: health-check = the visit (Option 1) + shared tabs
+
+**Driver:** a jobsheet booked WITHOUT a VHC ("Requires VHC" off) still needs the vehicle checked in,
+but check-in lives only on `health_checks`. After discussion we chose **Option 1: the `health_check`
+is the universal "visit"; inspection is an optional layer.** This serves VHC-only, DMS, *and* GMS users
+with one model — see "Why best for both" below.
+
+**Decisions (Leo, 2026-06-24):**
+- **Option 1** — a no-VHC jobsheet gets a lightweight `health_check` "visit" shell (`inspection_required=false`,
+  no template), created **lazily at check-in**. Inspection becomes the optional layer. VHC-only/DMS users
+  are untouched (they never set the flag false).
+- **Shared panels, not a rewrite** — `CheckInTab` and `MriScanSection`/`MriTab` already take a `healthCheckId`
+  and self-fetch, so they're reused **as-is** on the jobsheet.
+- **Jobsheet → tabbed page** (mirrors the VHC): **Overview / Check-In / MRI / Work**, `?tab=` deep-linkable.
+  Chosen over collapsible sections because the jobsheet will keep growing (estimates, parts, invoice…).
+- **Settings unchanged functionally** — the shared panels read the same org check-in/MRI settings, so one
+  Settings area governs both contexts; only descriptions were clarified.
+- **No data moved** — additive `inspection_required` column + `template_id` relaxed to nullable.
+
+**Why best for both:** check-in is universal but the jobsheet/visit is an opt-in module. Putting check-in
+on the `health_check` (which every flow already has) unifies it for everyone, makes inspection optional,
+and avoids a second check-in model — without disturbing VHC-only users. (A separate `visit`/`checkin` table
+or "check-in on the jobsheet" both fail VHC-only users or duplicate the model.)
+
+**Build (uncommitted on `dev`, 2026-06-24):**
+- **Migration** `20260624120000_jobsheet_visit_checkin.sql` — `health_checks.inspection_required BOOLEAN NOT
+  NULL DEFAULT true`; `template_id` → nullable; index. (Pending deploy with the other GMS migrations.)
+- **API** — `jobsheets.ts`: `kickOffJobsheetVhc` gains `inspectionRequired`; new `POST /jobsheets/:id/ensure-visit`
+  (lazy shell); read-through adds `inspectionRequired`. `crud.ts` + `dashboard.ts` board exclude shells
+  (`inspection_required=true`) from inspection lists. `arrivals.ts` dedupes a jobsheet that has a shell.
+- **Web** — `JobsheetDetail` rebuilt as a **tabbed** page mounting the shared `CheckInTab` / `MriScanSection` /
+  `MriTab` / `WorkDetailsPanel`; Check-In/MRI tabs gated on org `checkinEnabled`; "Check in vehicle" does
+  ensure-visit → mark-arrived → panel. `ArrivalsHub` + `JobsheetList` route jobsheet check-in to
+  `/jobsheets/:id?tab=checkin` (DMS → the VHC). Settings hub + Workflow copy clarified.
+- **Verified:** `tsc` (api + web) + web production build pass. Live verify pending GMS migration deploy.
+
+> This **supersedes** the §"Web" deep-link approach below (jobsheet → `/health-checks/:id?tab=checkin`):
+> check-in now happens **in-place** on the jobsheet's Check-In tab. The original Phase A–C plan/build is
+> retained below for history.
+
+---
 
 ## 1. Problem
 

@@ -176,7 +176,13 @@ arrivals.get('/', authorize([...VIEW_ROLES]), async (c) => {
       if (dueBeforeDate) jq = jq.lt('due_in_date', dueBeforeDate)
       if (site_id) jq = jq.eq('site_id', site_id)
       const { data: jsRows, error: jsErr } = await jq
-      if (!jsErr && jsRows) items = items.concat(jsRows.map(shapeJobsheetArrival))
+      if (!jsErr && jsRows) {
+        // A no-VHC jobsheet that already has a (shell) health_check is represented by the query
+        // above — don't also list it from the jobsheet side (avoids a brief double-show in the
+        // window between shell creation and arrival).
+        const jsWithHc = new Set(rows.map((r) => r.jobsheet_id).filter(Boolean) as string[])
+        items = items.concat(jsRows.filter((j) => !jsWithHc.has(j.id)).map(shapeJobsheetArrival))
+      }
     }
 
     // Free-text filter (reg / customer / JS ref).

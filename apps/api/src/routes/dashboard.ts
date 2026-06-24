@@ -145,6 +145,9 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       `)
         .eq('organization_id', auth.orgId)
         .is('deleted_at', null) // Exclude soft-deleted records
+        // Exclude no-inspection "visit" shells (no-VHC jobsheet check-ins) — they don't belong
+        // on the inspection kanban; they're managed from the jobsheet + Arrivals.
+        .eq('inspection_required', true)
         // Exclude terminal states AND DMS pre-arrival states (awaiting_arrival has its own UI section)
         .not('status', 'in', '(completed,cancelled,expired,awaiting_arrival,no_show)')
       if (date_from) q = q.gte('created_at', date_from)

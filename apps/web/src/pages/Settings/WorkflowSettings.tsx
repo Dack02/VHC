@@ -149,7 +149,7 @@ export default function WorkflowSettings() {
                 <li>Service advisors complete a check-in form when the customer drops off the vehicle</li>
                 <li>MRI scan captures manufacturer service intervals, recall status, and key items</li>
                 <li>Flagged MRI items automatically create repair items for technician review</li>
-                <li>Check-In and MRI tabs appear in the health check detail view</li>
+                <li>Check-In and MRI tabs appear in the health check <strong>and jobsheet</strong> detail views</li>
               </ul>
             </div>
 

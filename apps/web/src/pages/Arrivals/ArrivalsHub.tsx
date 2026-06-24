@@ -80,7 +80,7 @@ function dueLabel(item: ArrivalItem): string | null {
 }
 
 export default function ArrivalsHub() {
-  const { session } = useAuth()
+  const { session, user } = useAuth()
   const toast = useToast()
   const navigate = useNavigate()
   const token = session?.accessToken
@@ -91,6 +91,13 @@ export default function ArrivalsHub() {
   const [search, setSearch] = useState('')
   const [windowMode, setWindowMode] = useState<'soon' | 'all'>('soon')
   const [actingId, setActingId] = useState<string | null>(null)
+  const [checkinEnabled, setCheckinEnabled] = useState(false)
+
+  // Jobsheet check-in lives on the jobsheet's Check-In tab; DMS check-in on the VHC.
+  const checkinHref = (item: ArrivalItem) =>
+    item.origin === 'jobsheet' && item.jobsheetId
+      ? `/jobsheets/${item.jobsheetId}?tab=checkin`
+      : `/health-checks/${item.healthCheckId}?tab=checkin`
 
   const load = useCallback(async () => {
     if (!token) return
@@ -108,6 +115,13 @@ export default function ArrivalsHub() {
   }, [token, windowMode])
 
   useEffect(() => { load() }, [load])
+
+  // Org check-in setting — when on, jobsheet arrivals route to their Check-In tab.
+  useEffect(() => {
+    if (!token || !user?.organization?.id) return
+    api<{ checkinEnabled: boolean }>(`/api/v1/organizations/${user.organization.id}/checkin-settings`, { token })
+      .then(d => setCheckinEnabled(!!d.checkinEnabled)).catch(() => setCheckinEnabled(false))
+  }, [token, user?.organization?.id])
 
   const handleArrived = async (item: ArrivalItem) => {
     if (!token || !item.healthCheckId) return
@@ -229,7 +243,7 @@ export default function ArrivalsHub() {
                       </div>
                     </div>
                     <button
-                      onClick={() => item.healthCheckId && navigate(`/health-checks/${item.healthCheckId}?tab=checkin`)}
+                      onClick={() => navigate(checkinHref(item))}
                       className="shrink-0 px-4 py-2 bg-rag-red text-white text-sm font-semibold rounded-lg hover:opacity-90">
                       Check in
                     </button>
@@ -270,7 +284,20 @@ export default function ArrivalsHub() {
                         {item.bookedRepairs.length > 0 && <span className="text-[11px] text-gray-400">{item.bookedRepairs.length} pre-booked</span>}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        {item.hasVhc ? (
+                        {item.origin === 'jobsheet' && checkinEnabled ? (
+                          // Jobsheet + check-in on: do it on the jobsheet's Check-In tab (it handles
+                          // arrival, the visit shell for no-VHC jobs, and the panel).
+                          <>
+                            <button onClick={() => navigate(`/jobsheets/${item.jobsheetId}?tab=checkin`)} className="px-4 py-2 bg-rag-green text-white text-sm font-semibold rounded-lg hover:opacity-90">
+                              Check in
+                            </button>
+                            {item.hasVhc && (
+                              <button onClick={() => handleNoShow(item)} disabled={busy} className="px-3 py-2 border border-gray-300 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                                No show
+                              </button>
+                            )}
+                          </>
+                        ) : item.hasVhc ? (
                           <>
                             <button onClick={() => handleArrived(item)} disabled={busy} className="px-4 py-2 bg-rag-green text-white text-sm font-semibold rounded-lg hover:opacity-90 disabled:opacity-50">
                               {busy ? '…' : 'Arrived'}

@@ -24,6 +24,13 @@ function dateForOffset(offset: number): string {
   return d.toISOString().split('T')[0]
 }
 
+// Shift a YYYY-MM-DD string by N days. Noon anchor avoids DST/midnight slips.
+function shiftDate(date: string, days: number): string {
+  const d = new Date(`${date}T12:00:00`)
+  d.setDate(d.getDate() + days)
+  return d.toISOString().split('T')[0]
+}
+
 interface ViewColumn {
   key: string
   title: string
@@ -664,6 +671,32 @@ export default function WorkshopBoard() {
                   {opt.label}
                 </button>
               ))}
+            </div>
+            {/* Jump to any day (steppers + native picker) */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setDate(shiftDate(date, -1))}
+                className="px-2 py-2 bg-white border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 text-sm leading-none"
+                title="Previous day"
+                aria-label="Previous day"
+              >
+                ‹
+              </button>
+              <input
+                type="date"
+                value={date}
+                onChange={e => { if (e.target.value) setDate(e.target.value) }}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                aria-label="Pick a date"
+              />
+              <button
+                onClick={() => setDate(shiftDate(date, 1))}
+                className="px-2 py-2 bg-white border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 text-sm leading-none"
+                title="Next day"
+                aria-label="Next day"
+              >
+                ›
+              </button>
             </div>
             <input
               type="text"

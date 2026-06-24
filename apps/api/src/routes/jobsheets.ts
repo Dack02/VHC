@@ -25,7 +25,7 @@ const SELECT = `
   service_type:service_types(id, code, label, colour),
   advisor:users!jobsheets_advisor_id_fkey(id, first_name, last_name),
   created_by_user:users!jobsheets_created_by_fkey(id, first_name, last_name),
-  linked_checks:health_checks!health_checks_jobsheet_id_fkey(id, status, job_state, vhc_reference, deleted_at, arrived_at, checked_in_at, mileage_in, key_location, time_required, customer_waiting, checkin_notes, checked_in_by_user:users!health_checks_checked_in_by_fkey(id, first_name, last_name)),
+  linked_checks:health_checks!health_checks_jobsheet_id_fkey(id, status, job_state, inspection_required, vhc_reference, deleted_at, arrived_at, checked_in_at, mileage_in, key_location, time_required, customer_waiting, checkin_notes, checked_in_by_user:users!health_checks_checked_in_by_fkey(id, first_name, last_name)),
   codes:jobsheet_booking_codes(booking_code:booking_codes(id, code, label, colour))
 `
 
@@ -81,7 +81,8 @@ function shapeJobsheet(row: any) {
     advisor: row.advisor ? { id: row.advisor.id, firstName: row.advisor.first_name, lastName: row.advisor.last_name } : null,
     createdBy: row.created_by_user ? { id: row.created_by_user.id, firstName: row.created_by_user.first_name, lastName: row.created_by_user.last_name } : null,
     // Vehicle Status ("Work Status Code") is read through from the linked VHC
-    healthCheck: hc ? { id: hc.id, status: hc.status, vehicleStatus: hc.job_state, vhcReference: hc.vhc_reference } : null,
+    // inspectionRequired distinguishes a real VHC (true) from a check-in-only visit shell (false).
+    healthCheck: hc ? { id: hc.id, status: hc.status, vehicleStatus: hc.job_state, vhcReference: hc.vhc_reference, inspectionRequired: hc.inspection_required ?? true } : null,
     // Check-in details read through from the linked VHC (arrival → check-in happens on the VHC;
     // the check-in form writes these fields). null when no VHC or not yet arrived/checked in.
     checkIn: hc
@@ -223,7 +224,10 @@ async function kickOffJobsheetVhc(params: {
   templateId: string | null; advisorId: string; mileage: number | null
   dueInDate: string; dueInTime: string | null | undefined; userId: string
   jobsheetId: string; jobsheetReference: string
+  // false = a check-in-only "visit" shell (no inspection, no template). Default true.
+  inspectionRequired?: boolean
 }): Promise<{ hc: { id: string; status: string; job_state: string; vhc_reference: string | null } | null; error: string | null }> {
+  const inspectionRequired = params.inspectionRequired !== false
   const { data: hcRow, error: hcError } = await supabaseAdmin
     .from('health_checks')
     .insert({
@@ -236,7 +240,8 @@ async function kickOffJobsheetVhc(params: {
       mileage_in: params.mileage,
       status: 'awaiting_arrival',
       due_date: combineDueIn(params.dueInDate, params.dueInTime),
-      jobsheet_id: params.jobsheetId
+      jobsheet_id: params.jobsheetId,
+      inspection_required: inspectionRequired
     })
     .select('id, status, job_state, vhc_reference')
     .single()
@@ -248,7 +253,9 @@ async function kickOffJobsheetVhc(params: {
     to_status: hcRow.status,
     changed_by: params.userId,
     change_source: 'user',
-    notes: `Created from jobsheet ${params.jobsheetReference}`
+    notes: inspectionRequired
+      ? `Created from jobsheet ${params.jobsheetReference}`
+      : `Visit (check-in only) created from jobsheet ${params.jobsheetReference}`
   })
   return { hc: hcRow, error: null }
 }
@@ -578,6 +585,50 @@ jobsheets.post('/:id/discard', authorize(['super_admin', 'org_admin', 'site_admi
   } catch (error) {
     console.error('Discard jobsheet draft error:', error)
     return c.json({ error: 'Failed to discard draft' }, 500)
+  }
+})
+
+// POST /:id/ensure-visit - ensure the jobsheet has a linked health_check to hold check-in.
+// Returns the existing linked VHC if there is one; otherwise lazily creates a "visit" shell
+// (inspection_required=false, no template) so the shared Check-In / MRI panels have a
+// health_check to bind to. Used for no-VHC jobsheets when the org has check-in enabled.
+jobsheets.post('/:id/ensure-visit', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    const { data: js } = await supabaseAdmin
+      .from('jobsheets')
+      .select('id, reference, vehicle_id, customer_id, site_id, advisor_id, mileage, due_in_date, due_in_time')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .single()
+    if (!js) return c.json({ error: 'Jobsheet not found' }, 404)
+
+    // Already has a linked (non-deleted) health check? Return it.
+    const { data: existing } = await supabaseAdmin
+      .from('health_checks')
+      .select('id, status')
+      .eq('jobsheet_id', id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    if (existing) return c.json({ healthCheckId: existing.id, status: existing.status, created: false })
+
+    const { hc, error } = await kickOffJobsheetVhc({
+      orgId: auth.orgId, siteId: js.site_id, vehicleId: js.vehicle_id, customerId: js.customer_id,
+      templateId: null, inspectionRequired: false, advisorId: js.advisor_id || auth.user.id,
+      mileage: js.mileage, dueInDate: js.due_in_date, dueInTime: js.due_in_time,
+      userId: auth.user.id, jobsheetId: id, jobsheetReference: js.reference || '(draft)'
+    })
+    if (error || !hc) return c.json({ error: error || 'Failed to create visit' }, 500)
+
+    return c.json({ healthCheckId: hc.id, status: hc.status, created: true }, 201)
+  } catch (error) {
+    console.error('Ensure visit error:', error)
+    return c.json({ error: 'Failed to ensure visit' }, 500)
   }
 })
 

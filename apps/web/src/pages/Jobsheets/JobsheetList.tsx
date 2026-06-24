@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
-import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
 
 interface ArrivalLite {
@@ -59,13 +58,11 @@ function formatDueIn(dateStr: string, time: string | null): string {
 
 export default function JobsheetList() {
   const { session } = useAuth()
-  const toast = useToast()
   const navigate = useNavigate()
   const [rows, setRows] = useState<JobsheetRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [arrivals, setArrivals] = useState<ArrivalLite[]>([])
-  const [busyId, setBusyId] = useState<string | null>(null)
   const token = session?.accessToken
 
   // Jobsheet bookings due in soon (today + overdue) that still need arrival / check-in.
@@ -80,37 +77,6 @@ export default function JobsheetList() {
   }, [token])
 
   useEffect(() => { fetchArrivals() }, [fetchArrivals])
-
-  // Inline check-in from the list: mark arrived (VHC) then jump to the check-in form, or
-  // continue an in-progress check-in. No-VHC jobsheets just get marked on site.
-  const handleCheckIn = async (item: ArrivalLite) => {
-    if (!token) return
-    if (item.status === 'awaiting_checkin' && item.healthCheckId) {
-      navigate(`/health-checks/${item.healthCheckId}?tab=checkin`)
-      return
-    }
-    setBusyId(item.id)
-    try {
-      if (item.hasVhc && item.healthCheckId) {
-        const res = await api<{ healthCheck: { requiresCheckin: boolean } }>(
-          `/api/v1/health-checks/${item.healthCheckId}/mark-arrived`, { method: 'POST', token }
-        )
-        if (res.healthCheck?.requiresCheckin) {
-          navigate(`/health-checks/${item.healthCheckId}?tab=checkin`)
-          return
-        }
-        toast.success('Vehicle marked as arrived')
-      } else if (item.jobsheetId) {
-        await api(`/api/v1/jobsheets/${item.jobsheetId}`, { method: 'PATCH', token, body: { jobState: 'arrived', vehicleOnSite: true } })
-        toast.success('Vehicle marked on site')
-      }
-      fetchArrivals()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to check in')
-    } finally {
-      setBusyId(null)
-    }
-  }
 
   const fetchRows = useCallback(async (q: string) => {
     if (!token) return
@@ -170,9 +136,9 @@ export default function JobsheetList() {
                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${item.status === 'awaiting_checkin' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>
                     {item.status === 'awaiting_checkin' ? 'Awaiting check-in' : 'Due in'}
                   </span>
-                  <button onClick={() => handleCheckIn(item)} disabled={busyId === item.id}
-                    className="px-3 py-1.5 bg-primary text-white text-sm font-medium rounded-lg disabled:opacity-50">
-                    {busyId === item.id ? '…' : item.status === 'awaiting_checkin' ? 'Check in' : item.hasVhc ? 'Arrived' : 'On site'}
+                  <button onClick={() => navigate(`/jobsheets/${item.jobsheetId}?tab=checkin`)}
+                    className="px-3 py-1.5 bg-primary text-white text-sm font-medium rounded-lg">
+                    Check in
                   </button>
                 </div>
               </div>

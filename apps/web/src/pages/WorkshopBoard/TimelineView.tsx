@@ -3,7 +3,7 @@ import { DndContext, DragOverlay, PointerSensor, TouchSensor, useSensor, useSens
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import type { BoardCard, BoardData } from './types'
-import { timeToMinutes, actualWorkedMinutes, isClockStale } from './types'
+import { timeToMinutes, actualWorkedMinutes, isClockStale, dayCapacityMinutes } from './types'
 import { moveCard, patchCard as patchCardApi } from './boardActions'
 import {
   SNAP_MIN,
@@ -226,6 +226,33 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
       .filter(col => col.technicianId && availabilityByTech.get(col.technicianId)?.isFreeNow)
       .map(col => col.name)
   }, [isToday, techColumns, availabilityByTech])
+
+  // Per-tech shift window / off-day for the selected date (drives lane shading).
+  const weekdayOfDate = (new Date(`${date}T12:00:00`).getDay() + 6) % 7
+  const laneShift = useCallback((techId: string | null | undefined): { mode: 'none' | 'off' } | { mode: 'shift'; startMin: number; endMin: number } => {
+    if (!techId) return { mode: 'none' }
+    const shifts = board.shiftsByTech?.[techId] || []
+    if (shifts.length === 0) return { mode: 'none' }
+    const s = shifts.find(x => x.weekday === weekdayOfDate)
+    if (!s) return { mode: 'off' }
+    return { mode: 'shift', startMin: timeToMinutes(s.startTime), endMin: timeToMinutes(s.endTime) }
+  }, [board.shiftsByTech, weekdayOfDate])
+  const laneAbsences = useCallback((techId: string | null | undefined) =>
+    (techId && board.absencesByTech?.[techId]) || [], [board.absencesByTech])
+
+  // Day capacity (hours) for a tech, from their shift; flat fallback when no shift/absence.
+  const capacityHoursFor = useCallback((col: { technicianId: string | null; availableHours: number }): number => {
+    const shifts = col.technicianId ? board.shiftsByTech?.[col.technicianId] || [] : []
+    const absences = col.technicianId ? board.absencesByTech?.[col.technicianId] || [] : []
+    if (shifts.length === 0 && absences.length === 0) return col.availableHours
+    return dayCapacityMinutes({
+      date, shifts, absences,
+      lunchStartTime: board.config.lunchStartTime,
+      lunchEndTime: board.config.lunchEndTime,
+      flatHours: col.availableHours,
+      dayStartTime: board.config.dayStartTime,
+    }) / 60
+  }, [board.shiftsByTech, board.absencesByTech, board.config, date])
 
   // ---- Auto-arrange (1d) --------------------------------------------------
   const lanesBusyByTech = useCallback((): Map<string, Interval[]> => {
@@ -475,7 +502,8 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
             {techColumns.map(col => {
               const blocks = lanes.get(col.technicianId!) || []
               const allocated = blocks.reduce((sum, b) => sum + b.durationMin / 60, 0)
-              const overCapacity = allocated > col.availableHours
+              const capacity = capacityHoursFor(col)
+              const overCapacity = allocated > capacity
               const anyOverrun = blocks.some(b => {
                 const actual = actualWorkedMinutes(b.card, now, board.config.staleClockMinutes)
                 return actual > b.durationMin
@@ -496,7 +524,7 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
                     )}
                   </div>
                   <div className={`text-xs mt-0.5 ${overCapacity ? 'text-red-600 font-medium' : 'text-gray-400'}`}>
-                    {fmtHours(allocated)} / {fmtHours(col.availableHours)}
+                    {fmtHours(allocated)} / {fmtHours(capacity)}{capacity <= 0 ? ' · off' : ''}
                     {anyOverrun && <span className="ml-1.5 text-red-600 font-semibold">⚠ overrun</span>}
                     {anyStale && <span className="ml-1.5 text-amber-600 font-semibold">⚠ check clock</span>}
                   </div>
@@ -547,6 +575,44 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
                       <span className="text-[10px] text-gray-400 font-medium">LUNCH</span>
                     </div>
                   )}
+
+                  {/* Shift shading + absences (per-tech availability) */}
+                  {(() => {
+                    const px = (from: number, to: number) => {
+                      const top = Math.max(0, (from - dayStartMin) * PX_PER_MIN)
+                      const bottom = Math.min(gridHeight, (to - dayStartMin) * PX_PER_MIN)
+                      return { top, height: Math.max(0, bottom - top) }
+                    }
+                    const shift = laneShift(col.technicianId)
+                    const bands: React.ReactNode[] = []
+                    if (shift.mode === 'off') {
+                      bands.push(
+                        <div key="off" className="absolute inset-0 bg-gray-200/60 pointer-events-none flex items-start justify-center pt-2">
+                          <span className="text-[10px] text-gray-400 font-medium">Off today</span>
+                        </div>
+                      )
+                    } else if (shift.mode === 'shift') {
+                      const before = px(dayStartMin, shift.startMin)
+                      const after = px(shift.endMin, dayEndMin)
+                      if (before.height > 0) bands.push(<div key="b" className="absolute left-0 right-0 bg-gray-100/70 pointer-events-none" style={{ top: before.top, height: before.height }} />)
+                      if (after.height > 0) bands.push(<div key="a" className="absolute left-0 right-0 bg-gray-100/70 pointer-events-none" style={{ top: after.top, height: after.height }} />)
+                    }
+                    laneAbsences(col.technicianId).forEach((a, i) => {
+                      const allDay = a.allDay || !a.startTime || !a.endTime
+                      const g = allDay ? px(dayStartMin, dayEndMin) : px(timeToMinutes(a.startTime!), timeToMinutes(a.endTime!))
+                      if (g.height <= 0) return
+                      bands.push(
+                        <div
+                          key={`abs-${i}`}
+                          className="absolute left-0 right-0 pointer-events-none border-y border-amber-300 flex items-start justify-center pt-0.5"
+                          style={{ top: g.top, height: g.height, background: 'repeating-linear-gradient(45deg, rgba(245,158,11,0.18), rgba(245,158,11,0.18) 6px, rgba(245,158,11,0.06) 6px, rgba(245,158,11,0.06) 12px)' }}
+                        >
+                          <span className="text-[9px] font-semibold text-amber-700">{a.reason || 'Absent'}</span>
+                        </div>
+                      )
+                    })
+                    return bands
+                  })()}
 
                   {/* Live drop preview */}
                   {ghost && ghost.laneId === col.id && (

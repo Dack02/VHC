@@ -155,8 +155,9 @@ day's timeline**. The per-day **"Day load" footer is Theme 3c** (forward loading
 (shift − lunch − absence, flat fallback); `/week` returns `shiftsByTech`/`absencesByTech` + lunch;
 CRUD `GET /shifts`, `PUT /shifts/:techId`, `POST/DELETE /absences`; `ShiftsModal.tsx` (weekday grid +
 absence list) opened from a **🕑 Shifts** button; the week grid now greys off-days and reds
-over-capacity per real availability. **Deferred:** day-timeline lane shading/absence bands (`GET /`
-not extended — the week view is the primary capacity surface). `tsc` (web+api) + `vite build` pass.
+over-capacity per real availability. The **day timeline** now reflects shifts too: `GET /` carries the
+day's shifts/absences, lanes grey outside the shift (or "Off today"), absences show as hatched bands,
+and the tech header shows real capacity. `tsc` (web+api) + `vite build` pass.
 
 **Goal:** plan ahead across days and model real technician availability.
 

@@ -150,7 +150,7 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
 
     await ensureStatusesSeeded(auth.orgId)
 
-    const [columnsRes, configRes, statusesRes, dueInRes, activeRes, workCompleteRes] = await Promise.all([
+    const [columnsRes, configRes, statusesRes, dueInRes, activeRes, workCompleteRes, shiftsRes, absencesRes] = await Promise.all([
       supabaseAdmin
         .from('workshop_columns')
         .select(`
@@ -197,6 +197,16 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
         .eq('site_id', siteId)
         .eq('job_state', 'work_complete')
         .is('deleted_at', null),
+      // Per-tech shift pattern + absences overlapping the selected day (lane shading)
+      supabaseAdmin
+        .from('workshop_tech_shifts')
+        .select('technician_id, weekday, start_time, end_time')
+        .eq('organization_id', auth.orgId).eq('site_id', siteId),
+      supabaseAdmin
+        .from('workshop_tech_absences')
+        .select('id, technician_id, start_date, end_date, start_time, end_time, all_day, reason')
+        .eq('organization_id', auth.orgId).eq('site_id', siteId)
+        .lte('start_date', date).gte('end_date', date),
     ])
 
     const queryError = dueInRes.error || activeRes.error || workCompleteRes.error || columnsRes.error
@@ -377,6 +387,25 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
       .eq('organization_id', auth.orgId)
       .maybeSingle()
 
+    // Per-tech shift pattern + absences overlapping the day (timeline lane shading)
+    const shiftsByTech: Record<string, Array<{ weekday: number; startTime: string; endTime: string }>> = {}
+    for (const s of shiftsRes?.data || []) {
+      const tid = s.technician_id as string
+      if (!shiftsByTech[tid]) shiftsByTech[tid] = []
+      shiftsByTech[tid].push({ weekday: s.weekday as number, startTime: (s.start_time as string).slice(0, 5), endTime: (s.end_time as string).slice(0, 5) })
+    }
+    const absencesByTech: Record<string, Array<Record<string, unknown>>> = {}
+    for (const a of absencesRes?.data || []) {
+      const tid = a.technician_id as string
+      if (!absencesByTech[tid]) absencesByTech[tid] = []
+      absencesByTech[tid].push({
+        id: a.id, technicianId: tid, startDate: a.start_date, endDate: a.end_date,
+        startTime: a.start_time ? (a.start_time as string).slice(0, 5) : null,
+        endTime: a.end_time ? (a.end_time as string).slice(0, 5) : null,
+        allDay: a.all_day === true, reason: a.reason ?? null,
+      })
+    }
+
     return c.json({
       siteId,
       date,
@@ -411,7 +440,9 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
         sortOrder: col.sort_order,
         isVisible: col.is_visible
       })),
-      cards
+      cards,
+      shiftsByTech,
+      absencesByTech
     })
   } catch (error) {
     console.error('Get workshop board error:', error)

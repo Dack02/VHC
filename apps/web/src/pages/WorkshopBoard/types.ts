@@ -107,6 +107,9 @@ export interface BoardData {
   statuses: BoardStatus[]
   columns: BoardColumnDef[]
   cards: BoardCard[]
+  /** The day's per-technician shift pattern + absences (timeline lane shading) */
+  shiftsByTech?: Record<string, TechShift[]>
+  absencesByTech?: Record<string, TechAbsence[]>
 }
 
 // Minutes since midnight for an HH:MM string
@@ -202,6 +205,8 @@ export function dayCapacityMinutes(opts: {
   const { date, shifts, absences, flatHours, dayStartTime } = opts
   const weekday = (new Date(`${date}T12:00:00`).getDay() + 6) % 7
   const shift = shifts.find(s => s.weekday === weekday) || null
+  // A tech with a weekly pattern but no row for this weekday isn't working today.
+  if (!shift && shifts.length > 0) return 0
   let startMin: number
   let endMin: number
   if (shift) {

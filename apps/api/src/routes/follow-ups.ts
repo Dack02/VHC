@@ -23,7 +23,7 @@ function caseListSelect() {
     id, status, anchor_date, next_action_at, deferred_value_snapshot, item_count,
     last_contacted_at, manual_attempts, current_step_order, created_at, updated_at,
     outcome_id, outcome_notes, closed_at, linked_booking_id, health_check_id, timeline_id,
-    health_check:health_checks(jobsheet_id),
+    health_check:health_checks!follow_up_cases_health_check_id_fkey(jobsheet_id),
     customer:customers(id, first_name, last_name, mobile, email),
     vehicle:vehicles(id, registration, make, model),
     assignee:users!follow_up_cases_assigned_to_fkey(id, first_name, last_name),

@@ -11,6 +11,7 @@ import JobCard, { promiseCountdown } from './JobCard'
 import JobDetailModal from './JobDetailModal'
 import AddColumnModal from './AddColumnModal'
 import ShiftsModal from './ShiftsModal'
+import HelpModal from './HelpModal'
 import TimelineView from './TimelineView'
 import WeekView from './WeekView'
 
@@ -148,6 +149,7 @@ export default function WorkshopBoard() {
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
   const [showAddColumn, setShowAddColumn] = useState(false)
   const [showShifts, setShowShifts] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const [activeDragCard, setActiveDragCard] = useState<BoardCard | null>(null)
   const [tvMode, setTvMode] = useState(false)
   const boardRef = useRef<HTMLDivElement>(null)
@@ -760,6 +762,13 @@ export default function WorkshopBoard() {
                 🖨 Print
               </a>
               <button
+                onClick={() => setShowHelp(true)}
+                className="px-3 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50"
+                title="How the workshop board works"
+              >
+                ? Help
+              </button>
+              <button
                 onClick={toggleTvMode}
                 className="px-3 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800"
                 title="Full-screen wallboard for a workshop TV"
@@ -1061,6 +1070,9 @@ export default function WorkshopBoard() {
           onChanged={() => { refresh(true); refreshWeek(true) }}
         />
       )}
+
+      {/* How it works */}
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
     </div>
   )
 }

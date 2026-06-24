@@ -10,6 +10,7 @@ import { FeedbackButton } from './components/feedback/FeedbackButton'
 
 const PreCheck = lazy(() => import('./pages/PreCheck').then(m => ({ default: m.PreCheck })))
 const MyBoard = lazy(() => import('./pages/MyBoard').then(m => ({ default: m.MyBoard })))
+const MyDay = lazy(() => import('./pages/MyDay').then(m => ({ default: m.MyDay })))
 const Inspection = lazy(() => import('./pages/Inspection').then(m => ({ default: m.Inspection })))
 const Summary = lazy(() => import('./pages/Summary').then(m => ({ default: m.Summary })))
 const Repair = lazy(() => import('./pages/Repair').then(m => ({ default: m.Repair })))
@@ -62,6 +63,12 @@ function AppRoutes() {
           path="/board"
           element={
             session && user ? <MyBoard /> : <Navigate to="/login" replace />
+          }
+        />
+        <Route
+          path="/my-day"
+          element={
+            session && user ? <MyDay /> : <Navigate to="/login" replace />
           }
         />
         <Route

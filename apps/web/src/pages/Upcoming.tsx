@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useSocket, WS_EVENTS } from '../contexts/SocketContext'
 import { api } from '../lib/api'
+import { jobPath } from '../lib/jobLink'
 
 interface MriProgress {
   completed: number
@@ -11,6 +12,7 @@ interface MriProgress {
 
 interface UpcomingHealthCheck {
   id: string
+  jobsheetId?: string | null
   status: string
   dueDate: string
   bookingTime: string | null
@@ -223,7 +225,7 @@ export default function Upcoming() {
                     <div className="flex flex-col items-end gap-2 shrink-0">
                       <MriBadge status={hc.mriStatus} progress={hc.mriProgress} />
                       <Link
-                        to={`/health-checks/${hc.id}?tab=mri`}
+                        to={jobPath({ jobsheetId: hc.jobsheetId, healthCheckId: hc.id }, { tab: 'mri' })}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-primary bg-primary/5 border border-primary/20 rounded-lg hover:bg-primary/10 transition-colors"
                       >
                         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

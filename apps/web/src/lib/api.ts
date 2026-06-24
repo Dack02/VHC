@@ -293,6 +293,8 @@ export interface User {
 
 export interface HealthCheck {
   id: string
+  /** Parent GMS job card, when this VHC was created under one (routing: open the job card) */
+  jobsheet_id?: string | null
   organization_id: string
   site_id: string | null
   vehicle_id: string
@@ -899,6 +901,7 @@ export interface CustomerHealthCheckSummary {
   totalParts: number
   totalAmount: number
   mileageIn: number | null
+  jobsheetId: string | null
   vehicle: { id: string; registration: string; make: string | null; model: string | null; year: number | null } | null
   technician: { id: string; first_name: string; last_name: string } | null
   advisor: { id: string; first_name: string; last_name: string } | null
@@ -926,6 +929,7 @@ export interface SmsMessage {
 export interface CustomerCommRecord {
   id: string
   healthCheckId: string
+  jobsheetId: string | null
   vhcReference: string | null
   vehicleReg: string | null
   channel: 'email' | 'sms'

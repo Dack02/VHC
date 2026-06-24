@@ -72,6 +72,7 @@ crud.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advi
     return c.json({
       healthChecks: data?.map(hc => ({
         id: hc.id,
+        jobsheet_id: hc.jobsheet_id,
         status: hc.status,
         vhc_reference: hc.vhc_reference,
         vehicle: hc.vehicle ? {

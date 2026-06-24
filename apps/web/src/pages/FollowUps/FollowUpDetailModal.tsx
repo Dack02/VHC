@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, Fragment } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
+import { jobPath } from '../../lib/jobLink'
 import {
   FollowUpDetail,
   FollowUpOutcome,
@@ -356,7 +357,7 @@ export default function FollowUpDetailModal({ caseId, onClose, onChanged }: Prop
           <div className="flex items-center gap-2 flex-shrink-0">
             {c?.healthCheckId && (
               <a
-                href={`/health-checks/${c.healthCheckId}`}
+                href={jobPath({ jobsheetId: c.jobsheetId, healthCheckId: c.healthCheckId })}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 whitespace-nowrap"

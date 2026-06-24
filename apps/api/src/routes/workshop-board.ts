@@ -420,6 +420,273 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
 })
 
 // ============================================================================
+// GET /week - Multi-day planner data (lean projection across a date range)
+// ============================================================================
+// Drives the WeekView (technician rows × day columns). Returns only the planning
+// slice each card needs - no notes/time-entries - so a whole week stays well
+// under the PostgREST row cap. Active WIP is placed by planned_start_at (else the
+// tray); due-in bookings are pulled by due_date within the range.
+workshopBoard.get('/week', authorize([...ALL_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const siteId = await resolveSiteId(c)
+    if (!siteId) return c.json({ error: 'No site available - pass ?siteId= or assign a site to your user' }, 400)
+
+    const from = c.req.query('from') || new Date().toISOString().split('T')[0]
+    const to = c.req.query('to') || from
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      return c.json({ error: 'Invalid from/to - expected YYYY-MM-DD' }, 400)
+    }
+    const span = Math.round((new Date(`${to}T00:00:00`).getTime() - new Date(`${from}T00:00:00`).getTime()) / 86400000)
+    if (span < 0 || span > 13) return c.json({ error: 'Range must be 0-14 days' }, 400)
+    const fromStart = `${from}T00:00:00`
+    const toEnd = `${to}T23:59:59`
+
+    const WEEK_HC_SELECT = `
+      id, status, job_state, technician_id, customer_waiting, promise_time, due_date, booked_repairs,
+      vehicle:vehicles(registration),
+      customer:customers(first_name, last_name)
+    `
+
+    const [columnsRes, configRes, activeRes, dueInRes, shiftsRes, absencesRes] = await Promise.all([
+      supabaseAdmin
+        .from('workshop_columns')
+        .select('id, column_type, technician_id, name, available_hours, sort_order, is_visible, technician:users!workshop_columns_technician_id_fkey(id, first_name, last_name, is_active)')
+        .eq('organization_id', auth.orgId).eq('site_id', siteId)
+        .order('sort_order', { ascending: true }),
+      supabaseAdmin
+        .from('workshop_board_config')
+        .select('*').eq('organization_id', auth.orgId).eq('site_id', siteId).maybeSingle(),
+      supabaseAdmin
+        .from('health_checks')
+        .select(WEEK_HC_SELECT)
+        .eq('organization_id', auth.orgId).eq('site_id', siteId)
+        .in('job_state', ACTIVE_JOB_STATES).is('deleted_at', null),
+      supabaseAdmin
+        .from('health_checks')
+        .select(WEEK_HC_SELECT)
+        .eq('organization_id', auth.orgId).eq('site_id', siteId)
+        .eq('job_state', 'due_in').gte('due_date', fromStart).lte('due_date', toEnd).is('deleted_at', null),
+      supabaseAdmin
+        .from('workshop_tech_shifts')
+        .select('technician_id, weekday, start_time, end_time')
+        .eq('organization_id', auth.orgId).eq('site_id', siteId),
+      supabaseAdmin
+        .from('workshop_tech_absences')
+        .select('id, technician_id, start_date, end_date, start_time, end_time, all_day, reason')
+        .eq('organization_id', auth.orgId).eq('site_id', siteId)
+        .lte('start_date', to).gte('end_date', from),
+    ])
+    const qErr = columnsRes.error || activeRes.error || dueInRes.error
+    if (qErr) { console.error('Workshop week query error:', qErr); return c.json({ error: qErr.message }, 500) }
+
+    const healthChecks = [...(activeRes.data || []), ...(dueInRes.data || [])]
+    const hcIds = healthChecks.map(hc => hc.id)
+
+    const cardMetaByHc = new Map<string, Record<string, unknown>>()
+    const clockedOn = new Set<string>()
+    for (const idChunk of chunkIds(hcIds, 100)) {
+      const [cards, times] = await Promise.all([
+        supabaseAdmin
+          .from('workshop_cards')
+          .select('health_check_id, estimated_hours, planned_start_at')
+          .eq('organization_id', auth.orgId).in('health_check_id', idChunk),
+        supabaseAdmin
+          .from('technician_time_entries')
+          .select('health_check_id, category:time_entry_categories(counts_toward_job)')
+          .in('health_check_id', idChunk).is('clock_out_at', null),
+      ])
+      for (const m of cards.data || []) cardMetaByHc.set(m.health_check_id as string, m as Record<string, unknown>)
+      for (const e of times.data || []) {
+        const cat = e.category as { counts_toward_job?: boolean } | null
+        if (cat && cat.counts_toward_job === false) continue
+        if (e.health_check_id) clockedOn.add(e.health_check_id as string)
+      }
+    }
+
+    const columns = (columnsRes.data || []).filter(col =>
+      col.column_type === 'technician' && (col.technician as { is_active?: boolean } | null)?.is_active !== false
+    )
+
+    const cards = healthChecks.map(hc => {
+      const meta = cardMetaByHc.get(hc.id) || null
+      const estimatedHours = meta?.estimated_hours != null ? Number(meta.estimated_hours) : bookedRepairsHours(hc.booked_repairs)
+      const cust = hc.customer as { first_name?: string; last_name?: string } | null
+      return {
+        healthCheckId: hc.id,
+        technicianId: hc.technician_id ?? null,
+        plannedStartAt: (meta?.planned_start_at as string) ?? null,
+        estimatedHours,
+        status: hc.status,
+        jobState: hc.job_state ?? 'arrived',
+        registration: (hc.vehicle as { registration?: string } | null)?.registration ?? null,
+        customerName: cust ? `${cust.first_name ?? ''} ${cust.last_name ?? ''}`.trim() || null : null,
+        customerWaiting: hc.customer_waiting === true,
+        promiseTime: hc.promise_time ?? null,
+        dueDate: hc.due_date ?? null,
+        isClockedOn: clockedOn.has(hc.id),
+      }
+    })
+
+    // Per-tech shift pattern + absences (times trimmed to HH:MM for the client).
+    const shiftsByTech: Record<string, Array<{ weekday: number; startTime: string; endTime: string }>> = {}
+    for (const s of shiftsRes.data || []) {
+      const tid = s.technician_id as string
+      if (!shiftsByTech[tid]) shiftsByTech[tid] = []
+      shiftsByTech[tid].push({ weekday: s.weekday as number, startTime: (s.start_time as string).slice(0, 5), endTime: (s.end_time as string).slice(0, 5) })
+    }
+    const absencesByTech: Record<string, Array<Record<string, unknown>>> = {}
+    for (const a of absencesRes.data || []) {
+      const tid = a.technician_id as string
+      if (!absencesByTech[tid]) absencesByTech[tid] = []
+      absencesByTech[tid].push({
+        id: a.id,
+        technicianId: tid,
+        startDate: a.start_date,
+        endDate: a.end_date,
+        startTime: a.start_time ? (a.start_time as string).slice(0, 5) : null,
+        endTime: a.end_time ? (a.end_time as string).slice(0, 5) : null,
+        allDay: a.all_day === true,
+        reason: a.reason ?? null,
+      })
+    }
+
+    return c.json({
+      siteId,
+      from,
+      to,
+      config: {
+        dayStartTime: (configRes.data?.day_start_time as string)?.slice(0, 5) || '08:00',
+        dayEndTime: (configRes.data?.day_end_time as string)?.slice(0, 5) || '17:30',
+        lunchStartTime: (configRes.data?.lunch_start_time as string)?.slice(0, 5) || null,
+        lunchEndTime: (configRes.data?.lunch_end_time as string)?.slice(0, 5) || null,
+        defaultTechHours: configRes.data ? Number(configRes.data.default_tech_hours) : 8.0,
+      },
+      shiftsByTech,
+      absencesByTech,
+      columns: columns.map(col => ({
+        id: col.id,
+        technicianId: col.technician_id,
+        name: `${(col.technician as { first_name?: string } | null)?.first_name || ''} ${(col.technician as { last_name?: string } | null)?.last_name || ''}`.trim(),
+        availableHours: Number(col.available_hours),
+        sortOrder: col.sort_order,
+        isVisible: col.is_visible,
+      })),
+      cards,
+    })
+  } catch (error) {
+    console.error('Get workshop week error:', error)
+    return c.json({ error: 'Failed to load workshop week' }, 500)
+  }
+})
+
+// ============================================================================
+// Technician shifts & absences (per-site working hours)
+// ============================================================================
+const HHMM = /^\d{2}:\d{2}$/
+const YMD = /^\d{4}-\d{2}-\d{2}$/
+
+workshopBoard.get('/shifts', authorize([...ADVISOR_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const siteId = await resolveSiteId(c)
+    if (!siteId) return c.json({ error: 'No site available' }, 400)
+    const [shiftsRes, absencesRes] = await Promise.all([
+      supabaseAdmin.from('workshop_tech_shifts')
+        .select('technician_id, weekday, start_time, end_time')
+        .eq('organization_id', auth.orgId).eq('site_id', siteId),
+      supabaseAdmin.from('workshop_tech_absences')
+        .select('id, technician_id, start_date, end_date, start_time, end_time, all_day, reason')
+        .eq('organization_id', auth.orgId).eq('site_id', siteId).order('start_date', { ascending: true }),
+    ])
+    return c.json({
+      shifts: (shiftsRes.data || []).map(s => ({ technicianId: s.technician_id, weekday: s.weekday, startTime: (s.start_time as string).slice(0, 5), endTime: (s.end_time as string).slice(0, 5) })),
+      absences: (absencesRes.data || []).map(a => ({ id: a.id, technicianId: a.technician_id, startDate: a.start_date, endDate: a.end_date, startTime: a.start_time ? (a.start_time as string).slice(0, 5) : null, endTime: a.end_time ? (a.end_time as string).slice(0, 5) : null, allDay: a.all_day === true, reason: a.reason ?? null })),
+    })
+  } catch (error) {
+    console.error('Get shifts error:', error)
+    return c.json({ error: 'Failed to load shifts' }, 500)
+  }
+})
+
+// Replace a technician's whole weekly pattern (omitted weekdays = days off).
+workshopBoard.put('/shifts/:technicianId', authorize([...ADVISOR_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const siteId = await resolveSiteId(c)
+    if (!siteId) return c.json({ error: 'No site available' }, 400)
+    const technicianId = c.req.param('technicianId')
+    const { data: tech } = await supabaseAdmin.from('users').select('id').eq('id', technicianId).eq('organization_id', auth.orgId).single()
+    if (!tech) return c.json({ error: 'Technician not found' }, 404)
+
+    const body = await c.req.json().catch(() => ({}))
+    const shifts = Array.isArray(body.shifts) ? body.shifts : []
+    const rows: Record<string, unknown>[] = []
+    for (const s of shifts) {
+      const wd = Number(s.weekday)
+      if (!Number.isInteger(wd) || wd < 0 || wd > 6) return c.json({ error: 'Invalid weekday' }, 400)
+      if (!HHMM.test(s.startTime) || !HHMM.test(s.endTime)) return c.json({ error: 'Invalid time (HH:MM)' }, 400)
+      if (s.startTime >= s.endTime) return c.json({ error: 'Start must be before end' }, 400)
+      rows.push({ organization_id: auth.orgId, site_id: siteId, technician_id: technicianId, weekday: wd, start_time: s.startTime, end_time: s.endTime })
+    }
+    await supabaseAdmin.from('workshop_tech_shifts').delete().eq('organization_id', auth.orgId).eq('site_id', siteId).eq('technician_id', technicianId)
+    if (rows.length) {
+      const { error } = await supabaseAdmin.from('workshop_tech_shifts').insert(rows)
+      if (error) return c.json({ error: error.message }, 500)
+    }
+    emitBoardUpdated(siteId, 'shifts_updated')
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Update shifts error:', error)
+    return c.json({ error: 'Failed to update shifts' }, 500)
+  }
+})
+
+workshopBoard.post('/absences', authorize([...ADVISOR_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const siteId = await resolveSiteId(c)
+    if (!siteId) return c.json({ error: 'No site available' }, 400)
+    const body = await c.req.json().catch(() => ({}))
+    if (!body.technicianId) return c.json({ error: 'technicianId required' }, 400)
+    if (!YMD.test(body.startDate || '') || !YMD.test(body.endDate || '')) return c.json({ error: 'Invalid dates (YYYY-MM-DD)' }, 400)
+    if (body.endDate < body.startDate) return c.json({ error: 'End date before start date' }, 400)
+    const { data: tech } = await supabaseAdmin.from('users').select('id').eq('id', body.technicianId).eq('organization_id', auth.orgId).single()
+    if (!tech) return c.json({ error: 'Technician not found' }, 404)
+
+    const allDay = body.allDay !== false
+    const startTime = !allDay && HHMM.test(body.startTime || '') ? body.startTime : null
+    const endTime = !allDay && HHMM.test(body.endTime || '') ? body.endTime : null
+    const { data, error } = await supabaseAdmin.from('workshop_tech_absences').insert({
+      organization_id: auth.orgId, site_id: siteId, technician_id: body.technicianId,
+      start_date: body.startDate, end_date: body.endDate, start_time: startTime, end_time: endTime,
+      all_day: allDay, reason: (body.reason ? String(body.reason).slice(0, 40) : null),
+    }).select('id').single()
+    if (error) return c.json({ error: error.message }, 500)
+    emitBoardUpdated(siteId, 'absence_added')
+    return c.json({ id: data?.id }, 201)
+  } catch (error) {
+    console.error('Add absence error:', error)
+    return c.json({ error: 'Failed to add absence' }, 500)
+  }
+})
+
+workshopBoard.delete('/absences/:id', authorize([...ADVISOR_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const id = c.req.param('id')
+    const { data: existing } = await supabaseAdmin.from('workshop_tech_absences').select('id, site_id').eq('id', id).eq('organization_id', auth.orgId).single()
+    if (!existing) return c.json({ error: 'Absence not found' }, 404)
+    await supabaseAdmin.from('workshop_tech_absences').delete().eq('id', id).eq('organization_id', auth.orgId)
+    emitBoardUpdated(existing.site_id as string, 'absence_removed')
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Delete absence error:', error)
+    return c.json({ error: 'Failed to delete absence' }, 500)
+  }
+})
+
+// ============================================================================
 // Card moves and metadata
 // ============================================================================
 

@@ -296,18 +296,19 @@ messages.get('/conversations/:phoneNumber', async (c) => {
 
   // Get linked health checks
   const hcIds = new Set(threadMessages.map(m => m.health_check_id).filter(Boolean))
-  let healthChecks: { id: string; vhcReference: string | null; status: string }[] = []
+  let healthChecks: { id: string; vhcReference: string | null; status: string; jobsheetId: string | null }[] = []
   if (hcIds.size > 0) {
     const { data: hcs } = await supabaseAdmin
       .from('health_checks')
-      .select('id, vhc_reference, status')
+      .select('id, vhc_reference, status, jobsheet_id')
       .in('id', [...hcIds])
 
     if (hcs) {
       healthChecks = hcs.map(hc => ({
         id: hc.id,
         vhcReference: hc.vhc_reference,
-        status: hc.status
+        status: hc.status,
+        jobsheetId: hc.jobsheet_id ?? null
       }))
     }
   }

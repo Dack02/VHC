@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { api } from '../../lib/api'
+import { jobPath } from '../../lib/jobLink'
 
 interface TechnicianWorkload {
   id: string
@@ -11,6 +12,7 @@ interface TechnicianWorkload {
   status: 'working' | 'available' | 'idle'
   currentJob: {
     id: string
+    jobsheetId?: string | null
     vehicle: { registration: string; make?: string; model?: string }
     timeElapsedMinutes: number
   } | null
@@ -161,7 +163,7 @@ export default function TechnicianWorkload() {
             {/* Current Job */}
             {tech.currentJob && (
               <Link
-                to={`/health-checks/${tech.currentJob.id}`}
+                to={jobPath({ jobsheetId: tech.currentJob.jobsheetId, healthCheckId: tech.currentJob.id })}
                 className="block p-4 bg-rag-green-bg hover:bg-green-100 transition-colors"
               >
                 <div className="text-xs text-rag-green font-medium mb-1">CURRENT JOB</div>

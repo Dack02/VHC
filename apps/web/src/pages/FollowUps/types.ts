@@ -13,6 +13,7 @@ export interface FollowUpCase {
   manualAttempts: number
   currentStepOrder: number
   healthCheckId: string
+  jobsheetId: string | null
   linkedBookingId: string | null
   outcome: { id: string; name: string; isWon: boolean } | null
   outcomeNotes: string | null

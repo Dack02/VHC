@@ -115,6 +115,115 @@ export function timeToMinutes(hhmm: string): number {
   return h * 60 + m
 }
 
+// ---- Multi-day planner (week view) -----------------------------------------
+
+// Shift a YYYY-MM-DD string by n days. Noon anchor avoids DST/midnight slips.
+export function addDays(date: string, n: number): string {
+  const d = new Date(`${date}T12:00:00`)
+  d.setDate(d.getDate() + n)
+  return d.toISOString().split('T')[0]
+}
+
+// Monday of the week containing `date` (UK week start).
+export function weekStart(date: string): string {
+  const d = new Date(`${date}T12:00:00`)
+  const mondayIndex = (d.getDay() + 6) % 7 // Sun=0 → 6, Mon=1 → 0 …
+  return addDays(date, -mondayIndex)
+}
+
+// Lean per-card projection returned by GET /workshop-board/week.
+export interface WeekCard {
+  healthCheckId: string
+  technicianId: string | null
+  plannedStartAt: string | null
+  estimatedHours: number | null
+  status: string
+  jobState: JobState
+  registration: string | null
+  customerName: string | null
+  customerWaiting: boolean
+  promiseTime: string | null
+  dueDate: string | null
+  isClockedOn: boolean
+}
+
+export interface WeekColumn {
+  id: string
+  technicianId: string | null
+  name: string
+  availableHours: number
+  sortOrder: number
+  isVisible: boolean
+}
+
+// Recurring weekly working pattern (weekday 0=Mon … 6=Sun).
+export interface TechShift {
+  weekday: number
+  startTime: string
+  endTime: string
+}
+
+// One-off absence (holiday/sick/training). All-day unless start/end times given.
+export interface TechAbsence {
+  id: string
+  technicianId: string
+  startDate: string
+  endDate: string
+  startTime: string | null
+  endTime: string | null
+  allDay: boolean
+  reason: string | null
+}
+
+export interface WeekData {
+  siteId: string
+  from: string
+  to: string
+  config: { dayStartTime: string; dayEndTime: string; lunchStartTime: string | null; lunchEndTime: string | null; defaultTechHours: number }
+  columns: WeekColumn[]
+  cards: WeekCard[]
+  shiftsByTech: Record<string, TechShift[]>
+  absencesByTech: Record<string, TechAbsence[]>
+}
+
+// Available working minutes for a technician on a given date, derived from their
+// shift for that weekday (minus lunch, minus any absence overlap). Falls back to
+// the flat column hours anchored at the day start when no shift is defined, so a
+// tech with no shift behaves exactly as before. A whole-day absence returns 0.
+export function dayCapacityMinutes(opts: {
+  date: string
+  shifts: TechShift[]
+  absences: TechAbsence[]
+  lunchStartTime: string | null
+  lunchEndTime: string | null
+  flatHours: number
+  dayStartTime: string
+}): number {
+  const { date, shifts, absences, flatHours, dayStartTime } = opts
+  const weekday = (new Date(`${date}T12:00:00`).getDay() + 6) % 7
+  const shift = shifts.find(s => s.weekday === weekday) || null
+  let startMin: number
+  let endMin: number
+  if (shift) {
+    startMin = timeToMinutes(shift.startTime)
+    endMin = timeToMinutes(shift.endTime)
+  } else {
+    startMin = timeToMinutes(dayStartTime)
+    endMin = startMin + Math.round(flatHours * 60)
+  }
+  let mins = Math.max(0, endMin - startMin)
+  const overlap = (s: number, e: number) => Math.max(0, Math.min(endMin, e) - Math.max(startMin, s))
+  if (opts.lunchStartTime && opts.lunchEndTime) {
+    mins -= overlap(timeToMinutes(opts.lunchStartTime), timeToMinutes(opts.lunchEndTime))
+  }
+  for (const a of absences) {
+    if (date < a.startDate || date > a.endDate) continue
+    if (a.allDay || !a.startTime || !a.endTime) return 0 // whole day off
+    mins -= overlap(timeToMinutes(a.startTime), timeToMinutes(a.endTime))
+  }
+  return Math.max(0, mins)
+}
+
 // Default ceiling (minutes) for an open clock-on's live contribution, used when
 // the board config hasn't supplied the org's configured open_segment_stale_minutes.
 export const DEFAULT_STALE_CLOCK_MIN = 600 // 10h

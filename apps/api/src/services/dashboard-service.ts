@@ -206,6 +206,7 @@ export async function getQueues(filters: DashboardFilters): Promise<QueuesData> 
     .from('health_checks')
     .select(`
       id,
+      jobsheet_id,
       status,
       promised_at,
       token_expires_at,
@@ -269,7 +270,7 @@ export interface TechnicianWorkloadData {
     lastName: string
     siteId: string | null
     status: 'working' | 'available' | 'idle'
-    currentJob: { id: string; vehicle: unknown; timeElapsedMinutes: number } | null
+    currentJob: { id: string; jobsheetId: string | null; vehicle: unknown; timeElapsedMinutes: number } | null
     queueCount: number
     completedToday: number
     isClockedIn: boolean
@@ -308,7 +309,7 @@ export async function getTechnicianWorkload(filters: DashboardFilters): Promise<
   const [currentJobsRes, openEntriesRes, queueRes, completedRes] = await Promise.all([
     supabaseAdmin
       .from('health_checks')
-      .select('id, technician_id, created_at, vehicle:vehicles(registration, make, model)')
+      .select('id, jobsheet_id, technician_id, created_at, vehicle:vehicles(registration, make, model)')
       .eq('organization_id', filters.orgId)
       .in('technician_id', techIds)
       .eq('status', 'in_progress')
@@ -334,10 +335,10 @@ export async function getTechnicianWorkload(filters: DashboardFilters): Promise<
       .gte('tech_completed_at', todayISO)
   ])
 
-  const currentJobByTech = new Map<string, { id: string; vehicle: unknown }>()
+  const currentJobByTech = new Map<string, { id: string; jobsheetId: string | null; vehicle: unknown }>()
   for (const job of currentJobsRes.data || []) {
     if (job.technician_id && !currentJobByTech.has(job.technician_id)) {
-      currentJobByTech.set(job.technician_id, { id: job.id, vehicle: job.vehicle })
+      currentJobByTech.set(job.technician_id, { id: job.id, jobsheetId: job.jobsheet_id ?? null, vehicle: job.vehicle })
     }
   }
 

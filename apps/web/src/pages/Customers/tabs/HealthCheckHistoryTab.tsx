@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../../contexts/AuthContext'
 import { api } from '../../../lib/api'
+import { jobPath } from '../../../lib/jobLink'
 import type { CustomerDetail, CustomerHealthCheckSummary } from '../../../lib/api'
 
 const statusLabels: Record<string, string> = {
@@ -149,7 +150,7 @@ export default function HealthCheckHistoryTab({ customer }: HealthCheckHistoryTa
             {healthChecks.map((hc) => (
               <Link
                 key={hc.id}
-                to={`/health-checks/${hc.id}`}
+                to={jobPath({ jobsheetId: hc.jobsheetId, healthCheckId: hc.id })}
                 className="block bg-white border border-gray-200 rounded-xl p-4 active:bg-gray-50"
               >
                 <div className="flex items-center justify-between">
@@ -213,7 +214,7 @@ export default function HealthCheckHistoryTab({ customer }: HealthCheckHistoryTa
                   <tr
                     key={hc.id}
                     className="hover:bg-gray-50 cursor-pointer"
-                    onClick={() => window.location.href = `/health-checks/${hc.id}`}
+                    onClick={() => window.location.href = jobPath({ jobsheetId: hc.jobsheetId, healthCheckId: hc.id })}
                   >
                     <td className="px-4 py-3 text-sm text-gray-600">{formatDate(hc.createdAt)}</td>
                     <td className="px-4 py-3 text-sm font-mono font-medium text-gray-700">{hc.vhcReference || '-'}</td>
@@ -257,7 +258,7 @@ export default function HealthCheckHistoryTab({ customer }: HealthCheckHistoryTa
                     <td className="px-4 py-3 text-sm text-right font-medium">{formatCurrency(hc.totalAmount || 0)}</td>
                     <td className="px-4 py-3 text-right">
                       <Link
-                        to={`/health-checks/${hc.id}`}
+                        to={jobPath({ jobsheetId: hc.jobsheetId, healthCheckId: hc.id })}
                         className="text-sm text-primary hover:text-primary-dark"
                         onClick={(e) => e.stopPropagation()}
                       >

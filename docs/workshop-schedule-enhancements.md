@@ -86,7 +86,13 @@ Built this session (uncommitted). Files: `WorkshopBoard.tsx`, `TimelineView.tsx`
 
 ---
 
-## 3. 🔜 Theme 1 — Smart timeline helpers
+## 3. ✅ Theme 1 — Smart timeline helpers (built, uncommitted)
+
+Shipped in new `scheduling.ts` + `TimelineView.tsx`: deadline "by HH:MM" pill + red "won't be ready"
+ring/ribbon on blocks finishing after the promise; "Free now" tech-header pill + "Free now:" tray chips;
+collision-aware drag (ghost shows the real free slot, red "Day full" when none, drop snaps/aborts); and
+"✨ Auto-arrange day" (first-fit across least-loaded techs, deadline/priority-aware, avoids lunch) + a
+per-card ⌖ "suggest slot". `tsc` + `vite build` pass. Original design retained below.
 
 **Goal:** make the existing day timeline *plan for you*. Client-only; new module
 `apps/web/src/pages/WorkshopBoard/scheduling.ts` (pure interval logic) consumed by `TimelineView`.
@@ -134,7 +140,23 @@ Shared primitives in `scheduling.ts`: `durationMinFor(card)` (single source of b
 
 ---
 
-## 4. 🔜🧱 Theme 2 — Week / multi-day planner + per-technician shifts
+## 4. 🧱 Theme 2 — Week / multi-day planner + per-technician shifts (2a built; 2b pending)
+
+**Built (uncommitted) — 2a week view (no schema):** lean `GET /workshop-board/week` endpoint;
+`weekStart`/`addDays` helpers + `WeekData`/`WeekCard` types; `useWeekData(from,to,enabled)` hook;
+`WeekView.tsx` (technician rows × 7 day columns, unscheduled tray, drag across days/techs via
+`move`+`PATCH plannedStartAt`, per-cell + per-day capacity bars). Wired into `WorkshopBoard` as a
+third **▥ Week** toggle with a Prev/This/Next-week navigator; day headers + chips **drill into that
+day's timeline**. The per-day **"Day load" footer is Theme 3c** (forward loading forecast), now done.
+`tsc` (web + api) + `vite build` pass. **2b shifts/absence schema** below is still pending.
+
+**Built (uncommitted) — 2b shifts/absence:** migration `20260624130000_workshop_tech_shifts.sql`
+(`workshop_tech_shifts` + `workshop_tech_absences`, RLS); `dayCapacityMinutes` seam in `types.ts`
+(shift − lunch − absence, flat fallback); `/week` returns `shiftsByTech`/`absencesByTech` + lunch;
+CRUD `GET /shifts`, `PUT /shifts/:techId`, `POST/DELETE /absences`; `ShiftsModal.tsx` (weekday grid +
+absence list) opened from a **🕑 Shifts** button; the week grid now greys off-days and reds
+over-capacity per real availability. **Deferred:** day-timeline lane shading/absence bands (`GET /`
+not extended — the week view is the primary capacity surface). `tsc` (web+api) + `vite build` pass.
 
 **Goal:** plan ahead across days and model real technician availability.
 
@@ -213,7 +235,13 @@ marker); week/month rollover handled by string date math; per-site scoping throu
 
 ---
 
-## 5. 🔜🧱 Theme 3 — Efficiency & loading insight
+## 5. 🧱 Theme 3 — Efficiency & loading insight (3a + 3b built; 3c pending)
+
+**Built (uncommitted):** 3a board efficiency tile + per-tech column "Eff %" badge; 3b migration
+`20260624120000_tech_efficiency_report.sql` (RPC `report_technician_efficiency`) wired into
+`/reports/technicians` with Sold Hrs / Clocked Hrs / Efficiency / Utilisation columns on
+`TechnicianPerformance.tsx`. `tsc` (web + api) + `vite build` pass. **3c forecast** folds onto the
+Theme 2 `/week` payload (pending). Original design below.
 
 **Goal:** surface the #1 workshop KPI (sold vs actual labour) and forward load.
 
@@ -242,7 +270,11 @@ marker); week/month rollover handled by string date math; per-site scoping throu
 
 ---
 
-## 6. 🔜 Theme 4 — Ops polish
+## 6. ✅ Theme 4 — Ops polish (built, uncommitted)
+
+Shipped: board **filters** for technician / internal-vs-retail / loan car ([WorkshopBoard.tsx](apps/web/src/pages/WorkshopBoard/WorkshopBoard.tsx)); **richer TV mode** (auto-rotates Job Status ↔ Technicians every 20s without persisting, big waiter/overdue pills, "🔑 Ready for collection" spotlight banner); **mobile "My Day"** read-only timed schedule ([apps/mobile/src/pages/MyDay.tsx](apps/mobile/src/pages/MyDay.tsx) + route + JobList link); **printable per-tech day sheet** ([PrintDaySheet.tsx](apps/web/src/pages/WorkshopBoard/PrintDaySheet.tsx) at `/workshop-board/print?date=&tech=`, `@media print`, auto-print). No migrations. `tsc` (web + mobile) + both builds pass. Original design table below.
+
+
 
 | Item | Design | Files | Backend? |
 |---|---|---|---|

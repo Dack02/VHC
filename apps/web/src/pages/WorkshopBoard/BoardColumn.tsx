@@ -8,6 +8,8 @@ interface ColumnCapacity {
   active: number
   dueIn: number
   available: number
+  /** Labour efficiency % (sold ÷ actual on completed jobs); null until there's one */
+  efficiency?: number | null
 }
 
 interface BoardColumnProps {
@@ -108,6 +110,13 @@ export default function BoardColumn({
                 </span>
               )}
             </div>
+            {capacity.efficiency != null && (
+              <div className={`${tvMode ? 'text-xs' : 'text-[10px]'} text-right -mt-0.5 mb-0.5 font-medium ${
+                capacity.efficiency >= 100 ? 'text-rag-green' : capacity.efficiency >= 85 ? 'text-amber-600' : 'text-rag-red'
+              }`} title="Sold vs actual hours on completed jobs">
+                Eff {Math.round(capacity.efficiency)}%
+              </div>
+            )}
             <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden flex">
               <div className={`h-full ${barColour} opacity-40`} style={{ width: `${doneWidth}%` }} />
               <div className={`h-full ${barColour}`} style={{ width: `${barWidth - doneWidth}%` }} />

@@ -124,6 +124,7 @@ dashboard.get('/board', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         .from('health_checks')
         .select(`
         id,
+        jobsheet_id,
         status,
         promised_at,
         created_at,

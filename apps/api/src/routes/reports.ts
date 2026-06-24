@@ -1510,6 +1510,25 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       }
     }
 
+    // Labour efficiency / utilisation, aggregated in the DB (dodges the row cap)
+    const { data: effRows, error: effErr } = await supabaseAdmin.rpc('report_technician_efficiency', {
+      p_org_id: auth.orgId,
+      p_site_id: site_id || null,
+      p_from: startDate,
+      p_to: endDate,
+      p_technician_id: technician_id || null,
+    })
+    if (effErr) console.error('Technician efficiency RPC error:', effErr)
+    const effByTech = new Map<string, { sold: number; clocked: number; days: number; avail: number }>()
+    for (const r of (effRows || []) as Array<Record<string, unknown>>) {
+      effByTech.set(r.technician_id as string, {
+        sold: Number(r.sold_hours) || 0,
+        clocked: Number(r.clocked_hours) || 0,
+        days: Number(r.days_clocked) || 0,
+        avail: Number(r.available_hours_per_day) || 8,
+      })
+    }
+
     // Build leaderboard
     const leaderboard = Object.values(techData)
       .map(t => ({
@@ -1541,6 +1560,15 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           return denominator > 0
             ? Math.round(((t.libraryOnlyCount + t.bothCount) / denominator) * 1000) / 10
             : 0
+        })(),
+        ...(() => {
+          const e = effByTech.get(t.id)
+          return {
+            soldHours: e ? Math.round(e.sold * 10) / 10 : 0,
+            clockedHours: e ? Math.round(e.clocked * 10) / 10 : 0,
+            efficiencyPct: e && e.clocked > 0 ? Math.round((e.sold / e.clocked) * 1000) / 10 : null,
+            utilisationPct: e && e.days > 0 && e.avail > 0 ? Math.round((e.clocked / (e.days * e.avail)) * 1000) / 10 : null,
+          }
         })(),
       }))
       .sort((a, b) => b.completed - a.completed)
@@ -1598,6 +1626,7 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
     // Dual-date approach
     const advSelect = `
       id,
+      jobsheet_id,
       status,
       created_at,
       due_date,
@@ -1663,6 +1692,7 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
     // Aging checks (sent but not responded)
     const agingChecks: Array<{
       healthCheckId: string
+      jobsheetId: string | null
       advisorName: string
       sentAt: string
       daysWaiting: number
@@ -1775,6 +1805,7 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
           if (daysWaiting >= 1) {
             agingChecks.push({
               healthCheckId: hc.id,
+              jobsheetId: hc.jobsheet_id ?? null,
               advisorName: `${advisor.first_name} ${advisor.last_name}`,
               sentAt: hc.sent_at,
               daysWaiting: Math.round(daysWaiting * 10) / 10,
@@ -2171,6 +2202,7 @@ reports.get('/operations', authorize(['super_admin', 'org_admin', 'site_admin', 
       .from('health_checks')
       .select(`
         id,
+        jobsheet_id,
         status,
         created_at,
         tech_started_at,
@@ -2211,6 +2243,7 @@ reports.get('/operations', authorize(['super_admin', 'org_admin', 'site_admin', 
     // Stuck checks
     const stuckChecks: Array<{
       healthCheckId: string
+      jobsheetId: string | null
       status: string
       daysInStatus: number
       siteName: string
@@ -2318,6 +2351,7 @@ reports.get('/operations', authorize(['super_admin', 'org_admin', 'site_admin', 
         if (daysInStatus >= 3) {
           stuckChecks.push({
             healthCheckId: hc.id,
+            jobsheetId: hc.jobsheet_id ?? null,
             status: hc.status,
             daysInStatus: Math.round(daysInStatus * 10) / 10,
             siteName,
@@ -2401,6 +2435,7 @@ reports.get('/deferred', authorize(['super_admin', 'org_admin', 'site_admin', 's
         created_at,
         health_check:health_checks!inner(
           id,
+          jobsheet_id,
           organization_id,
           site_id,
           advisor_id,
@@ -2473,6 +2508,7 @@ reports.get('/deferred', authorize(['super_admin', 'org_admin', 'site_admin', 's
       deferredNotes: string | null
       isOverdue: boolean
       healthCheckId: string
+      jobsheetId: string | null
     }> = []
 
     // Calculate week and month boundaries
@@ -2587,6 +2623,7 @@ reports.get('/deferred', authorize(['super_admin', 'org_admin', 'site_admin', 's
         deferredNotes: item.deferred_notes as string | null,
         isOverdue,
         healthCheckId: hc?.id || '',
+        jobsheetId: (hc as any)?.jobsheet_id ?? null,
       })
     }
 
@@ -2659,6 +2696,7 @@ reports.get('/compliance/audit-trail', authorize(['super_admin', 'org_admin', 's
         user:users(first_name, last_name),
         health_check:health_checks!inner(
           id,
+          jobsheet_id,
           organization_id,
           site_id,
           vehicle:vehicles(registration)
@@ -2681,10 +2719,11 @@ reports.get('/compliance/audit-trail', authorize(['super_admin', 'org_admin', 's
 
     const auditEntries = (statusChanges || []).map(sc => {
       const user = sc.user as unknown as { first_name: string; last_name: string } | null
-      const hc = sc.health_check as unknown as { id: string; vehicle?: { registration: string } | null }
+      const hc = sc.health_check as unknown as { id: string; jobsheet_id?: string | null; vehicle?: { registration: string } | null }
       return {
         id: sc.id,
         healthCheckId: hc?.id,
+        jobsheetId: hc?.jobsheet_id ?? null,
         vehicleReg: (hc?.vehicle as any)?.registration || 'Unknown',
         fromStatus: sc.from_status,
         toStatus: sc.to_status,

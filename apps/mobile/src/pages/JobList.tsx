@@ -174,6 +174,12 @@ export function JobList() {
               </button>
             )}
             <button
+              onClick={() => navigate('/my-day')}
+              className="text-sm text-blue-200 underline"
+            >
+              My Day
+            </button>
+            <button
               onClick={() => navigate('/board')}
               className="text-sm text-blue-200 underline"
             >

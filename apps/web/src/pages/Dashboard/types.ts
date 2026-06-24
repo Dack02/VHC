@@ -27,6 +27,7 @@ export interface Alerts {
 
 export interface QueueItem {
   id: string
+  jobsheet_id?: string | null
   status: string
   promised_at?: string | null
   token_expires_at?: string | null
@@ -50,7 +51,7 @@ export interface TechnicianWorkloadEntry {
   firstName: string
   lastName: string
   status: 'working' | 'available' | 'idle'
-  currentJob: { id: string; vehicle: { registration: string }; timeElapsedMinutes: number } | null
+  currentJob: { id: string; jobsheetId?: string | null; vehicle: { registration: string }; timeElapsedMinutes: number } | null
   queueCount: number
   completedToday: number
   isClockedIn: boolean
@@ -121,6 +122,7 @@ export interface DashboardOverview {
 
 export interface AwaitingArrivalItem {
   id: string
+  jobsheetId?: string | null
   registration: string
   make: string
   model: string
@@ -136,6 +138,7 @@ export interface AwaitingArrivalItem {
 
 export interface AwaitingCheckinItem {
   id: string
+  jobsheetId?: string | null
   registration: string
   make: string
   model: string

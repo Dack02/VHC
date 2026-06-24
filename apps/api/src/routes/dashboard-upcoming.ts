@@ -31,6 +31,7 @@ dashboardUpcoming.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 
       .from('health_checks')
       .select(`
         id,
+        jobsheet_id,
         status,
         due_date,
         customer_waiting,
@@ -153,6 +154,7 @@ dashboardUpcoming.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 
 
         return {
           id: hc.id,
+          jobsheetId: hc.jobsheet_id ?? null,
           status: hc.status,
           dueDate: hc.due_date,
           bookingTime,

@@ -77,6 +77,7 @@ export default function Dashboard() {
         arrivals: Array<{
           healthCheckId: string | null
           hasVhc: boolean
+          jobsheetId: string | null
           registration: string
           make: string
           model: string
@@ -95,6 +96,7 @@ export default function Dashboard() {
         .filter(a => a.hasVhc && a.healthCheckId)
         .map(a => ({
           id: a.healthCheckId as string,
+          jobsheetId: a.jobsheetId,
           registration: a.registration,
           make: a.make,
           model: a.model,
@@ -123,6 +125,7 @@ export default function Dashboard() {
       setAwaitingCheckinLoading(true)
       const response = await api<{ healthChecks: Array<{
         id: string
+        jobsheet_id: string | null
         arrived_at: string | null
         customer_waiting: boolean
         vehicle: {
@@ -135,6 +138,7 @@ export default function Dashboard() {
 
       setAwaitingCheckin((response.healthChecks || []).map(hc => ({
         id: hc.id,
+        jobsheetId: hc.jobsheet_id,
         registration: hc.vehicle?.registration || 'Unknown',
         make: hc.vehicle?.make || '',
         model: hc.vehicle?.model || '',

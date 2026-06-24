@@ -1,19 +1,21 @@
-import { useState, useMemo, useRef, useCallback } from 'react'
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import { DndContext, DragOverlay, PointerSensor, TouchSensor, KeyboardSensor, MeasuringStrategy, closestCorners, useSensor, useSensors, type DragEndEvent, type DragOverEvent, type DragStartEvent } from '@dnd-kit/core'
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { moveCard, reorderCards, type MoveTarget, type SortPositionUpdate } from './boardActions'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
-import { useBoardData, useNow } from './useBoardData'
-import { sortCards, type BoardCard, type BoardData } from './types'
+import { useBoardData, useWeekData, useNow } from './useBoardData'
+import { sortCards, actualWorkedMinutes, isClockStale, weekStart, addDays, type BoardCard, type BoardData } from './types'
 import BoardColumn from './BoardColumn'
 import JobCard, { promiseCountdown } from './JobCard'
 import JobDetailModal from './JobDetailModal'
 import AddColumnModal from './AddColumnModal'
+import ShiftsModal from './ShiftsModal'
 import TimelineView from './TimelineView'
+import WeekView from './WeekView'
 
 type BoardView = 'status' | 'tech'
-type TechMode = 'cards' | 'timeline'
+type TechMode = 'cards' | 'timeline' | 'week'
 
 const VIEW_KEY = 'vhc-board-view'
 const TECH_MODE_KEY = 'vhc-board-tech-mode'
@@ -36,7 +38,7 @@ interface ViewColumn {
   title: string
   subtitle?: string
   accent?: string | null
-  capacity?: { done: number; active: number; dueIn: number; available: number } | null
+  capacity?: { done: number; active: number; dueIn: number; available: number; efficiency?: number | null } | null
   isClockedOn?: boolean
   droppable: boolean
   cards: BoardCard[]
@@ -138,10 +140,14 @@ export default function WorkshopBoard() {
   const [techMode, setTechMode] = useState<TechMode>(() => (localStorage.getItem(TECH_MODE_KEY) as TechMode) || 'cards')
   const [search, setSearch] = useState('')
   const [advisorFilter, setAdvisorFilter] = useState('')
+  const [technicianFilter, setTechnicianFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [typeFilter, setTypeFilter] = useState<'' | 'internal' | 'retail'>('')
   const [waitingOnly, setWaitingOnly] = useState(false)
+  const [loanOnly, setLoanOnly] = useState(false)
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
   const [showAddColumn, setShowAddColumn] = useState(false)
+  const [showShifts, setShowShifts] = useState(false)
   const [activeDragCard, setActiveDragCard] = useState<BoardCard | null>(null)
   const [tvMode, setTvMode] = useState(false)
   const boardRef = useRef<HTMLDivElement>(null)
@@ -166,6 +172,14 @@ export default function WorkshopBoard() {
   const role = user?.role || 'technician'
   const canDrag = ['super_admin', 'org_admin', 'site_admin', 'service_advisor'].includes(role)
   const isTimeline = view === 'tech' && techMode === 'timeline'
+  const isWeek = view === 'tech' && techMode === 'week'
+
+  // Week planner: Monday-anchored 7-day window, navigable by week offset.
+  const [weekOffset, setWeekOffset] = useState(0)
+  const weekFrom = useMemo(() => addDays(weekStart(dateForOffset(0)), weekOffset * 7), [weekOffset])
+  const weekTo = useMemo(() => addDays(weekFrom, 6), [weekFrom])
+  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekFrom, i)), [weekFrom])
+  const { week, refresh: refreshWeek, setPaused: setWeekPaused } = useWeekData(weekFrom, weekTo, isWeek)
 
   const switchView = (v: BoardView) => {
     setView(v)
@@ -182,8 +196,12 @@ export default function WorkshopBoard() {
     const query = search.trim().toLowerCase()
     return board.cards.filter(card => {
       if (waitingOnly && !card.customerWaiting) return false
+      if (loanOnly && !card.loanCarRequired) return false
       if (advisorFilter && card.advisor?.id !== advisorFilter) return false
+      if (technicianFilter && card.technician?.id !== technicianFilter) return false
       if (statusFilter && card.workshopStatusId !== statusFilter) return false
+      if (typeFilter === 'internal' && !card.isInternal) return false
+      if (typeFilter === 'retail' && card.isInternal) return false
       if (query) {
         const haystack = [
           card.vehicle?.registration,
@@ -197,7 +215,7 @@ export default function WorkshopBoard() {
       }
       return true
     })
-  }, [board, search, advisorFilter, statusFilter, waitingOnly])
+  }, [board, search, advisorFilter, technicianFilter, statusFilter, typeFilter, waitingOnly, loanOnly])
 
   const queueNameById = useMemo(() => {
     const map = new Map<string, string>()
@@ -234,6 +252,29 @@ export default function WorkshopBoard() {
     }
     return map
   }, [board?.cards])
+
+  // Per-tech labour efficiency (sold vs actual on completed jobs) for the column
+  // badge — same metric as the header tile, scoped to each technician.
+  const techEfficiencyByUserId = useMemo(() => {
+    const map = new Map<string, number | null>()
+    if (!board) return map
+    const staleMin = board.config.staleClockMinutes
+    const acc = new Map<string, { sold: number; actual: number }>()
+    for (const card of board.cards) {
+      const techId = card.technician?.id
+      if (!techId) continue
+      const completed = card.position === 'work_complete' || card.status === 'completed'
+      if (!completed || !card.estimatedHours || card.estimatedHours <= 0 || isClockStale(card, now, staleMin)) continue
+      const actualH = actualWorkedMinutes(card, now, staleMin) / 60
+      if (actualH <= 0) continue
+      const e = acc.get(techId) || { sold: 0, actual: 0 }
+      e.sold += card.estimatedHours
+      e.actual += actualH
+      acc.set(techId, e)
+    }
+    for (const [techId, e] of acc) map.set(techId, e.actual > 0 ? (e.sold / e.actual) * 100 : null)
+    return map
+  }, [board, now])
 
   // ---- View column assembly ----------------------------------------------
   const viewColumns: ViewColumn[] = useMemo(() => {
@@ -293,7 +334,7 @@ export default function WorkshopBoard() {
         return {
           key: col.id,
           title: col.name,
-          capacity: { ...load, available: col.availableHours },
+          capacity: { ...load, available: col.availableHours, efficiency: col.technicianId ? (techEfficiencyByUserId.get(col.technicianId) ?? null) : null },
           isClockedOn: cards.some(c => c.isClockedOn),
           droppable: canDrag,
           cards
@@ -301,7 +342,7 @@ export default function WorkshopBoard() {
       }),
       { key: 'work_complete', title: 'Work Complete', subtitle: 'Awaiting collection', droppable: canDrag, cards: sortCards(buckets.get('work_complete') || []) }
     ]
-  }, [board, filteredCards, view, queueNameById, techColumnByUserId, techLoadByUserId, canDrag, date])
+  }, [board, filteredCards, view, queueNameById, techColumnByUserId, techLoadByUserId, techEfficiencyByUserId, canDrag, date])
 
   const advisors = useMemo(() => {
     if (!board) return []
@@ -309,6 +350,17 @@ export default function WorkshopBoard() {
     for (const card of board.cards) {
       if (card.advisor && !seen.has(card.advisor.id)) {
         seen.set(card.advisor.id, { id: card.advisor.id, name: `${card.advisor.first_name} ${card.advisor.last_name}` })
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name))
+  }, [board])
+
+  const technicianOptions = useMemo(() => {
+    if (!board) return []
+    const seen = new Map<string, { id: string; name: string }>()
+    for (const card of board.cards) {
+      if (card.technician && !seen.has(card.technician.id)) {
+        seen.set(card.technician.id, { id: card.technician.id, name: `${card.technician.first_name} ${card.technician.last_name}` })
       }
     }
     return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name))
@@ -330,7 +382,24 @@ export default function WorkshopBoard() {
     const active = board.cards.filter(c => c.position !== 'work_complete' && c.position !== 'due_in')
     const waiters = active.filter(c => c.customerWaiting).length
     const overdue = active.filter(c => promiseCountdown(c, now)?.tone === 'overdue').length
-    return { booked, done, available, waiters, overdue, onSite: active.length }
+
+    // Labour efficiency = sold ÷ actual over COMPLETED jobs only (in-progress jobs
+    // would read as wildly efficient). Stale clocks are excluded so a forgotten
+    // clock-off can't poison the number. null until there's a completed job.
+    const staleMin = board.config.staleClockMinutes
+    let soldDone = 0
+    let actualDone = 0
+    for (const c of board.cards) {
+      const isCompleted = c.position === 'work_complete' || c.status === 'completed'
+      if (!isCompleted || !c.estimatedHours || c.estimatedHours <= 0 || isClockStale(c, now, staleMin)) continue
+      const actualH = actualWorkedMinutes(c, now, staleMin) / 60
+      if (actualH <= 0) continue
+      soldDone += c.estimatedHours
+      actualDone += actualH
+    }
+    const efficiency = actualDone > 0 ? (soldDone / actualDone) * 100 : null
+
+    return { booked, done, available, waiters, overdue, onSite: active.length, efficiency }
   }, [board, techLoadByUserId, now])
 
   // ---- Drag and drop (kanban views) ---------------------------------------
@@ -522,6 +591,21 @@ export default function WorkshopBoard() {
     }
   }, [tvMode])
 
+  // TV mode: auto-rotate Job Status ↔ Technicians (without persisting the user's
+  // chosen default to localStorage).
+  useEffect(() => {
+    if (!tvMode) return
+    const id = setInterval(() => setView(v => (v === 'status' ? 'tech' : 'status')), 20000)
+    return () => clearInterval(id)
+  }, [tvMode])
+
+  // Cars ready to hand back — spotlighted on the wallboard.
+  const readyForCollection = useMemo(() => {
+    if (!board) return []
+    const ids = new Set(board.statuses.filter(s => s.icon === 'key' || /ready for collection/i.test(s.name)).map(s => s.id))
+    return board.cards.filter(c => c.workshopStatusId && ids.has(c.workshopStatusId))
+  }, [board])
+
   // ---- Render -------------------------------------------------------------
   if (!user?.site?.id && !loading && !board) {
     return (
@@ -542,6 +626,19 @@ export default function WorkshopBoard() {
     const resolved = resolveTarget(view, board, colKey, queueNameById)
     if (!resolved) return null
     return canDropCard(activeDragCard, resolved) ? 'ok' : 'blocked'
+  }
+
+  // Week view drills into a single day's timeline (the detail modal needs a full
+  // board card, which the lean week payload doesn't carry).
+  const drillIntoDay = (day: string) => { setDate(day); switchTechMode('timeline') }
+  const openFromWeek = (healthCheckId: string) => {
+    const c = week?.cards.find(x => x.healthCheckId === healthCheckId)
+    if (c?.plannedStartAt) {
+      const d = new Date(c.plannedStartAt)
+      drillIntoDay(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
+    } else {
+      drillIntoDay(weekFrom)
+    }
   }
 
   const dateOptions = [
@@ -575,19 +672,31 @@ export default function WorkshopBoard() {
     >
       {/* Header / toolbar */}
       {tvMode ? (
-        <div className="flex items-center justify-between mb-4 text-white">
-          <h1 className="text-2xl font-bold">{user?.site?.name || 'Workshop'} — {view === 'status' ? 'Job Status' : 'Technicians'}</h1>
-          <div className="flex items-center gap-6">
-            {stats && (
-              <span className="text-lg text-gray-300">
-                {stats.onSite} on site · {stats.waiters} waiting · {stats.overdue} overdue
+        <>
+          <div className="flex items-center justify-between mb-3 text-white">
+            <h1 className="text-2xl font-bold">{user?.site?.name || 'Workshop'} — {view === 'status' ? 'Job Status' : 'Technicians'}</h1>
+            <div className="flex items-center gap-3">
+              {stats && (
+                <>
+                  <span className="text-lg text-gray-300">{stats.onSite} on site</span>
+                  {stats.waiters > 0 && <span className="px-3 py-1 rounded-full bg-rag-red text-white text-lg font-bold">{stats.waiters} waiting</span>}
+                  {stats.overdue > 0 && <span className="px-3 py-1 rounded-full bg-amber-500 text-white text-lg font-bold">{stats.overdue} overdue</span>}
+                </>
+              )}
+              <span className="text-2xl font-mono ml-2">
+                {now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
               </span>
-            )}
-            <span className="text-2xl font-mono">
-              {now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-            </span>
+            </div>
           </div>
-        </div>
+          {readyForCollection.length > 0 && (
+            <div className="mb-4 flex items-center gap-2 flex-wrap bg-emerald-900/40 border border-emerald-500/40 rounded-xl px-4 py-2">
+              <span className="text-emerald-300 text-sm font-semibold uppercase tracking-wide flex-shrink-0">🔑 Ready for collection</span>
+              {readyForCollection.map(c => (
+                <span key={c.healthCheckId} className="px-2 py-0.5 rounded-full bg-emerald-500 text-white text-sm font-bold">{c.vehicle?.registration || 'No reg'}</span>
+              ))}
+            </div>
+          )}
+        </>
       ) : (
         <div className="mb-4 space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-3">
@@ -613,6 +722,13 @@ export default function WorkshopBoard() {
                   >
                     ☰ Timeline
                   </button>
+                  <button
+                    onClick={() => switchTechMode('week')}
+                    className={`px-2.5 py-1.5 text-sm font-medium rounded-md ${techMode === 'week' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}
+                    title="Week planner"
+                  >
+                    ▥ Week
+                  </button>
                 </div>
               )}
             </div>
@@ -625,6 +741,24 @@ export default function WorkshopBoard() {
                   + Add column
                 </button>
               )}
+              {canDrag && (
+                <button
+                  onClick={() => setShowShifts(true)}
+                  className="px-3 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50"
+                  title="Set technician working hours & absence"
+                >
+                  🕑 Shifts
+                </button>
+              )}
+              <a
+                href={`/workshop-board/print?date=${date}${technicianFilter ? `&tech=${technicianFilter}` : ''}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50"
+                title="Printable day sheet (per technician)"
+              >
+                🖨 Print
+              </a>
               <button
                 onClick={toggleTvMode}
                 className="px-3 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800"
@@ -637,7 +771,7 @@ export default function WorkshopBoard() {
 
           {/* Stats strip */}
           {stats && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <div className="bg-white border border-gray-200 rounded-xl px-4 py-2.5">
                 <div className="text-xs text-gray-400">On site</div>
                 <div className="text-lg font-bold text-gray-900">{stats.onSite}</div>
@@ -646,6 +780,19 @@ export default function WorkshopBoard() {
                 <div className="text-xs text-gray-400">Workshop loading</div>
                 <div className="text-lg font-bold text-gray-900">
                   {stats.booked.toFixed(1)}<span className="text-sm font-normal text-gray-400"> / {stats.available.toFixed(1)} hrs{stats.done > 0 ? ` · ${stats.done.toFixed(1)} done` : ''}</span>
+                </div>
+              </div>
+              <div
+                className="bg-white border border-gray-200 rounded-xl px-4 py-2.5"
+                title="Sold (estimated) vs actual clocked hours on completed jobs today. >100% = beating booked time."
+              >
+                <div className="text-xs text-gray-400">Efficiency</div>
+                <div className={`text-lg font-bold ${
+                  stats.efficiency == null ? 'text-gray-400'
+                    : stats.efficiency >= 100 ? 'text-rag-green'
+                    : stats.efficiency >= 85 ? 'text-amber-600' : 'text-rag-red'
+                }`}>
+                  {stats.efficiency == null ? '–' : `${stats.efficiency.toFixed(0)}%`}
                 </div>
               </div>
               <div className={`border rounded-xl px-4 py-2.5 ${stats.waiters > 0 ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}`}>
@@ -659,7 +806,19 @@ export default function WorkshopBoard() {
             </div>
           )}
 
-          {/* Filters */}
+          {/* Filters (week navigator replaces the day picker in Week view) */}
+          {isWeek ? (
+            <div className="flex items-center gap-3">
+              <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+                <button onClick={() => setWeekOffset(o => o - 1)} className="px-2.5 py-1.5 text-sm font-medium rounded-md text-gray-500 hover:text-gray-900" title="Previous week">‹ Prev</button>
+                <button onClick={() => setWeekOffset(0)} className={`px-2.5 py-1.5 text-sm font-medium rounded-md ${weekOffset === 0 ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>This week</button>
+                <button onClick={() => setWeekOffset(o => o + 1)} className="px-2.5 py-1.5 text-sm font-medium rounded-md text-gray-500 hover:text-gray-900" title="Next week">Next ›</button>
+              </div>
+              <span className="text-sm font-medium text-gray-600">
+                {new Date(`${weekFrom}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – {new Date(`${weekTo}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+              </span>
+            </div>
+          ) : (
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
               {dateOptions.map(opt => (
@@ -714,6 +873,14 @@ export default function WorkshopBoard() {
               {advisors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
             <select
+              value={technicianFilter}
+              onChange={e => setTechnicianFilter(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="">All technicians</option>
+              {technicianOptions.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <select
               value={statusFilter}
               onChange={e => setStatusFilter(e.target.value)}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
@@ -722,6 +889,15 @@ export default function WorkshopBoard() {
               {board?.statuses.filter(s => s.isActive).map(s => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
+            </select>
+            <select
+              value={typeFilter}
+              onChange={e => setTypeFilter(e.target.value as '' | 'internal' | 'retail')}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="">All types</option>
+              <option value="retail">Retail</option>
+              <option value="internal">Internal</option>
             </select>
             <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
               <input
@@ -732,7 +908,17 @@ export default function WorkshopBoard() {
               />
               Waiting only
             </label>
+            <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={loanOnly}
+                onChange={e => setLoanOnly(e.target.checked)}
+                className="rounded border-gray-300 text-primary focus:ring-primary"
+              />
+              Loan car
+            </label>
           </div>
+          )}
         </div>
       )}
 
@@ -749,7 +935,24 @@ export default function WorkshopBoard() {
           </button>
         </div>
       ) : board ? (
-        isTimeline ? (
+        isWeek ? (
+          week ? (
+            <WeekView
+              week={week}
+              days={weekDays}
+              today={dateForOffset(0)}
+              canDrag={canDrag}
+              onOpenCard={openFromWeek}
+              onPickDay={drillIntoDay}
+              refresh={refreshWeek}
+              onDragActive={setWeekPaused}
+            />
+          ) : (
+            <div className="flex items-center justify-center h-64">
+              <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
+            </div>
+          )
+        ) : isTimeline ? (
           <TimelineView
             board={board}
             cards={filteredCards}
@@ -847,6 +1050,15 @@ export default function WorkshopBoard() {
           initialTab={view === 'status' ? 'queue' : 'technician'}
           onClose={() => setShowAddColumn(false)}
           onAdded={() => refresh(true)}
+        />
+      )}
+
+      {/* Shifts & absence */}
+      {showShifts && board && (
+        <ShiftsModal
+          siteId={board.siteId}
+          onClose={() => setShowShifts(false)}
+          onChanged={() => { refresh(true); refreshWeek(true) }}
         />
       )}
     </div>

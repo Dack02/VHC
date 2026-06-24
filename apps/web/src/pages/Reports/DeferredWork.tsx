@@ -11,6 +11,7 @@ import DataTable, { Column } from './components/DataTable'
 import ReportFiltersBar from './components/ReportFiltersBar'
 import { formatCurrency, formatDate, formatDateFull } from './utils/formatters'
 import { CHART_COLORS, RAG_COLORS } from './utils/colors'
+import { jobPath } from '../../lib/jobLink'
 
 interface DeferredData {
   period: { from: string; to: string }
@@ -49,6 +50,7 @@ interface DeferredData {
     deferredNotes: string | null
     isOverdue: boolean
     healthCheckId: string
+    jobsheetId: string | null
   }>
 }
 
@@ -94,7 +96,7 @@ export default function DeferredWork() {
       <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">Deferred</span>
     ), sortable: true, sortValue: r => r.isOverdue ? 1 : 0 },
     { key: 'action', label: '', render: r => (
-      <Link to={`/health-checks/${r.healthCheckId}`} className="text-primary hover:underline text-xs">
+      <Link to={jobPath({ jobsheetId: r.jobsheetId, healthCheckId: r.healthCheckId })} className="text-primary hover:underline text-xs">
         View
       </Link>
     )},

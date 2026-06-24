@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { jobPath } from '../../lib/jobLink'
 import type { AwaitingArrivalItem, AwaitingCheckinItem, QueueItem } from './types'
 
 interface ActionCenterProps {
@@ -157,7 +158,7 @@ export default function ActionCenter({
               return (
                 <Link
                   key={item.id}
-                  to={`/health-checks/${item.id}?tab=checkin`}
+                  to={jobPath({ jobsheetId: item.jobsheetId, healthCheckId: item.id }, { tab: 'checkin' })}
                   className={`flex items-center justify-between gap-3 px-[22px] py-3 border-b border-[#f3f3f1] last:border-0 hover:bg-[#f7f7f5] ${isOverdue ? 'bg-[#fbeceb]/60' : ''}`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
@@ -196,7 +197,7 @@ export default function ActionCenter({
           <SectionHeader title="Needs attention" count={needsAttention?.total || 0} tone="amber" />
           <div className="max-h-64 overflow-y-auto">
             {attentionItems.map(item => (
-              <Link key={item.id} to={`/health-checks/${item.id}`} className="flex items-center justify-between gap-3 px-[22px] py-3 border-b border-[#f3f3f1] last:border-0 hover:bg-[#f7f7f5]">
+              <Link key={item.id} to={jobPath({ jobsheetId: item.jobsheet_id, healthCheckId: item.id })} className="flex items-center justify-between gap-3 px-[22px] py-3 border-b border-[#f3f3f1] last:border-0 hover:bg-[#f7f7f5]">
                 <div className="min-w-0">
                   <div className="text-[13.5px] font-semibold text-[#16181d] truncate">{item.vehicle?.registration}</div>
                   <div className="text-[12.5px] text-[#7b7f88] truncate">
@@ -234,7 +235,7 @@ export default function ActionCenter({
           <div className="max-h-80 overflow-y-auto">
             {awaitingArrival.map(item => (
               <div key={item.id} className={`px-[22px] py-3 flex items-center justify-between gap-3 border-b border-[#f3f3f1] last:border-0 hover:bg-[#f7f7f5] ${item.customerWaiting ? 'bg-[#fbeceb]/60' : ''}`}>
-                <Link to={`/health-checks/${item.id}`} className="flex-1 min-w-0">
+                <Link to={jobPath({ jobsheetId: item.jobsheetId, healthCheckId: item.id })} className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 flex-wrap">
                     <div className="flex flex-col items-center gap-1">
                       <PlateChip reg={item.registration} />

@@ -208,7 +208,7 @@ customers.get('/:id/health-checks', authorize(['super_admin', 'org_admin', 'site
       .select(`
         id, status, created_at, updated_at, vhc_reference,
         green_count, amber_count, red_count,
-        mileage_in,
+        mileage_in, jobsheet_id,
         vehicle:vehicles(id, registration, make, model, year),
         technician:users!health_checks_technician_id_fkey(id, first_name, last_name),
         advisor:users!health_checks_advisor_id_fkey(id, first_name, last_name)
@@ -243,6 +243,7 @@ customers.get('/:id/health-checks', authorize(['super_admin', 'org_admin', 'site
         redCount: hc.red_count,
         totalAmount: 0,
         mileageIn: hc.mileage_in,
+        jobsheetId: hc.jobsheet_id ?? null,
         vehicle: hc.vehicle,
         technician: hc.technician,
         advisor: hc.advisor
@@ -314,7 +315,7 @@ customers.get('/:id/communications', authorize(['super_admin', 'org_admin', 'sit
     // Get all health check IDs for this customer
     const { data: healthChecks, error: hcError } = await supabaseAdmin
       .from('health_checks')
-      .select('id, vhc_reference, vehicle:vehicles(registration)')
+      .select('id, vhc_reference, jobsheet_id, vehicle:vehicles(registration)')
       .eq('customer_id', id)
       .eq('organization_id', auth.orgId)
 
@@ -340,12 +341,13 @@ customers.get('/:id/communications', authorize(['super_admin', 'org_admin', 'sit
     }
 
     // Build a lookup for health check info
-    const hcLookup: Record<string, { vhcReference: string | null; vehicleReg: string | null }> = {}
+    const hcLookup: Record<string, { vhcReference: string | null; vehicleReg: string | null; jobsheetId: string | null }> = {}
     healthChecks?.forEach((hc: Record<string, unknown>) => {
       const vehicle = hc.vehicle as Record<string, unknown> | null
       hcLookup[hc.id as string] = {
         vhcReference: (hc.vhc_reference as string) || null,
-        vehicleReg: vehicle ? (vehicle.registration as string) : null
+        vehicleReg: vehicle ? (vehicle.registration as string) : null,
+        jobsheetId: (hc.jobsheet_id as string) || null
       }
     })
 
@@ -355,6 +357,7 @@ customers.get('/:id/communications', authorize(['super_admin', 'org_admin', 'sit
         return {
           id: comm.id,
           healthCheckId: comm.health_check_id,
+          jobsheetId: hcInfo?.jobsheetId || null,
           vhcReference: hcInfo?.vhcReference || null,
           vehicleReg: hcInfo?.vehicleReg || null,
           channel: comm.channel,

@@ -11,6 +11,7 @@ import DataTable, { Column } from './components/DataTable'
 import ReportFiltersBar from './components/ReportFiltersBar'
 import { formatDuration, formatPercent, formatDate } from './utils/formatters'
 import { CHART_COLORS, SERIES_COLORS } from './utils/colors'
+import { jobPath } from '../../lib/jobLink'
 
 interface OperationsData {
   period: { from: string; to: string }
@@ -25,6 +26,7 @@ interface OperationsData {
   statusDistribution: Array<{ status: string; count: number }>
   stuckChecks: Array<{
     healthCheckId: string
+    jobsheetId: string | null
     status: string
     daysInStatus: number
     siteName: string
@@ -83,7 +85,7 @@ export default function OperationalEfficiency() {
 
   const stuckColumns: Column<OperationsData['stuckChecks'][0]>[] = [
     { key: 'id', label: 'Health Check', render: r => (
-      <Link to={`/health-checks/${r.healthCheckId}`} className="text-primary hover:underline font-mono text-xs">
+      <Link to={jobPath({ jobsheetId: r.jobsheetId, healthCheckId: r.healthCheckId })} className="text-primary hover:underline font-mono text-xs">
         {r.healthCheckId.slice(0, 8)}...
       </Link>
     ) },

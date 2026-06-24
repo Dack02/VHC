@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { jobPath } from '../../lib/jobLink'
 import type { QueueItem, TechnicianWorkloadEntry } from './types'
 import { formatStatusLabel } from './types'
 
@@ -65,7 +66,7 @@ export default function TeamPanel({ technicians, customerQueue }: TeamPanelProps
               return (
                 <Link
                   key={item.id}
-                  to={`/health-checks/${item.id}`}
+                  to={jobPath({ jobsheetId: item.jobsheet_id, healthCheckId: item.id })}
                   className="flex items-center justify-between gap-3 py-3 border-b border-[#f5f5f3] last:border-0 -mx-2 px-2 rounded-lg hover:bg-[#f7f7f5]"
                 >
                   <div className="min-w-0">

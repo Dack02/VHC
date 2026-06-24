@@ -7,6 +7,7 @@ import { useReportData } from './hooks/useReportData'
 import DataTable, { Column } from './components/DataTable'
 import ReportFiltersBar from './components/ReportFiltersBar'
 import { formatPercent } from './utils/formatters'
+import { jobPath } from '../../lib/jobLink'
 
 interface BrakeDiscTechnicianStat {
   technicianId: string
@@ -64,6 +65,7 @@ interface MriBypassData {
 interface AuditEntry {
   id: string
   healthCheckId: string
+  jobsheetId: string | null
   vehicleReg: string
   fromStatus: string | null
   toStatus: string
@@ -171,7 +173,7 @@ export default function QualityCompliance() {
 
   const auditColumns: Column<AuditEntry>[] = [
     { key: 'vehicle', label: 'Vehicle', render: r => (
-      <Link to={`/health-checks/${r.healthCheckId}`} className="font-mono text-primary hover:underline">
+      <Link to={jobPath({ jobsheetId: r.jobsheetId, healthCheckId: r.healthCheckId })} className="font-mono text-primary hover:underline">
         {r.vehicleReg}
       </Link>
     ) },

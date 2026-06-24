@@ -10,10 +10,14 @@ export interface JobRef {
   healthCheckId?: string | null
 }
 
-export function jobPath(job: JobRef): string {
-  return job.jobsheetId
+// `tab` deep-links a shared tab that exists on BOTH the job card and the VHC
+// (overview / checkin / mri / work). Don't pass a VHC-only tab (e.g. notes) when
+// the job may be a job card — there's no such tab there.
+export function jobPath(job: JobRef, opts?: { tab?: string }): string {
+  const base = job.jobsheetId
     ? `/jobsheets/${job.jobsheetId}`
     : `/health-checks/${job.healthCheckId}`
+  return opts?.tab ? `${base}?tab=${opts.tab}` : base
 }
 
 // "job card" when the job has one, else "health check" — for button labels.

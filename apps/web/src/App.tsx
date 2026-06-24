@@ -108,6 +108,7 @@ const ServicePackages = lazy(() => import('./pages/ServicePackages/ServicePackag
 const DailySmsOverview = lazy(() => import('./pages/Settings/DailySmsOverview'))
 const LibraryGapReport = lazy(() => import('./pages/Settings/LibraryGapReport'))
 const WorkshopBoard = lazy(() => import('./pages/WorkshopBoard/WorkshopBoard'))
+const WorkshopDaySheet = lazy(() => import('./pages/WorkshopBoard/PrintDaySheet'))
 const TileStatus = lazy(() => import('./pages/TileStatus/TileStatusPage'))
 const WorkshopStatuses = lazy(() => import('./pages/Settings/WorkshopStatuses'))
 const WorkshopBoardSettings = lazy(() => import('./pages/Settings/WorkshopBoardSettings'))
@@ -188,6 +189,7 @@ function App() {
                     <Route element={<ProtectedLayout />}>
                       <Route path="/onboarding" element={<Onboarding />} />
                       <Route path="/templates/:id/print" element={<TemplatePrint />} />
+                      <Route path="/workshop-board/print" element={<RequireModule module="workshop_board"><WorkshopDaySheet /></RequireModule>} />
                     </Route>
 
                     {/* Main app routes */}

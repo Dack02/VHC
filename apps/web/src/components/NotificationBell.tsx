@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useSocket, WS_EVENTS } from '../contexts/SocketContext'
 import { api } from '../lib/api'
+import { jobPath } from '../lib/jobLink'
 import { isPushSupported, getPushPermission, subscribeToPush } from '../lib/push-notifications'
 
 interface Notification {
@@ -23,6 +24,7 @@ interface Notification {
   created_at: string
   health_check?: {
     id: string
+    jobsheet_id?: string | null
     vehicle?: {
       registration: string
     }
@@ -128,7 +130,7 @@ export default function NotificationBell() {
     if (notification.action_url) {
       navigate(notification.action_url)
     } else if (notification.health_check_id) {
-      navigate(`/health-checks/${notification.health_check_id}`)
+      navigate(jobPath({ jobsheetId: notification.health_check?.jobsheet_id, healthCheckId: notification.health_check_id }))
     }
   }
 

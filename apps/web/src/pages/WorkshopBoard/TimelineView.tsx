@@ -5,10 +5,22 @@ import { useToast } from '../../contexts/ToastContext'
 import type { BoardCard, BoardData } from './types'
 import { timeToMinutes, actualWorkedMinutes, isClockStale } from './types'
 import { moveCard, patchCard as patchCardApi } from './boardActions'
+import {
+  SNAP_MIN,
+  durationMinFor,
+  promiseDeadlineMin,
+  busyIntervals,
+  lunchInterval,
+  firstFreeSlot,
+  techAvailability,
+  autoArrangePlan,
+  type Interval,
+  type AutoPlanEntry,
+  type TechAvailability
+} from './scheduling'
 import { promiseCountdown } from './JobCard'
 
 const PX_PER_MIN = 88 / 60 // 88px per hour
-const SNAP_MIN = 15
 const MIN_BLOCK_PX = 44
 
 interface TimelineViewProps {
@@ -81,7 +93,8 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
   const recentDragRef = useRef(false)
   const [activeDragCard, setActiveDragCard] = useState<BoardCard | null>(null)
   // Live snap preview while dragging onto a lane (the dashed ghost block).
-  const [ghost, setGhost] = useState<{ laneId: string; startMin: number; durationMin: number } | null>(null)
+  // ok=false means the day is full at/after the drop point (rendered red).
+  const [ghost, setGhost] = useState<{ laneId: string; startMin: number; durationMin: number; ok: boolean } | null>(null)
   const [resizing, setResizing] = useState<{ id: string; hours: number } | null>(null)
 
   // Mouse keeps the instant 6px lift; touch needs a long-press so a tap opens
@@ -185,6 +198,95 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
     return snapMinToDay(dayStartMin + offsetPx / PX_PER_MIN, dayStartMin, dayEndMin)
   }, [dayStartMin, dayEndMin])
 
+  // Collision-aware landing slot: the first free slot at/after where the user is
+  // dropping, ignoring the dragged card itself (so nudging a block within its own
+  // lane doesn't collide with itself). null = won't fit before close. Manual drags
+  // avoid other jobs but not lunch (the advisor may deliberately work through it).
+  const resolveDropSlot = useCallback((laneTechId: string, card: BoardCard, desiredMin: number): number | null => {
+    const laneBlocks = (lanes.get(laneTechId) || []).filter(b => b.card.healthCheckId !== card.healthCheckId)
+    const busy = busyIntervals(laneBlocks.map(b => ({ startMin: b.startMin, durationMin: b.durationMin })))
+    return firstFreeSlot(durationMinFor(card), busy, { fromMin: desiredMin, dayStartMin, dayEndMin })
+  }, [lanes, dayStartMin, dayEndMin])
+
+  // Free-now readout per technician (drives the header pill + tray chips).
+  const availabilityByTech = useMemo(() => {
+    const map = new Map<string, TechAvailability>()
+    for (const col of techColumns) {
+      if (!col.technicianId) continue
+      const blocks = lanes.get(col.technicianId) || []
+      map.set(col.technicianId, techAvailability(blocks, nowMin, dayEndMin, now, board.config.staleClockMinutes))
+    }
+    return map
+  }, [techColumns, lanes, nowMin, dayEndMin, now, board.config.staleClockMinutes])
+
+  // Technicians free right now (today only) — surfaced as drop hints in the tray.
+  const freeTechNames = useMemo(() => {
+    if (!isToday) return []
+    return techColumns
+      .filter(col => col.technicianId && availabilityByTech.get(col.technicianId)?.isFreeNow)
+      .map(col => col.name)
+  }, [isToday, techColumns, availabilityByTech])
+
+  // ---- Auto-arrange (1d) --------------------------------------------------
+  const lanesBusyByTech = useCallback((): Map<string, Interval[]> => {
+    const map = new Map<string, Interval[]>()
+    for (const [techId, blocks] of lanes) {
+      map.set(techId, busyIntervals(blocks.map(b => ({ startMin: b.startMin, durationMin: b.durationMin }))))
+    }
+    return map
+  }, [lanes])
+
+  const applyPlan = useCallback(async (entries: AutoPlanEntry[]): Promise<number> => {
+    let scheduled = 0
+    for (const e of entries) {
+      if (e.card.technician?.id !== e.technicianId) {
+        const moved = await moveToTech(e.card.healthCheckId, e.columnId)
+        if (!moved) continue
+      }
+      const plannedStartAt = new Date(`${date}T${fmtMin(e.startMin)}:00`).toISOString()
+      const ok = await patchCard(e.card.healthCheckId, { plannedStartAt })
+      if (ok) scheduled++
+    }
+    return scheduled
+  }, [moveToTech, patchCard, date])
+
+  const planOpts = () => ({
+    date,
+    dayStartMin,
+    dayEndMin,
+    lunch: lunchInterval(board.config),
+    nowMin,
+    isToday
+  })
+  const techTargets = () =>
+    techColumns
+      .filter(c => c.technicianId)
+      .map(c => ({ columnId: c.id, technicianId: c.technicianId! }))
+
+  const handleAutoArrange = useCallback(async () => {
+    const jobs = [...tray.unassigned, ...tray.assigned]
+    if (!jobs.length) return
+    const techs = techTargets()
+    if (!techs.length) { toast.error('No technician columns to schedule into'); return }
+    if (!window.confirm(`Auto-schedule ${jobs.length} job${jobs.length === 1 ? '' : 's'} onto the first free slots today?`)) return
+    const { plan, unplaced } = autoArrangePlan(jobs, techs, lanesBusyByTech(), planOpts())
+    if (!plan.length) { toast.error('No free slots to auto-arrange into'); return }
+    const scheduled = await applyPlan(plan)
+    refresh(true)
+    toast.success(`Scheduled ${scheduled} job${scheduled === 1 ? '' : 's'}${unplaced.length ? ` · ${unplaced.length} didn’t fit` : ''}`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tray, techColumns, lanesBusyByTech, applyPlan, refresh, toast, date, dayStartMin, dayEndMin, nowMin, isToday, board.config])
+
+  const handleSuggest = useCallback(async (card: BoardCard) => {
+    const techs = techTargets()
+    if (!techs.length) { toast.error('No technician columns to schedule into'); return }
+    const { plan } = autoArrangePlan([card], techs, lanesBusyByTech(), planOpts())
+    if (!plan.length) { toast.error('No free slot today for this job'); return }
+    await applyPlan(plan)
+    refresh(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [techColumns, lanesBusyByTech, applyPlan, refresh, toast, date, dayStartMin, dayEndMin, nowMin, isToday, board.config])
+
   const handleDragStart = (event: DragStartEvent) => {
     recentDragRef.current = true
     onDragActive?.(true)
@@ -199,11 +301,13 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
     const card = activeDragCard || cards.find(c => c.healthCheckId === active.id)
     const overId = over?.id as string | undefined
     const lane = overId ? techColumns.find(c => c.id === overId) : undefined
-    if (!card || !lane) { if (ghost) setGhost(null); return }
-    const startMin = snapStartForLane(lane.id, active.rect.current.translated?.top)
-    if (startMin == null) { if (ghost) setGhost(null); return }
-    const durationMin = Math.max((card.estimatedHours ?? 1) * 60, SNAP_MIN)
-    setGhost({ laneId: lane.id, startMin, durationMin })
+    if (!card || !lane?.technicianId) { if (ghost) setGhost(null); return }
+    const desired = snapStartForLane(lane.id, active.rect.current.translated?.top)
+    if (desired == null) { if (ghost) setGhost(null); return }
+    // Show where it will actually land (snapped past existing jobs), red if the
+    // day is full at/after that point.
+    const slot = resolveDropSlot(lane.technicianId, card, desired)
+    setGhost({ laneId: lane.id, startMin: slot ?? desired, durationMin: durationMinFor(card), ok: slot != null })
   }
 
   const handleDragCancel = () => {
@@ -238,8 +342,14 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
       const lane = techColumns.find(c => c.id === overId)
       if (!lane?.technicianId) return
 
-      const startMin = snapStartForLane(lane.id, active.rect.current.translated?.top)
-      if (startMin == null) return
+      const desired = snapStartForLane(lane.id, active.rect.current.translated?.top)
+      if (desired == null) return
+      // Snap to the first free slot; if the day is full from here on, warn and abort.
+      const startMin = resolveDropSlot(lane.technicianId, card, desired)
+      if (startMin == null) {
+        toast.error(`No free ${fmtHours(durationMinFor(card) / 60)} slot on ${lane.name} before close`)
+        return
+      }
       const plannedStartAt = new Date(`${date}T${fmtMin(startMin)}:00`).toISOString()
 
       // Reassign first if dropped on a different technician's lane
@@ -322,6 +432,20 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
       <div className="flex-1 flex gap-3 min-h-0">
         {/* Unscheduled tray */}
         <TrayDropZone>
+          {canDrag && (tray.unassigned.length + tray.assigned.length) > 0 && (
+            <button
+              onClick={handleAutoArrange}
+              className="w-full mb-1 px-2 py-1.5 bg-primary text-white text-xs font-semibold rounded-lg hover:bg-primary/90"
+              title="Schedule every job in this tray onto the first free slot"
+            >
+              ✨ Auto-arrange day
+            </button>
+          )}
+          {freeTechNames.length > 0 && (
+            <p className="text-[10px] text-rag-green px-1 truncate" title="Technicians with no job running right now">
+              Free now: {freeTechNames.join(', ')}
+            </p>
+          )}
           {tray.unassigned.length === 0 && tray.assigned.length === 0 && (
             <p className="text-xs text-gray-300 text-center py-4">Everything is scheduled 🎉</p>
           )}
@@ -329,7 +453,7 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
             <>
               <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide px-1">Unassigned</p>
               {tray.unassigned.map(card => (
-                <TrayCard key={card.healthCheckId} card={card} now={now} draggable={canDrag} onClick={() => openCard(card.healthCheckId)} />
+                <TrayCard key={card.healthCheckId} card={card} now={now} draggable={canDrag} onClick={() => openCard(card.healthCheckId)} onSuggest={canDrag ? () => handleSuggest(card) : undefined} />
               ))}
             </>
           )}
@@ -337,7 +461,7 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
             <>
               <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide px-1 mt-2">Assigned · no time</p>
               {tray.assigned.map(card => (
-                <TrayCard key={card.healthCheckId} card={card} now={now} draggable={canDrag} showTech onClick={() => openCard(card.healthCheckId)} />
+                <TrayCard key={card.healthCheckId} card={card} now={now} draggable={canDrag} showTech onClick={() => openCard(card.healthCheckId)} onSuggest={canDrag ? () => handleSuggest(card) : undefined} />
               ))}
             </>
           )}
@@ -357,6 +481,7 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
                 return actual > b.durationMin
               })
               const anyStale = blocks.some(b => isClockStale(b.card, now, board.config.staleClockMinutes))
+              const avail = col.technicianId ? availabilityByTech.get(col.technicianId) : undefined
               return (
                 <div key={col.id} className="flex-1 min-w-[140px] px-3 py-2 border-r border-gray-100 last:border-r-0">
                   <div className="flex items-center gap-1.5">
@@ -364,6 +489,11 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
                       <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
                     )}
                     <span className="text-sm font-semibold text-gray-900 truncate">{col.name}</span>
+                    {isToday && avail?.isFreeNow && (
+                      <span className="ml-auto text-[9px] font-bold text-rag-green bg-green-50 border border-green-200 rounded-full px-1.5 py-px flex-shrink-0">
+                        Free now
+                      </span>
+                    )}
                   </div>
                   <div className={`text-xs mt-0.5 ${overCapacity ? 'text-red-600 font-medium' : 'text-gray-400'}`}>
                     {fmtHours(allocated)} / {fmtHours(col.availableHours)}
@@ -421,14 +551,14 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
                   {/* Live drop preview */}
                   {ghost && ghost.laneId === col.id && (
                     <div
-                      className="absolute left-1 right-1 z-20 rounded-lg border-2 border-dashed border-primary bg-indigo-50/70 pointer-events-none flex items-start justify-between px-2 py-1"
+                      className={`absolute left-1 right-1 z-20 rounded-lg border-2 border-dashed pointer-events-none flex items-start justify-between px-2 py-1 ${ghost.ok ? 'border-primary bg-indigo-50/70' : 'border-rag-red bg-red-50/70'}`}
                       style={{
                         top: (ghost.startMin - dayStartMin) * PX_PER_MIN,
                         height: Math.max(ghost.durationMin * PX_PER_MIN, MIN_BLOCK_PX)
                       }}
                     >
-                      <span className="text-[10px] font-bold text-primary">
-                        {fmtMin(ghost.startMin)}–{fmtMin(ghost.startMin + ghost.durationMin)}
+                      <span className={`text-[10px] font-bold ${ghost.ok ? 'text-primary' : 'text-rag-red'}`}>
+                        {ghost.ok ? `${fmtMin(ghost.startMin)}–${fmtMin(ghost.startMin + ghost.durationMin)}` : 'Day full'}
                       </span>
                     </div>
                   )}
@@ -439,6 +569,7 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
                       key={block.card.healthCheckId}
                       block={block}
                       board={board}
+                      date={date}
                       now={now}
                       dayStartMin={dayStartMin}
                       dayEndMin={dayEndMin}
@@ -499,12 +630,13 @@ function TrayDropZone({ children }: { children: React.ReactNode }) {
   )
 }
 
-function TrayCard({ card, now, draggable, showTech, onClick }: {
+function TrayCard({ card, now, draggable, showTech, onClick, onSuggest }: {
   card: BoardCard
   now: Date
   draggable: boolean
   showTech?: boolean
   onClick: () => void
+  onSuggest?: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: card.healthCheckId,
@@ -523,7 +655,20 @@ function TrayCard({ card, now, draggable, showTech, onClick }: {
     >
       <div className="flex items-center justify-between gap-1">
         <span className="text-sm font-bold text-gray-900 truncate">{card.vehicle?.registration || 'No reg'}</span>
-        <span className="text-xs text-gray-400 flex-shrink-0">{fmtHours(card.estimatedHours ?? 1)}</span>
+        <span className="flex items-center gap-1 flex-shrink-0">
+          {onSuggest && (
+            <button
+              onPointerDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); onSuggest() }}
+              className="text-[11px] leading-none text-gray-400 hover:text-primary"
+              title="Drop into the first free slot"
+              aria-label="Suggest a slot"
+            >
+              ⌖
+            </button>
+          )}
+          <span className="text-xs text-gray-400">{fmtHours(card.estimatedHours ?? 1)}</span>
+        </span>
       </div>
       <div className="flex items-center justify-between gap-1 text-[11px] text-gray-500">
         <span className="truncate">
@@ -557,9 +702,10 @@ function TimelineLane({ laneId, droppable, refCb, children }: {
   )
 }
 
-function TimelineBlock({ block, board, now, dayStartMin, dayEndMin, canDrag, resizingHours, queueNameById, onResizeStart, onClick }: {
+function TimelineBlock({ block, board, date, now, dayStartMin, dayEndMin, canDrag, resizingHours, queueNameById, onResizeStart, onClick }: {
   block: PlacedBlock
   board: BoardData
+  date: string
   now: Date
   dayStartMin: number
   dayEndMin: number
@@ -593,6 +739,10 @@ function TimelineBlock({ block, board, now, dayStartMin, dayEndMin, canDrag, res
   const progressPct = card.isClockedOn || actualMin > 0 ? Math.min(100, (actualMin / durationMin) * 100) : 0
   const pastClose = block.startMin + durationMin > dayEndMin
   const notArrived = card.status === 'awaiting_arrival'
+  // Customer deadline awareness: flag a block scheduled to finish after the
+  // promised/collection time (the car won't be ready in time).
+  const deadlineMin = promiseDeadlineMin(card, date, dayEndMin)
+  const willMiss = !isDone && deadlineMin != null && block.startMin + durationMin > deadlineMin
 
   const borderColour = overrunMin > 0 ? '#DC2626' : workshopStatus?.colour || (card.isClockedOn ? '#16A34A' : '#94A3B8')
   const compact = height < 64
@@ -606,7 +756,7 @@ function TimelineBlock({ block, board, now, dayStartMin, dayEndMin, canDrag, res
       className={`absolute rounded-lg border bg-white shadow-sm overflow-visible select-none z-10 ${
         canDrag && !locked ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
       } ${notArrived ? 'border-dashed' : ''} ${isDragging ? 'opacity-40' : ''} ${
-        overrunMin > 0 ? 'ring-1 ring-red-400' : ''
+        overrunMin > 0 || willMiss ? 'ring-1 ring-red-400' : ''
       }`}
       style={{
         top,
@@ -653,6 +803,11 @@ function TimelineBlock({ block, board, now, dayStartMin, dayEndMin, canDrag, res
             <div className="flex flex-wrap gap-1 mt-0.5">
               {clockStale && <span className="text-[9px] font-bold text-white bg-amber-500 rounded-full px-1.5 py-px">CHECK CLOCK</span>}
               {notArrived && <span className="text-[9px] font-medium text-gray-500 bg-gray-100 rounded-full px-1.5 py-px">DUE IN</span>}
+              {deadlineMin != null && (
+                <span className={`text-[9px] font-bold rounded-full px-1.5 py-px ${willMiss ? 'text-white bg-rag-red' : 'text-gray-600 bg-gray-100'}`}>
+                  {willMiss ? '⚠ ' : ''}by {fmtMin(deadlineMin)}
+                </span>
+              )}
               {workshopStatus && (
                 <span className="text-[9px] font-medium text-white rounded-full px-1.5 py-px" style={{ backgroundColor: workshopStatus.colour }}>
                   {workshopStatus.name}
@@ -663,11 +818,15 @@ function TimelineBlock({ block, board, now, dayStartMin, dayEndMin, canDrag, res
             </div>
           </>
         )}
-        {pastClose && (
+        {willMiss ? (
+          <div className="absolute bottom-0 inset-x-0 text-center text-[9px] font-bold text-white bg-rag-red">
+            won’t be ready
+          </div>
+        ) : pastClose ? (
           <div className="absolute bottom-0 inset-x-0 text-center text-[9px] font-semibold text-amber-700 bg-amber-50 border-t border-dashed border-amber-300">
             past close
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Overrun extension (actual beyond estimate) */}

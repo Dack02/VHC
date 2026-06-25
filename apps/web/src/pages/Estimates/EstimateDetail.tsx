@@ -20,6 +20,7 @@ interface Estimate {
   sentAt: string | null
   firstOpenedAt: string | null
   respondedAt: string | null
+  responseFinalisedAt: string | null
   createdAt: string
   customer: { id: string; firstName: string; lastName: string; mobile: string | null; email: string | null; phone: string | null } | null
   vehicle: { id: string; registration: string; make: string | null; model: string | null; year: number | null; fuelType: string | null } | null
@@ -282,7 +283,7 @@ export default function EstimateDetail() {
               <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
                 <div><span className="text-gray-500">Sent</span> <span className="text-gray-900 font-medium ml-1">{formatDateTime(est.sentAt)}</span></div>
                 <div><span className="text-gray-500">Opened</span> <span className="text-gray-900 font-medium ml-1">{est.firstOpenedAt ? formatDateTime(est.firstOpenedAt) : 'Not yet'}</span></div>
-                <div><span className="text-gray-500">Responded</span> <span className="text-gray-900 font-medium ml-1">{est.respondedAt ? formatDateTime(est.respondedAt) : 'Not yet'}</span></div>
+                <div><span className="text-gray-500">Responded</span> <span className="text-gray-900 font-medium ml-1">{est.responseFinalisedAt ? formatDateTime(est.responseFinalisedAt) : est.respondedAt ? 'In progress' : 'Not yet'}</span></div>
               </div>
             </div>
           )}

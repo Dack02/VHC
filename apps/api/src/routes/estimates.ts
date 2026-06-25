@@ -49,6 +49,7 @@ function shapeEstimate(row: any) {
     sentAt: row.sent_at,
     firstOpenedAt: row.first_opened_at,
     respondedAt: row.responded_at,
+    responseFinalisedAt: row.response_finalised_at,
     convertedToJobsheetId: row.converted_to_jobsheet_id,
     convertedAt: row.converted_at,
     createdAt: row.created_at, // Document Date

@@ -56,7 +56,7 @@ function MonthCell({ date, day, inMonth, isToday, isSelected, roomy, onClick }: 
 
       {jobs > 0 ? (
         <>
-          <LoadBar pct={pct} className={roomy ? 'h-2' : ''} />
+          <LoadBar pct={pct} />
           <div className={`${roomy ? 'text-xs' : 'text-[11px]'} text-gray-500`}>{jobs} {jobs === 1 ? 'job' : 'jobs'}</div>
           {(day!.totalMots > 0 || day!.totalWaiting > 0 || day!.totalLoans > 0) && (
             <div className="flex flex-wrap gap-1 mt-auto">

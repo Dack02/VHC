@@ -94,12 +94,20 @@ export function CountPills({ mots, waiting, loans, outreach }: {
   )
 }
 
-// One booking row, reused by the Week / Agenda / Grouped views. A left status
-// stripe surfaces live workshop state; `compact` density drops the description.
+// One booking row, reused by the Week / Agenda / Grouped views. Columns: status
+// stripe, time, reg, customer, "booked for" (what the job is — the widest column),
+// type badges, hours, source. `compact` density only tightens row padding.
 export function BookingRow({ booking, onOpen, density = 'normal' }: {
   booking: DiaryBooking; onOpen: () => void; density?: Density
 }) {
-  const subtitle = [booking.customerName, booking.serviceType].filter(Boolean).join(' · ')
+  const customer = booking.customerName || '—'
+  // "Booked for": the work summary. Prefix the service type when it adds info
+  // beyond the description. Collapse the CR/LF the DMS notes carry.
+  const desc = (booking.description || '').replace(/\s+/g, ' ').trim()
+  const svc = (booking.serviceType || '').trim()
+  const bookedFor = desc && svc && desc.toLowerCase() !== svc.toLowerCase()
+    ? `${svc} · ${desc}`
+    : (desc || svc || '—')
   const pad = density === 'compact' ? 'py-1.5' : 'py-2'
   return (
     <button
@@ -109,16 +117,28 @@ export function BookingRow({ booking, onOpen, density = 'normal' }: {
       <span className={`absolute left-1 top-2 bottom-2 w-1 rounded-full ${statusStripeClass(booking)}`} aria-hidden="true" />
       <span className="text-sm font-medium text-gray-900 w-12 shrink-0">{formatTime(booking.apptTime)}</span>
       <span className="text-sm font-mono text-gray-700 w-20 shrink-0">{booking.registration || '—'}</span>
-      <span className="flex-1 min-w-0">
-        <span className="block text-sm text-gray-700 truncate">{subtitle || '—'}</span>
-        {booking.description && density !== 'compact' && (
-          <span className="block text-xs text-gray-400 truncate" title={booking.description}>{booking.description}</span>
-        )}
-      </span>
+      <span className="text-sm text-gray-700 w-40 shrink-0 truncate" title={customer}>{customer}</span>
+      <span className="flex-1 min-w-0 text-sm text-gray-600 truncate" title={bookedFor}>{bookedFor}</span>
       <BadgeStrip booking={booking} />
       <span className="text-sm text-gray-700 w-12 text-right shrink-0">{booking.estimatedHours}h</span>
       <span className="text-[10px] uppercase tracking-wide text-gray-400 w-9 text-right shrink-0">{booking.source}</span>
     </button>
+  )
+}
+
+// Small column headers aligned to BookingRow's columns (same widths/padding/gap).
+// The status stripe sits in BookingRow's pl-4 gutter, so the header starts at pl-4 too.
+export function BookingListHeader() {
+  return (
+    <div className="flex items-center gap-3 pl-4 pr-3 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+      <span className="w-12 shrink-0">Time</span>
+      <span className="w-20 shrink-0">Reg</span>
+      <span className="w-40 shrink-0">Customer</span>
+      <span className="flex-1 min-w-0">Booked for</span>
+      <span className="shrink-0">Type</span>
+      <span className="w-12 text-right shrink-0">Hrs</span>
+      <span className="w-9 text-right shrink-0">Src</span>
+    </div>
   )
 }
 
@@ -219,9 +239,12 @@ export function DayDetail({ date, density }: { date: string; density: Density })
       ) : !detail || detail.bookings.length === 0 ? (
         <div className="px-4 py-12 text-center text-sm text-gray-400">No bookings for this day.</div>
       ) : (
-        <div className="flex flex-col gap-1.5">
-          {detail.bookings.map(b => <BookingRow key={b.bookingId} booking={b} onOpen={() => open(b)} density={density} />)}
-        </div>
+        <>
+          <BookingListHeader />
+          <div className="flex flex-col gap-1.5">
+            {detail.bookings.map(b => <BookingRow key={b.bookingId} booking={b} onOpen={() => open(b)} density={density} />)}
+          </div>
+        </>
       )}
       {modal}
     </div>

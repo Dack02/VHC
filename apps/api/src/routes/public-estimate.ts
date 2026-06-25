@@ -46,7 +46,7 @@ async function loadByToken(token: string) {
     .from('estimates')
     .select(`
       id, organization_id, reference, status, valid_until, token_expires_at, first_opened_at,
-      customer_notes, responded_at,
+      customer_notes, responded_at, response_finalised_at,
       customer:customers(first_name, last_name),
       vehicle:vehicles(registration, make, model, year)
     `)
@@ -68,8 +68,9 @@ async function loadLines(estimateId: string) {
 }
 
 // Recompute the estimate status from its lines' decisions, set responded_at on first
-// response. Returns the new status.
-async function recomputeStatus(estimateId: string, orgId: string): Promise<string> {
+// response. When `finalise` is set, also stamp response_finalised_at — the customer has
+// confirmed their final answer, which locks the portal. Returns the new status.
+async function recomputeStatus(estimateId: string, orgId: string, opts: { finalise?: boolean } = {}): Promise<string> {
   const lines = await loadLines(estimateId)
   const decided = lines.filter((l) => l.customer_approved !== null)
   const approved = lines.filter((l) => l.customer_approved === true)
@@ -83,6 +84,7 @@ async function recomputeStatus(estimateId: string, orgId: string): Promise<strin
 
   const update: Record<string, unknown> = { status }
   if (decided.length > 0) update.responded_at = new Date().toISOString()
+  if (opts.finalise) update.response_finalised_at = new Date().toISOString()
 
   await supabaseAdmin.from('estimates').update(update).eq('id', estimateId).eq('organization_id', orgId)
   return status
@@ -136,7 +138,8 @@ publicEstimate.get('/estimate/:token', async (c) => {
       validUntil: est.valid_until,
       customerNotes: est.customer_notes,
       termsText: settings.termsText,
-      requireSignature: settings.requireSignature
+      requireSignature: settings.requireSignature,
+      responseFinalised: !!est.response_finalised_at
     },
     organization: {
       name: branding.organizationName,
@@ -169,6 +172,7 @@ async function liveEstimate(c: { req: { param: (k: string) => string } }) {
     return { est: null, error: { msg: 'This estimate link has expired', code: 410 as const } }
   }
   if (TERMINAL.includes(est.status)) return { est: null, error: { msg: 'This estimate is no longer open', code: 400 as const } }
+  if (est.response_finalised_at) return { est: null, error: { msg: 'This estimate response has already been submitted', code: 400 as const } }
   return { est, error: null }
 }
 
@@ -235,7 +239,7 @@ publicEstimate.post('/estimate/:token/approve-all', async (c) => {
   const lines = await loadLines(est!.id)
   for (const l of lines) await decideLine(est!.id, l.id, true, c, { signatureData: body.signatureData })
   await trackEstimateActivity(est!.id, 'approve_all', null, c, { count: lines.length, hasSigned: !!body.signatureData })
-  const status = await recomputeStatus(est!.id, est!.organization_id)
+  const status = await recomputeStatus(est!.id, est!.organization_id, { finalise: true })
   return c.json({ success: true, status })
 })
 
@@ -247,7 +251,25 @@ publicEstimate.post('/estimate/:token/decline-all', async (c) => {
   const lines = await loadLines(est!.id)
   for (const l of lines) await decideLine(est!.id, l.id, false, c, { reason: body.reason })
   await trackEstimateActivity(est!.id, 'decline_all', null, c, { count: lines.length })
-  const status = await recomputeStatus(est!.id, est!.organization_id)
+  const status = await recomputeStatus(est!.id, est!.organization_id, { finalise: true })
+  return c.json({ success: true, status })
+})
+
+// POST /estimate/:token/submit — finalise a per-line response. The customer has decided
+// some/all lines individually and is confirming their answer. Requires at least one
+// decision; any line left undecided simply isn't approved (won't be booked). Locks the portal.
+publicEstimate.post('/estimate/:token/submit', async (c) => {
+  const { est, error } = await liveEstimate(c)
+  if (error) return c.json({ error: error.msg, expired: error.code === 410 }, error.code)
+  const lines = await loadLines(est!.id)
+  const decided = lines.filter((l) => l.customer_approved !== null)
+  if (decided.length === 0) return c.json({ error: 'Please approve or decline at least one item before submitting' }, 400)
+  await trackEstimateActivity(est!.id, 'response_submitted', null, c, {
+    approved: lines.filter((l) => l.customer_approved === true).length,
+    declined: lines.filter((l) => l.customer_approved === false).length,
+    total: lines.length
+  })
+  const status = await recomputeStatus(est!.id, est!.organization_id, { finalise: true })
   return c.json({ success: true, status })
 })
 

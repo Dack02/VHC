@@ -14,7 +14,7 @@ interface Line {
   customerDeclinedReason: string | null
 }
 interface EstimateData {
-  estimate: { id: string; reference: string | null; status: string; validUntil: string | null; customerNotes: string | null; termsText: string | null; requireSignature: boolean }
+  estimate: { id: string; reference: string | null; status: string; validUntil: string | null; customerNotes: string | null; termsText: string | null; requireSignature: boolean; responseFinalised: boolean }
   organization: { name?: string; logoUrl?: string | null; primaryColor?: string; phone?: string }
   customer: { firstName: string; lastName: string } | null
   vehicle: { registration: string; make: string | null; model: string | null; year: number | null } | null
@@ -23,7 +23,10 @@ interface EstimateData {
 }
 
 const money = (n: number) => `£${(n || 0).toFixed(2)}`
-const STATUS_DONE = ['accepted', 'declined', 'partial', 'converted', 'cancelled']
+// Statuses that lock the portal regardless of the customer's response. The portal otherwise
+// stays interactive until the customer explicitly finalises (estimate.responseFinalised);
+// in-progress 'opened'/'accepted'/'partial'/'declined' do NOT lock on their own.
+const TERMINAL_STATUSES = ['converted', 'cancelled', 'expired']
 
 function formatDate(d: string | null): string {
   if (!d) return ''
@@ -149,8 +152,10 @@ export default function EstimatePortal() {
 
   const { estimate, organization, customer, vehicle, lines, totals } = data
   const brand = organization.primaryColor || '#4f46e5'
-  const responded = STATUS_DONE.includes(estimate.status)
+  const responded = estimate.responseFinalised || TERMINAL_STATUSES.includes(estimate.status)
   const approvedCount = lines.filter(l => l.customerApproved === true).length
+  const declinedCount = lines.filter(l => l.customerApproved === false).length
+  const anyDecided = approvedCount + declinedCount > 0
   const requireSig = estimate.requireSignature
   const canAccept = !requireSig || !!signature
 
@@ -236,27 +241,52 @@ export default function EstimatePortal() {
         )}
 
         {/* Action area */}
-        {!responded && (
+        {!responded && requireSig && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-5">
-            {requireSig && (
-              <div className="mb-4">
-                <p className="text-sm font-medium text-gray-700 mb-2">Please sign to approve this estimate</p>
-                <SignaturePad onChange={setSignature} />
-              </div>
-            )}
+            <div className="mb-4">
+              <p className="text-sm font-medium text-gray-700 mb-2">Please sign to approve this estimate</p>
+              <SignaturePad onChange={setSignature} />
+            </div>
             <div className="flex flex-col sm:flex-row gap-2">
               <button disabled={busy || !canAccept}
                 onClick={() => post('/approve-all', signature ? { signatureData: signature } : undefined)}
                 style={{ backgroundColor: brand }}
                 className="flex-1 px-4 py-2.5 text-white font-semibold rounded-lg disabled:opacity-50">
-                Approve {requireSig ? '& accept estimate' : 'all'}
+                Approve &amp; accept estimate
               </button>
               <button disabled={busy} onClick={() => post('/decline-all')}
                 className="px-4 py-2.5 text-gray-700 font-medium rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50">
                 Decline
               </button>
             </div>
-            {requireSig && !signature && <p className="text-xs text-gray-400 mt-2">Add your signature above to enable approval.</p>}
+            {!signature && <p className="text-xs text-gray-400 mt-2">Add your signature above to enable approval.</p>}
+          </div>
+        )}
+
+        {/* Per-line response: choose each item above, then confirm. */}
+        {!responded && !requireSig && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 mt-4 p-5">
+            <button disabled={busy || !anyDecided} onClick={() => post('/submit')}
+              style={{ backgroundColor: brand }}
+              className="w-full px-4 py-2.5 text-white font-semibold rounded-lg disabled:opacity-50">
+              Submit my response
+            </button>
+            <p className="text-xs text-gray-500 mt-2 text-center">
+              {anyDecided
+                ? `Approving ${approvedCount} ${approvedCount === 1 ? 'item' : 'items'}${declinedCount ? `, declining ${declinedCount}` : ''}. Anything left undecided won’t be booked.`
+                : 'Approve or decline at least one item above, then submit your response.'}
+            </p>
+            <div className="flex items-center justify-center gap-2 mt-4 pt-4 border-t border-gray-100">
+              <span className="text-xs text-gray-400">Or quickly:</span>
+              <button disabled={busy} onClick={() => post('/approve-all')}
+                className="px-3 py-1.5 text-sm font-medium text-gray-700 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50">
+                Approve all
+              </button>
+              <button disabled={busy} onClick={() => post('/decline-all')}
+                className="px-3 py-1.5 text-sm font-medium text-gray-700 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50">
+                Decline all
+              </button>
+            </div>
           </div>
         )}
 

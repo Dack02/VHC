@@ -1,6 +1,6 @@
 /**
  * Hook: count of follow-up cases needing attention (for the nav badge).
- * Overdue + bookings to confirm + customer replies. Polls every 60s.
+ * Overdue + call list + bookings to confirm + customer replies. Polls every 60s.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
@@ -25,7 +25,7 @@ export function useFollowUpDueCount() {
     if (!session?.accessToken) return
     try {
       const d = await api<FollowUpSummary>('/api/v1/follow-ups/summary', { token: session.accessToken })
-      setCount((d.overdue || 0) + (d.bookingFound || 0) + (d.engaged || 0))
+      setCount((d.overdue || 0) + (d.manual || 0) + (d.bookingFound || 0) + (d.engaged || 0))
     } catch {
       // Silently fail
     }

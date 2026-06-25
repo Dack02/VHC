@@ -158,7 +158,9 @@ vehicles.get('/:id/mot-history', authorize(['super_admin', 'org_admin', 'site_ad
 
 // POST /api/v1/vehicles/:id/mot-sync - On-demand DVSA lookup + persist for an
 // existing vehicle (e.g. a DMS-imported booking never looked up at create time).
-vehicles.post('/:id/mot-sync', requireModule('vehicle_lookup'), authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+// Technicians can trigger this from the mobile inspection screen, since DMS
+// vehicles are often not pre-synced at booking time.
+vehicles.post('/:id/mot-sync', requireModule('vehicle_lookup'), authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {
     const auth = c.get('auth')
     const { id } = c.req.param()

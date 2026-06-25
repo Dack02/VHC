@@ -60,8 +60,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
-export default function DmsBookingModal({ healthCheckId, onClose, onOpenFull }: {
+export default function DmsBookingModal({ healthCheckId, endpoint, onClose, onOpenFull }: {
   healthCheckId: string
+  // Override the data endpoint. Defaults to the Booking Diary route; the Follow-Up
+  // module passes its own (module-scoped) endpoint instead.
+  endpoint?: string
   onClose: () => void
   onOpenFull: () => void
 }) {
@@ -75,12 +78,13 @@ export default function DmsBookingModal({ healthCheckId, onClose, onOpenFull }: 
     if (!session?.accessToken) return
     setLoading(true)
     setError(null)
-    api<DmsBookingDetail>(`/api/v1/booking-diary/booking?id=${encodeURIComponent(healthCheckId)}`, { token: session.accessToken })
+    const url = endpoint || `/api/v1/booking-diary/booking?id=${encodeURIComponent(healthCheckId)}`
+    api<DmsBookingDetail>(url, { token: session.accessToken })
       .then(d => { if (!cancelled) setDetail(d) })
       .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load booking') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [healthCheckId, session?.accessToken])
+  }, [healthCheckId, endpoint, session?.accessToken])
 
   const v = detail?.vehicle
   const c = detail?.customer

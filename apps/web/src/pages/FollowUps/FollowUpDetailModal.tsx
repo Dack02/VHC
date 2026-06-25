@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Fragment } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
@@ -8,6 +8,7 @@ import {
   FollowUpOutcome,
   FollowUpEvent,
   CadenceNode,
+  MatchLevel,
   fmtMoney,
   fmtDate,
   fmtDateTime,
@@ -17,6 +18,20 @@ import {
   STATUS_META,
 } from './types'
 import FollowUpConversation from './FollowUpConversation'
+import DmsBookingModal from '../BookingDiary/DmsBookingModal'
+
+// Booking-match verdict → panel tone + chip styling. Full class strings (no
+// dynamic concatenation) so Tailwind keeps them.
+const VERDICT_TONE: Record<'related' | 'partial' | 'unrelated', {
+  box: string; head: string; sub: string; chip: string; chipLabel: string
+}> = {
+  related: { box: 'bg-green-50 border-green-200', head: 'text-green-800', sub: 'text-green-700', chip: 'bg-green-100 text-green-700', chipLabel: 'Likely included' },
+  partial: { box: 'bg-amber-50 border-amber-200', head: 'text-amber-800', sub: 'text-amber-700', chip: 'bg-amber-100 text-amber-700', chipLabel: 'Partly included' },
+  unrelated: { box: 'bg-gray-50 border-gray-200', head: 'text-gray-800', sub: 'text-gray-600', chip: 'bg-gray-200 text-gray-700', chipLabel: 'Not related' },
+}
+const LEVEL_DOT: Record<MatchLevel, string> = {
+  high: 'bg-green-500', medium: 'bg-amber-500', low: 'bg-gray-400', none: 'bg-gray-400',
+}
 
 interface Props {
   caseId: string
@@ -201,6 +216,14 @@ export default function FollowUpDetailModal({ caseId, onClose, onChanged }: Prop
   const [note, setNote] = useState('')
   const [snoozeDays, setSnoozeDays] = useState<number | ''>('')
 
+  // Future-booking record viewer (click-through from the booking-found banner)
+  const [showBooking, setShowBooking] = useState(false)
+  // Confirm-as-booked dialog (the "OK to close the case" step)
+  const [confirming, setConfirming] = useState<'booked' | null>(null)
+  // Track bookings we've already re-fetched once (to pick up the AI-refined
+  // verdict that the API computes in the background) so we don't loop.
+  const aiRefetched = useRef<Set<string>>(new Set())
+
   // `silent` refetches (after a save) leave the current content on screen and
   // refresh it in place — without it the body briefly swaps to "Loading…",
   // collapsing the modal height and making it flick off/on.
@@ -233,6 +256,20 @@ export default function FollowUpDetailModal({ caseId, onClose, onChanged }: Prop
     return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = prev }
   }, [onClose])
 
+  // A fast deterministic verdict on an ambiguous booking means the API is
+  // computing the AI-refined verdict in the background — re-fetch once shortly
+  // after to surface it (guarded so it never loops).
+  useEffect(() => {
+    const b = detail?.booking
+    const v = b?.verdict
+    if (!b || !v || v.source !== 'deterministic') return
+    const ambiguous = v.relatedness === 'partial' || v.level === 'medium' || v.level === 'low'
+    if (!ambiguous || aiRefetched.current.has(b.id)) return
+    aiRefetched.current.add(b.id)
+    const t = setTimeout(() => { fetchDetail(true) }, 3500)
+    return () => clearTimeout(t)
+  }, [detail?.booking, fetchDetail])
+
   const afterAction = async (msg: string) => {
     toast.success(msg)
     setOutcomeId(''); setNote(''); setSnoozeDays(''); setChannel('call')
@@ -240,25 +277,42 @@ export default function FollowUpDetailModal({ caseId, onClose, onChanged }: Prop
     onChanged()
   }
 
+  // Closing a case ends the workflow, so dismiss the modal straight after rather
+  // than leaving it open to unmount the booking banner + footer in place (the
+  // collapse-and-recentre that read as a "flick"). The confirmed booking id is
+  // threaded through so the close event can be reconciled against the attributed
+  // booking in the reporting module.
+  const closeWithOutcome = async (outcome_id: string, opts: { bookingId?: string | null; successMsg?: string } = {}) => {
+    try {
+      setSubmitting(true)
+      await api(`/api/v1/follow-ups/${caseId}/close`, {
+        method: 'POST', token,
+        body: { outcome_id, notes: note.trim() || null, booking_id: opts.bookingId ?? null },
+      })
+      toast.success(opts.successMsg || 'Case closed')
+      onChanged()
+      onClose()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to close case')
+      setSubmitting(false)
+    }
+  }
+
   const submitResult = async () => {
     if (!outcomeId && !note.trim() && snoozeDays === '') {
       toast.error('Add a note, an outcome, or a call-back first')
       return
     }
+    if (outcomeId) { await closeWithOutcome(outcomeId); return }
     try {
       setSubmitting(true)
-      if (outcomeId) {
-        await api(`/api/v1/follow-ups/${caseId}/close`, { method: 'POST', token, body: { outcome_id: outcomeId, notes: note || null } })
-        await afterAction('Case closed')
-      } else {
-        await api(`/api/v1/follow-ups/${caseId}/log-call`, {
-          method: 'POST', token,
-          body: { channel: channel === 'call' ? 'phone' : channel, notes: note || null, snooze_days: snoozeDays || null },
-        })
-        const base = channel === 'note' ? 'Note added' : channel === 'call' ? 'Call logged' : channel === 'sms' ? 'SMS logged' : 'Email logged'
-        const snz = snoozeDays !== '' ? SNOOZE_OPTIONS.find((s) => s.value === snoozeDays)?.label.toLowerCase() : null
-        await afterAction(snz ? `${base} — chasing again ${snz}` : base)
-      }
+      await api(`/api/v1/follow-ups/${caseId}/log-call`, {
+        method: 'POST', token,
+        body: { channel: channel === 'call' ? 'phone' : channel, notes: note || null, snooze_days: snoozeDays || null },
+      })
+      const base = channel === 'note' ? 'Note added' : channel === 'call' ? 'Call logged' : channel === 'sms' ? 'SMS logged' : 'Email logged'
+      const snz = snoozeDays !== '' ? SNOOZE_OPTIONS.find((s) => s.value === snoozeDays)?.label.toLowerCase() : null
+      await afterAction(snz ? `${base} — chasing again ${snz}` : base)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save result')
     } finally { setSubmitting(false) }
@@ -274,9 +328,35 @@ export default function FollowUpDetailModal({ caseId, onClose, onChanged }: Prop
     } finally { setSubmitting(false) }
   }
 
-  const quickBooked = () => {
-    const booked = outcomes.find((o) => o.isWon) || outcomes.find((o) => o.name.toLowerCase().includes('book'))
-    if (booked) { setOutcomeId(booked.id); toast.success('Outcome set — press Close case to confirm') }
+  // The outcome to record when an advisor confirms a found booking. The booking
+  // pre-exists (the sweep matched it), so the semantically correct label is
+  // "Already Booked"; fall back to "Booked", then any won outcome.
+  const bookedOutcome =
+    outcomes.find((o) => o.name.toLowerCase() === 'already booked') ||
+    outcomes.find((o) => o.name.toLowerCase() === 'booked') ||
+    outcomes.find((o) => o.isWon) ||
+    null
+
+  // "Confirm as booked" → one decisive action: close as booked and dismiss the
+  // modal. Invoked from the confirm dialog so the advisor explicitly OKs the close.
+  const confirmAsBooked = async () => {
+    if (!bookedOutcome) {
+      toast.error('No "Booked" outcome is configured — add one in Follow-Up Settings first')
+      return
+    }
+    await closeWithOutcome(bookedOutcome.id, { bookingId: detail?.booking?.id || null, successMsg: 'Closed — booked' })
+  }
+
+  // "Not related": don't resume the cadence — drop straight onto the call list
+  // with a clear reason so the customer can be phoned about the deferred work.
+  const bookingUnrelated = async () => {
+    try {
+      setSubmitting(true)
+      await api(`/api/v1/follow-ups/${caseId}/booking-unrelated`, { method: 'POST', token, body: {} })
+      await afterAction('Added to call list — call the customer to discuss')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update')
+    } finally { setSubmitting(false) }
   }
 
   const setItemOutcome = async (itemId: string, value: string) => {
@@ -412,25 +492,84 @@ export default function FollowUpDetailModal({ caseId, onClose, onChanged }: Prop
                 </div>
               )}
 
-              {/* Booking-found banner */}
-              {detail?.booking && !isClosed && (
-                <div className="bg-green-50 border border-green-200 rounded-xl p-4">
-                  <div className="font-semibold text-green-800">Possible booking found</div>
-                  <div className="text-sm text-green-700 mt-1">
-                    This customer has a workshop booking on <strong>{fmtDate(detail.booking.due_date)}</strong>
-                    {detail.booking.jobsheet_number ? ` (jobsheet ${detail.booking.jobsheet_number})` : ''}. Confirm the deferred work is included.
+              {/* Booking-found banner — with relatedness verdict */}
+              {detail?.booking && !isClosed && (() => {
+                const b = detail.booking
+                const v = b.verdict || null
+                const tone = VERDICT_TONE[v?.relatedness || 'related']
+                const repairs = Array.isArray(b.booked_repairs) ? b.booked_repairs : []
+                const moreCount = Math.max(0, repairs.length - 6)
+                const callEmphasis = v?.suggestedAction === 'call'
+                const confirmEmphasis = !v || v.suggestedAction === 'confirm'
+                return (
+                  <div className={`border rounded-xl p-4 ${tone.box}`}>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className={`font-semibold ${tone.head}`}>Possible booking found</div>
+                      {v && (
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${tone.chip}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${LEVEL_DOT[v.level]}`} />
+                          {tone.chipLabel} · {Math.round(v.confidence * 100)}%
+                          {v.source === 'ai' && <span className="opacity-60">· AI</span>}
+                        </span>
+                      )}
+                    </div>
+                    <div className={`text-sm mt-1 ${tone.sub}`}>
+                      Workshop booking on <strong>{fmtDate(b.due_date)}</strong>
+                      {b.jobsheet_number ? ` (jobsheet ${b.jobsheet_number})` : ''}.
+                      {v ? ` ${v.message}` : ' Confirm the deferred work is included.'}
+                    </div>
+
+                    {/* Coverage detail when not a clean match */}
+                    {v && v.relatedness !== 'related' && (v.matchedItems.length > 0 || v.unmatchedItems.length > 0) && (
+                      <div className="mt-2 space-y-0.5 text-xs">
+                        {v.matchedItems.length > 0 && (
+                          <div className="text-green-700">✓ Appears covered: {v.matchedItems.join(', ')}</div>
+                        )}
+                        {v.unmatchedItems.length > 0 && (
+                          <div className={tone.sub}>– Not seen in booking: {v.unmatchedItems.join(', ')}</div>
+                        )}
+                      </div>
+                    )}
+
+                    {repairs.length > 0 && (
+                      <ul className={`text-xs mt-2 list-disc list-inside ${tone.sub}`}>
+                        {repairs.slice(0, 6).map((r, i) => <li key={i}>{r.description || r.code}</li>)}
+                        {moreCount > 0 && <li className="list-none opacity-70">+{moreCount} more booked item{moreCount === 1 ? '' : 's'} (assessed in full)</li>}
+                      </ul>
+                    )}
+
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      <button
+                        onClick={() => setConfirming('booked')}
+                        disabled={submitting}
+                        className={confirmEmphasis
+                          ? 'px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 ring-2 ring-green-300 disabled:opacity-50'
+                          : 'px-3 py-1.5 bg-white border border-green-300 text-green-700 rounded-lg text-sm font-medium hover:bg-green-50 disabled:opacity-50'}
+                      >
+                        Confirm as booked
+                      </button>
+                      <button
+                        onClick={() => setShowBooking(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50"
+                      >
+                        <Icon name="external" className="w-4 h-4" />
+                        View booking
+                      </button>
+                      <button
+                        onClick={bookingUnrelated}
+                        disabled={submitting}
+                        className={callEmphasis
+                          ? 'inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600'
+                          : 'inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50'}
+                        title="Not related to this deferred work — move to the call list to phone the customer"
+                      >
+                        <Icon name="phone" className="w-4 h-4" />
+                        Not related — call customer
+                      </button>
+                    </div>
                   </div>
-                  {Array.isArray(detail.booking.booked_repairs) && detail.booking.booked_repairs.length > 0 && (
-                    <ul className="text-xs text-green-700 mt-2 list-disc list-inside">
-                      {detail.booking.booked_repairs.slice(0, 6).map((r, i) => <li key={i}>{r.description || r.code}</li>)}
-                    </ul>
-                  )}
-                  <div className="flex gap-2 mt-3">
-                    <button onClick={quickBooked} className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700">Confirm as booked</button>
-                    <button onClick={resume} disabled={submitting} className="px-3 py-1.5 border border-green-300 text-green-700 rounded-lg text-sm hover:bg-green-100">Not related — resume</button>
-                  </div>
-                </div>
-              )}
+                )
+              })()}
 
               {/* Closed banner */}
               {isClosed && (
@@ -586,6 +725,56 @@ export default function FollowUpDetailModal({ caseId, onClose, onChanged }: Prop
           </>
         )}
       </div>
+
+      {/* Confirm-as-booked dialog — the explicit "OK to close the case" step */}
+      {confirming === 'booked' && detail?.booking && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => { if (!submitting) setConfirming(null) }} />
+          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-green-100 text-green-600 flex items-center justify-center flex-shrink-0">
+                <Icon name="calendar" className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-base font-semibold text-gray-900">Close this case as booked?</h3>
+                <p className="text-sm text-gray-500 mt-1.5">
+                  Records the deferred work as recovered against the workshop booking on{' '}
+                  <strong className="text-gray-700">{fmtDate(detail.booking.due_date)}</strong>
+                  {detail.booking.jobsheet_number ? ` (jobsheet ${detail.booking.jobsheet_number})` : ''} and closes the follow-up
+                  {bookedOutcome ? <> as <strong className="text-gray-700">{bookedOutcome.name}</strong></> : ''}.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                onClick={() => setConfirming(null)}
+                disabled={submitting}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmAsBooked}
+                disabled={submitting}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700 disabled:opacity-50"
+              >
+                <Icon name="check" className="w-4 h-4" />
+                {submitting ? 'Closing…' : 'Yes, close as booked'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Future-booking record viewer (click-through) */}
+      {showBooking && detail?.booking && (
+        <DmsBookingModal
+          healthCheckId={detail.booking.id}
+          endpoint={`/api/v1/follow-ups/${caseId}/booking`}
+          onClose={() => setShowBooking(false)}
+          onOpenFull={() => window.open(jobPath({ healthCheckId: detail.booking!.id }), '_blank', 'noopener')}
+        />
+      )}
     </div>
   )
 }

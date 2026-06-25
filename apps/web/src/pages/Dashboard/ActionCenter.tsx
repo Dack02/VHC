@@ -23,6 +23,27 @@ const TONE_DOT: Record<'red' | 'amber' | 'blue', string> = {
   blue: '#3f7fd1'
 }
 
+/**
+ * "Due …" label for an arrival row — friendly date (no year) so staleness is obvious.
+ * Date-only DMS imports arrive as midnight UTC, which would render as a misleading
+ * "01:00" (BST); for those we drop the time and show just the date. Real promise times
+ * keep the clock. Anything due before today is flagged in red as overdue/stale.
+ */
+function DueLabel({ iso }: { iso: string }) {
+  const d = new Date(iso)
+  const datePart = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+  const dateOnly = d.getUTCHours() === 0 && d.getUTCMinutes() === 0
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  const startOfToday = new Date()
+  startOfToday.setHours(0, 0, 0, 0)
+  const overdue = d.getTime() < startOfToday.getTime()
+  return (
+    <div className={`text-[12.5px] ${overdue ? 'text-[#cf4a45] font-medium' : 'text-[#7b7f88]'}`}>
+      Due {dateOnly ? datePart : `${datePart} · ${time}`}
+    </div>
+  )
+}
+
 /** Reg-plate chip — IBM Plex Mono on the amber paper background from the design tokens. */
 function PlateChip({ reg }: { reg: string }) {
   return (
@@ -258,9 +279,7 @@ export default function ActionCenter({
                       <div className="text-[12.5px] text-[#7b7f88] truncate">{item.customerName}</div>
                     </div>
                     {(item.dueDate || item.promiseTime) && (
-                      <div className="text-[12.5px] text-[#7b7f88]">
-                        Due {new Date(item.dueDate || item.promiseTime!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </div>
+                      <DueLabel iso={(item.dueDate || item.promiseTime)!} />
                     )}
                     {item.bookedRepairs && item.bookedRepairs.length > 0 && (
                       <div className="text-[11px] text-[#a4a8b0]" title={item.bookedRepairs.map(r => r.description).join(', ')}>

@@ -84,6 +84,9 @@ media.post('/health-checks/:id/results/:resultId/media', authorize(['super_admin
     const contentType = c.req.header('content-type') || ''
     let path: string
     let caption: string | undefined
+    let fileSize: number | null = null
+    let mimeType: string | null = null
+    let originalFilename: string | null = null
 
     if (contentType.includes('multipart/form-data')) {
       // Direct file upload via FormData
@@ -101,10 +104,14 @@ media.post('/health-checks/:id/results/:resultId/media', authorize(['super_admin
 
       // Upload to Supabase storage
       const buffer = await file.arrayBuffer()
+      mimeType = file.type || 'image/jpeg'
+      originalFilename = file.name || null
+      // file.size can be 0 for some Blob sources; fall back to the buffer length
+      fileSize = file.size || buffer.byteLength
       const { error: uploadError } = await supabaseAdmin.storage
         .from(BUCKET_NAME)
         .upload(path, buffer, {
-          contentType: file.type || 'image/jpeg',
+          contentType: mimeType,
           upsert: false
         })
 
@@ -117,6 +124,10 @@ media.post('/health-checks/:id/results/:resultId/media', authorize(['super_admin
       const body = await c.req.json()
       path = body.path
       caption = body.caption
+      // Optional metadata for files uploaded directly to storage via signed URL
+      if (typeof body.fileSize === 'number') fileSize = body.fileSize
+      if (typeof body.mimeType === 'string') mimeType = body.mimeType
+      if (typeof body.filename === 'string') originalFilename = body.filename
 
       if (!path) {
         return c.json({ error: 'Path is required' }, 400)
@@ -136,7 +147,10 @@ media.post('/health-checks/:id/results/:resultId/media', authorize(['super_admin
         media_type: 'photo',
         storage_path: path,
         thumbnail_path: path, // Use same path, Supabase transforms handle thumbnails
-        caption
+        caption,
+        file_size: fileSize,
+        mime_type: mimeType,
+        original_filename: originalFilename
       })
       .select()
       .single()

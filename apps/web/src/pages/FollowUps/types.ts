@@ -62,12 +62,30 @@ export interface FollowUpEvent {
   createdAt: string
 }
 
+export type MatchLevel = 'high' | 'medium' | 'low' | 'none'
+
+// Verdict: does the found booking actually include the deferred work? Computed
+// by the API (deterministic rules + Claude for the ambiguous middle).
+export interface BookingMatchVerdict {
+  level: MatchLevel
+  confidence: number
+  relatedness: 'related' | 'partial' | 'unrelated'
+  message: string
+  matchedItems: string[]
+  partialItems: string[]
+  unmatchedItems: string[]
+  suggestedAction: 'confirm' | 'review' | 'call'
+  basis: string
+  source: 'deterministic' | 'ai'
+}
+
 export interface FollowUpBooking {
   id: string
   due_date: string | null
   promise_time: string | null
   booked_repairs: Array<{ code?: string; description?: string }> | null
   jobsheet_number?: string | null
+  verdict?: BookingMatchVerdict | null
 }
 
 export interface FollowUpDetail {

@@ -1,9 +1,24 @@
 import { Link } from 'react-router-dom'
 import { useReportFilters } from './hooks/useReportFilters'
+import type { GroupBy } from './hooks/useReportFilters'
 import { useReportData } from './hooks/useReportData'
 import ReportFiltersBar from './components/ReportFiltersBar'
 import ExportButton from './components/ExportButton'
 import { formatCurrency, formatPercent, formatNumber, formatDateFull } from './utils/formatters'
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+// Period keys are YYYY-MM-DD: a day, the Monday of a week, or the 1st of a month.
+function periodLabel(dateStr: string, groupBy: GroupBy): string {
+  if (groupBy === 'month') {
+    const [year, month] = dateStr.split('-')
+    return `${MONTH_NAMES[Number(month) - 1]} ${year}`
+  }
+  if (groupBy === 'week') return `w/c ${formatDateFull(dateStr)}`
+  return formatDateFull(dateStr)
+}
+
+const PERIOD_HEADER: Record<GroupBy, string> = { day: 'Date', week: 'Week', month: 'Month' }
 
 interface DailyOverviewDay {
   date: string
@@ -68,8 +83,8 @@ export default function DailyOverview() {
             </svg>
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Daily Overview</h1>
-            <p className="text-gray-500 text-sm mt-0.5">Daily performance, revenue, conversion</p>
+            <h1 className="text-2xl font-bold text-gray-900">Overview Report</h1>
+            <p className="text-gray-500 text-sm mt-0.5">Performance, revenue, conversion</p>
           </div>
         </div>
         <ExportButton
@@ -106,7 +121,7 @@ export default function DailyOverview() {
             <table className="w-full text-xs sm:text-sm">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50">
-                  <th className="sticky left-0 bg-gray-50 z-10 px-3 py-3 text-left font-semibold text-gray-700 whitespace-nowrap">Date</th>
+                  <th className="sticky left-0 bg-gray-50 z-10 px-3 py-3 text-left font-semibold text-gray-700 whitespace-nowrap">{PERIOD_HEADER[filters.groupBy]}</th>
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">Jobs</th>
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">No Show</th>
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">HCs</th>
@@ -125,7 +140,7 @@ export default function DailyOverview() {
                   <tr key={day.date} className={`border-b border-gray-100 ${i % 2 === 1 ? 'bg-gray-50/50' : ''} hover:bg-gray-50`}>
                     <td className="sticky left-0 bg-white z-10 px-3 py-2.5 font-medium text-gray-900 whitespace-nowrap"
                         style={i % 2 === 1 ? { backgroundColor: 'rgb(249 250 251 / 0.5)' } : undefined}>
-                      {formatDateFull(day.date)}
+                      {periodLabel(day.date, filters.groupBy)}
                     </td>
                     <td className="px-3 py-2.5 text-right text-gray-700">{formatNumber(day.jobsQty)}</td>
                     <td className={`px-3 py-2.5 text-right ${day.noShows > 0 ? 'text-red-600 font-medium' : 'text-gray-400'}`}>

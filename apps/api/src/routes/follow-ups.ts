@@ -6,8 +6,16 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
-import { runFollowUpSweep, findFutureBooking } from '../services/follow-up-engine.js'
+import { runFollowUpSweep, findFutureBooking, attributeBookingToFollowUp } from '../services/follow-up-engine.js'
 import { getFollowUpSettings } from '../services/follow-up-settings.js'
+import {
+  scoreBookingRelatednessDeterministic,
+  persistBookingVerdict,
+  bookingMatchHash,
+  type DeferredItemLite,
+  type BookingLite,
+} from '../services/booking-match.js'
+import { DMS_BOOKING_DETAIL_SELECT, mapDmsBookingDetailRow } from '../services/dms-booking-detail.js'
 
 const followUps = new Hono()
 followUps.use('*', authMiddleware)
@@ -296,7 +304,7 @@ followUps.get('/:id', async (c) => {
     if (error || !caseRow) return c.json({ error: 'Follow-up case not found' }, 404)
     const cr = caseRow as any
 
-    const [{ data: items }, { data: events }, { data: timelineSteps }] = await Promise.all([
+    const [{ data: items }, { data: events }, { data: timelineSteps }, { data: matchRow }] = await Promise.all([
       supabaseAdmin
         .from('follow_up_case_items')
         .select('id, repair_item_id, name_snapshot, value_snapshot, due_date_snapshot, rag_snapshot, item_outcome_id, item_outcome:follow_up_outcomes!follow_up_case_items_item_outcome_id_fkey(id, name), repair_item:repair_items(outcome_status, total_inc_vat)')
@@ -314,19 +322,51 @@ followUps.get('/:id', async (c) => {
             .eq('timeline_id', cr.timeline_id)
             .order('step_order', { ascending: true })
         : Promise.resolve({ data: [] }),
+      // Cached booking-match verdict + dismissed bookings (own query so the heavier
+      // worklist select stays lean). Tolerates the columns not existing yet.
+      supabaseAdmin
+        .from('follow_up_cases')
+        .select('booking_match_verdict, booking_match_booking_id, booking_match_hash, dismissed_booking_ids')
+        .eq('id', id)
+        .maybeSingle(),
     ])
+    const cm = (matchRow || {}) as any
 
     // Linked DMS booking (if any) or a live look-up for display
-    let booking = null
+    let booking: any = null
     if (cr.linked_booking_id) {
       const { data: b } = await supabaseAdmin
         .from('health_checks')
-        .select('id, due_date, promise_time, booked_repairs, jobsheet_number')
+        .select('id, due_date, promise_time, booked_repairs, jobsheet_number, booked_service_type, is_mot_booking, notes, estimated_hours')
         .eq('id', cr.linked_booking_id)
         .maybeSingle()
       booking = b
     } else if (cr.customer?.id && cr.vehicle?.id) {
-      booking = await findFutureBooking(auth.orgId, cr.customer.id, cr.vehicle.id)
+      booking = await findFutureBooking(auth.orgId, cr.customer.id, cr.vehicle.id, cm.dismissed_booking_ids || [])
+    }
+
+    // Attach a relatedness verdict: does the booking actually include the deferred
+    // work? Prefer the cached verdict (which may be AI-refined from the sweep);
+    // otherwise score deterministically inline (instant, no LLM on the hot path)
+    // and, when the result is genuinely ambiguous, kick off the AI tier in the
+    // background so a later open shows the refined verdict.
+    if (booking) {
+      const deferredItems: DeferredItemLite[] = (items || []).map((it: any) => ({
+        name: it.name_snapshot, value: it.value_snapshot, rag: it.rag_snapshot,
+      }))
+      const bookingLite = booking as BookingLite
+      const hash = bookingMatchHash(deferredItems, bookingLite)
+      if (cm.booking_match_verdict && cm.booking_match_booking_id === booking.id && cm.booking_match_hash === hash) {
+        booking.verdict = cm.booking_match_verdict
+      } else {
+        const det = scoreBookingRelatednessDeterministic(deferredItems, bookingLite)
+        booking.verdict = det.verdict
+        if (det.ambiguous) {
+          // fire-and-forget — never block the modal on AI
+          persistBookingVerdict(cr.id, auth.orgId, deferredItems, bookingLite, { userId: auth.user.id, allowAI: true })
+            .catch(() => {})
+        }
+      }
     }
 
     return c.json({
@@ -473,7 +513,7 @@ followUps.post('/:id/close', authorize(['super_admin', 'org_admin', 'site_admin'
     const auth = c.get('auth')
     const id = c.req.param('id')
     const body = await c.req.json()
-    const { outcome_id, notes } = body
+    const { outcome_id, notes, booking_id } = body
 
     if (!outcome_id) return c.json({ error: 'outcome_id is required' }, 400)
 
@@ -507,12 +547,26 @@ followUps.post('/:id/close', authorize(['super_admin', 'org_admin', 'site_admin'
       })
       .eq('id', id)
 
+    // Manual "Confirm as booked": booking_id is sent ONLY by that flow, so its
+    // presence is the advisor explicitly marking this booking as covering the
+    // deferred work. Credit it to outreach now (no-op if the matcher was already
+    // confident and auto-attributed it; first-attribution-wins guards re-assignment).
+    if (booking_id) {
+      await attributeBookingToFollowUp(booking_id, id, auth.orgId, Number(caseRow.deferred_value_snapshot) || 0)
+    }
+
     await supabaseAdmin.from('follow_up_events').insert({
       case_id: id,
       organization_id: auth.orgId,
       event_type: 'outcome_set',
       body: `Closed: ${outcome.name}${notes ? ` — ${notes.trim()}` : ''}`,
-      metadata: { outcomeId: outcome_id, outcomeName: outcome.name },
+      metadata: {
+        outcomeId: outcome_id,
+        outcomeName: outcome.name,
+        // Recorded only on a confirmed-booking close, so the conversion (closed-won)
+        // and outreach (attributed booking) reports tie up to the same booking.
+        bookingId: booking_id || null,
+      },
       created_by: auth.user.id,
     })
 
@@ -601,6 +655,122 @@ followUps.post('/:id/resume', authorize(['super_admin', 'org_admin', 'site_admin
   } catch (err) {
     console.error('Resume follow-up error:', err)
     return c.json({ error: 'Failed to resume follow-up' }, 500)
+  }
+})
+
+// GET /api/v1/follow-ups/:id/booking — full DMS detail for the case's booking,
+// so the advisor can open the future booking record from the Follow-Up modal
+// without needing the Booking Diary module.
+followUps.get('/:id/booking', async (c) => {
+  try {
+    const auth = c.get('auth')
+    const id = c.req.param('id')
+    const caseRow = await getCaseForOrg(id, auth.orgId)
+    if (!caseRow) return c.json({ error: 'Follow-up case not found' }, 404)
+
+    let bookingId: string | null = caseRow.linked_booking_id || null
+    if (!bookingId && caseRow.customer_id && caseRow.vehicle_id) {
+      const b = await findFutureBooking(auth.orgId, caseRow.customer_id, caseRow.vehicle_id, caseRow.dismissed_booking_ids || [])
+      bookingId = b?.id || null
+    }
+    if (!bookingId) return c.json({ error: 'No booking linked to this case' }, 404)
+
+    const { data, error } = await supabaseAdmin
+      .from('health_checks')
+      .select(DMS_BOOKING_DETAIL_SELECT)
+      .eq('id', bookingId)
+      .eq('organization_id', auth.orgId)
+      .maybeSingle()
+    if (error) {
+      console.error('Follow-up booking detail error:', error)
+      return c.json({ error: 'Failed to load booking' }, 500)
+    }
+    if (!data) return c.json({ error: 'Booking not found' }, 404)
+    return c.json(mapDmsBookingDetailRow(data))
+  } catch (err) {
+    console.error('Follow-up booking detail error:', err)
+    return c.json({ error: 'Failed to load booking' }, 500)
+  }
+})
+
+// POST /api/v1/follow-ups/:id/booking-unrelated — the advisor has reviewed the
+// found booking and it is NOT related to the deferred work. Instead of resuming
+// the automated cadence, drop the case straight onto the manual call list (with a
+// clear reason) so the customer can be phoned to discuss the outstanding work.
+// The booking is remembered as dismissed so the sweep won't re-pause on it.
+followUps.post('/:id/booking-unrelated', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const id = c.req.param('id')
+    const body = await c.req.json().catch(() => ({}))
+
+    const caseRow = await getCaseForOrg(id, auth.orgId)
+    if (!caseRow) return c.json({ error: 'Follow-up case not found' }, 404)
+    if (caseRow.status === 'closed') return c.json({ error: 'Cannot update a closed case' }, 400)
+
+    // Resolve which booking is being dismissed.
+    let bookingId: string | null = body.booking_id || caseRow.linked_booking_id || null
+    if (!bookingId && caseRow.customer_id && caseRow.vehicle_id) {
+      const b = await findFutureBooking(auth.orgId, caseRow.customer_id, caseRow.vehicle_id, caseRow.dismissed_booking_ids || [])
+      bookingId = b?.id || null
+    }
+    if (!bookingId) return c.json({ error: 'No booking to mark as unrelated' }, 400)
+
+    // Pull a little booking context for the activity note.
+    const { data: bk } = await supabaseAdmin
+      .from('health_checks')
+      .select('due_date, jobsheet_number, follow_up_case_id')
+      .eq('id', bookingId)
+      .eq('organization_id', auth.orgId)
+      .maybeSingle()
+    const dueLabel = bk?.due_date
+      ? new Date(bk.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      : 'an upcoming date'
+    const jsLabel = bk?.jobsheet_number ? ` (jobsheet ${bk.jobsheet_number})` : ''
+
+    const dismissed = Array.from(new Set([...(caseRow.dismissed_booking_ids || []), bookingId]))
+    const now = new Date().toISOString()
+
+    await supabaseAdmin
+      .from('follow_up_cases')
+      .update({
+        status: 'manual',
+        next_action_at: now,
+        linked_booking_id: null,
+        dismissed_booking_ids: dismissed,
+        // Clear the stale verdict — it was for the now-dismissed booking.
+        booking_match_verdict: null,
+        booking_match_level: null,
+        booking_match_source: null,
+        booking_match_booking_id: null,
+        booking_match_hash: null,
+        updated_at: now,
+      })
+      .eq('id', id)
+
+    // Reverse the outreach attribution we stamped on the booking when it was found
+    // (only if it still points at this case) — that booking isn't ours.
+    if (bk?.follow_up_case_id === id) {
+      await supabaseAdmin
+        .from('health_checks')
+        .update({ origin_source: null, follow_up_case_id: null, follow_up_attributed_at: null, follow_up_attributed_value: null, updated_at: now })
+        .eq('id', bookingId)
+        .eq('follow_up_case_id', id)
+    }
+
+    await supabaseAdmin.from('follow_up_events').insert({
+      case_id: id,
+      organization_id: auth.orgId,
+      event_type: 'status_change',
+      body: `Future booking on ${dueLabel}${jsLabel} is NOT related to this deferred work — added to the call list to phone the customer and discuss.`,
+      metadata: { to: 'manual', reason: 'booking_unrelated', bookingId, dueDate: bk?.due_date || null, jobsheetNumber: bk?.jobsheet_number || null },
+      created_by: auth.user.id,
+    })
+
+    return c.json({ success: true })
+  } catch (err) {
+    console.error('Mark booking unrelated error:', err)
+    return c.json({ error: 'Failed to update follow-up' }, 500)
   }
 })
 

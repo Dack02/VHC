@@ -25,6 +25,7 @@ import { emitToOrganization, emitToHealthCheck, WS_EVENTS } from './websocket.js
 import { gbp, fmtDate, startOfDay, addDays, todayStart, calendarDate, dateStr, chunk, render, followUpDryRun } from './follow-up-utils.js'
 import { buildEmail, type CaseItemSnapshot } from './follow-up-email.js'
 import { getFollowUpSettings, withinSendWindow, nowInOrgTz, type FollowUpSettings } from './follow-up-settings.js'
+import { persistBookingVerdict, isConfidentlyRelated, type BookingMatchVerdict } from './booking-match.js'
 
 // ---------------------------------------------------------------------------
 // Tuning constants
@@ -96,6 +97,7 @@ interface CaseRow {
   item_count: number | null
   last_contacted_at: string | null
   created_at: string
+  dismissed_booking_ids?: string[] | null
 }
 
 // CaseItemSnapshot (the email item shape) is defined in ./follow-up-email.ts.
@@ -164,18 +166,25 @@ export interface FutureBooking {
   due_date: string | null
   promise_time: string | null
   booked_repairs: unknown
+  // Richer content used by the relatedness matcher (booking-match.ts).
+  booked_service_type?: string | null
+  is_mot_booking?: boolean | null
+  notes?: string | null
+  estimated_hours?: number | null
+  jobsheet_number?: string | null
 }
 
 export async function findFutureBooking(
   organizationId: string,
   customerId: string | null,
-  vehicleId: string | null
+  vehicleId: string | null,
+  excludeBookingIds: string[] = []
 ): Promise<FutureBooking | null> {
   if (!customerId || !vehicleId) return null
   const todayStr = todayStart().toISOString().slice(0, 10)
   const { data, error } = await supabaseAdmin
     .from('health_checks')
-    .select('id, due_date, promise_time, booked_repairs')
+    .select('id, due_date, promise_time, booked_repairs, booked_service_type, is_mot_booking, notes, estimated_hours, jobsheet_number')
     .eq('organization_id', organizationId)
     .eq('customer_id', customerId)
     .eq('vehicle_id', vehicleId)
@@ -184,12 +193,16 @@ export async function findFutureBooking(
     .gte('due_date', todayStr)
     .is('deleted_at', null)
     .order('due_date', { ascending: true })
-    .limit(1)
+    .limit(10)
   if (error) {
     logger.error('Booking pre-check failed', { error: error.message, organizationId })
     return null
   }
-  return (data && data[0]) || null
+  const rows = (data || []) as FutureBooking[]
+  // Skip bookings an advisor already flagged as NOT related to this case, so the
+  // sweep doesn't re-pause on the same unrelated booking.
+  const usable = excludeBookingIds.length ? rows.filter((r) => !excludeBookingIds.includes(r.id)) : rows
+  return usable[0] || null
 }
 
 // ---------------------------------------------------------------------------
@@ -688,6 +701,34 @@ async function executeStep(c: CaseRow, step: TimelineStep, allSteps: TimelineSte
     .lt('current_step_order', step.step_order)
 }
 
+/**
+ * Stamp the durable outreach-attribution marker on a booking (health_check) so the
+ * Booking Diary flags it and the outreach report credits recovered £ — even after
+ * the case closes. First-attribution-wins: the `.is(null)` guard means a booking
+ * already credited to another case is never reassigned. Only called when we KNOW the
+ * booking is related — the matcher is confident (sweep) or an advisor confirmed it.
+ */
+export async function attributeBookingToFollowUp(
+  bookingId: string,
+  caseId: string,
+  organizationId: string,
+  attributedValue: number,
+  nowIso: string = new Date().toISOString()
+): Promise<void> {
+  await supabaseAdmin
+    .from('health_checks')
+    .update({
+      origin_source: 'follow_up',
+      follow_up_case_id: caseId,
+      follow_up_attributed_at: nowIso,
+      follow_up_attributed_value: attributedValue,
+      updated_at: nowIso,
+    })
+    .eq('id', bookingId)
+    .eq('organization_id', organizationId)
+    .is('follow_up_case_id', null)
+}
+
 // ---------------------------------------------------------------------------
 // Process one due case
 // ---------------------------------------------------------------------------
@@ -698,7 +739,7 @@ async function processCase(c: CaseRow, tlCache: Map<string, Timeline | null>, se
   // 1. Resolution check — are any snapshot items still deferred?
   const { data: caseItems } = await supabaseAdmin
     .from('follow_up_case_items')
-    .select('repair_item_id')
+    .select('repair_item_id, name_snapshot, value_snapshot, rag_snapshot')
     .eq('case_id', c.id)
   const itemIds = (caseItems || []).map((ci) => ci.repair_item_id)
   if (itemIds.length > 0) {
@@ -714,35 +755,39 @@ async function processCase(c: CaseRow, tlCache: Map<string, Timeline | null>, se
     }
   }
 
-  // 2. DMS booking pre-check
-  const booking = await findFutureBooking(org, c.customer_id, c.vehicle_id)
+  // 2. DMS booking pre-check (skipping any booking the advisor flagged unrelated)
+  const booking = await findFutureBooking(org, c.customer_id, c.vehicle_id, c.dismissed_booking_ids || [])
   if (booking) {
     const nowIso = new Date().toISOString()
     await supabaseAdmin
       .from('follow_up_cases')
       .update({ status: 'booking_found', linked_booking_id: booking.id, next_action_at: nowIso, updated_at: nowIso })
       .eq('id', c.id)
-    // Attribute the booking to outreach (auto-on-detection). linked_booking_id is
-    // the canonical case→booking pointer; this stamps the durable reverse marker
-    // on the booking so the diary can flag it and reports can credit recovered £
-    // even after the case closes. First-attribution-wins (is null guard) so a
-    // booking already credited to another case isn't reassigned.
-    await supabaseAdmin
-      .from('health_checks')
-      .update({
-        origin_source: 'follow_up',
-        follow_up_case_id: c.id,
-        follow_up_attributed_at: nowIso,
-        follow_up_attributed_value: c.deferred_value_snapshot ?? 0,
-        updated_at: nowIso,
-      })
-      .eq('id', booking.id)
-      .is('follow_up_case_id', null)
     await logEvent(c.id, org, 'booking_found', {
       channel: 'system',
       body: `Existing booking found for ${fmtDate(booking.due_date)} — paused for confirmation`,
       metadata: { bookingId: booking.id, dueDate: booking.due_date, bookedRepairs: booking.booked_repairs },
     })
+    // Score whether the booking actually includes the deferred work (deterministic
+    // + Claude for the ambiguous middle) and cache the verdict on the case. Best-
+    // effort: never let a matcher/AI failure break the sweep.
+    let verdict: BookingMatchVerdict | null = null
+    try {
+      const deferredItems = (caseItems || []).map((ci) => ({
+        name: ci.name_snapshot, value: ci.value_snapshot, rag: ci.rag_snapshot,
+      }))
+      verdict = await persistBookingVerdict(c.id, org, deferredItems, booking, { allowAI: true })
+    } catch (e) {
+      logger.warn('Follow-up: booking verdict failed', { caseId: c.id, error: String(e) })
+    }
+    // Outreach attribution is GATED on confidence: only auto-credit the booking to
+    // the follow-up when the matcher is sure it includes the deferred work. Anything
+    // ambiguous stays unattributed until an advisor manually confirms via "Confirm as
+    // booked" (handled in the /close route). linked_booking_id (set above) is just the
+    // case→booking pointer for the modal — it does NOT credit recovered £; this does.
+    if (isConfidentlyRelated(verdict)) {
+      await attributeBookingToFollowUp(booking.id, c.id, org, c.deferred_value_snapshot ?? 0, nowIso)
+    }
     return
   }
 

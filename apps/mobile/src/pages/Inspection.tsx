@@ -15,6 +15,7 @@ import { MeasurementInput } from '../components/MeasurementInput'
 import { SelectInput } from '../components/SelectInput'
 import { MultiSelectInput } from '../components/MultiSelectInput'
 import { Badge } from '../components/Badge'
+import { MotHistory } from '../components/MotHistory'
 import { db } from '../lib/db'
 import { ReasonSelector } from '../components/ReasonSelector'
 import { LocationPicker } from '../components/LocationPicker'
@@ -888,6 +889,14 @@ export function Inspection() {
       {/* Section items or MRI Scan tab */}
       <main className="flex-1 p-4 space-y-3 overflow-auto pb-24">
         {id && <JobTimeSummary healthCheckId={id} />}
+
+        {job?.vehicle?.id && (
+          <MotHistory
+            vehicleId={job.vehicle.id}
+            registration={job.vehicle.registration}
+            token={session?.access_token}
+          />
+        )}
 
         {error && (
           <div className="bg-rag-red-bg text-rag-red p-4 mb-4">{error}</div>

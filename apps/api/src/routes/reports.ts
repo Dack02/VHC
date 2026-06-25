@@ -482,6 +482,21 @@ function groupByPeriod(healthChecks: any[], groupBy: 'day' | 'week' | 'month', h
   return Object.values(grouped).sort((a, b) => a.period.localeCompare(b.period))
 }
 
+// Bucket a YYYY-MM-DD day key into a day/week/month period key.
+// week → Monday of that week; month → first of the month. All keys stay
+// YYYY-MM-DD format so they continue to sort lexically.
+function periodKeyForDay(dayKey: string, groupBy: 'day' | 'week' | 'month'): string {
+  if (groupBy === 'month') return `${dayKey.slice(0, 7)}-01`
+  if (groupBy === 'week') {
+    // Computed in UTC to avoid timezone drift on the date-only key
+    const d = new Date(`${dayKey}T00:00:00Z`)
+    const dow = d.getUTCDay() // 0=Sun..6=Sat
+    d.setUTCDate(d.getUTCDate() + (dow === 0 ? -6 : 1 - dow))
+    return d.toISOString().split('T')[0]
+  }
+  return dayKey
+}
+
 // Helper: Calculate per-technician metrics
 function calculateTechnicianMetrics(healthChecks: any[]) {
   const techMetrics: Record<string, {
@@ -3201,7 +3216,8 @@ reports.get('/mri-performance', authorize(['super_admin', 'org_admin', 'site_adm
 reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
   try {
     const auth = c.get('auth')
-    const { date_from, date_to, site_id } = c.req.query()
+    const { date_from, date_to, site_id, group_by = 'day' } = c.req.query()
+    const groupBy = (['day', 'week', 'month'].includes(group_by) ? group_by : 'day') as 'day' | 'week' | 'month'
 
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
     thirtyDaysAgo.setHours(0, 0, 0, 0)
@@ -3350,9 +3366,11 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
     for (const hc of healthChecks) {
       // Use due_date if set, otherwise fall back to created_at
       // due_date is date-only (YYYY-MM-DD), created_at is ISO timestamp
-      const dateKey = hc.due_date
+      const dayKey = hc.due_date
         ? hc.due_date.split('T')[0]
         : new Date(hc.created_at).toISOString().split('T')[0]
+      // Bucket into the requested period (day / week / month)
+      const dateKey = periodKeyForDay(dayKey, groupBy)
 
       if (!dayMap[dateKey]) {
         dayMap[dateKey] = {
@@ -3521,6 +3539,7 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
 
     return c.json({
       period: { from: startDate, to: endDate },
+      groupBy,
       days,
       totals,
     })
@@ -3534,7 +3553,8 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
 reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
   try {
     const auth = c.get('auth')
-    const { date_from, date_to, site_id } = c.req.query()
+    const { date_from, date_to, site_id, group_by = 'day' } = c.req.query()
+    const groupBy = (['day', 'week', 'month'].includes(group_by) ? group_by : 'day') as 'day' | 'week' | 'month'
 
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
     thirtyDaysAgo.setHours(0, 0, 0, 0)
@@ -3613,9 +3633,10 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
     }> = {}
 
     for (const hc of healthChecks) {
-      const dateKey = hc.due_date
+      const dayKey = hc.due_date
         ? hc.due_date.split('T')[0]
         : new Date(hc.created_at).toISOString().split('T')[0]
+      const dateKey = periodKeyForDay(dayKey, groupBy)
       if (!dayMap[dateKey]) {
         dayMap[dateKey] = { jobsQty: 0, noShows: 0, hcQty: 0, sentQty: 0, totalIdentified: 0, totalSold: 0, mriIdentified: 0, mriSold: 0, redIdentified: 0, redSold: 0, amberIdentified: 0, amberSold: 0 }
       }
@@ -3676,7 +3697,8 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
       }
     }
 
-    const csvHeaders = ['Date', 'Jobs', 'No Shows', 'HCs', 'Conversion %', 'Send %', 'Identified', 'Sold', 'MRI Identified', 'MRI Sold', '% Red Sold', '% Amber Sold']
+    const periodHeader = groupBy === 'week' ? 'Week Starting' : groupBy === 'month' ? 'Month' : 'Date'
+    const csvHeaders = [periodHeader, 'Jobs', 'No Shows', 'HCs', 'Conversion %', 'Send %', 'Identified', 'Sold', 'MRI Identified', 'MRI Sold', '% Red Sold', '% Amber Sold']
     const csvRows = Object.entries(dayMap)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, d]) => {

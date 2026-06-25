@@ -199,6 +199,18 @@ function toE164(m?: string | null): string | null {
   return s
 }
 
+// Best human-readable label for a booked-repair line. DMS imports often leave the
+// repair `code` as a bare letter ("A") and put the actual work on the labour line,
+// so fall back description → labour descriptions → code.
+function bookedRepairLabel(r: {
+  code?: string | null; description?: string | null; labourItems?: Array<{ description?: string | null }> | null
+}): string {
+  const labour = Array.isArray(r.labourItems)
+    ? r.labourItems.map((l) => (l?.description || '').trim()).filter(Boolean)
+    : []
+  return (r.description || '').trim() || labour.join(' · ') || (r.code || '').trim() || '—'
+}
+
 export default function FollowUpDetailModal({ caseId, onClose, onChanged }: Props) {
   const { session, user } = useAuth()
   const toast = useToast()
@@ -533,9 +545,15 @@ export default function FollowUpDetailModal({ caseId, onClose, onChanged }: Prop
 
                     {repairs.length > 0 && (
                       <ul className={`text-xs mt-2 list-disc list-inside ${tone.sub}`}>
-                        {repairs.slice(0, 6).map((r, i) => <li key={i}>{r.description || r.code}</li>)}
+                        {repairs.slice(0, 6).map((r, i) => <li key={i}>{bookedRepairLabel(r)}</li>)}
                         {moreCount > 0 && <li className="list-none opacity-70">+{moreCount} more booked item{moreCount === 1 ? '' : 's'} (assessed in full)</li>}
                       </ul>
+                    )}
+
+                    {b.notes && (
+                      <p className={`text-xs mt-2 line-clamp-2 ${tone.sub}`}>
+                        <span className="font-medium">Booking note:</span> {b.notes}
+                      </p>
                     )}
 
                     <div className="flex flex-wrap gap-2 mt-3">

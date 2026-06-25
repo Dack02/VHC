@@ -229,7 +229,10 @@ function bookingLines(booking: BookingLite): BookingLine[] {
   // Low-trust fallbacks — a generic service type / free-text note can hint, but
   // must never on its own confirm a specific repair.
   if (booking.booked_service_type) lines.push({ norm: normalizeWorkText(booking.booked_service_type), trust: 'low' })
-  if (booking.notes) lines.push({ norm: normalizeWorkText(String(booking.notes).split('\n')[0]), trust: 'low' })
+  // Full booking notes (capped) — the real work is often only here (e.g. a bare
+  // "A" repair code with "Warning on dash, hill assist malfunction" in the notes).
+  // Low-trust, so notes hint but never on their own confirm a specific repair.
+  if (booking.notes) lines.push({ norm: normalizeWorkText(String(booking.notes).slice(0, 1000)), trust: 'low' })
   return lines
 }
 
@@ -456,7 +459,7 @@ ${itemLines}
 WORKSHOP BOOKING (source: dealer DMS import):
 service_type: ${booking.booked_service_type || '(unknown)'}
 is_mot_booking: ${booking.is_mot_booking ? 'true' : 'false'}
-notes(first line): ${booking.notes ? String(booking.notes).split('\n')[0] : '(none)'}
+notes: ${booking.notes ? String(booking.notes).slice(0, 600) : '(none)'}
 booked_repairs:
 ${repairLines}`
 }
@@ -596,7 +599,7 @@ export function bookingMatchHash(items: DeferredItemLite[], booking: BookingLite
     bookingId: booking.id,
     serviceType: booking.booked_service_type || null,
     mot: !!booking.is_mot_booking,
-    notes: booking.notes ? String(booking.notes).split('\n')[0] : null,
+    notes: booking.notes ? String(booking.notes).slice(0, 1000) : null,
     repairs: parseRepairs(booking).map((r) => ({
       d: r.description || null, c: r.code || null, n: r.notes || null,
       l: (r.labourItems || []).map((x) => x.description || null),

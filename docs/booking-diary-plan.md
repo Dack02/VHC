@@ -5,10 +5,14 @@
 > cars. Click a day to drill into every booking. Unifies GMS-native jobsheets **and**
 > Gemini-DMS-imported bookings into one feed.
 
-Status: **P1 built, typechecked, validated against dev data — pending deploy** (2026-06-25).
+Status: **P1 built + DEPLOYED to dev; backend verified end-to-end on live data. Backfill migration + full UI session-test outstanding** (2026-06-25).
 
 ## Build status (P1)
-- Migration `supabase/migrations/20260625120000_booking_diary.sql` — new columns, `vw_diary_bookings` view, `diary_available_hours` / `diary_day_summary` / `diary_day_bookings` RPCs. **Written; NOT yet applied to dev** (must go via the deploy pipeline, not MCP, to avoid version drift).
+- Migration `supabase/migrations/20260625120000_booking_diary.sql` — new columns, `vw_diary_bookings` view, `diary_available_hours` / `diary_day_summary` / `diary_day_bookings` RPCs. **Committed (b0c7ee2) + DEPLOYED to dev** (Deploy to Dev pipeline green; migration applied cleanly).
+- Migration `supabase/migrations/20260625130000_backfill_dms_mot.sql` — best-effort backfill of `is_mot_booking` for pre-patch DMS rows (390/1353 on dev match the `\bmot\b` signal). **Written, NOT yet pushed** — until it deploys, historical MOT counts read 0.
+- **Verified on live dev data:** all 3 RPCs return correct results — `diary_day_summary` (per-day jobs/booked/available/flags, e.g. 2026-02-13 = 22 jobs, 36.5/59.5h), `diary_day_bookings` (real notes-derived descriptions, waiting/loan flags, hours, health-check routeTarget), `diary_available_hours` (59.5h from techs). View handles both branches + dedup. API + web `tsc` clean; web `vite build` clean.
+- **Known data nuances (not bugs):** historical DMS imports stored date-only `due_date` → diary shows `00:00` times (real future bookings carry proper times); MOT counts stay 0 until the backfill migration deploys.
+- **Outstanding:** push the backfill migration; verify the `/diary` page in-browser with a logged-in dev session (Railway API/web redeploy on push).
 - Importer: `gemini-osi.ts` now captures top-level `Duration` (hours) + a `durationHours` field; `dms-import.ts` persists `estimated_hours`, `booked_service_type`, `is_mot_booking` (inferred from `\bmot\b` in booked work / notes).
 - API: `apps/api/src/routes/booking-diary.ts` (`/summary`, `/day`), mounted at `/api/v1/booking-diary`; gated `requireModule('booking_diary')` + `authorize(advisor+)`.
 - Web: `apps/web/src/pages/BookingDiary/` (page + `useDiaryData` hooks + types), route `/diary`, nav entry, new `booking_diary` module (defaultOn) in both `lib/modules.ts` registries.

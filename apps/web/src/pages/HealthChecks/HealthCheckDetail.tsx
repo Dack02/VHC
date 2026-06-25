@@ -29,6 +29,7 @@ import { JobTimeSummary, type JobTimeData } from '../../components/JobTimeSummar
 import WorkshopNotesPanel from '../../components/WorkshopNotesPanel'
 import { MotHistoryPanel } from './components/MotHistoryPanel'
 import BookedWorkPanel from './components/BookedWorkPanel'
+import CustomerInsightsBanner from '../../components/CustomerInsightsBanner'
 import { useModules } from '../../contexts/ModulesContext'
 
 // Hook for online/offline detection
@@ -855,6 +856,11 @@ export default function HealthCheckDetail() {
             ))}
           </nav>
         </div>
+      </div>
+
+      {/* Smart banner — staff-facing customer/vehicle cues */}
+      <div className="px-6 pt-4">
+        <CustomerInsightsBanner customerId={healthCheck.vehicle?.customer?.id} vehicleId={healthCheck.vehicle_id} excludeHealthCheckId={id} />
       </div>
 
       {/* Tab Content */}

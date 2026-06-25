@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import { getCustomerInsights } from '../services/customer-insights.js'
 
 const customers = new Hono()
 
@@ -302,6 +303,24 @@ customers.get('/:id/stats', authorize(['super_admin', 'org_admin', 'site_admin',
   } catch (error) {
     console.error('Get customer stats error:', error)
     return c.json({ error: 'Failed to get customer stats' }, 500)
+  }
+})
+
+// GET /api/v1/customers/:id/insights - Smart-banner data (new/lapsed/at-risk, deferred
+// work, MOT). Powers the shared <CustomerInsightsBanner> on Estimate/Jobsheet/VHC pages.
+customers.get('/:id/insights', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const { vehicle_id, exclude_hc } = c.req.query()
+    const insights = await getCustomerInsights(auth.orgId, id, {
+      vehicleId: vehicle_id || null,
+      excludeHealthCheckId: exclude_hc || null
+    })
+    return c.json(insights)
+  } catch (error) {
+    console.error('Get customer insights error:', error)
+    return c.json({ error: 'Failed to get customer insights' }, 500)
   }
 })
 

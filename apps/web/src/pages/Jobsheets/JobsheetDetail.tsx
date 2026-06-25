@@ -7,6 +7,7 @@ import { api, User, TimelineEvent } from '../../lib/api'
 import ComposeMessageModal from '../../components/ComposeMessageModal'
 import FollowUpDetailModal from '../FollowUps/FollowUpDetailModal'
 import WorkDetailsPanel from './WorkDetailsPanel'
+import CustomerInsightsBanner from '../../components/CustomerInsightsBanner'
 import { CheckInTab } from '../HealthChecks/tabs/CheckInTab'
 import { MriScanSection } from '../HealthChecks/components/MriScanSection'
 import { MriTab } from '../HealthChecks/tabs/MriTab'
@@ -364,6 +365,9 @@ export default function JobsheetDetail() {
           </div>
         </div>
       </div>
+
+      {/* Smart banner — staff-facing customer/vehicle cues */}
+      <CustomerInsightsBanner customerId={js.customer?.id} vehicleId={js.vehicle?.id} excludeHealthCheckId={js.healthCheck?.id} className="mb-4" />
 
       {/* Tab nav */}
       <div className="flex gap-1 border-b border-gray-200 mb-5 overflow-x-auto">

@@ -6,6 +6,7 @@ import { api, User } from '../../lib/api'
 import { useToast } from '../../contexts/ToastContext'
 import WorkDetailsPanel from '../Jobsheets/WorkDetailsPanel'
 import CustomerCardModal from '../Jobsheets/components/CustomerCardModal'
+import CustomerInsightsBanner from '../../components/CustomerInsightsBanner'
 
 interface Estimate {
   id: string
@@ -257,6 +258,9 @@ export default function EstimateDetail() {
           )
         )}
       </div>
+
+      {/* Smart banner — staff-facing customer/vehicle cues */}
+      <CustomerInsightsBanner customerId={est.customer?.id} vehicleId={est.vehicle?.id} className="mb-4" />
 
       {/* Tab nav */}
       <div className="flex gap-1 border-b border-gray-200 mb-5">

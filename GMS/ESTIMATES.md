@@ -1,8 +1,8 @@
 # GMS — Estimates module (design / plan)
 
-Status: **P0–P3 BUILT (uncommitted on `dev`, 2026-06-26)** — P1+P2 migrations DEPLOYED to cloud dev
-(verified: estimates table, repair_items.estimate_id, 4 settings cols, comm_logs/activities estimate_id,
-ref trigger fn all present). P3 adds NO migration. Companion to `GMS/JOBSHEET.md`. Ships **off by default**.
+Status: **P0–P4 BUILT — the initiative is feature-complete (uncommitted on `dev`, 2026-06-26).**
+P1+P2 migrations DEPLOYED to cloud dev (verified live). P3 + P4 add NO migration. Companion to
+`GMS/JOBSHEET.md`. Ships **off by default**.
 
 ## Build status
 - **P0 (Documents nav) — DONE.** Expandable "Documents" nav group (Jobsheets + Estimates,
@@ -49,10 +49,20 @@ ref trigger fn all present). P3 adds NO migration. Companion to `GMS/JOBSHEET.md
   Jobsheet" button + modal on EstimateDetail (line selection, due-in date/time, service type,
   advisor, booking notes; defaults approved-only when accepted/partial) → navigates to the new
   jobsheet. Garage-Hive "Make Jobsheet" / "Copy Authorised Lines" pattern. tsc(api+web)+web build green.
-- **Not yet built (P4):** shared smart banners (the [[estimates-module-initiative]] 4-badge
-  `<CustomerInsightsBanner>` across Estimate/Jobsheet/VHC). See §6 phasing.
-- **Go-live now unblocked for P1–P3:** super-admin Force-On `estimates` (+ `jobsheets` for
-  conversion) for the org; real SMS/email needs Railway TWILIO_*/RESEND_* env.
+- **P4 (Smart banners) — DONE. No migration.** Shared `apps/web/src/components/CustomerInsightsBanner.tsx`
+  (conditional badge strip — Salesforce "Dynamic Highlights"; severity-ordered safety→commercial→lifecycle;
+  icon+text, RAG tints; renders nothing when no trigger fires; staff-only — not on the customer portal/PDF)
+  rendered on **EstimateDetail + JobsheetDetail + HealthCheckDetail**. Backed by one endpoint
+  `GET /api/v1/customers/:id/insights?vehicle_id=&exclude_hc=` → `services/customer-insights.ts`
+  (`getCustomerInsights`), reusing the user's `loadJobsheetExtras` query patterns. 4 build-first badges:
+  **New customer** (0 prior visits), **Lapsed/At-risk** (tiered 9/12/18mo, shows last-visit date; "Regular
+  customer" wording when ≥3 prior visits), **£X advised work outstanding** (deferred repair_items + follow_up
+  case deep-link), **MOT due/expired** (vehicles.mot_expiry_date/status). VIP/spend + service-due + recall
+  deferred (need new compute). Thresholds are constants in the service (easy to make org-configurable later).
+  Verified vs dev data: MOT-expired ×2, deferred ×577, new-customer all fire; lapsed=0 on dev only because
+  all dev visits are recent (<9mo) — logic sound, fires on prod historical data. tsc(api+web)+web build green.
+- **Go-live (whole feature P1–P4):** super-admin Force-On `estimates` (+ `jobsheets` for conversion) for the
+  org; real SMS/email needs Railway TWILIO_*/RESEND_* env. No further migrations pending.
 
 ---
 

@@ -11,6 +11,7 @@ import {
   renderSmsMessage,
   TemplateContext
 } from './template-renderer.js'
+import { getOrganizationBranding } from './email.js'
 import type { TemplateType } from './default-templates.js'
 
 // Legacy: Environment-based credentials for backward compatibility
@@ -191,6 +192,9 @@ export async function sendHealthCheckReadySms(
     'sms'
   )
 
+  // Resolve the dealership phone (Org Settings) so {{dealershipPhone}} renders in SMS
+  const branding = organizationId ? await getOrganizationBranding(organizationId) : undefined
+
   // Build context for template rendering
   const firstName = customerName.split(' ')[0]
   const context: TemplateContext = {
@@ -200,6 +204,7 @@ export async function sendHealthCheckReadySms(
     vehicleMakeModel: vehicleMakeModel || '',
     publicUrl,
     dealershipName,
+    dealershipPhone: branding?.phone,
     repairItemsCount: repairItemsCount || 0,
     quoteTotalIncVat: quoteTotalIncVat || 0
   }
@@ -229,6 +234,9 @@ export async function sendReminderSms(
   // Get customizable template
   const template = await getOrganizationTemplate(organizationId, templateType, 'sms')
 
+  // Resolve the dealership phone (Org Settings) so {{dealershipPhone}} renders in SMS
+  const branding = organizationId ? await getOrganizationBranding(organizationId) : undefined
+
   // Build context for template rendering
   const firstName = customerName.split(' ')[0]
   const context: TemplateContext = {
@@ -238,6 +246,7 @@ export async function sendReminderSms(
     vehicleMakeModel: '',
     publicUrl,
     dealershipName,
+    dealershipPhone: branding?.phone,
     hoursRemaining: hoursRemaining || 0
   }
 
@@ -266,6 +275,9 @@ export async function sendAuthorizationConfirmationSms(
     'sms'
   )
 
+  // Resolve the dealership phone (Org Settings) so {{dealershipPhone}} renders in SMS
+  const branding = organizationId ? await getOrganizationBranding(organizationId) : undefined
+
   // Build context for template rendering
   const firstName = customerName.split(' ')[0]
   const context: TemplateContext = {
@@ -275,6 +287,7 @@ export async function sendAuthorizationConfirmationSms(
     vehicleMakeModel: '',
     publicUrl: '',
     dealershipName,
+    dealershipPhone: branding?.phone,
     approvedCount: approvedCount || 0,
     authorizedTotal: authorizedTotal || 0
   }

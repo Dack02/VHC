@@ -11,6 +11,7 @@
  * - {{vehicleMakeModel}} - Make and model (e.g., "BMW 3 Series")
  * - {{publicUrl}} - Customer link to view health check
  * - {{dealershipName}} - Organization/site name
+ * - {{dealershipPhone}} - Dealership phone number (from Org Settings)
  * - {{redCount}} - Number of red (urgent) items
  * - {{amberCount}} - Number of amber (advisory) items
  * - {{greenCount}} - Number of green (passed) items
@@ -141,6 +142,7 @@ export const AVAILABLE_PLACEHOLDERS = [
   },
   { key: 'publicUrl', label: 'Link', description: 'Customer link to view health check' },
   { key: 'dealershipName', label: 'Dealership', description: 'Organization name' },
+  { key: 'dealershipPhone', label: 'Phone', description: 'Dealership phone (from Org Settings)' },
   { key: 'redCount', label: 'Red Items', description: 'Number of urgent items' },
   { key: 'amberCount', label: 'Amber Items', description: 'Number of advisory items' },
   { key: 'greenCount', label: 'Green Items', description: 'Number of passed items' },

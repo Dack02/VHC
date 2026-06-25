@@ -237,7 +237,7 @@ export async function sendHealthCheckReadyEmail(
   quoteTotalIncVat?: number
 ): Promise<EmailResult> {
   // Get organization branding
-  const branding = organizationId
+  const branding: OrganizationBranding = organizationId
     ? await getOrganizationBranding(organizationId)
     : { primaryColor: '#3B82F6', organizationName: dealershipName }
 
@@ -257,7 +257,7 @@ export async function sendHealthCheckReadyEmail(
     vehicleMakeModel,
     publicUrl,
     dealershipName: branding.organizationName || dealershipName,
-    dealershipPhone,
+    dealershipPhone: branding.phone || dealershipPhone,
     redCount,
     amberCount,
     greenCount,
@@ -307,7 +307,7 @@ export async function sendReminderEmail(
   organizationId?: string
 ): Promise<EmailResult> {
   // Get organization branding
-  const branding = organizationId
+  const branding: OrganizationBranding = organizationId
     ? await getOrganizationBranding(organizationId)
     : { primaryColor: '#3B82F6', organizationName: dealershipName }
 
@@ -327,7 +327,7 @@ export async function sendReminderEmail(
     vehicleMakeModel: '',
     publicUrl,
     dealershipName: branding.organizationName || dealershipName,
-    dealershipPhone,
+    dealershipPhone: branding.phone || dealershipPhone,
     hoursRemaining: hoursRemaining || 0
   }
 
@@ -374,7 +374,7 @@ export async function sendAuthorizationConfirmationEmail(
   organizationId?: string
 ): Promise<EmailResult> {
   // Get organization branding
-  const branding = organizationId
+  const branding: OrganizationBranding = organizationId
     ? await getOrganizationBranding(organizationId)
     : { primaryColor: '#3B82F6', organizationName: dealershipName }
 
@@ -394,7 +394,7 @@ export async function sendAuthorizationConfirmationEmail(
     vehicleMakeModel: '',
     publicUrl: '',
     dealershipName: branding.organizationName || dealershipName,
-    dealershipPhone,
+    dealershipPhone: branding.phone || dealershipPhone,
     approvedCount: authorizedItems.length,
     authorizedTotal: totalAuthorized
   }
@@ -444,23 +444,34 @@ export async function getOrganizationBranding(organizationId: string): Promise<O
   }
 
   try {
+    // Branding lives in the organization_settings table — that's where the Org Settings
+    // page writes logo/colour/phone/email/website. The legacy organizations.settings JSON
+    // column is never populated for branding, so reading it left every value blank.
     const { data: org } = await supabaseAdmin
       .from('organizations')
-      .select('name, settings')
+      .select('name, organization_settings(logo_url, primary_color, phone, email, website)')
       .eq('id', organizationId)
       .single()
 
     if (!org) return defaultBranding
 
-    const settings = org.settings as Record<string, unknown> | null
+    // PostgREST returns the embed as an array; normalise the bare-object case too.
+    const rel = (org as { organization_settings?: unknown }).organization_settings
+    const settings = (Array.isArray(rel) ? rel[0] : rel) as {
+      logo_url?: string | null
+      primary_color?: string | null
+      phone?: string | null
+      email?: string | null
+      website?: string | null
+    } | null | undefined
 
     return {
-      logoUrl: settings?.logoUrl as string | null,
-      primaryColor: (settings?.primaryColor as string) || defaultBranding.primaryColor,
+      logoUrl: settings?.logo_url ?? null,
+      primaryColor: settings?.primary_color || defaultBranding.primaryColor,
       organizationName: org.name || defaultBranding.organizationName,
-      phone: settings?.phone as string,
-      email: settings?.email as string,
-      website: settings?.website as string
+      phone: settings?.phone || undefined,
+      email: settings?.email || undefined,
+      website: settings?.website || undefined
     }
   } catch (error) {
     console.error('Failed to get organization branding:', error)

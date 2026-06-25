@@ -55,6 +55,60 @@ export interface DiaryDayDetail {
   bookings: DiaryBooking[]
 }
 
+export interface DmsBookingLabour {
+  description: string | null
+  units: number | null
+  price: number | null
+  fitter: string | null
+}
+
+export interface DmsBookingRepair {
+  code: string | null
+  description: string | null
+  notes: string | null
+  labour: DmsBookingLabour[]
+}
+
+export interface DmsBookingDetail {
+  bookingId: string | null
+  source: string
+  status: string | null
+  jobState: string | null
+  dueDate: string | null
+  promiseTime: string | null
+  bookedDate: string | null
+  mileageIn: number | null
+  keyLocation: string | null
+  jobsheetNumber: string | null
+  jobsheetStatus: string | null
+  serviceType: string | null
+  estimatedHours: number | null
+  isMot: boolean
+  isWaiting: boolean
+  isLoan: boolean
+  isInternal: boolean
+  notes: string | null
+  customer: {
+    name: string | null
+    contactName: string | null
+    email: string | null
+    mobile: string | null
+    phone: string | null
+    address: string[]
+  } | null
+  vehicle: {
+    registration: string | null
+    make: string | null
+    model: string | null
+    year: number | null
+    color: string | null
+    fuelType: string | null
+    vin: string | null
+    mileage: number | null
+  } | null
+  bookedRepairs: DmsBookingRepair[]
+}
+
 export type LoadTone = 'green' | 'amber' | 'red' | 'none'
 
 // RAG band for a "booked %" — matches the app convention: green < 85%,
@@ -75,8 +129,10 @@ export function toneBarClass(tone: LoadTone): string {
   }
 }
 
-// 'HH:MM:SS' (or 'HH:MM') → 'HH:MM'; null → '—'
+// 'HH:MM:SS' (or 'HH:MM') → 'HH:MM'; null or midnight (date-only imports with no
+// real time) → '—' so the row reads "no time set" rather than a misleading 00:00.
 export function formatTime(t: string | null): string {
   if (!t) return '—'
-  return t.slice(0, 5)
+  const hhmm = t.slice(0, 5)
+  return hhmm === '00:00' ? '—' : hhmm
 }

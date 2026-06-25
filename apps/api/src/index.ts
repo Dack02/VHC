@@ -87,7 +87,7 @@ import olloDevWebhookRoutes from './routes/webhooks/ollo-dev.js'
 // Services
 import { initializeWebSocket } from './services/websocket.js'
 import { checkRedisConnection, updateRedisStatus } from './services/queue.js'
-import { startScheduledCleanupTasks, initializeDailySmsOverviewSchedules, initializeAutoCloseSchedules, startFollowUpSweepSchedule, startLibraryGapReportSchedule, startFeedbackSyncRetrySchedule } from './services/scheduler.js'
+import { startScheduledCleanupTasks, initializeDailySmsOverviewSchedules, initializeAutoCloseSchedules, initializeDmsImportSchedules, startFollowUpSweepSchedule, startLibraryGapReportSchedule, startFeedbackSyncRetrySchedule } from './services/scheduler.js'
 
 const app = new Hono()
 
@@ -313,6 +313,11 @@ checkRedisConnection().then(async (connected) => {
       })
       initializeAutoCloseSchedules().catch(err => {
         logger.error('Failed to initialize auto-close schedules', { error: String(err) })
+      })
+      // Re-register DMS auto-import schedules (BullMQ repeatable jobs are lost on
+      // Redis restart; without this, scheduled imports silently stop firing).
+      initializeDmsImportSchedules().catch(err => {
+        logger.error('Failed to initialize DMS import schedules', { error: String(err) })
       })
     } catch (err) {
       logger.error('Failed to start queue workers', { error: String(err) })

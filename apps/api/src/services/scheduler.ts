@@ -2,7 +2,7 @@
  * Scheduler Service - Manages automatic reminder scheduling
  */
 
-import { scheduleReminder, cancelReminders, queueNotification, scheduleDailySmsOverview, scheduleCloseStaleEntries } from './queue.js'
+import { scheduleReminder, cancelReminders, queueNotification, scheduleDailySmsOverview, scheduleCloseStaleEntries, scheduleDmsImport, cancelDmsSchedule } from './queue.js'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { runFollowUpSweep } from './follow-up-engine.js'
 import { sendLibraryGapReport } from './library-gap-report.js'
@@ -292,6 +292,58 @@ export async function initializeDailySmsOverviewSchedules() {
     console.log(`[Daily SMS Overview Scheduler] Initialized ${settings.length} schedule(s)`)
   } catch (error) {
     console.error('[Daily SMS Overview Scheduler] Initialization error:', error)
+  }
+}
+
+// Fallback import hours (mirrors DEFAULT_IMPORT_HOURS in routes/dms-settings.ts).
+const DEFAULT_DMS_IMPORT_HOURS = [6, 10, 14, 20]
+
+/**
+ * Re-register DMS auto-import schedules for every enabled organisation on boot.
+ *
+ * BullMQ repeatable jobs live in Redis, so a Redis restart silently drops each
+ * org's scheduled import. Unlike the SMS-overview / auto-close schedules, nothing
+ * re-created the DMS ones — so after a restart scheduled imports stopped firing
+ * until someone re-saved their DMS settings (which is why imports can go stale
+ * for days). This restores them on startup, mirroring the settings-save handler
+ * (cancel, then one repeatable job per configured hour).
+ */
+export async function initializeDmsImportSchedules() {
+  try {
+    const { data: settings, error } = await supabaseAdmin
+      .from('organization_dms_settings')
+      .select('organization_id, import_schedule_hours, import_schedule_days')
+      .eq('enabled', true)
+      .eq('auto_import_enabled', true)
+
+    if (error) {
+      console.error('[DMS Import Scheduler] Error querying settings:', error)
+      return
+    }
+
+    if (!settings || settings.length === 0) {
+      console.log('[DMS Import Scheduler] No organizations with auto-import enabled')
+      return
+    }
+
+    for (const setting of settings) {
+      const hours = (setting.import_schedule_hours as number[] | null) || DEFAULT_DMS_IMPORT_HOURS
+      const days = (setting.import_schedule_days as number[] | null) || [1, 2, 3, 4, 5, 6]
+      try {
+        // Clear any stale entry first, then re-add one repeatable job per hour.
+        await cancelDmsSchedule(setting.organization_id)
+        for (const hour of hours) {
+          await scheduleDmsImport(setting.organization_id, undefined, hour, days)
+        }
+        console.log(`[DMS Import Scheduler] Scheduled org ${setting.organization_id} at hours ${hours.join(',')}`)
+      } catch (err) {
+        console.error(`[DMS Import Scheduler] Failed to schedule for org ${setting.organization_id}:`, err)
+      }
+    }
+
+    console.log(`[DMS Import Scheduler] Initialized ${settings.length} schedule(s)`)
+  } catch (error) {
+    console.error('[DMS Import Scheduler] Initialization error:', error)
   }
 }
 

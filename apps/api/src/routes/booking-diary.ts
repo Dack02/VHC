@@ -167,4 +167,88 @@ bookingDiary.get('/day', authorize([...ADVISOR_ROLES]), async (c) => {
   return c.json({ date, siteId, capacity, bookings })
 })
 
+// GET /booking?id=<healthCheckId>  → full captured detail for one DMS booking
+// (everything the Gemini import landed on the health_check + customer + vehicle).
+bookingDiary.get('/booking', authorize([...ADVISOR_ROLES]), async (c) => {
+  const auth = c.get('auth')
+  const id = c.req.query('id')
+  if (!id) return c.json({ error: 'id is required' }, 400)
+
+  const { data, error } = await supabaseAdmin
+    .from('health_checks')
+    .select(`
+      id, external_id, external_source, status, job_state,
+      due_date, promise_time, booked_date, mileage_in, key_location,
+      jobsheet_number, jobsheet_status, notes,
+      booked_service_type, estimated_hours, is_mot_booking,
+      customer_waiting, loan_car_required, is_internal, booked_repairs,
+      customer:customers(title, first_name, last_name, contact_name, email, mobile, phone, address_line1, address_line2, town, county, postcode),
+      vehicle:vehicles(registration, make, model, color, fuel_type, year, vin, mileage)
+    `)
+    .eq('id', id)
+    .eq('organization_id', auth.orgId)
+    .maybeSingle()
+
+  if (error) {
+    console.error('diary booking detail error:', error)
+    return c.json({ error: 'Failed to load booking' }, 500)
+  }
+  if (!data) return c.json({ error: 'Booking not found' }, 404)
+
+  const row = data as any
+  const cust = row.customer || null
+  const veh = row.vehicle || null
+  const repairs = Array.isArray(row.booked_repairs) ? row.booked_repairs : []
+
+  return c.json({
+    bookingId: row.external_id,
+    source: row.external_source === 'gemini_osi' ? 'dms' : 'other',
+    status: row.status,
+    jobState: row.job_state,
+    dueDate: row.due_date,
+    promiseTime: row.promise_time,
+    bookedDate: row.booked_date,
+    mileageIn: row.mileage_in,
+    keyLocation: row.key_location,
+    jobsheetNumber: row.jobsheet_number,
+    jobsheetStatus: row.jobsheet_status,
+    serviceType: row.booked_service_type,
+    estimatedHours: row.estimated_hours,
+    isMot: !!row.is_mot_booking,
+    isWaiting: !!row.customer_waiting,
+    isLoan: !!row.loan_car_required,
+    isInternal: !!row.is_internal,
+    notes: row.notes,
+    customer: cust ? {
+      name: [cust.title, cust.first_name, cust.last_name].filter(Boolean).join(' ').trim() || null,
+      contactName: cust.contact_name,
+      email: cust.email,
+      mobile: cust.mobile,
+      phone: cust.phone,
+      address: [cust.address_line1, cust.address_line2, cust.town, cust.county, cust.postcode].filter(Boolean)
+    } : null,
+    vehicle: veh ? {
+      registration: veh.registration,
+      make: veh.make,
+      model: veh.model,
+      year: veh.year,
+      color: veh.color,
+      fuelType: veh.fuel_type,
+      vin: veh.vin,
+      mileage: veh.mileage
+    } : null,
+    bookedRepairs: repairs.map((r: any) => ({
+      code: r.code ?? null,
+      description: r.description ?? null,
+      notes: r.notes ?? null,
+      labour: Array.isArray(r.labourItems) ? r.labourItems.map((l: any) => ({
+        description: l.description ?? null,
+        units: l.units ?? null,
+        price: l.price ?? null,
+        fitter: l.fitter ?? null
+      })) : []
+    }))
+  })
+})
+
 export default bookingDiary

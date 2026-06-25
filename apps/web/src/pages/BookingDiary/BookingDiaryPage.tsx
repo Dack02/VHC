@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { jobPath } from '../../lib/jobLink'
 import { useDiarySummary, useDiaryDay } from './useDiaryData'
+import DmsBookingModal from './DmsBookingModal'
 import {
   addDays, weekStart, loadTone, toneBarClass, formatTime,
   type DiaryDay, type DiaryBooking
@@ -111,6 +112,17 @@ function BookingRow({ booking, onOpen }: { booking: DiaryBooking; onOpen: () => 
 function DayDetail({ date }: { date: string }) {
   const navigate = useNavigate()
   const { detail, loading, error } = useDiaryDay(date)
+  const [modalHcId, setModalHcId] = useState<string | null>(null)
+
+  // DMS bookings open a rich detail modal; GMS bookings open their jobsheet.
+  const openBooking = (b: DiaryBooking) => {
+    if (b.source === 'dms' && b.routeTarget.healthCheckId) {
+      setModalHcId(b.routeTarget.healthCheckId)
+    } else {
+      navigate(jobPath({ jobsheetId: b.routeTarget.jobsheetId, healthCheckId: b.routeTarget.healthCheckId }))
+    }
+  }
+
   const heading = new Date(`${date}T12:00:00`).toLocaleDateString('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long'
   })
@@ -141,13 +153,18 @@ function DayDetail({ date }: { date: string }) {
             <BookingRow
               key={b.bookingId}
               booking={b}
-              onOpen={() => navigate(jobPath({
-                jobsheetId: b.routeTarget.jobsheetId,
-                healthCheckId: b.routeTarget.healthCheckId
-              }))}
+              onOpen={() => openBooking(b)}
             />
           ))}
         </div>
+      )}
+
+      {modalHcId && (
+        <DmsBookingModal
+          healthCheckId={modalHcId}
+          onClose={() => setModalHcId(null)}
+          onOpenFull={() => { const id = modalHcId; setModalHcId(null); navigate(jobPath({ healthCheckId: id })) }}
+        />
       )}
     </div>
   )

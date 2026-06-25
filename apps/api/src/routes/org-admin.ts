@@ -5,6 +5,7 @@
 
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { buildResetPasswordLink } from '../lib/authLinks.js'
 import { authMiddleware, requireOrgAdmin } from '../middleware/auth.js'
 import {
   checkSiteLimit,
@@ -645,7 +646,7 @@ orgAdminRoutes.post('/:id/users/:userId/resend-invite', requireOrgAdmin(), async
     success: true,
     message: 'Invite resent',
     // In production, don't return this - send via email
-    resetLink: linkData.properties?.action_link
+    resetLink: buildResetPasswordLink(linkData.properties)
   })
 })
 
@@ -696,7 +697,9 @@ orgAdminRoutes.get('/:id/subscription', async (c) => {
       features: subscription.plan.features
     } : null,
     currentPeriodStart: subscription.current_period_start,
-    currentPeriodEnd: subscription.current_period_end
+    currentPeriodEnd: subscription.current_period_end,
+    trialEndsAt: subscription.trial_ends_at ?? null,
+    trialStartedAt: subscription.trial_started_at ?? null
   })
 })
 

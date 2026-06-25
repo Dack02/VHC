@@ -306,7 +306,7 @@ export default function Today() {
           <div className="text-2xl font-bold text-rag-amber">{formatCurrency(financial?.totalPending || 0)}</div>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
-          <div className="text-sm text-gray-500 mb-1">Conversion Rate</div>
+          <div className="text-sm text-gray-500 mb-1" title="Authorised value as a share of identified value">Value Sold %</div>
           <div className="text-2xl font-bold text-primary">{financial?.conversionRate || 0}%</div>
         </div>
       </div>

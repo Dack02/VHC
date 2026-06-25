@@ -18,7 +18,10 @@ export default function AddUserToOrgModal({ organizationId, onClose, onCreated }
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [sites, setSites] = useState<Site[]>([])
+  const [created, setCreated] = useState(false)
   const [tempPassword, setTempPassword] = useState('')
+  const [emailSent, setEmailSent] = useState<boolean | undefined>(undefined)
+  const [linkedExisting, setLinkedExisting] = useState(false)
 
   const [email, setEmail] = useState('')
   const [firstName, setFirstName] = useState('')
@@ -48,7 +51,7 @@ export default function AddUserToOrgModal({ organizationId, onClose, onCreated }
     setError('')
 
     try {
-      const data = await api<{ id: string; temporaryPassword?: string; note?: string }>(`/api/v1/admin/organizations/${organizationId}/users`, {
+      const data = await api<{ id: string; temporaryPassword?: string; emailSent?: boolean; note?: string }>(`/api/v1/admin/organizations/${organizationId}/users`, {
         method: 'POST',
         token: session.accessToken,
         body: {
@@ -61,11 +64,10 @@ export default function AddUserToOrgModal({ organizationId, onClose, onCreated }
         }
       })
 
-      if (data.temporaryPassword) {
-        setTempPassword(data.temporaryPassword)
-      } else {
-        onCreated()
-      }
+      setTempPassword(data.temporaryPassword || '')
+      setEmailSent(data.emailSent)
+      setLinkedExisting(!!data.note)
+      setCreated(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create user')
     } finally {
@@ -73,19 +75,42 @@ export default function AddUserToOrgModal({ organizationId, onClose, onCreated }
     }
   }
 
-  // Show temp password screen after successful creation
-  if (tempPassword) {
+  // Success screen after creation: report whether the invite email went out, and
+  // keep the temporary password visible as a fallback the admin can hand over.
+  if (created) {
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
         <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">User Created</h2>
-          <p className="text-sm text-gray-600 mb-4">
-            The user has been created. Share the temporary password below — it will not be shown again.
-          </p>
-          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
-            <p className="text-xs text-gray-500 mb-1">Temporary Password</p>
-            <p className="font-mono text-sm text-gray-900 select-all break-all">{tempPassword}</p>
-          </div>
+
+          {emailSent ? (
+            <div className="bg-green-50 border border-green-200 text-green-800 text-sm rounded-lg p-3 mb-4">
+              {linkedExisting
+                ? <>We've emailed <strong>{email}</strong> to let them know they've been added.</>
+                : <>An invite email with a set-password link was sent to <strong>{email}</strong>.</>}
+            </div>
+          ) : (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg p-3 mb-4">
+              {linkedExisting
+                ? <>The user was added, but we couldn't email them. Let them know they can sign in with their existing VHC account.</>
+                : <>The user was created, but the invite email couldn't be sent. Share the temporary password below instead.</>}
+            </div>
+          )}
+
+          {tempPassword && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
+              <p className="text-xs text-gray-500 mb-1">Temporary Password (fallback)</p>
+              <p className="font-mono text-sm text-gray-900 select-all break-all">{tempPassword}</p>
+              <p className="text-xs text-gray-400 mt-2">Won't be shown again. The user can also set their own password from the invite link.</p>
+            </div>
+          )}
+
+          {linkedExisting && (
+            <p className="text-xs text-gray-500 mb-4">
+              This email already had a VHC account, so they keep their existing password — no new password is needed.
+            </p>
+          )}
+
           <button
             onClick={() => { onCreated() }}
             className="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"

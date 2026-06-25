@@ -1,6 +1,8 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import { aggregateRepairItemsByHc, type RepairItemLike } from '../lib/metrics.js'
+import { chunkIds } from '../services/hc-period-service.js'
 
 const dashboardToday = new Hono()
 
@@ -107,18 +109,20 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     )].filter(id => !healthCheckMap.has(id))
 
     if (outcomeTodayHcIds.length > 0) {
-      const { data: actionedTodayHcs, error: actionedError } = await supabaseAdmin
-        .from('health_checks')
-        .select(baseSelect)
-        .in('id', outcomeTodayHcIds)
-        .is('deleted_at', null)
+      for (const idChunk of chunkIds(outcomeTodayHcIds)) {
+        const { data: actionedTodayHcs, error: actionedError } = await supabaseAdmin
+          .from('health_checks')
+          .select(baseSelect)
+          .in('id', idChunk)
+          .is('deleted_at', null)
 
-      if (actionedError) {
-        console.error('Actioned today HC query error:', actionedError)
-      } else if (actionedTodayHcs) {
-        for (const hc of actionedTodayHcs) {
-          if (!healthCheckMap.has(hc.id)) {
-            healthCheckMap.set(hc.id, hc)
+        if (actionedError) {
+          console.error('Actioned today HC query error:', actionedError)
+        } else if (actionedTodayHcs) {
+          for (const hc of actionedTodayHcs) {
+            if (!healthCheckMap.has(hc.id)) {
+              healthCheckMap.set(hc.id, hc)
+            }
           }
         }
       }
@@ -140,35 +144,38 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       parent_repair_item_id: string | null
       selected_option_id: string | null
       deleted_at: string | null
+      rag_status: string | null
       check_results: Array<{ check_result: { rag_status: string } | { rag_status: string }[] | null }> | null
     }> = []
 
     if (healthCheckIds.length > 0) {
-      const { data, error } = await supabaseAdmin
-        .from('repair_items')
-        .select(`
-          id,
-          health_check_id,
-          labour_total,
-          parts_total,
-          total_inc_vat,
-          customer_approved,
-          outcome_status,
-          is_group,
-          parent_repair_item_id,
-          selected_option_id,
-          deleted_at,
-          check_results:repair_item_check_results(
-            check_result:check_results(rag_status)
-          )
-        `)
-        .in('health_check_id', healthCheckIds)
-
-      if (error) {
-        console.error('Repair items query error:', error)
-      } else {
-        repairData = data || []
-      }
+      // Chunk by HC id so today's set can't overflow a single .in() URL.
+      repairData = (await Promise.all(
+        chunkIds(healthCheckIds, 100).map(async chunk => {
+          const { data, error } = await supabaseAdmin
+            .from('repair_items')
+            .select(`
+              id,
+              health_check_id,
+              labour_total,
+              parts_total,
+              total_inc_vat,
+              customer_approved,
+              outcome_status,
+              is_group,
+              parent_repair_item_id,
+              selected_option_id,
+              deleted_at,
+              rag_status,
+              check_results:repair_item_check_results(
+                check_result:check_results(rag_status)
+              )
+            `)
+            .in('health_check_id', chunk)
+          if (error) console.error('Repair items query error:', error)
+          return data || []
+        })
+      )).flat()
     }
 
     // Fetch selected option totals
@@ -178,15 +185,12 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
 
     let optionTotalsMap: Record<string, { labour_total: number | null; parts_total: number | null; total_inc_vat: number | null }> = {}
     if (selectedOptionIds.length > 0) {
-      const { data: optionData } = await supabaseAdmin
-        .from('repair_options')
-        .select('id, labour_total, parts_total, total_inc_vat')
-        .in('id', selectedOptionIds)
-
-      if (optionData) {
-        for (const opt of optionData) {
-          optionTotalsMap[opt.id] = opt
-        }
+      for (const optChunk of chunkIds(selectedOptionIds)) {
+        const { data: optionData } = await supabaseAdmin
+          .from('repair_options')
+          .select('id, labour_total, parts_total, total_inc_vat')
+          .in('id', optChunk)
+        for (const opt of optionData || []) optionTotalsMap[opt.id] = opt
       }
     }
 
@@ -200,24 +204,32 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     }> = []
 
     if (healthCheckIds.length > 0) {
-      const { data: activityData } = await supabaseAdmin
-        .from('health_check_status_history')
-        .select(`
-          from_status,
-          to_status,
-          changed_at,
-          health_check:health_checks(
-            vehicle:vehicles(registration)
-          ),
-          user:users!health_check_status_history_changed_by_fkey(first_name, last_name)
-        `)
-        .in('health_check_id', healthCheckIds)
-        .gte('changed_at', todayISO)
-        .lt('changed_at', tomorrowISO)
-        .order('changed_at', { ascending: false })
-        .limit(20)
+      // Per-chunk top-20, then merge → sort → take the global latest 20.
+      const activityData = (await Promise.all(
+        chunkIds(healthCheckIds, 100).map(async chunk => {
+          const { data } = await supabaseAdmin
+            .from('health_check_status_history')
+            .select(`
+              from_status,
+              to_status,
+              changed_at,
+              health_check:health_checks(
+                vehicle:vehicles(registration)
+              ),
+              user:users!health_check_status_history_changed_by_fkey(first_name, last_name)
+            `)
+            .in('health_check_id', chunk)
+            .gte('changed_at', todayISO)
+            .lt('changed_at', tomorrowISO)
+            .order('changed_at', { ascending: false })
+            .limit(20)
+          return data || []
+        })
+      )).flat()
+        .sort((a, b) => String(b.changed_at).localeCompare(String(a.changed_at)))
+        .slice(0, 20)
 
-      recentActivity = (activityData || []).map((a: Record<string, unknown>) => {
+      recentActivity = activityData.map((a: Record<string, unknown>) => {
         const hc = a.health_check as { vehicle: { registration: string } | null } | null
         const u = a.user as { first_name: string; last_name: string } | null
         return {
@@ -232,9 +244,10 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
 
     // ── Aggregate data ──
 
-    const VAT_RATE = 0.20
+    // Canonical per-HC aggregation (shared metrics module: deleted items count
+    // toward nothing, group authorisation falls back to approved children)
+    const aggByHc = aggregateRepairItemsByHc(repairData as RepairItemLike[], optionTotalsMap)
 
-    // Per-HC aggregation for financial and RAG breakdown
     let totalIdentified = 0
     let totalAuthorized = 0
     let totalDeclined = 0
@@ -254,6 +267,28 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     let greenAuthorizedValue = 0
     let greenItemCount = 0
     let greenAuthorizedCount = 0
+
+    for (const agg of aggByHc.values()) {
+      totalIdentified += agg.identifiedTotal
+      totalAuthorized += agg.authorisedTotal
+      totalDeclined += agg.declinedTotal
+      totalPending += agg.pendingTotal
+      deferredTodayCount += agg.deferredCount
+      deferredTodayValue += agg.deferredValue
+
+      redIdentifiedValue += agg.red.identifiedValue
+      redAuthorizedValue += agg.red.authorisedValue
+      redItemCount += agg.red.identifiedCount
+      redAuthorizedCount += agg.red.authorisedCount
+      amberIdentifiedValue += agg.amber.identifiedValue
+      amberAuthorizedValue += agg.amber.authorisedValue
+      amberItemCount += agg.amber.identifiedCount
+      amberAuthorizedCount += agg.amber.authorisedCount
+      greenIdentifiedValue += agg.green.identifiedValue
+      greenAuthorizedValue += agg.green.authorisedValue
+      greenItemCount += agg.green.identifiedCount
+      greenAuthorizedCount += agg.green.authorisedCount
+    }
 
     // Technician and advisor lookup maps
     const techMap = new Map<string, {
@@ -277,128 +312,6 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       redIdentified: number
       redAuthorized: number
     }>()
-
-    // Process repair items following dashboard.ts pattern (lines 321-443)
-    const repairValueByHc: Record<string, number> = {}
-    const authorizedValueByHc: Record<string, number> = {}
-    const redIdentifiedByHc: Record<string, number> = {}
-    const redAuthorizedByHc: Record<string, number> = {}
-
-    // Helper to check if an item is authorised
-    const isItemAuthorised = (item: { customer_approved: boolean | null; outcome_status: string | null }) =>
-      item.customer_approved === true || item.outcome_status === 'authorised'
-
-    // Helper to calculate an item's totalIncVat
-    const calcItemTotal = (item: typeof repairData[0]) => {
-      const selectedOpt = item.selected_option_id ? optionTotalsMap[item.selected_option_id] : null
-      const srcTotalIncVat = selectedOpt?.total_inc_vat ?? item.total_inc_vat
-      const srcLabourTotal = selectedOpt?.labour_total ?? item.labour_total
-      const srcPartsTotal = selectedOpt?.parts_total ?? item.parts_total
-      let total = parseFloat(String(srcTotalIncVat ?? 0)) || 0
-      if (total === 0) {
-        const labourTotal = parseFloat(String(srcLabourTotal ?? 0)) || 0
-        const partsTotal = parseFloat(String(srcPartsTotal ?? 0)) || 0
-        if (labourTotal > 0 || partsTotal > 0) {
-          const subtotal = labourTotal + partsTotal
-          total = subtotal + subtotal * VAT_RATE
-        }
-      }
-      return total
-    }
-
-    // Build children-by-parent map for group authorization
-    const childrenByParent = new Map<string, typeof repairData>()
-    repairData.forEach(item => {
-      if (item.parent_repair_item_id) {
-        const children = childrenByParent.get(item.parent_repair_item_id) || []
-        children.push(item)
-        childrenByParent.set(item.parent_repair_item_id, children)
-      }
-    })
-
-    repairData.forEach(item => {
-      const isChild = !!item.parent_repair_item_id
-      const isDeleted = !!item.deleted_at
-
-      // Only count top-level items to avoid double-counting
-      if (isChild) return
-
-      const totalIncVat = calcItemTotal(item)
-
-      // Derive RAG from check_results junction
-      let derivedRagStatus: string | null = null
-      const checkResultLinks = item.check_results as unknown as Array<{ check_result: { rag_status: string } | { rag_status: string }[] | null }> | null
-      if (checkResultLinks && Array.isArray(checkResultLinks)) {
-        for (const link of checkResultLinks) {
-          const checkResult = Array.isArray(link?.check_result) ? link.check_result[0] : link?.check_result
-          const ragStatus = checkResult?.rag_status
-          if (ragStatus === 'red') {
-            derivedRagStatus = 'red'
-            break
-          } else if (ragStatus === 'amber' && derivedRagStatus !== 'red') {
-            derivedRagStatus = 'amber'
-          } else if (ragStatus === 'green' && !derivedRagStatus) {
-            derivedRagStatus = 'green'
-          }
-        }
-      }
-
-      // Check authorization: direct check on item, or check children for groups
-      let isAuthorised = isItemAuthorised(item)
-      let authorizedValue = totalIncVat
-
-      // For group parents, derive authorization from children if parent itself isn't marked
-      if (item.is_group && !isAuthorised) {
-        const children = childrenByParent.get(item.id) || []
-        const authorizedChildren = children.filter(c => !c.deleted_at && isItemAuthorised(c))
-        if (authorizedChildren.length > 0) {
-          isAuthorised = true
-          // Sum authorized children's values instead of using parent's total
-          authorizedValue = authorizedChildren.reduce((sum, child) => sum + calcItemTotal(child), 0)
-        }
-      }
-
-      if (!isDeleted) {
-        totalIdentified += totalIncVat
-        repairValueByHc[item.health_check_id] = (repairValueByHc[item.health_check_id] || 0) + totalIncVat
-
-        if (derivedRagStatus === 'red') {
-          redIdentifiedValue += totalIncVat
-          redItemCount++
-          redIdentifiedByHc[item.health_check_id] = (redIdentifiedByHc[item.health_check_id] || 0) + 1
-        } else if (derivedRagStatus === 'amber') {
-          amberIdentifiedValue += totalIncVat
-          amberItemCount++
-        } else if (derivedRagStatus === 'green') {
-          greenIdentifiedValue += totalIncVat
-          greenItemCount++
-        }
-      }
-
-      if (isAuthorised) {
-        totalAuthorized += authorizedValue
-        authorizedValueByHc[item.health_check_id] = (authorizedValueByHc[item.health_check_id] || 0) + authorizedValue
-
-        if (derivedRagStatus === 'red') {
-          redAuthorizedValue += authorizedValue
-          redAuthorizedCount++
-          redAuthorizedByHc[item.health_check_id] = (redAuthorizedByHc[item.health_check_id] || 0) + 1
-        } else if (derivedRagStatus === 'amber') {
-          amberAuthorizedValue += authorizedValue
-          amberAuthorizedCount++
-        } else if (derivedRagStatus === 'green') {
-          greenAuthorizedValue += authorizedValue
-          greenAuthorizedCount++
-        }
-      } else if (!isDeleted && item.outcome_status === 'declined') {
-        totalDeclined += totalIncVat
-      } else if (!isDeleted && item.outcome_status === 'deferred') {
-        deferredTodayCount++
-        deferredTodayValue += totalIncVat
-      } else if (!isDeleted && !isAuthorised && item.outcome_status !== 'declined') {
-        totalPending += totalIncVat
-      }
-    })
 
     // ── Arrivals metrics ──
     const totalBookings = healthChecks.length
@@ -527,9 +440,11 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
 
       const entry = advisorMap.get(adv.id)!
 
+      const hcAgg = aggByHc.get(hc.id)
+
       if (hc.sent_at) {
         entry.sentCount++
-        entry.totalValueSent += repairValueByHc[hc.id] || 0
+        entry.totalValueSent += hcAgg?.identifiedTotal || 0
 
         // Processing time
         if (hc.tech_completed_at) {
@@ -541,14 +456,14 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         }
       }
 
-      const authVal = authorizedValueByHc[hc.id] || 0
+      const authVal = hcAgg?.authorisedTotal || 0
       if (authVal > 0) {
         entry.totalValueAuthorized += authVal
         entry.authorizedCount++
       }
 
-      entry.redIdentified += redIdentifiedByHc[hc.id] || 0
-      entry.redAuthorized += redAuthorizedByHc[hc.id] || 0
+      entry.redIdentified += hcAgg?.red.identifiedCount || 0
+      entry.redAuthorized += hcAgg?.red.authorisedCount || 0
     }
 
     const advisors = Array.from(advisorMap.values())

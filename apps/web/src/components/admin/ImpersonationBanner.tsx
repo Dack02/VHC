@@ -1,89 +1,82 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { api } from '../../lib/api'
 
-interface ImpersonationData {
-  originalSuperAdminId: string
-  originalSuperAdminEmail: string
-  reason: string
-  startedAt: string
+interface StoredImpersonation {
+  impersonation: {
+    reason: string
+    startedAt: string
+    sessionId?: string | null
+    expiresAt?: string | null
+  }
   user: {
     id: string
     email: string
     firstName: string
     lastName: string
     role: string
-    organization: {
-      id: string
-      name: string
-      slug: string
-    }
+    organization?: { id: string; name: string; slug: string }
   }
 }
 
 export default function ImpersonationBanner() {
-  const [impersonation, setImpersonation] = useState<ImpersonationData | null>(null)
+  const [data, setData] = useState<StoredImpersonation | null>(null)
   const [ending, setEnding] = useState(false)
+  const [remainingMs, setRemainingMs] = useState<number | null>(null)
 
   useEffect(() => {
-    const stored = localStorage.getItem('vhc_impersonation')
-    if (stored) {
-      try {
-        setImpersonation(JSON.parse(stored))
-      } catch {
-        localStorage.removeItem('vhc_impersonation')
-      }
+    const load = (raw: string | null) => {
+      if (!raw) { setData(null); return }
+      try { setData(JSON.parse(raw)) } catch { setData(null); localStorage.removeItem('vhc_impersonation') }
     }
-
-    // Listen for storage changes (in case impersonation is started from another tab)
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'vhc_impersonation') {
-        if (e.newValue) {
-          try {
-            setImpersonation(JSON.parse(e.newValue))
-          } catch {
-            setImpersonation(null)
-          }
-        } else {
-          setImpersonation(null)
-        }
-      }
-    }
-
+    load(localStorage.getItem('vhc_impersonation'))
+    const handleStorage = (e: StorageEvent) => { if (e.key === 'vhc_impersonation') load(e.newValue) }
     window.addEventListener('storage', handleStorage)
     return () => window.removeEventListener('storage', handleStorage)
   }, [])
 
-  const handleEndImpersonation = async () => {
-    if (!impersonation) return
-
+  const handleEndImpersonation = useCallback(async () => {
     setEnding(true)
     try {
-      // Get super admin session
       const superAdminSession = localStorage.getItem('vhc_super_admin_session')
       if (superAdminSession) {
         const session = JSON.parse(superAdminSession)
         await api('/api/v1/admin/impersonate', {
           method: 'DELETE',
-          token: session.accessToken
+          token: session.accessToken,
+          body: { sessionId: data?.impersonation?.sessionId || undefined }
         })
       }
     } catch (error) {
       console.error('Failed to end impersonation:', error)
     }
-
-    // Clear impersonation data
     localStorage.removeItem('vhc_impersonation')
     localStorage.removeItem('vhc_session')
     localStorage.removeItem('vhc_user')
-
-    // Redirect back to admin
     window.location.href = '/admin'
-  }
+  }, [data])
 
-  if (!impersonation) return null
+  // Countdown to expiry; auto-end when it elapses.
+  useEffect(() => {
+    const expiresAt = data?.impersonation?.expiresAt
+    if (!expiresAt) { setRemainingMs(null); return }
+    const tick = () => {
+      const ms = new Date(expiresAt).getTime() - Date.now()
+      setRemainingMs(ms)
+      if (ms <= 0) handleEndImpersonation()
+    }
+    tick()
+    const interval = setInterval(tick, 1000)
+    return () => clearInterval(interval)
+  }, [data, handleEndImpersonation])
 
-  const userName = `${impersonation.user.firstName} ${impersonation.user.lastName}`
-  const orgName = impersonation.user.organization?.name || 'Unknown Organisation'
+  if (!data) return null
+
+  const userName = `${data.user.firstName} ${data.user.lastName}`
+  const orgName = data.user.organization?.name || 'Unknown Organisation'
+  const reason = data.impersonation?.reason
+  const countdown = remainingMs != null && remainingMs > 0
+    ? `${Math.floor(remainingMs / 60000)}:${String(Math.floor((remainingMs % 60000) / 1000)).padStart(2, '0')}`
+    : null
 
   return (
     <div className="bg-amber-500 text-amber-900">
@@ -102,28 +95,27 @@ export default function ImpersonationBanner() {
               <span className="mx-2">|</span>
               <span className="text-amber-800">{orgName}</span>
               <span className="mx-2">|</span>
-              <span className="text-amber-800 capitalize">{impersonation.user.role?.replace('_', ' ')}</span>
+              <span className="text-amber-800 capitalize">{data.user.role?.replace('_', ' ')}</span>
             </div>
           </div>
           <div className="flex items-center space-x-4">
-            <div className="text-sm text-amber-800">
-              <span className="hidden sm:inline">Reason: </span>
-              <span className="font-medium">{impersonation.reason}</span>
-            </div>
+            {countdown && (
+              <span className="text-sm text-amber-800" title="Session auto-ends at expiry">
+                ⏱ {countdown}
+              </span>
+            )}
+            {reason && (
+              <div className="text-sm text-amber-800">
+                <span className="hidden sm:inline">Reason: </span>
+                <span className="font-medium">{reason}</span>
+              </div>
+            )}
             <button
               onClick={handleEndImpersonation}
               disabled={ending}
               className="bg-amber-700 hover:bg-amber-800 text-white px-4 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 flex items-center"
             >
-              {ending ? (
-                <>
-                  <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Ending...
-                </>
-              ) : (
+              {ending ? 'Ending...' : (
                 <>
                   <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />

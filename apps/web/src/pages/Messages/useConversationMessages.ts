@@ -9,7 +9,7 @@ import { api, SmsMessage } from '../../lib/api'
 interface ConversationThread {
   phoneNumber: string
   customer: { id: string; firstName: string; lastName: string } | null
-  healthChecks: { id: string; vhcReference: string | null; status: string }[]
+  healthChecks: { id: string; vhcReference: string | null; status: string; jobsheetId: string | null }[]
   messages: SmsMessage[]
 }
 

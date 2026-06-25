@@ -31,6 +31,43 @@ async function attemptTokenRefresh(): Promise<string | null> {
   return _refreshPromise
 }
 
+// Super-admin endpoints (mounted under /api/v1/admin/) authenticate against the
+// super_admins table via a dedicated session — NOT the org-scoped dashboard session.
+// They must never inherit the dashboard's active-org header or its token-refresh
+// fallback: on a 401 the fallback would retry the admin request with the dashboard
+// user's token, which fails super-admin auth with a 403 and silently blocks admin
+// login when a normal user session is also present. See SuperAdminContext.
+function isSuperAdminEndpoint(endpoint: string): boolean {
+  return endpoint.startsWith('/api/v1/admin/')
+}
+
+/**
+ * Trigger a browser download of a file (e.g. CSV) from an API endpoint.
+ * The JSON `api()` helper parses responses as JSON and can't return a file body,
+ * so CSV/blob downloads fetch directly with the bearer token and save the blob.
+ */
+export async function downloadCsv(
+  endpoint: string,
+  token: string | null | undefined,
+  filename: string
+): Promise<void> {
+  const res = await fetch(`${API_URL}${endpoint}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
+  if (!res.ok) {
+    throw new ApiError(`Download failed (${res.status})`, res.status)
+  }
+  const blob = await res.blob()
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  window.URL.revokeObjectURL(url)
+  document.body.removeChild(a)
+}
+
 interface ApiOptions {
   method?: string
   body?: unknown
@@ -115,7 +152,7 @@ export async function api<T>(endpoint: string, options: ApiOptions = {}): Promis
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  if (_activeOrgId) {
+  if (_activeOrgId && !isSuperAdminEndpoint(endpoint)) {
     headers['X-Organization-Id'] = _activeOrgId
   }
 
@@ -145,8 +182,11 @@ export async function api<T>(endpoint: string, options: ApiOptions = {}): Promis
       }
 
       if (!response.ok) {
-        // On 401, attempt a token refresh and retry the request once
-        if (response.status === 401 && token && _tokenRefreshCallback) {
+        // On 401, attempt a token refresh and retry the request once.
+        // Skipped for super-admin endpoints: the refresh hook is bound to the
+        // dashboard session, so retrying an admin call with it swaps in the wrong
+        // account's token and turns a transient 401 into a hard 403.
+        if (response.status === 401 && token && _tokenRefreshCallback && !isSuperAdminEndpoint(endpoint)) {
           const newToken = await attemptTokenRefresh()
           if (newToken) {
             // Retry the original request with the fresh token
@@ -253,6 +293,8 @@ export interface User {
 
 export interface HealthCheck {
   id: string
+  /** Parent GMS job card, when this VHC was created under one (routing: open the job card) */
+  jobsheet_id?: string | null
   organization_id: string
   site_id: string | null
   vehicle_id: string
@@ -261,6 +303,8 @@ export interface HealthCheck {
   technician_id: string | null
   advisor_id: string | null
   status: string
+  /** Workshop lifecycle axis (due_in/arrived/in_workshop/work_complete/collected) - drives the workshop board */
+  job_state?: string
   created_at: string
   updated_at: string
   mileage_in: number | null
@@ -857,6 +901,7 @@ export interface CustomerHealthCheckSummary {
   totalParts: number
   totalAmount: number
   mileageIn: number | null
+  jobsheetId: string | null
   vehicle: { id: string; registration: string; make: string | null; model: string | null; year: number | null } | null
   technician: { id: string; first_name: string; last_name: string } | null
   advisor: { id: string; first_name: string; last_name: string } | null
@@ -884,6 +929,7 @@ export interface SmsMessage {
 export interface CustomerCommRecord {
   id: string
   healthCheckId: string
+  jobsheetId: string | null
   vhcReference: string | null
   vehicleReg: string | null
   channel: 'email' | 'sms'

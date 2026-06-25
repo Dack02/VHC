@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { api } from '../../lib/api'
+import { jobPath } from '../../lib/jobLink'
 import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface Submission {
@@ -25,6 +26,7 @@ interface Submission {
   approvedReasonId: string | null
   context: {
     healthCheckId: string
+    jobsheetId: string | null
     jobNumber: string
     registration: string
   } | null
@@ -356,7 +358,7 @@ function SubmissionCard({
               <div className="mt-1">
                 <span className="text-gray-500">Context: </span>
                 <Link
-                  to={`/health-checks/${submission.context.healthCheckId}`}
+                  to={jobPath({ jobsheetId: submission.context.jobsheetId, healthCheckId: submission.context.healthCheckId })}
                   className="text-primary hover:underline"
                 >
                   VHC for {submission.context.registration}

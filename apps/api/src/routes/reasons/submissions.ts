@@ -84,7 +84,7 @@ submissions.get('/organizations/:id/reason-submissions', authorize(['super_admin
         submitter:users!reason_submissions_submitted_by_fkey(first_name, last_name),
         reviewer:users!reason_submissions_reviewed_by_fkey(first_name, last_name),
         template_item:template_items(id, name),
-        health_check:health_checks(id, job_number, vehicle:vehicles(registration))
+        health_check:health_checks(id, job_number, jobsheet_id, vehicle:vehicles(registration))
       `, { count: 'exact' })
       .eq('organization_id', id)
       .order('submitted_at', { ascending: false })
@@ -122,6 +122,7 @@ submissions.get('/organizations/:id/reason-submissions', authorize(['super_admin
           reviewNotes: s.review_notes,
           context: healthCheck ? {
             healthCheckId: (healthCheck as { id?: string }).id,
+            jobsheetId: (healthCheck as { jobsheet_id?: string | null }).jobsheet_id ?? null,
             jobNumber: (healthCheck as { job_number?: string }).job_number,
             registration: (vehicle as { registration?: string })?.registration
           } : null

@@ -10,6 +10,7 @@ import DataTable, { Column } from './components/DataTable'
 import ReportFiltersBar from './components/ReportFiltersBar'
 import { formatCurrency, formatPercent, formatDuration } from './utils/formatters'
 import { CHART_COLORS } from './utils/colors'
+import { jobPath } from '../../lib/jobLink'
 
 interface AdvisorData {
   period: { from: string; to: string }
@@ -35,6 +36,7 @@ interface AdvisorData {
   funnelComparison: Array<{ name: string; managed: number; sent: number; authorized: number }>
   agingChecks: Array<{
     healthCheckId: string
+    jobsheetId: string | null
     advisorName: string
     sentAt: string
     daysWaiting: number
@@ -73,7 +75,7 @@ export default function AdvisorPerformance() {
 
   const agingColumns: Column<AdvisorData['agingChecks'][0]>[] = [
     { key: 'id', label: 'Health Check', render: r => (
-      <Link to={`/health-checks/${r.healthCheckId}`} className="text-primary hover:underline font-mono text-xs">
+      <Link to={jobPath({ jobsheetId: r.jobsheetId, healthCheckId: r.healthCheckId })} className="text-primary hover:underline font-mono text-xs">
         {r.healthCheckId.slice(0, 8)}...
       </Link>
     ) },

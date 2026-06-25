@@ -179,6 +179,13 @@ export const RateLimiters = {
     skipSuccessfulRequests: true, // Only count failed attempts
   }),
 
+  // Public self-service signup: very strict, per-IP, and counts successful requests
+  // too (the abuse vector is mass org/account creation, not just failed attempts).
+  signup: () => rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    maxRequests: 5,
+  }),
+
   // Public endpoints: 60 requests per minute (higher than before)
   // Uses path-based keys so different endpoints have separate buckets
   public: () => rateLimit({

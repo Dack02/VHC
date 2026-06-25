@@ -15,9 +15,20 @@ interface Organization {
     planName: string
     status: string
     currentPeriodEnd: string
+    trialEndsAt?: string | null
   } | null
   sitesCount: number
   usersCount: number
+}
+
+function trialBadge(sub: Organization['subscription']): { label: string; className: string } | null {
+  if (!sub || sub.status !== 'trialing' || !sub.trialEndsAt) return null
+  const days = Math.ceil((new Date(sub.trialEndsAt).getTime() - Date.now()) / 86400000)
+  if (days <= 0) return { label: 'Trial ended', className: 'bg-red-100 text-red-800' }
+  return {
+    label: `Trial · ${days} day${days === 1 ? '' : 's'} left`,
+    className: days <= 7 ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800',
+  }
 }
 
 export default function AdminOrganizations() {
@@ -195,8 +206,31 @@ export default function AdminOrganizations() {
                       <div className="text-sm text-gray-500">{org.slug}</div>
                     </Link>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {org.subscription?.planName || 'No plan'}
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {org.subscription ? (
+                      <div>
+                        <div className="text-sm font-medium text-gray-900">
+                          {org.subscription.planName || 'Unknown plan'}
+                        </div>
+                        {(() => {
+                          const t = trialBadge(org.subscription)
+                          if (t) {
+                            return (
+                              <span className={`inline-flex items-center mt-1 px-2 py-0.5 rounded-full text-xs font-medium ${t.className}`}>
+                                {t.label}
+                              </span>
+                            )
+                          }
+                          const s = org.subscription?.status
+                          if (s && s !== 'active') {
+                            return <span className="block mt-1 text-xs text-gray-500 capitalize">{s}</span>
+                          }
+                          return null
+                        })()}
+                      </div>
+                    ) : (
+                      <span className="text-sm text-gray-500">No plan</span>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {org.sitesCount || 0}

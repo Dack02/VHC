@@ -30,8 +30,14 @@ import platformAdmin from './routes/admin/platform.js'
 import adminOrganizations from './routes/admin/organizations.js'
 import adminStats from './routes/admin/stats.js'
 import starterReasons from './routes/admin/starter-reasons.js'
+import starterTemplates from './routes/admin/starter-templates.js'
 import aiSettings from './routes/admin/ai-settings.js'
 import aiUsage from './routes/admin/ai-usage.js'
+import adminUsageRoutes from './routes/admin/usage.js'
+import adminSuperAdmins from './routes/admin/super-admins.js'
+import adminSystem from './routes/admin/system.js'
+import adminAudit from './routes/admin/audit.js'
+import adminAlerts from './routes/admin/alerts.js'
 import adminReasonTypes from './routes/admin/reason-types.js'
 import orgNotificationSettings from './routes/organization-notification-settings.js'
 import orgAdmin from './routes/org-admin.js'
@@ -50,6 +56,8 @@ import deletedReasons from './routes/deleted-reasons.js'
 import hcDeletionReasons from './routes/hc-deletion-reasons.js'
 import supplierTypes from './routes/supplier-types.js'
 import checkinSettings from './routes/checkin-settings.js'
+import timeTrackingSettings from './routes/time-tracking-settings.js'
+import timeEntriesRoutes from './routes/time-entries.js'
 import messageTemplates from './routes/message-templates.js'
 import vehicleLocations from './routes/vehicle-locations.js'
 import pushSubscriptions from './routes/push-subscriptions.js'
@@ -59,11 +67,27 @@ import twilioWebhookRoutes from './routes/webhooks/twilio.js'
 import smsConversations from './routes/sms-conversations.js'
 import messages from './routes/messages.js'
 import dailySmsOverview from './routes/daily-sms-overview.js'
+import libraryGapReport from './routes/library-gap-report.js'
+import workshopBoard from './routes/workshop-board.js'
+import bookingDiary from './routes/booking-diary.js'
+import followUps from './routes/follow-ups.js'
+import followUpOutcomes from './routes/follow-up-outcomes.js'
+import followUpDispositions from './routes/follow-up-dispositions.js'
+import followUpTimelines from './routes/follow-up-timelines.js'
+import followUpSettings from './routes/follow-up-settings.js'
+import modulesRoute from './routes/modules.js'
+import vehicleLookup from './routes/vehicle-lookup.js'
+import jobsheetsRoute from './routes/jobsheets.js'
+import arrivalsRoute from './routes/arrivals.js'
+import bookingCodes from './routes/booking-codes.js'
+import serviceTypes from './routes/service-types.js'
+import feedback from './routes/feedback.js'
+import olloDevWebhookRoutes from './routes/webhooks/ollo-dev.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
 import { checkRedisConnection, updateRedisStatus } from './services/queue.js'
-import { startScheduledCleanupTasks, initializeDailySmsOverviewSchedules } from './services/scheduler.js'
+import { startScheduledCleanupTasks, initializeDailySmsOverviewSchedules, initializeAutoCloseSchedules, initializeDmsImportSchedules, startFollowUpSweepSchedule, startLibraryGapReportSchedule, startFeedbackSyncRetrySchedule } from './services/scheduler.js'
 
 const app = new Hono()
 
@@ -92,6 +116,8 @@ app.use('*', cors({
 // Rate limiting for API routes
 // Note: More specific routes must come BEFORE less specific ones
 // Auth routes (stricter, only counts failed attempts)
+// Stricter limiter for public self-service signup (must run before the broad auth limiter)
+app.use('/api/v1/auth/signup', RateLimiters.signup())
 app.use('/api/v1/auth/*', RateLimiters.auth())
 // Standard authenticated API routes
 app.use('/api/v1/*', RateLimiters.standard())
@@ -133,6 +159,8 @@ app.route('/api/v1', items)
 app.route('/api/v1/health-checks', healthChecks)
 app.route('/api/v1', smsConversations)
 app.route('/api/v1/messages', messages)
+app.route('/api/v1/workshop-board', workshopBoard)
+app.route('/api/v1/booking-diary', bookingDiary)
 app.route('/api/v1', results)
 app.route('/api/v1', repairItems)
 app.route('/api/v1', media)
@@ -142,13 +170,38 @@ app.route('/api/v1/dms-settings', dmsSettings)
 app.route('/api/v1/notifications', notifications)
 app.route('/api/v1/push', pushSubscriptions)
 
+// Follow-up module (deferred-work recovery)
+app.route('/api/v1/follow-ups', followUps)
+
+// Effective module set for the current organisation (frontend gating)
+app.route('/api/v1/modules', modulesRoute)
+
+// Vehicle data lookup (DVSA MOT History) — registration -> vehicle details + MOT
+app.route('/api/v1/vehicle-lookup', vehicleLookup)
+
+// Jobsheets (GMS) — top-level booking document + booking-code / service-type lookups
+app.route('/api/v1/jobsheets', jobsheetsRoute)
+app.route('/api/v1/booking-codes', bookingCodes)
+// Unified arrivals queue (DMS + jobsheet bookings) — feeds the Arrivals hub + dashboard widget
+app.route('/api/v1/arrivals', arrivalsRoute)
+app.route('/api/v1/service-types', serviceTypes)
+
+// In-app feedback / bug reporting (pushed to Ollo Dev)
+app.route('/api/v1/feedback', feedback)
+
 // Admin routes (Super Admin only)
 app.route('/api/v1/admin/platform', platformAdmin)
 app.route('/api/v1/admin/organizations', adminOrganizations)
 app.route('/api/v1/admin', adminStats)
 app.route('/api/v1/admin/starter-reasons', starterReasons)
+app.route('/api/v1/admin/starter-templates', starterTemplates)
 app.route('/api/v1/admin/ai-settings', aiSettings)
 app.route('/api/v1/admin/ai-usage', aiUsage)
+app.route('/api/v1/admin', adminUsageRoutes) // /usage/* and /communications/* (no path collision with adminStats)
+app.route('/api/v1/admin/super-admins', adminSuperAdmins)
+app.route('/api/v1/admin/system', adminSystem)
+app.route('/api/v1/admin/audit', adminAudit)
+app.route('/api/v1/admin/alerts', adminAlerts)
 app.route('/api/v1/admin/reason-types', adminReasonTypes)
 
 // Organization notification settings (extends organizations routes)
@@ -183,6 +236,12 @@ app.route('/api/v1/organizations/:orgId/suppliers', suppliers)
 // Declined reasons routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/declined-reasons', declinedReasons)
 
+// Follow-up settings routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/follow-up-outcomes', followUpOutcomes)
+app.route('/api/v1/organizations/:orgId/follow-up-dispositions', followUpDispositions)
+app.route('/api/v1/organizations/:orgId/follow-up-timelines', followUpTimelines)
+app.route('/api/v1/organizations/:orgId/follow-up-settings', followUpSettings)
+
 // Unable to send reasons routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/unable-to-send-reasons', unableToSendReasons)
 
@@ -207,8 +266,13 @@ app.route('/api/v1/organizations/:orgId/service-packages', servicePackages)
 // Daily SMS overview routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/daily-sms-overview', dailySmsOverview)
 
+// Library Gap Report routes (nested under organizations)
+app.route('/api/v1/organizations/:orgId/library-gap-report', libraryGapReport)
+
 // Check-in settings and MRI items routes (nested under organizations)
 app.route('/api/v1/organizations', checkinSettings)
+app.route('/api/v1/organizations', timeTrackingSettings)
+app.route('/api/v1/time-entries', timeEntriesRoutes)
 
 // Pricing calculator routes
 app.route('/api/v1/pricing', pricing)
@@ -219,6 +283,7 @@ app.route('/api/public', publicRoutes)
 // Webhook routes (unauthenticated, validated by provider signature)
 app.use('/api/webhooks/*', RateLimiters.webhook())
 app.route('/api/webhooks/twilio', twilioWebhookRoutes)
+app.route('/api/webhooks/ollo-dev', olloDevWebhookRoutes)
 
 // 404 handler for unmatched routes
 app.notFound(notFoundHandler)
@@ -246,6 +311,14 @@ checkRedisConnection().then(async (connected) => {
       initializeDailySmsOverviewSchedules().catch(err => {
         logger.error('Failed to initialize daily SMS overview schedules', { error: String(err) })
       })
+      initializeAutoCloseSchedules().catch(err => {
+        logger.error('Failed to initialize auto-close schedules', { error: String(err) })
+      })
+      // Re-register DMS auto-import schedules (BullMQ repeatable jobs are lost on
+      // Redis restart; without this, scheduled imports silently stop firing).
+      initializeDmsImportSchedules().catch(err => {
+        logger.error('Failed to initialize DMS import schedules', { error: String(err) })
+      })
     } catch (err) {
       logger.error('Failed to start queue workers', { error: String(err) })
     }
@@ -256,6 +329,15 @@ checkRedisConnection().then(async (connected) => {
 
 // Start daily cleanup tasks (activity log retention, etc.)
 startScheduledCleanupTasks()
+
+// Start the daily Follow-Up sweep (deferred-work recovery)
+startFollowUpSweepSchedule()
+
+// Start the Library Gap Report scheduler (daily digest of manually-typed notes)
+startLibraryGapReportSchedule()
+
+// Start the feedback sync retry sweep (re-push unsynced feedback to Ollo Dev)
+startFeedbackSyncRetrySchedule()
 
 logger.info(`Server started`, { port, environment: process.env.NODE_ENV || 'development' })
 

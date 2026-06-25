@@ -5,6 +5,7 @@
 
 import { supabaseAdmin } from '../lib/supabase.js'
 import { sendSms } from './sms.js'
+import { chunkIds } from './hc-period-service.js'
 
 export interface SiteMetrics {
   jobsQty: number              // Total health checks
@@ -90,17 +91,19 @@ export async function calculateSiteMetrics(
   )].filter(id => !hcMap.has(id))
 
   if (outcomeDateHcIds.length > 0) {
-    const { data: actionedHcs, error: actionedError } = await supabaseAdmin
-      .from('health_checks')
-      .select(mainSelect)
-      .in('id', outcomeDateHcIds)
-      .is('deleted_at', null)
+    for (const idChunk of chunkIds(outcomeDateHcIds)) {
+      const { data: actionedHcs, error: actionedError } = await supabaseAdmin
+        .from('health_checks')
+        .select(mainSelect)
+        .in('id', idChunk)
+        .is('deleted_at', null)
 
-    if (actionedError) {
-      console.error('SMS overview actioned HC query error:', actionedError)
-    } else if (actionedHcs) {
-      for (const hc of actionedHcs) {
-        if (!hcMap.has(hc.id)) hcMap.set(hc.id, hc)
+      if (actionedError) {
+        console.error('SMS overview actioned HC query error:', actionedError)
+      } else if (actionedHcs) {
+        for (const hc of actionedHcs) {
+          if (!hcMap.has(hc.id)) hcMap.set(hc.id, hc)
+        }
       }
     }
   }

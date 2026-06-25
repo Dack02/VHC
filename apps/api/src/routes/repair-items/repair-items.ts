@@ -279,6 +279,27 @@ repairItemsRouter.post('/health-checks/:id/repair-items', authorize(['super_admi
       return c.json({ error: 'Health check not found' }, 404)
     }
 
+    // Validate up front that every provided check_result_id belongs to THIS health check.
+    // check_results has no organization_id, so without this gate a user could pass another
+    // org's check_result_ids and read their inspection data back via the embedded GET joins.
+    // Done before the item is created so a bad request can't leave an orphaned repair item.
+    if (check_result_ids && Array.isArray(check_result_ids) && check_result_ids.length > 0) {
+      const { data: validCheckResults, error: crValidationError } = await supabaseAdmin
+        .from('check_results')
+        .select('id')
+        .eq('health_check_id', id)
+        .in('id', check_result_ids)
+
+      if (crValidationError) {
+        console.error('Check result validation error:', crValidationError)
+        return c.json({ error: 'Failed to validate check results' }, 500)
+      }
+
+      if ((validCheckResults?.length || 0) !== check_result_ids.length) {
+        return c.json({ error: 'One or more check results do not belong to this health check' }, 400)
+      }
+    }
+
     // Create repair item
     const { data: item, error } = await supabaseAdmin
       .from('repair_items')
@@ -815,6 +836,19 @@ repairItemsRouter.post('/repair-items/:id/check-results', authorize(['super_admi
     const existing = await verifyRepairItemAccess(id, auth.orgId)
     if (!existing) {
       return c.json({ error: 'Repair item not found' }, 404)
+    }
+
+    // Ensure the check result belongs to the SAME health check as the repair item.
+    // check_results has no organization_id, so this is the only tenant guard preventing
+    // a user from linking (and then reading back) another org's check result.
+    const { data: checkResult } = await supabaseAdmin
+      .from('check_results')
+      .select('health_check_id')
+      .eq('id', check_result_id)
+      .single()
+
+    if (!checkResult || checkResult.health_check_id !== existing.health_check_id) {
+      return c.json({ error: 'Check result not found' }, 404)
     }
 
     const { data: link, error } = await supabaseAdmin

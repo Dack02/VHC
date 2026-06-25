@@ -14,6 +14,7 @@ interface ConversationListProps {
   onSelect: (phoneNumber: string) => void
   onFilterChange: (filter: 'all' | 'unread' | 'unlinked') => void
   onSearchChange: (search: string) => void
+  onNewMessage: () => void
   filter: 'all' | 'unread' | 'unlinked'
   search: string
 }
@@ -26,6 +27,7 @@ export default function ConversationList({
   onSelect,
   onFilterChange,
   onSearchChange,
+  onNewMessage,
   filter,
   search
 }: ConversationListProps) {
@@ -45,6 +47,20 @@ export default function ConversationList({
 
   return (
     <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 pt-3 pb-1">
+        <h2 className="text-sm font-semibold text-gray-900">Conversations</h2>
+        <button
+          onClick={onNewMessage}
+          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-primary text-white rounded-lg hover:bg-primary-dark"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          New
+        </button>
+      </div>
+
       {/* Search */}
       <div className="p-3 border-b border-gray-200">
         <div className="relative">

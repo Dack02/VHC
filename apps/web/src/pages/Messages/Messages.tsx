@@ -4,10 +4,12 @@
  */
 
 import { useState, useCallback, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useSocket, WS_EVENTS } from '../../contexts/SocketContext'
 import { useUnreadSmsCount } from '../../hooks/useUnreadSmsCount'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { SmsMessage } from '../../lib/api'
+import ComposeMessageModal from '../../components/ComposeMessageModal'
 import ConversationList from './ConversationList'
 import ChatThread from './ChatThread'
 import { useConversations } from './useConversations'
@@ -16,6 +18,8 @@ export default function Messages() {
   const [selectedPhone, setSelectedPhone] = useState<string | null>(null)
   const [filter, setFilter] = useState<'all' | 'unread' | 'unlinked'>('all')
   const [search, setSearch] = useState('')
+  const [showCompose, setShowCompose] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
   const { on, off } = useSocket()
   const { decrement } = useUnreadSmsCount()
   const isMobile = useIsMobile()
@@ -31,9 +35,27 @@ export default function Messages() {
     conversations,
     loading,
     error,
+    refresh,
     bumpConversation,
     markConversationRead
   } = useConversations({ filter, search })
+
+  // Deep-link: /messages?phone=<e164> preselects (or opens) that thread,
+  // e.g. after sending from the Customers area. Consumes the param once.
+  useEffect(() => {
+    const phone = searchParams.get('phone')
+    if (phone) {
+      setSelectedPhone(phone)
+      searchParams.delete('phone')
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
+
+  const handleComposeSent = useCallback((phoneNumber: string) => {
+    setShowCompose(false)
+    setSelectedPhone(phoneNumber)
+    refresh()
+  }, [refresh])
 
   // Listen for real-time SMS events on org room
   useEffect(() => {
@@ -112,6 +134,7 @@ export default function Messages() {
             onSelect={setSelectedPhone}
             onFilterChange={setFilter}
             onSearchChange={setSearch}
+            onNewMessage={() => setShowCompose(true)}
             filter={filter}
             search={search}
           />
@@ -139,6 +162,13 @@ export default function Messages() {
             </div>
           )}
         </div>
+      )}
+
+      {showCompose && (
+        <ComposeMessageModal
+          onClose={() => setShowCompose(false)}
+          onSent={handleComposeSent}
+        />
       )}
     </div>
   )

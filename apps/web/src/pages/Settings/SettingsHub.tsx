@@ -1,9 +1,27 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { useModules } from '../../contexts/ModulesContext'
 import { api } from '../../lib/api'
+import type { ModuleKey } from '../../lib/modules'
 
 type UserRole = 'super_admin' | 'org_admin' | 'site_admin' | 'service_advisor' | 'technician'
+
+// Settings cards owned by a gateable module — hidden when that module is disabled.
+const CARD_MODULE: Record<string, ModuleKey> = {
+  '/settings/workshop-board': 'workshop_board',
+  '/settings/time-tracking': 'job_clocking',
+  '/settings/library-gap-report': 'library_gap_report',
+  '/settings/follow-up-settings': 'follow_up',
+  '/settings/follow-up-outcomes': 'follow_up',
+  '/settings/follow-up-dispositions': 'follow_up',
+  '/settings/follow-up-timelines': 'follow_up',
+  '/settings/integrations': 'dms_integration',
+  '/settings/daily-sms-overview': 'customer_comms',
+  '/settings/message-templates': 'customer_comms',
+  '/settings/service-types': 'jobsheets',
+  '/settings/booking-codes': 'jobsheets'
+}
 
 interface SettingsCard {
   to: string
@@ -17,6 +35,7 @@ interface SettingsCard {
 
 export default function SettingsHub() {
   const { user, session } = useAuth()
+  const { isEnabled } = useModules()
   const [pendingSubmissionsCount, setPendingSubmissionsCount] = useState(0)
   const [isAiEnabled, setIsAiEnabled] = useState(false)
 
@@ -102,10 +121,65 @@ export default function SettingsHub() {
     {
       to: '/settings/workflow',
       title: 'Workflow',
-      description: 'Check-in procedures and MRI scan settings',
+      description: 'Check-in & MRI settings (apply to health checks and jobsheets)',
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/workshop-board',
+      title: 'Workshop Planner',
+      description: 'Working day, board columns, queues, and technician capacity',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/time-tracking',
+      title: 'Time Tracking',
+      description: 'Clocking categories, indirect time, and stale-clock auto-close',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/workshop-statuses',
+      title: 'Job Statuses',
+      description: 'Job status flags, colours, and SMS triggers',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/service-types',
+      title: 'Service Types',
+      description: 'Service types selectable on a jobsheet (MOT, Service, Repair…)',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/booking-codes',
+      title: 'Booking Codes',
+      description: 'Multi-select booking tags for jobsheets (Waiting, Courtesy Car…)',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
         </svg>
       ),
       roles: ['super_admin', 'org_admin', 'site_admin']
@@ -202,7 +276,7 @@ export default function SettingsHub() {
     {
       to: '/settings/mri-items',
       title: 'MRI Items',
-      description: 'Manage MRI inspection items',
+      description: 'MRI items checked at check-in (health checks & jobsheets)',
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
@@ -256,12 +330,68 @@ export default function SettingsHub() {
       roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
+      to: '/settings/library-gap-report',
+      title: 'Library Gap Report',
+      description: 'Daily email of notes typed manually instead of using the library',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
       to: '/settings/declined-reasons',
       title: 'Declined Reasons',
       description: 'Manage customer decline reasons',
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/follow-up-settings',
+      title: 'Follow-Up Settings',
+      description: 'Enable/disable, simulation mode, send window, and test sends',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/follow-up-outcomes',
+      title: 'Follow-Up Outcomes',
+      description: 'Closing reasons for follow-up cases (Booked, Declined…)',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/follow-up-dispositions',
+      title: 'Call Dispositions',
+      description: 'Interim call results for follow-ups (No Answer, Voicemail…)',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/follow-up-timelines',
+      title: 'Follow-Up Timelines',
+      description: 'Configure the chase cadence, steps and messages',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
       ),
       roles: ['super_admin', 'org_admin', 'site_admin']
@@ -360,11 +490,122 @@ export default function SettingsHub() {
     }
   ]
 
+  // Ordered sub-sections for the General Settings area. Cards are matched by
+  // route, so the card definitions above stay untouched; any general card not
+  // listed here falls into a trailing "Other" group so nothing disappears when
+  // new settings are added.
+  const generalGroups: { title: string; routes: string[] }[] = [
+    {
+      title: 'Organisation & Account',
+      routes: ['/settings/organization', '/settings/sites', '/settings/subscription']
+    },
+    {
+      title: 'Workshop & Operations',
+      routes: [
+        '/settings/workflow',
+        '/settings/workshop-board',
+        '/settings/time-tracking',
+        '/settings/workshop-statuses'
+      ]
+    },
+    {
+      title: 'Jobsheets (GMS)',
+      routes: ['/settings/service-types', '/settings/booking-codes']
+    },
+    {
+      title: 'Inspections',
+      routes: [
+        '/settings/thresholds',
+        '/settings/vehicle-locations',
+        '/settings/mri-items',
+        '/settings/tyre-manufacturers',
+        '/settings/tyre-sizes'
+      ]
+    },
+    {
+      title: 'Pricing & Parts',
+      routes: [
+        '/settings/pricing',
+        '/settings/labour-codes',
+        '/settings/suppliers',
+        '/settings/supplier-types'
+      ]
+    },
+    {
+      title: 'Reasons & Analytics',
+      routes: [
+        '/settings/reasons',
+        '/settings/reason-types',
+        '/settings/reason-submissions',
+        '/settings/reason-analytics',
+        '/settings/library-gap-report',
+        '/settings/declined-reasons'
+      ]
+    },
+    {
+      title: 'Deletion & Audit Reasons',
+      routes: [
+        '/settings/deleted-reasons',
+        '/settings/unable-to-send-reasons',
+        '/settings/vhc-deletion-reasons'
+      ]
+    },
+    {
+      title: 'Follow-Up',
+      routes: [
+        '/settings/follow-up-settings',
+        '/settings/follow-up-outcomes',
+        '/settings/follow-up-dispositions',
+        '/settings/follow-up-timelines'
+      ]
+    }
+  ]
+
+  const moduleOk = (card: SettingsCard) => !CARD_MODULE[card.to] || isEnabled(CARD_MODULE[card.to])
   const visibleGeneral = generalCards.filter(card =>
-    card.roles.includes(userRole) && (card.condition === undefined || card.condition)
+    card.roles.includes(userRole) && (card.condition === undefined || card.condition) && moduleOk(card)
   )
   const visibleSystem = systemCards.filter(card =>
-    card.roles.includes(userRole) && (card.condition === undefined || card.condition)
+    card.roles.includes(userRole) && (card.condition === undefined || card.condition) && moduleOk(card)
+  )
+
+  // Bucket the visible general cards into their configured sub-sections (cards
+  // keep the order in which routes are listed), then append any unassigned
+  // cards under "Other" so newly added settings always show up somewhere.
+  const sections = generalGroups
+    .map(group => ({
+      title: group.title,
+      cards: group.routes
+        .map(route => visibleGeneral.find(card => card.to === route))
+        .filter((card): card is SettingsCard => card !== undefined)
+    }))
+    .filter(group => group.cards.length > 0)
+
+  const groupedRoutes = new Set(generalGroups.flatMap(g => g.routes))
+  const ungroupedGeneral = visibleGeneral.filter(card => !groupedRoutes.has(card.to))
+  if (ungroupedGeneral.length > 0) {
+    sections.push({ title: 'Other', cards: ungroupedGeneral })
+  }
+
+  const renderCard = (card: SettingsCard) => (
+    <Link
+      key={card.to}
+      to={card.to}
+      className="relative block bg-white border border-gray-200 rounded-xl p-5 hover:border-primary hover:shadow-sm transition-all"
+    >
+      <div className="flex items-start space-x-4">
+        <div className="flex-shrink-0 text-gray-400">{card.icon}</div>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-semibold text-gray-900">{card.title}</h3>
+          <p className="text-xs text-gray-500 mt-1">{card.description}</p>
+        </div>
+        {card.badge !== undefined && card.badge > 0 && (
+          <span className="inline-flex items-center px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-medium rounded-full">
+            {card.badge}
+          </span>
+        )}
+      </div>
+    </Link>
   )
 
   return (
@@ -374,53 +615,20 @@ export default function SettingsHub() {
         <p className="text-gray-600 mt-1">Manage your organisation configuration and preferences.</p>
       </div>
 
-      {visibleGeneral.length > 0 && (
-        <div className="mb-8">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">General Settings</h2>
+      {sections.map(section => (
+        <div key={section.title} className="mb-8">
+          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-4">{section.title}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {visibleGeneral.map(card => (
-              <Link
-                key={card.to}
-                to={card.to}
-                className="relative block bg-white border border-gray-200 rounded-xl p-5 hover:border-primary hover:shadow-sm transition-all"
-              >
-                <div className="flex items-start space-x-4">
-                  <div className="flex-shrink-0 text-gray-400">{card.icon}</div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-semibold text-gray-900">{card.title}</h3>
-                    <p className="text-xs text-gray-500 mt-1">{card.description}</p>
-                  </div>
-                  {card.badge !== undefined && card.badge > 0 && (
-                    <span className="inline-flex items-center px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-medium rounded-full">
-                      {card.badge}
-                    </span>
-                  )}
-                </div>
-              </Link>
-            ))}
+            {section.cards.map(renderCard)}
           </div>
         </div>
-      )}
+      ))}
 
       {visibleSystem.length > 0 && (
-        <div>
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">System Settings</h2>
+        <div className="mb-8">
+          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-4">System</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {visibleSystem.map(card => (
-              <Link
-                key={card.to}
-                to={card.to}
-                className="block bg-white border border-gray-200 rounded-xl p-5 hover:border-primary hover:shadow-sm transition-all"
-              >
-                <div className="flex items-start space-x-4">
-                  <div className="flex-shrink-0 text-gray-400">{card.icon}</div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-semibold text-gray-900">{card.title}</h3>
-                    <p className="text-xs text-gray-500 mt-1">{card.description}</p>
-                  </div>
-                </div>
-              </Link>
-            ))}
+            {visibleSystem.map(renderCard)}
           </div>
         </div>
       )}

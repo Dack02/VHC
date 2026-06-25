@@ -9,6 +9,8 @@ interface AISettings {
   aiEnabled: boolean
   defaultMonthlyLimit: number
   costAlertThreshold: number
+  marginPercent: number
+  usdToGbpRate: number
   lastTested: string | null
   isConnected: boolean
 }
@@ -70,7 +72,9 @@ export default function AIConfiguration() {
           ai_model: settings.model,
           ai_enabled: settings.aiEnabled,
           default_monthly_ai_limit: settings.defaultMonthlyLimit,
-          ai_cost_alert_threshold_usd: settings.costAlertThreshold
+          ai_cost_alert_threshold_usd: settings.costAlertThreshold,
+          ai_margin_percent: settings.marginPercent,
+          usd_to_gbp_rate: settings.usdToGbpRate
         }
       })
       setSuccessMessage('Settings saved successfully')
@@ -333,6 +337,48 @@ export default function AIConfiguration() {
               Alert when monthly platform cost exceeds this amount.
             </p>
           </div>
+
+          {/* Chargeout Margin */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Chargeout Margin
+            </label>
+            <div className="relative">
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={settings.marginPercent}
+                onChange={(e) => setSettings({ ...settings, marginPercent: parseFloat(e.target.value) || 0 })}
+                className="w-full pl-4 pr-8 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500">%</span>
+            </div>
+            <p className="mt-1 text-sm text-gray-500">
+              Markup applied to the AI cost price before converting to GBP. 0% = no markup.
+            </p>
+          </div>
+
+          {/* USD → GBP exchange rate */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              USD → GBP Rate
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">£</span>
+              <input
+                type="number"
+                min={0}
+                step={0.01}
+                value={settings.usdToGbpRate}
+                onChange={(e) => setSettings({ ...settings, usdToGbpRate: parseFloat(e.target.value) || 0 })}
+                className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <p className="mt-1 text-sm text-gray-500">
+              GBP per $1, used to bill AI chargeout in GBP. Anthropic bills the platform in USD — update this rate periodically.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -346,6 +392,14 @@ export default function AIConfiguration() {
             </div>
             <div>
               <span className="font-medium">Output:</span> ${selectedModel.outputCostPer1M.toFixed(2)} per 1M tokens
+            </div>
+          </div>
+          <div className="flex gap-8 text-sm text-blue-700 mt-2 pt-2 border-t border-blue-200">
+            <div>
+              <span className="font-medium">Chargeout{settings.marginPercent > 0 ? ` (+${settings.marginPercent}%)` : ''} in GBP:</span> Input £{(selectedModel.inputCostPer1M * (1 + settings.marginPercent / 100) * settings.usdToGbpRate).toFixed(2)}
+            </div>
+            <div>
+              Output £{(selectedModel.outputCostPer1M * (1 + settings.marginPercent / 100) * settings.usdToGbpRate).toFixed(2)} per 1M tokens
             </div>
           </div>
         </div>

@@ -15,9 +15,10 @@ interface DataTableProps<T> {
   rowKey: (row: T) => string
   pageSize?: number
   emptyMessage?: string
+  onRowClick?: (row: T) => void
 }
 
-export default function DataTable<T>({ columns, data, rowKey, pageSize = 10, emptyMessage = 'No data available' }: DataTableProps<T>) {
+export default function DataTable<T>({ columns, data, rowKey, pageSize = 10, emptyMessage = 'No data available', onRowClick }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [page, setPage] = useState(0)
@@ -81,7 +82,11 @@ export default function DataTable<T>({ columns, data, rowKey, pageSize = 10, emp
           </thead>
           <tbody className="divide-y divide-gray-100">
             {paged.map(row => (
-              <tr key={rowKey(row)} className="hover:bg-gray-50">
+              <tr
+                key={rowKey(row)}
+                className={`hover:bg-gray-50 ${onRowClick ? 'cursor-pointer' : ''}`}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+              >
                 {columns.map(col => (
                   <td
                     key={col.key}

@@ -1,0 +1,232 @@
+import { useState, useEffect, useCallback } from 'react'
+import { useAuth } from '../../contexts/AuthContext'
+import { useToast } from '../../contexts/ToastContext'
+import { api } from '../../lib/api'
+
+interface ShiftsModalProps {
+  siteId: string
+  onClose: () => void
+  onChanged: () => void
+}
+
+interface OrgUser {
+  id: string
+  first_name?: string; last_name?: string
+  firstName?: string; lastName?: string
+  role: string
+  is_active?: boolean; isActive?: boolean
+}
+interface ShiftRow { technicianId: string; weekday: number; startTime: string; endTime: string }
+interface Absence {
+  id: string; technicianId: string; startDate: string; endDate: string
+  startTime: string | null; endTime: string | null; allDay: boolean; reason: string | null
+}
+interface DayEdit { on: boolean; start: string; end: string }
+
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const DEFAULT_DAY: DayEdit = { on: true, start: '08:00', end: '17:30' }
+
+export default function ShiftsModal({ siteId, onClose, onChanged }: ShiftsModalProps) {
+  const { session } = useAuth()
+  const toast = useToast()
+  const token = session?.accessToken
+  const [tab, setTab] = useState<'hours' | 'absence'>('hours')
+  const [technicians, setTechnicians] = useState<OrgUser[]>([])
+  const [shifts, setShifts] = useState<ShiftRow[]>([])
+  const [absences, setAbsences] = useState<Absence[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedTechId, setSelectedTechId] = useState('')
+  const [days, setDays] = useState<DayEdit[]>(WEEKDAYS.map(() => ({ ...DEFAULT_DAY })))
+  const [saving, setSaving] = useState(false)
+  // Absence form
+  const [absTech, setAbsTech] = useState('')
+  const [absFrom, setAbsFrom] = useState('')
+  const [absTo, setAbsTo] = useState('')
+  const [absReason, setAbsReason] = useState('')
+
+  const userName = (id: string) => {
+    const u = technicians.find(t => t.id === id)
+    return u ? `${u.first_name ?? u.firstName ?? ''} ${u.last_name ?? u.lastName ?? ''}`.trim() : 'Unknown'
+  }
+
+  const load = useCallback(async () => {
+    if (!token) return
+    setLoading(true)
+    try {
+      const [usersRes, shiftsRes] = await Promise.all([
+        api<{ users: OrgUser[] }>('/api/v1/users', { token }),
+        api<{ shifts: ShiftRow[]; absences: Absence[] }>(`/api/v1/workshop-board/shifts?siteId=${siteId}`, { token }),
+      ])
+      const techs = (usersRes.users || []).filter(u => u.role === 'technician' && (u.is_active ?? u.isActive ?? true))
+      setTechnicians(techs)
+      setShifts(shiftsRes.shifts || [])
+      setAbsences(shiftsRes.absences || [])
+      const firstTech = techs[0]?.id || ''
+      setSelectedTechId(prev => prev || firstTech)
+      setAbsTech(prev => prev || firstTech)
+    } catch {
+      toast.error('Failed to load shifts')
+    } finally {
+      setLoading(false)
+    }
+  }, [token, siteId, toast])
+
+  useEffect(() => { load() }, [load])
+
+  // Populate the weekday editor from the selected tech's saved shift rows.
+  useEffect(() => {
+    if (!selectedTechId) return
+    const next = WEEKDAYS.map((_, wd) => {
+      const row = shifts.find(s => s.technicianId === selectedTechId && s.weekday === wd)
+      return row ? { on: true, start: row.startTime, end: row.endTime } : { on: false, start: '08:00', end: '17:30' }
+    })
+    setDays(next)
+  }, [selectedTechId, shifts])
+
+  const setDay = (i: number, patch: Partial<DayEdit>) =>
+    setDays(d => d.map((day, idx) => (idx === i ? { ...day, ...patch } : day)))
+
+  const copyMonToWeekdays = () => setDays(d => d.map((day, i) => (i >= 1 && i <= 4 ? { ...d[0] } : day)))
+
+  const saveHours = async () => {
+    if (!token || !selectedTechId) return
+    for (const d of days) {
+      if (d.on && d.start >= d.end) { toast.error('Each working day must start before it ends'); return }
+    }
+    setSaving(true)
+    try {
+      const payload = days.map((d, wd) => (d.on ? { weekday: wd, startTime: d.start, endTime: d.end } : null)).filter(Boolean)
+      await api(`/api/v1/workshop-board/shifts/${selectedTechId}`, { method: 'PUT', token, body: { shifts: payload } })
+      toast.success('Working hours saved')
+      onChanged()
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save hours')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const addAbsence = async () => {
+    if (!token || !absTech || !absFrom || !absTo) { toast.error('Pick a technician and dates'); return }
+    if (absTo < absFrom) { toast.error('End date is before start date'); return }
+    setSaving(true)
+    try {
+      await api('/api/v1/workshop-board/absences', {
+        method: 'POST', token,
+        body: { technicianId: absTech, startDate: absFrom, endDate: absTo, allDay: true, reason: absReason.trim() || null },
+      })
+      toast.success('Absence added')
+      setAbsFrom(''); setAbsTo(''); setAbsReason('')
+      onChanged()
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add absence')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const removeAbsence = async (id: string) => {
+    if (!token) return
+    try {
+      await api(`/api/v1/workshop-board/absences/${id}`, { method: 'DELETE', token })
+      onChanged()
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to remove absence')
+    }
+  }
+
+  const fmtRange = (a: Absence) => a.startDate === a.endDate ? a.startDate : `${a.startDate} → ${a.endDate}`
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-5 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <h3 className="text-base font-semibold text-gray-900 mb-3">Shifts &amp; absence</h3>
+
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-1 mb-4">
+          <button onClick={() => setTab('hours')} className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md ${tab === 'hours' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>Working hours</button>
+          <button onClick={() => setTab('absence')} className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md ${tab === 'absence' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>Absence</button>
+        </div>
+
+        {loading ? (
+          <div className="text-sm text-gray-400 py-6 text-center">Loading…</div>
+        ) : technicians.length === 0 ? (
+          <div className="text-sm text-gray-500 py-6 text-center">No technicians found for this site.</div>
+        ) : tab === 'hours' ? (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Technician</label>
+              <select value={selectedTechId} onChange={e => setSelectedTechId(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+                {technicians.map(t => <option key={t.id} value={t.id}>{userName(t.id)}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              {WEEKDAYS.map((label, i) => (
+                <div key={label} className="flex items-center gap-2">
+                  <label className="flex items-center gap-1.5 w-20 text-sm text-gray-700 cursor-pointer">
+                    <input type="checkbox" checked={days[i].on} onChange={e => setDay(i, { on: e.target.checked })} className="rounded border-gray-300 text-primary focus:ring-primary" />
+                    {label}
+                  </label>
+                  {days[i].on ? (
+                    <>
+                      <input type="time" value={days[i].start} onChange={e => setDay(i, { start: e.target.value })} className="border border-gray-300 rounded-lg px-2 py-1 text-sm" />
+                      <span className="text-gray-400 text-sm">–</span>
+                      <input type="time" value={days[i].end} onChange={e => setDay(i, { end: e.target.value })} className="border border-gray-300 rounded-lg px-2 py-1 text-sm" />
+                    </>
+                  ) : (
+                    <span className="text-sm text-gray-400">Day off</span>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button onClick={copyMonToWeekdays} className="text-xs text-primary hover:underline">Copy Monday to Tue–Fri</button>
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Close</button>
+              <button onClick={saveHours} disabled={saving} className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 disabled:opacity-50">{saving ? 'Saving…' : 'Save hours'}</button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Add absence */}
+            <div className="space-y-2 border border-gray-200 rounded-lg p-3">
+              <div className="text-xs font-medium text-gray-500">Add absence (holiday / sick / training)</div>
+              <select value={absTech} onChange={e => setAbsTech(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                {technicians.map(t => <option key={t.id} value={t.id}>{userName(t.id)}</option>)}
+              </select>
+              <div className="flex items-center gap-2">
+                <input type="date" value={absFrom} onChange={e => setAbsFrom(e.target.value)} className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm" aria-label="From" />
+                <span className="text-gray-400 text-sm">→</span>
+                <input type="date" value={absTo} onChange={e => setAbsTo(e.target.value)} className="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm" aria-label="To" />
+              </div>
+              <input type="text" value={absReason} onChange={e => setAbsReason(e.target.value)} maxLength={40} placeholder="Reason (optional)" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+              <div className="flex justify-end">
+                <button onClick={addAbsence} disabled={saving} className="px-3 py-1.5 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 disabled:opacity-50">Add absence</button>
+              </div>
+            </div>
+            {/* Existing absences */}
+            <div className="space-y-1.5">
+              {absences.length === 0 ? (
+                <div className="text-sm text-gray-400 text-center py-2">No upcoming absences.</div>
+              ) : (
+                absences.map(a => (
+                  <div key={a.id} className="flex items-center justify-between gap-2 text-sm border border-gray-100 rounded-lg px-3 py-1.5">
+                    <span className="min-w-0 truncate">
+                      <span className="font-medium text-gray-900">{userName(a.technicianId)}</span>
+                      <span className="text-gray-500"> · {fmtRange(a)}{a.reason ? ` · ${a.reason}` : ''}</span>
+                    </span>
+                    <button onClick={() => removeAbsence(a.id)} className="text-gray-400 hover:text-rag-red flex-shrink-0" title="Remove" aria-label="Remove absence">✕</button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="flex justify-end">
+              <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Close</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

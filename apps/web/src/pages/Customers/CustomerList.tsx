@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { useModules } from '../../contexts/ModulesContext'
 import { api } from '../../lib/api'
+import ComposeMessageModal from '../../components/ComposeMessageModal'
 import CustomerModal from './components/CustomerModal'
 import VehicleLookupModal from './components/VehicleLookupModal'
 
@@ -33,6 +35,7 @@ interface CustomersResponse {
 
 export default function CustomerList() {
   const { session } = useAuth()
+  const { isEnabled } = useModules()
   const navigate = useNavigate()
   const [customers, setCustomers] = useState<Customer[]>([])
   const [loading, setLoading] = useState(true)
@@ -41,6 +44,9 @@ export default function CustomerList() {
   const [total, setTotal] = useState(0)
   const [showModal, setShowModal] = useState(false)
   const [showVehicleLookup, setShowVehicleLookup] = useState(false)
+  const [composeCustomer, setComposeCustomer] = useState<Customer | null>(null)
+
+  const commsEnabled = isEnabled('customer_comms')
 
   useEffect(() => {
     fetchCustomers()
@@ -197,6 +203,19 @@ export default function CustomerList() {
                     )}
                   </div>
                 )}
+                {commsEnabled && customer.mobile && (
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setComposeCustomer(customer)
+                      }}
+                      className="text-sm text-primary hover:text-primary-dark font-medium"
+                    >
+                      Send Message
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -255,15 +274,28 @@ export default function CustomerList() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          navigate(`/customers/${customer.id}`)
-                        }}
-                        className="text-sm text-primary hover:text-primary-dark"
-                      >
-                        View
-                      </button>
+                      <div className="flex items-center justify-end gap-3">
+                        {commsEnabled && customer.mobile && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setComposeCustomer(customer)
+                            }}
+                            className="text-sm text-primary hover:text-primary-dark"
+                          >
+                            Message
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            navigate(`/customers/${customer.id}`)
+                          }}
+                          className="text-sm text-primary hover:text-primary-dark"
+                        >
+                          View
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -294,6 +326,23 @@ export default function CustomerList() {
       {showVehicleLookup && (
         <VehicleLookupModal
           onClose={() => setShowVehicleLookup(false)}
+        />
+      )}
+
+      {/* Compose Message Modal */}
+      {composeCustomer && (
+        <ComposeMessageModal
+          customer={{
+            id: composeCustomer.id,
+            firstName: composeCustomer.firstName,
+            lastName: composeCustomer.lastName,
+            mobile: composeCustomer.mobile
+          }}
+          onClose={() => setComposeCustomer(null)}
+          onSent={(phoneNumber) => {
+            setComposeCustomer(null)
+            navigate(`/messages?phone=${encodeURIComponent(phoneNumber)}`)
+          }}
         />
       )}
     </div>

@@ -120,7 +120,8 @@ export const QUEUE_NAMES = {
   EMAILS: 'emails',
   SMS: 'sms',
   DMS_IMPORT: 'dms-import',
-  DAILY_SMS_OVERVIEW: 'daily-sms-overview'
+  DAILY_SMS_OVERVIEW: 'daily-sms-overview',
+  CLOSE_STALE_ENTRIES: 'close-stale-entries'
 } as const
 
 // Create queues
@@ -203,9 +204,27 @@ export const dailySmsOverviewQueue = new Queue(QUEUE_NAMES.DAILY_SMS_OVERVIEW, {
   }
 })
 
+export const closeStaleEntriesQueue = new Queue(QUEUE_NAMES.CLOSE_STALE_ENTRIES, {
+  connection: redis as any,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: {
+      type: 'exponential',
+      delay: 5000
+    },
+    removeOnComplete: 50,
+    removeOnFail: 100
+  }
+})
+
 // Job types
 export interface DailySmsOverviewJob {
   type: 'daily_sms_overview'
+  organizationId: string
+}
+
+export interface CloseStaleEntriesJob {
+  type: 'close_stale_entries'
   organizationId: string
 }
 
@@ -507,6 +526,50 @@ export async function cancelDailySmsOverviewSchedule(organizationId: string) {
   }
 }
 
+// Close Stale Time Entries Queue Functions
+export async function scheduleCloseStaleEntries(
+  organizationId: string,
+  hour: number,
+  minute: number,
+  tz = 'Europe/London'
+) {
+  const jobId = `close-stale-entries-${organizationId}`
+
+  // Remove existing repeatable job first
+  await cancelCloseStaleEntriesSchedule(organizationId)
+
+  // Run every day at the given time in the org's timezone
+  return closeStaleEntriesQueue.add(
+    'close-stale-entries',
+    {
+      type: 'close_stale_entries',
+      organizationId
+    } as CloseStaleEntriesJob,
+    {
+      jobId,
+      repeat: {
+        pattern: `${minute} ${hour} * * *`,
+        tz
+      }
+    }
+  )
+}
+
+export async function cancelCloseStaleEntriesSchedule(organizationId: string) {
+  const jobId = `close-stale-entries-${organizationId}`
+  const job = await closeStaleEntriesQueue.getJob(jobId)
+  if (job) {
+    await job.remove()
+  }
+
+  const repeatableJobs = await closeStaleEntriesQueue.getRepeatableJobs()
+  for (const repeatJob of repeatableJobs) {
+    if (repeatJob.id === jobId || repeatJob.name === jobId) {
+      await closeStaleEntriesQueue.removeRepeatableByKey(repeatJob.key)
+    }
+  }
+}
+
 // Check Redis connection (with timeout to prevent hanging when Redis is unreachable)
 export async function checkRedisConnection(): Promise<boolean> {
   try {
@@ -531,5 +594,6 @@ export async function closeQueues() {
   await smsQueue.close()
   await dmsImportQueue.close()
   await dailySmsOverviewQueue.close()
+  await closeStaleEntriesQueue.close()
   await redis.quit()
 }

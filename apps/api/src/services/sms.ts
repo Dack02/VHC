@@ -4,7 +4,8 @@
  */
 
 import twilio from 'twilio'
-import { getSmsCredentials, SmsCredentials } from './credentials.js'
+import { supabaseAdmin } from '../lib/supabase.js'
+import { getSmsCredentials, getPlatformSmsCredentials, SmsCredentials } from './credentials.js'
 import {
   getOrganizationTemplate,
   renderSmsMessage,
@@ -25,6 +26,10 @@ export interface SmsResult {
   messageId?: string
   error?: string
   source?: 'organization' | 'platform' | 'env'
+  /** The phone number the message was actually sent FROM (org or platform sender id). */
+  from?: string
+  /** The rendered message body that was sent (for mirroring into the conversation thread). */
+  body?: string
 }
 
 /**
@@ -70,7 +75,9 @@ export async function sendSms(
       return {
         success: true,
         messageId: result.sid,
-        source: credResult.source
+        source: credResult.source,
+        from: credResult.credentials.phoneNumber,
+        body: message
       }
     } catch (error) {
       console.error('SMS send error:', error)
@@ -107,7 +114,9 @@ export async function sendSms(
     return {
       success: true,
       messageId: result.sid,
-      source: 'env'
+      source: 'env',
+      from: envFromNumber,
+      body: message
     }
   } catch (error) {
     console.error('SMS send error:', error)
@@ -115,6 +124,48 @@ export async function sendSms(
       success: false,
       error: error instanceof Error ? error.message : 'Failed to send SMS',
       source: 'env'
+    }
+  }
+}
+
+/**
+ * Send an SMS using the PLATFORM's Twilio credentials, independent of any organization.
+ * Credentials resolve env-first (TWILIO_* in the Railway secret store) then the encrypted
+ * platform_settings row — the same platform resolution org sends fall back to. Use this
+ * for platform-level alerts (e.g. notifying super admins of a new signup) where there is
+ * no tenant to bill or attribute the message to.
+ */
+export async function sendPlatformSms(to: string, message: string): Promise<SmsResult> {
+  const credResult = await getPlatformSmsCredentials()
+  if (!credResult.configured || !credResult.credentials) {
+    return {
+      success: false,
+      error: credResult.error || 'Platform SMS not configured',
+      source: 'platform'
+    }
+  }
+
+  try {
+    const client = createTwilioClient(credResult.credentials)
+    const formattedTo = formatPhoneNumber(to)
+    const result = await client.messages.create({
+      body: message,
+      from: credResult.credentials.phoneNumber,
+      to: formattedTo
+    })
+    return {
+      success: true,
+      messageId: result.sid,
+      source: 'platform',
+      from: credResult.credentials.phoneNumber,
+      body: message
+    }
+  } catch (error) {
+    console.error('Platform SMS send error:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to send SMS',
+      source: 'platform'
     }
   }
 }
@@ -315,4 +366,38 @@ export function formatPhoneNumber(phone: string): string {
  */
 export function isTwilioConfigured(): boolean {
   return !!legacyClient && !!envFromNumber
+}
+
+/**
+ * Record an outbound SMS into sms_messages (the two-way conversation log).
+ * Centralises the outbound-row shape so an inbound reply can thread back to it via
+ * recency-based tenant routing and so the send appears in the conversation view.
+ * Non-fatal: the SMS has already been sent, so a logging failure is reported, never thrown.
+ */
+export async function recordOutboundSms(rec: {
+  organizationId: string
+  healthCheckId: string | null
+  customerId: string | null
+  toNumber: string
+  result: SmsResult
+  kind?: string
+  sentBy?: string | null
+}): Promise<void> {
+  const { error } = await supabaseAdmin.from('sms_messages').insert({
+    organization_id: rec.organizationId,
+    health_check_id: rec.healthCheckId,
+    customer_id: rec.customerId,
+    direction: 'outbound',
+    from_number: rec.result.from || '',
+    to_number: rec.toNumber,
+    body: rec.result.body || '',
+    twilio_sid: rec.result.messageId || null,
+    twilio_status: 'sent',
+    is_read: true,
+    sent_by: rec.sentBy ?? null,
+    metadata: { source: rec.result.source, kind: rec.kind }
+  })
+  if (error) {
+    console.error('Failed to record outbound SMS:', error.message)
+  }
 }

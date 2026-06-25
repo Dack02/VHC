@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { useToast } from '../../contexts/ToastContext'
 import { api, HealthCheck, CheckResult, RepairItem, TemplateSection, HealthCheckSummary, FullHealthCheckResponse, NewRepairItem, TimelineEvent } from '../../lib/api'
 import { WorkflowBadges, WorkflowStatus, calculateWorkflowStatus, calculateAuthorisationInfo, CompletionInfo, AuthorisationInfo } from '../../components/WorkflowBadges'
 import { PhotosTab } from './tabs/PhotosTab'
@@ -24,6 +25,11 @@ import { CustomerEditModal } from './components/CustomerEditModal'
 import { HcDeletionModal } from './components/HcDeletionModal'
 import { AdvisorAuthorizationModal } from './components/AdvisorAuthorizationModal'
 import { InspectionTimer } from '../../components/InspectionTimer'
+import { JobTimeSummary, type JobTimeData } from '../../components/JobTimeSummary'
+import WorkshopNotesPanel from '../../components/WorkshopNotesPanel'
+import { MotHistoryPanel } from './components/MotHistoryPanel'
+import BookedWorkPanel from './components/BookedWorkPanel'
+import { useModules } from '../../contexts/ModulesContext'
 
 // Hook for online/offline detection
 function useOnlineStatus() {
@@ -43,6 +49,47 @@ function useOnlineStatus() {
   }, [])
 
   return isOnline
+}
+
+// Workshop lifecycle (job_state) - independent of the VHC pipeline `status`.
+const jobStateLabels: Record<string, string> = {
+  due_in: 'Due In',
+  arrived: 'Arrived',
+  in_workshop: 'In Workshop',
+  work_complete: 'Work Complete',
+  collected: 'Collected'
+}
+
+const jobStateColors: Record<string, string> = {
+  due_in: 'bg-gray-100 text-gray-700',
+  arrived: 'bg-blue-100 text-blue-700',
+  in_workshop: 'bg-indigo-100 text-indigo-700',
+  work_complete: 'bg-green-100 text-green-700',
+  collected: 'bg-gray-100 text-gray-500'
+}
+
+// Vehicle status (the job_state field) shown on the working document - editable (a dropdown) for users who
+// can change it, otherwise a read-only badge. Writes go through the same
+// workshop-board endpoint the Kanban board uses.
+function JobStateControl({ jobState, editable, onChange }: { jobState: string; editable: boolean; onChange?: (value: string) => void }) {
+  if (!editable) {
+    return (
+      <span className={`inline-block px-3 py-1 text-sm font-medium rounded ${jobStateColors[jobState] || 'bg-gray-100 text-gray-700'}`}>
+        {jobStateLabels[jobState] || jobState}
+      </span>
+    )
+  }
+  return (
+    <select
+      value={jobState}
+      onChange={e => onChange?.(e.target.value)}
+      className="text-sm font-medium rounded-lg border border-gray-300 px-2.5 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-primary"
+    >
+      {Object.entries(jobStateLabels).map(([value, label]) => (
+        <option key={value} value={value}>{label}</option>
+      ))}
+    </select>
+  )
 }
 
 const statusLabels: Record<string, string> = {
@@ -89,17 +136,20 @@ const statusColors: Record<string, string> = {
   no_show: 'bg-red-100 text-red-700'
 }
 
-type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'tyres-brakes' | 'labour' | 'parts' | 'photos' | 'timeline' | 'activity' | 'sms'
+type Tab = 'summary' | 'checkin' | 'mri' | 'health-check' | 'tyres-brakes' | 'labour' | 'parts' | 'photos' | 'timeline' | 'notes' | 'activity' | 'sms' | 'mot'
 
 export default function HealthCheckDetail() {
   const { id } = useParams<{ id: string }>()
   const { session, user } = useAuth()
+  const toast = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const isOnline = useOnlineStatus()
+  const { isEnabled } = useModules()
+  const vehicleLookupEnabled = isEnabled('vehicle_lookup')
 
   // Get initial tab from URL query parameter
-  const validTabs: Tab[] = ['summary', 'checkin', 'mri', 'health-check', 'tyres-brakes', 'labour', 'parts', 'photos', 'timeline', 'activity', 'sms']
+  const validTabs: Tab[] = ['summary', 'checkin', 'mri', 'health-check', 'tyres-brakes', 'labour', 'parts', 'photos', 'timeline', 'notes', 'activity', 'sms', 'mot']
   const urlTab = searchParams.get('tab') as Tab | null
   const initialTab: Tab = urlTab && validTabs.includes(urlTab) ? urlTab : 'health-check'
 
@@ -131,11 +181,13 @@ export default function HealthCheckDetail() {
   const [showAdvisorAuthModal, setShowAdvisorAuthModal] = useState(false)
   const [generatingPDF, setGeneratingPDF] = useState(false)
   const [unreadSmsCount, setUnreadSmsCount] = useState(0)
+  const [workshopNotesCount, setWorkshopNotesCount] = useState(0)
   const [checkinEnabled, setCheckinEnabled] = useState(false)
   const [timerData, setTimerData] = useState<{
     total_closed_minutes: number
     active_clock_in_at: string | null
   } | null>(null)
+  const [jobTimeData, setJobTimeData] = useState<JobTimeData | null>(null)
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const fetchData = useCallback(async (options: { isRetry?: boolean; silent?: boolean } = {}) => {
@@ -166,7 +218,7 @@ export default function HealthCheckDetail() {
       setSummary(hcData.summary || null)
 
       // Run remaining calls in parallel - they only depend on hcData
-      const [templateResult, timelineResult, timeEntriesResult, checkinResult, repairItemsResult, smsUnreadResult] =
+      const [templateResult, timelineResult, timeEntriesResult, checkinResult, repairItemsResult, smsUnreadResult, workshopNotesResult] =
         await Promise.allSettled([
           // Template sections
           hcData.healthCheck.template_id
@@ -180,20 +232,12 @@ export default function HealthCheckDetail() {
             `/api/v1/health-checks/${id}/timeline`,
             { token: session.accessToken }
           ),
-          // Time entries (only for in_progress)
-          hcData.healthCheck.status === 'in_progress'
-            ? api<{
-                entries: Array<{
-                  clockIn: string
-                  clockOut: string | null
-                  durationMinutes: number | null
-                }>
-                totalMinutes: number
-              }>(
-                `/api/v1/health-checks/${id}/time-entries`,
-                { token: session.accessToken }
-              )
-            : Promise.resolve(null),
+          // Time entries (segment breakdown — always fetched so the time summary
+          // persists after the inspection is complete)
+          api<JobTimeData>(
+            `/api/v1/health-checks/${id}/time-entries`,
+            { token: session.accessToken }
+          ),
           // Check-in settings
           user?.organization?.id
             ? api<{ checkinEnabled: boolean }>(
@@ -209,6 +253,11 @@ export default function HealthCheckDetail() {
           // Unread SMS count
           api<{ count: number }>(
             `/api/v1/health-checks/${id}/sms-messages/unread-count`,
+            { token: session.accessToken }
+          ),
+          // Workshop notes (count for the Notes tab badge)
+          api<{ notes: unknown[] }>(
+            `/api/v1/workshop-board/cards/${id}/notes`,
             { token: session.accessToken }
           )
         ])
@@ -226,6 +275,7 @@ export default function HealthCheckDetail() {
       // Process time entries result
       if (timeEntriesResult.status === 'fulfilled' && timeEntriesResult.value) {
         const timeEntriesData = timeEntriesResult.value
+        setJobTimeData(timeEntriesData)
         const activeEntry = timeEntriesData.entries?.find(e => !e.clockOut)
         const closedMinutes = timeEntriesData.entries
           ?.filter(e => e.clockOut)
@@ -236,6 +286,7 @@ export default function HealthCheckDetail() {
         })
       } else {
         setTimerData(null)
+        setJobTimeData(null)
       }
 
       // Process check-in settings result
@@ -314,6 +365,11 @@ export default function HealthCheckDetail() {
         setUnreadSmsCount(smsUnreadResult.value?.count || 0)
       }
 
+      // Process workshop notes count result
+      if (workshopNotesResult.status === 'fulfilled') {
+        setWorkshopNotesCount(workshopNotesResult.value?.notes?.length || 0)
+      }
+
       // Reset retry count on success
       setRetryCount(0)
     } catch (err) {
@@ -361,6 +417,23 @@ export default function HealthCheckDetail() {
       await fetchData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update status')
+    }
+  }
+
+  // Vehicle status (job_state) - reuses the same endpoint the workshop board uses, so
+  // the board updates live too. Server enforces the technician-own-job rule.
+  const handleJobStateChange = async (jobState: string) => {
+    if (!session?.accessToken || !id) return
+    try {
+      await api(`/api/v1/workshop-board/cards/${id}`, {
+        method: 'PATCH',
+        token: session.accessToken,
+        body: { jobState }
+      })
+      await fetchData({ silent: true })
+      toast.success(`Vehicle status set to ${jobStateLabels[jobState] || jobState}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update vehicle status')
     }
   }
 
@@ -528,8 +601,10 @@ export default function HealthCheckDetail() {
     { id: 'parts', label: 'Parts' },
     { id: 'photos', label: 'Photos', badge: summary?.media_count },
     { id: 'timeline', label: 'Timeline' },
+    { id: 'notes' as Tab, label: 'Notes', badge: workshopNotesCount > 0 ? workshopNotesCount : undefined, badgeColor: 'gray' },
     { id: 'activity', label: 'Customer Activity' },
-    { id: 'sms' as Tab, label: 'SMS', badge: unreadSmsCount > 0 ? unreadSmsCount : undefined, badgeColor: 'red' }
+    { id: 'sms' as Tab, label: 'SMS', badge: unreadSmsCount > 0 ? unreadSmsCount : undefined, badgeColor: 'red' },
+    ...(vehicleLookupEnabled ? [{ id: 'mot' as Tab, label: 'MOT History' }] : [])
   ]
 
   // Determine available actions based on status
@@ -737,6 +812,12 @@ export default function HealthCheckDetail() {
         canEditCustomer={canChangeAdvisor || undefined}
         onCustomerEditClick={() => setShowCustomerEditModal(true)}
         timerData={timerData}
+        jobTimeData={jobTimeData}
+        canEditJobState={!!user && (
+          ['super_admin', 'org_admin', 'site_admin', 'service_advisor'].includes(user.role) ||
+          (user.role === 'technician' && healthCheck.technician_id === user.id)
+        )}
+        onJobStateChange={handleJobStateChange}
       />
 
       {/* Tab Navigation */}
@@ -774,12 +855,22 @@ export default function HealthCheckDetail() {
       {/* Tab Content */}
       <div className="p-6">
         {activeTab === 'summary' && (
-          <SummaryTab
-            healthCheckId={id!}
-            sentAt={healthCheck.sent_at ?? null}
-            bookedRepairs={healthCheck.booked_repairs}
-            bookingNotes={healthCheck.notes}
-            onUpdate={silentRefresh}
+          <>
+            <BookedWorkPanel healthCheckId={id!} />
+            <SummaryTab
+              healthCheckId={id!}
+              sentAt={healthCheck.sent_at ?? null}
+              bookedRepairs={healthCheck.booked_repairs}
+              bookingNotes={healthCheck.notes}
+              onUpdate={silentRefresh}
+            />
+          </>
+        )}
+        {activeTab === 'mot' && (
+          <MotHistoryPanel
+            vehicleId={healthCheck.vehicle_id}
+            token={session?.accessToken}
+            registration={healthCheck.vehicle?.registration}
           />
         )}
         {activeTab === 'checkin' && (
@@ -836,6 +927,15 @@ export default function HealthCheckDetail() {
         )}
         {activeTab === 'timeline' && (
           <TimelineTab timeline={timeline} />
+        )}
+        {activeTab === 'notes' && (
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 max-w-2xl">
+            <h3 className="font-medium text-gray-900 mb-3">Workshop notes</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Shared with the workshop board — anything added here shows on the job's card.
+            </p>
+            <WorkshopNotesPanel healthCheckId={id!} onCountChange={setWorkshopNotesCount} />
+          </div>
         )}
         {activeTab === 'activity' && (
           <CustomerActivityTab healthCheckId={id!} />
@@ -979,15 +1079,18 @@ interface VehicleInfoBarProps {
   authorisationInfo?: AuthorisationInfo
   canChangeAdvisor?: boolean
   onAdvisorClick?: () => void
+  canEditJobState?: boolean
+  onJobStateChange?: (jobState: string) => void
   canEditCustomer?: boolean
   onCustomerEditClick?: () => void
   timerData?: {
     total_closed_minutes: number
     active_clock_in_at: string | null
   } | null
+  jobTimeData?: JobTimeData | null
 }
 
-function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, labourCompletion, partsCompletion, authorisationInfo, canChangeAdvisor, onAdvisorClick, canEditCustomer, onCustomerEditClick, timerData }: VehicleInfoBarProps) {
+function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, labourCompletion, partsCompletion, authorisationInfo, canChangeAdvisor, onAdvisorClick, canEditCustomer, onCustomerEditClick, timerData, jobTimeData, canEditJobState, onJobStateChange }: VehicleInfoBarProps) {
   const vehicle = healthCheck.vehicle
   const customer = healthCheck.vehicle?.customer
   const [vinExpanded, setVinExpanded] = useState(false)
@@ -1037,8 +1140,20 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
               />
             )}
             {workflowStatus && <WorkflowBadges status={workflowStatus} compact technicianCompletion={technicianCompletion} labourCompletion={labourCompletion} partsCompletion={partsCompletion} authorisationInfo={authorisationInfo} />}
+            <JobStateControl
+              jobState={healthCheck.job_state || 'arrived'}
+              editable={!!canEditJobState}
+              onChange={onJobStateChange}
+            />
           </div>
         </div>
+
+        {/* Technician time: job / health-check / indirect, with segment history */}
+        {jobTimeData && (jobTimeData.entries.length > 0 || jobTimeData.activeClockInAt) && (
+          <div className="mb-4">
+            <JobTimeSummary data={jobTimeData} />
+          </div>
+        )}
 
         {/* Vehicle + Customer */}
         <div className="grid grid-cols-2 gap-4">
@@ -1280,6 +1395,16 @@ function VehicleInfoBar({ healthCheck, workflowStatus, technicianCompletion, lab
               </span>
             )}
           </div>
+        </div>
+
+        {/* Vehicle status (job_state) - the workshop lifecycle, separate from the VHC status above */}
+        <div>
+          <div className="text-xs text-gray-500 uppercase tracking-wider mb-1">Vehicle Status</div>
+          <JobStateControl
+            jobState={healthCheck.job_state || 'arrived'}
+            editable={!!canEditJobState}
+            onChange={onJobStateChange}
+          />
         </div>
 
         {/* Inspection Timer - shown when in_progress */}

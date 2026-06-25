@@ -7,6 +7,10 @@ export function setActiveOrgId(orgId: string | null) {
   _activeOrgId = orgId
 }
 
+export function getActiveOrgId(): string | null {
+  return _activeOrgId
+}
+
 // Token refresh callback — set by AuthContext to avoid circular imports
 let _tokenRefreshCallback: (() => Promise<string | null>) | null = null
 

@@ -7,6 +7,37 @@ import { createNotification } from '../notifications.js'
 
 const status = new Hono()
 
+/**
+ * When a health check that belongs to a jobsheet arrives / is checked in, reflect that on
+ * the parent jobsheet: the vehicle is now on site, and the jobsheet's own Vehicle Status
+ * advances Due In → Arrived (forward-only — never regresses a job already further along).
+ *
+ * The linked VHC's own job_state is advanced automatically by the health_check_job_state_sync
+ * trigger when status leaves awaiting_arrival; this keeps the jobsheet row in step for the
+ * no-VHC fallback (shapeJobsheet reads the jobsheet's job_state when no VHC exists) and tidiness.
+ * Best-effort and idempotent: a failure here must not fail the arrival/check-in itself.
+ */
+async function syncJobsheetOnArrival(jobsheetId: string | null | undefined, orgId: string): Promise<void> {
+  if (!jobsheetId) return
+  try {
+    // Vehicle is on site now (always set).
+    await supabaseAdmin
+      .from('jobsheets')
+      .update({ vehicle_on_site: true })
+      .eq('id', jobsheetId)
+      .eq('organization_id', orgId)
+    // Advance the jobsheet's Vehicle Status forward-only (Due In → Arrived).
+    await supabaseAdmin
+      .from('jobsheets')
+      .update({ job_state: 'arrived' })
+      .eq('id', jobsheetId)
+      .eq('organization_id', orgId)
+      .eq('job_state', 'due_in')
+  } catch (err) {
+    console.error('Failed to sync jobsheet on arrival:', err)
+  }
+}
+
 // POST /:id/status - Change status
 status.post('/:id/status', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {
@@ -146,6 +177,10 @@ status.post('/:id/mark-arrived', authorize(['super_admin', 'org_admin', 'site_ad
       return c.json({ error: updateError.message }, 500)
     }
 
+    // If this VHC belongs to a jobsheet, reflect arrival on the parent (vehicle on site,
+    // Vehicle Status → Arrived). The VHC's own job_state is advanced by the job_state trigger.
+    await syncJobsheetOnArrival(healthCheck.jobsheet_id, auth.orgId)
+
     // Record status change in history
     await supabaseAdmin
       .from('health_check_status_history')
@@ -264,6 +299,10 @@ status.post('/:id/complete-checkin', authorize(['super_admin', 'org_admin', 'sit
     if (updateError) {
       return c.json({ error: updateError.message }, 500)
     }
+
+    // Reflect arrival/check-in on the parent jobsheet (if any): vehicle on site, Vehicle
+    // Status → Arrived. Idempotent — mark-arrived may already have done this.
+    await syncJobsheetOnArrival(healthCheck.jobsheet_id, auth.orgId)
 
     // Mark MRI scan as complete (set completed_at on all MRI results)
     // This ensures the mobile app shows MRI results instead of "Awaiting MRI Scan"
@@ -804,7 +843,7 @@ status.post('/:id/clock-in', authorize(['super_admin', 'org_admin', 'site_admin'
     const { data: healthCheck } = await supabaseAdmin
       .from('health_checks')
       .select(`
-        id, status, technician_id, site_id,
+        id, status, technician_id, site_id, organization_id, tech_completed_at,
         vehicle:vehicles(registration)
       `)
       .eq('id', id)
@@ -881,10 +920,50 @@ status.post('/:id/clock-in', authorize(['super_admin', 'org_admin', 'site_admin'
         .from('technician_time_entries')
         .update({
           clock_out_at: clockOut.toISOString(),
-          duration_minutes: durationMinutes
+          duration_minutes: durationMinutes,
+          closed_reason: 'reclock'
         })
         .eq('id', openEntry.id)
     }
+
+    // A tech can't be on a break and on a job at once: clocking onto a job ends
+    // any open shop-level indirect segment (job-less break/cleaning/training).
+    const { data: openIndirect } = await supabaseAdmin
+      .from('technician_time_entries')
+      .select('id, clock_in_at')
+      .eq('technician_id', auth.user.id)
+      .eq('organization_id', auth.orgId)
+      .is('health_check_id', null)
+      .is('clock_out_at', null)
+
+    for (const seg of openIndirect || []) {
+      const closeAt = new Date()
+      await supabaseAdmin
+        .from('technician_time_entries')
+        .update({
+          clock_out_at: closeAt.toISOString(),
+          duration_minutes: Math.round((closeAt.getTime() - new Date(seg.clock_in_at).getTime()) / 60000),
+          closed_reason: 'reclock'
+        })
+        .eq('id', seg.id)
+    }
+
+    // Resolve the time category. An optional categoryKey in the body overrides the
+    // split-by-milestone default: inspection before the VHC is completed, repair
+    // after. Falls back to no category (treated as productive) if not found.
+    let categoryKey: string | null = null
+    try {
+      const body = await c.req.json()
+      categoryKey = typeof body?.categoryKey === 'string' ? body.categoryKey : null
+    } catch { /* empty body */ }
+    const resolvedKey = categoryKey || (healthCheck.tech_completed_at ? 'repair' : 'inspection')
+    const { data: category } = await supabaseAdmin
+      .from('time_entry_categories')
+      .select('id')
+      .eq('organization_id', healthCheck.organization_id)
+      .eq('key', resolvedKey)
+      .eq('is_active', true)
+      .maybeSingle()
 
     // Create time entry
     const { data: timeEntry, error: entryError } = await supabaseAdmin
@@ -892,7 +971,10 @@ status.post('/:id/clock-in', authorize(['super_admin', 'org_admin', 'site_admin'
       .insert({
         health_check_id: id,
         technician_id: auth.user.id,
-        clock_in_at: new Date().toISOString()
+        clock_in_at: new Date().toISOString(),
+        category_id: category?.id ?? null,
+        organization_id: healthCheck.organization_id,
+        site_id: healthCheck.site_id
       })
       .select()
       .single()
@@ -1083,7 +1165,8 @@ status.post('/:id/clock-out', authorize(['super_admin', 'org_admin', 'site_admin
       .from('technician_time_entries')
       .update({
         clock_out_at: clockOut.toISOString(),
-        duration_minutes: durationMinutes
+        duration_minutes: durationMinutes,
+        closed_reason: 'manual'
       })
       .eq('id', openEntry.id)
       .select()
@@ -1165,6 +1248,81 @@ status.post('/:id/clock-out', authorize(['super_admin', 'org_admin', 'site_admin
   }
 })
 
+// POST /:id/clock-indirect - Start a job-linked indirect segment (pauses the job clock)
+status.post('/:id/clock-indirect', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const body = await c.req.json().catch(() => ({}))
+    const categoryKey = typeof body?.categoryKey === 'string' ? body.categoryKey : null
+    if (!categoryKey) return c.json({ error: 'categoryKey is required' }, 400)
+
+    const { data: healthCheck } = await supabaseAdmin
+      .from('health_checks')
+      .select('id, technician_id, site_id, organization_id')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+    if (!healthCheck) return c.json({ error: 'Health check not found' }, 404)
+    if (auth.user.role === 'technician' && healthCheck.technician_id !== auth.user.id) {
+      return c.json({ error: 'Not authorized for this health check' }, 403)
+    }
+
+    const { data: settings } = await supabaseAdmin
+      .from('organization_settings')
+      .select('indirect_time_enabled')
+      .eq('organization_id', auth.orgId)
+      .maybeSingle()
+    if (settings?.indirect_time_enabled !== true) {
+      return c.json({ error: 'Indirect time tracking is not enabled for this organization' }, 400)
+    }
+
+    const { data: category } = await supabaseAdmin
+      .from('time_entry_categories')
+      .select('id, kind, is_active')
+      .eq('organization_id', auth.orgId)
+      .eq('key', categoryKey)
+      .maybeSingle()
+    if (!category || category.is_active === false) return c.json({ error: 'Unknown or inactive category' }, 400)
+    if (category.kind !== 'indirect') return c.json({ error: 'Category is not an indirect category' }, 400)
+
+    // Indirect pauses the job clock: close the tech's open segment on this job first.
+    const { data: openEntry } = await supabaseAdmin
+      .from('technician_time_entries')
+      .select('id, clock_in_at')
+      .eq('health_check_id', id)
+      .eq('technician_id', auth.user.id)
+      .is('clock_out_at', null)
+      .maybeSingle()
+    if (openEntry) {
+      const clockOut = new Date()
+      const dur = Math.round((clockOut.getTime() - new Date(openEntry.clock_in_at).getTime()) / 60000)
+      await supabaseAdmin
+        .from('technician_time_entries')
+        .update({ clock_out_at: clockOut.toISOString(), duration_minutes: dur, closed_reason: 'reclock' })
+        .eq('id', openEntry.id)
+    }
+
+    const { data: entry, error } = await supabaseAdmin
+      .from('technician_time_entries')
+      .insert({
+        health_check_id: id,
+        technician_id: auth.user.id,
+        organization_id: healthCheck.organization_id,
+        site_id: healthCheck.site_id,
+        category_id: category.id,
+        clock_in_at: new Date().toISOString()
+      })
+      .select('id, clock_in_at')
+      .single()
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ id: entry.id, clockIn: entry.clock_in_at })
+  } catch (error) {
+    console.error('Clock indirect error:', error)
+    return c.json({ error: 'Failed to start indirect time' }, 500)
+  }
+})
+
 // GET /:id/time-entries - Get time entries
 status.get('/:id/time-entries', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {
@@ -1186,31 +1344,72 @@ status.get('/:id/time-entries', authorize(['super_admin', 'org_admin', 'site_adm
     const { data: entries, error } = await supabaseAdmin
       .from('technician_time_entries')
       .select(`
-        *,
-        technician:users(id, first_name, last_name)
+        id, clock_in_at, clock_out_at, duration_minutes, auto_closed, closed_reason,
+        technician:users(id, first_name, last_name),
+        category:time_entry_categories(id, key, label, kind, counts_toward_job, is_health_check, colour)
       `)
       .eq('health_check_id', id)
-      .order('clock_in', { ascending: true })
+      .order('clock_in_at', { ascending: true })
 
     if (error) {
       return c.json({ error: error.message }, 500)
     }
 
-    const totalMinutes = entries?.reduce((sum, e) => sum + (e.duration_minutes || 0), 0) || 0
+    // Category-aware breakdown, all computed from the segments (the source of
+    // truth — health_checks.total_tech_time_minutes is not maintained).
+    let jobMinutes = 0
+    let healthCheckMinutes = 0
+    let indirectMinutes = 0
+    let activeClockInAt: string | null = null
+    let activeCategory: { key: string; label: string } | null = null
+
+    for (const e of (entries || []) as any[]) {
+      const cat = e.category as { key?: string; label?: string; counts_toward_job?: boolean; is_health_check?: boolean } | null
+      const productive = !cat || cat.counts_toward_job !== false
+      const dur = (e.duration_minutes as number) || 0
+      if (e.clock_out_at == null) {
+        if (productive && !activeClockInAt) {
+          activeClockInAt = e.clock_in_at
+          activeCategory = cat ? { key: cat.key || '', label: cat.label || '' } : null
+        }
+      } else if (productive) {
+        jobMinutes += dur
+        if (cat?.is_health_check) healthCheckMinutes += dur
+      } else {
+        indirectMinutes += dur
+      }
+    }
 
     return c.json({
-      entries: entries?.map(e => ({
-        id: e.id,
-        technician: e.technician ? {
-          id: e.technician.id,
-          firstName: e.technician.first_name,
-          lastName: e.technician.last_name
-        } : null,
-        clockIn: e.clock_in_at,
-        clockOut: e.clock_out_at,
-        durationMinutes: e.duration_minutes
-      })),
-      totalMinutes
+      entries: ((entries || []) as any[]).map(e => {
+        const cat = e.category as { key?: string; label?: string; kind?: string; is_health_check?: boolean; colour?: string } | null
+        return {
+          id: e.id,
+          technician: e.technician ? {
+            id: e.technician.id,
+            firstName: e.technician.first_name,
+            lastName: e.technician.last_name
+          } : null,
+          clockIn: e.clock_in_at,
+          clockOut: e.clock_out_at,
+          durationMinutes: e.duration_minutes,
+          autoClosed: e.auto_closed === true,
+          category: cat ? {
+            key: cat.key,
+            label: cat.label,
+            kind: cat.kind,
+            isHealthCheck: cat.is_health_check === true,
+            colour: cat.colour
+          } : null
+        }
+      }),
+      // totalMinutes kept for backward-compat; now productive-only (job time)
+      totalMinutes: jobMinutes,
+      jobMinutes,
+      healthCheckMinutes,
+      indirectMinutes,
+      activeClockInAt,
+      activeCategory
     })
   } catch (error) {
     console.error('Get time entries error:', error)

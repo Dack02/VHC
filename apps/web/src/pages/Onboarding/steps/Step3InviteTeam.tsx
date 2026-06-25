@@ -38,20 +38,24 @@ export default function Step3InviteTeam({ token, onNext, onBack }: Props) {
     role: 'technician'
   })
 
-  const handleAddMember = () => {
-    if (!newMember.firstName || !newMember.lastName || !newMember.email) {
-      setError('Please fill in all fields')
-      return
+  const validateMember = (candidate: typeof newMember): string | null => {
+    if (!candidate.firstName || !candidate.lastName || !candidate.email) {
+      return 'Please fill in all fields'
     }
-
-    if (!newMember.email.includes('@')) {
-      setError('Please enter a valid email address')
-      return
+    if (!candidate.email.includes('@')) {
+      return 'Please enter a valid email address'
     }
-
     // Check for duplicate email
-    if (members.some(m => m.email.toLowerCase() === newMember.email.toLowerCase())) {
-      setError('This email has already been added')
+    if (members.some(m => m.email.toLowerCase() === candidate.email.toLowerCase())) {
+      return 'This email has already been added'
+    }
+    return null
+  }
+
+  const handleAddMember = () => {
+    const validationError = validateMember(newMember)
+    if (validationError) {
+      setError(validationError)
       return
     }
 
@@ -75,15 +79,30 @@ export default function Step3InviteTeam({ token, onNext, onBack }: Props) {
     setError('')
     setSuccess('')
 
+    // Include any details typed into the "Add Team Member" form that weren't
+    // explicitly added via "+ Add to List", so a single typed-in member isn't
+    // silently dropped when "Continue" is clicked.
+    let allMembers = members
+    const hasPendingInput = !!(newMember.firstName || newMember.lastName || newMember.email)
+    if (hasPendingInput) {
+      const validationError = validateMember(newMember)
+      if (validationError) {
+        setError(validationError)
+        setSaving(false)
+        return
+      }
+      allMembers = [...members, { id: Date.now().toString(), ...newMember }]
+    }
+
     try {
-      if (members.length > 0) {
+      if (allMembers.length > 0) {
         const response = await api<{ invited: { email: string }[]; errors?: { email: string; error: string }[] }>(
           '/api/v1/onboarding/invite-team',
           {
             method: 'POST',
             token,
             body: {
-              invites: members.map(m => ({
+              invites: allMembers.map(m => ({
                 firstName: m.firstName,
                 lastName: m.lastName,
                 email: m.email,
@@ -113,6 +132,11 @@ export default function Step3InviteTeam({ token, onNext, onBack }: Props) {
   const handleSkip = () => {
     onNext()
   }
+
+  // Count a fully-entered-but-not-yet-added member towards the invite total so
+  // the button reflects that clicking it will invite them.
+  const pendingMemberValid = validateMember(newMember) === null
+  const totalToInvite = members.length + (pendingMemberValid ? 1 : 0)
 
   return (
     <div>
@@ -258,7 +282,7 @@ export default function Step3InviteTeam({ token, onNext, onBack }: Props) {
             disabled={saving}
             className="px-6 py-2 bg-primary text-white rounded-lg hover:bg-primary-dark disabled:opacity-50 transition-colors"
           >
-            {saving ? 'Sending Invites...' : members.length > 0 ? `Invite ${members.length} Member(s)` : 'Continue'}
+            {saving ? 'Sending Invites...' : totalToInvite > 0 ? `Invite ${totalToInvite} Member(s)` : 'Continue'}
           </button>
         </div>
       </div>

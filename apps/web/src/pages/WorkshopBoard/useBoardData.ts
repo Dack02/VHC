@@ -1,0 +1,182 @@
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useAuth } from '../../contexts/AuthContext'
+import { useSocket, WS_EVENTS } from '../../contexts/SocketContext'
+import { api } from '../../lib/api'
+import type { BoardData, WeekData } from './types'
+
+const REFRESH_DEBOUNCE_MS = 600
+const POLL_FALLBACK_MS = 60000
+
+/**
+ * Loads the workshop board and keeps it live: any board mutation, health
+ * check status change or technician clock event triggers a debounced refetch,
+ * with a slow polling fallback when sockets are quiet.
+ */
+export function useBoardData(date: string) {
+  const { session, user } = useAuth()
+  const { socket } = useSocket()
+  const [board, setBoard] = useState<BoardData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inFlightRef = useRef(false)
+  // While a drag is in flight we pause background (socket/poll) refetches so an
+  // incoming update can't clobber the optimistic board and yank the card from
+  // under the cursor. A refetch that arrives while paused is deferred and
+  // flushed once on drag end.
+  const pauseRef = useRef(false)
+  const pendingRef = useRef(false)
+
+  const siteId = user?.site?.id
+
+  const fetchBoard = useCallback(async (silent = false) => {
+    if (!session?.accessToken) return
+    if (silent && pauseRef.current) { pendingRef.current = true; return }
+    if (inFlightRef.current) return
+    inFlightRef.current = true
+    if (!silent) setLoading(true)
+    setError(null)
+
+    try {
+      const params = new URLSearchParams({ date })
+      if (siteId) params.set('siteId', siteId)
+      const data = await api<BoardData>(`/api/v1/workshop-board?${params}`, {
+        token: session.accessToken
+      })
+      setBoard(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load workshop board')
+    } finally {
+      inFlightRef.current = false
+      setLoading(false)
+    }
+  }, [session?.accessToken, siteId, date])
+
+  useEffect(() => {
+    fetchBoard()
+  }, [fetchBoard])
+
+  // Debounced silent refresh for real-time events
+  const scheduleRefresh = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => fetchBoard(true), REFRESH_DEBOUNCE_MS)
+  }, [fetchBoard])
+
+  useEffect(() => {
+    if (!socket) return
+
+    const events = [
+      WS_EVENTS.WORKSHOP_BOARD_UPDATED,
+      WS_EVENTS.HEALTH_CHECK_STATUS_CHANGED,
+      WS_EVENTS.TECHNICIAN_CLOCKED_IN,
+      WS_EVENTS.TECHNICIAN_CLOCKED_OUT
+    ]
+    events.forEach(event => socket.on(event, scheduleRefresh))
+
+    return () => {
+      events.forEach(event => socket.off(event, scheduleRefresh))
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [socket, scheduleRefresh])
+
+  // Polling fallback (covers missed socket events / reconnects)
+  useEffect(() => {
+    const interval = setInterval(() => fetchBoard(true), POLL_FALLBACK_MS)
+    return () => clearInterval(interval)
+  }, [fetchBoard])
+
+  // Pause/resume background refetches around a drag. Resuming flushes a single
+  // refetch if any socket/poll event was suppressed while paused.
+  const setPaused = useCallback((paused: boolean) => {
+    pauseRef.current = paused
+    if (!paused && pendingRef.current) {
+      pendingRef.current = false
+      fetchBoard(true)
+    }
+  }, [fetchBoard])
+
+  return { board, setBoard, loading, error, refresh: fetchBoard, setPaused }
+}
+
+/**
+ * Loads the multi-day planner (GET /week) for a [from,to] range. Mirrors
+ * useBoardData's live refresh + drag-pause, and only fetches while `enabled`
+ * (the Week view is active) so it costs nothing in the other views.
+ */
+export function useWeekData(from: string, to: string, enabled: boolean) {
+  const { session, user } = useAuth()
+  const { socket } = useSocket()
+  const [week, setWeek] = useState<WeekData | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inFlightRef = useRef(false)
+  const pauseRef = useRef(false)
+  const pendingRef = useRef(false)
+  const siteId = user?.site?.id
+
+  const fetchWeek = useCallback(async (silent = false) => {
+    if (!session?.accessToken || !enabled) return
+    if (silent && pauseRef.current) { pendingRef.current = true; return }
+    if (inFlightRef.current) return
+    inFlightRef.current = true
+    if (!silent) setLoading(true)
+    setError(null)
+    try {
+      const params = new URLSearchParams({ from, to })
+      if (siteId) params.set('siteId', siteId)
+      const data = await api<WeekData>(`/api/v1/workshop-board/week?${params}`, { token: session.accessToken })
+      setWeek(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load week')
+    } finally {
+      inFlightRef.current = false
+      setLoading(false)
+    }
+  }, [session?.accessToken, siteId, from, to, enabled])
+
+  useEffect(() => { if (enabled) fetchWeek() }, [fetchWeek, enabled])
+
+  const scheduleRefresh = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => fetchWeek(true), REFRESH_DEBOUNCE_MS)
+  }, [fetchWeek])
+
+  useEffect(() => {
+    if (!socket || !enabled) return
+    const events = [
+      WS_EVENTS.WORKSHOP_BOARD_UPDATED,
+      WS_EVENTS.HEALTH_CHECK_STATUS_CHANGED,
+      WS_EVENTS.TECHNICIAN_CLOCKED_IN,
+      WS_EVENTS.TECHNICIAN_CLOCKED_OUT
+    ]
+    events.forEach(e => socket.on(e, scheduleRefresh))
+    return () => {
+      events.forEach(e => socket.off(e, scheduleRefresh))
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [socket, scheduleRefresh, enabled])
+
+  useEffect(() => {
+    if (!enabled) return
+    const interval = setInterval(() => fetchWeek(true), POLL_FALLBACK_MS)
+    return () => clearInterval(interval)
+  }, [fetchWeek, enabled])
+
+  const setPaused = useCallback((paused: boolean) => {
+    pauseRef.current = paused
+    if (!paused && pendingRef.current) { pendingRef.current = false; fetchWeek(true) }
+  }, [fetchWeek])
+
+  return { week, setWeek, loading, error, refresh: fetchWeek, setPaused }
+}
+
+/** Ticks every `intervalMs` - drives promise-time countdowns */
+export function useNow(intervalMs = 30000): Date {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), intervalMs)
+    return () => clearInterval(interval)
+  }, [intervalMs])
+  return now
+}

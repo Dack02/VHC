@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { buildResetPasswordLink } from '../lib/authLinks.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { checkUserLimit } from '../services/limits.js'
 import { sendEmail } from '../services/email.js'
@@ -368,7 +369,7 @@ users.post('/:id/reset-link', authorize(['super_admin', 'org_admin', 'site_admin
         .single()
 
       const orgName = org?.name || 'Your Organization'
-      const resetUrl = linkData.properties?.action_link || ''
+      const resetUrl = buildResetPasswordLink(linkData.properties) || ''
 
       const html = `
 <!DOCTYPE html>

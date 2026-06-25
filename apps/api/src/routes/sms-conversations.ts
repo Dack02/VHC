@@ -6,6 +6,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorizeMinRole } from '../middleware/auth.js'
+import { requireModule } from '../middleware/require-module.js'
 import { sendSms } from '../services/sms.js'
 import { emitToHealthCheck, emitToOrganization, WS_EVENTS } from '../services/websocket.js'
 import { logger } from '../lib/logger.js'
@@ -14,6 +15,7 @@ const smsConversations = new Hono()
 
 // Apply auth middleware to all routes
 smsConversations.use('*', authMiddleware)
+smsConversations.use('*', requireModule('customer_comms'))
 
 /**
  * GET /api/v1/health-checks/:id/sms-messages
@@ -142,6 +144,7 @@ smsConversations.post('/health-checks/:id/sms-reply', authorizeMinRole('service_
 
   // Log in communication_logs for consistency with existing system
   await supabaseAdmin.from('communication_logs').insert({
+    organization_id: auth.orgId,
     health_check_id: healthCheckId,
     channel: 'sms',
     recipient: customer.mobile,

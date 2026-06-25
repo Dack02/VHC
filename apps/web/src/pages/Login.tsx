@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { api } from '../lib/api'
+import GoogleAuthButton from '../components/GoogleAuthButton'
+import AuthBackdrop from '../components/AuthBackdrop'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -17,47 +18,30 @@ export default function Login() {
     setLoading(true)
 
     try {
-      // First try to login
       await login(email, password)
 
-      // Get the session from localStorage to check if super admin
       const sessionStr = localStorage.getItem('vhc_session')
-      if (sessionStr) {
-        const session = JSON.parse(sessionStr)
+      const userStr = localStorage.getItem('vhc_user')
+      const user = userStr ? JSON.parse(userStr) : null
 
-        // Check if user is a super admin
-        try {
-          await api('/api/v1/admin/stats', {
-            token: session.accessToken
-          })
+      // Super admins logging in via the main app: bridge a session for the /admin
+      // portal. The login response already carries the role, so no extra probe needed.
+      if (user?.isSuperAdmin && sessionStr) {
+        localStorage.setItem('vhc_super_admin_session', sessionStr)
+        localStorage.setItem('vhc_super_admin', JSON.stringify({
+          id: user.id,
+          email: user.email,
+          name: `${user.firstName} ${user.lastName}`,
+          isActive: true
+        }))
+        navigate('/')
+        return
+      }
 
-          // User is a super admin - store super admin session and redirect
-          localStorage.setItem('vhc_super_admin_session', sessionStr)
-          const userStr = localStorage.getItem('vhc_user')
-          if (userStr) {
-            const user = JSON.parse(userStr)
-            localStorage.setItem('vhc_super_admin', JSON.stringify({
-              id: user.id,
-              email: user.email,
-              name: `${user.firstName} ${user.lastName}`,
-              isActive: true
-            }))
-          }
-          navigate('/')
-          return
-        } catch {
-          // Not a super admin, continue to regular dashboard
-        }
-
-        // Check if org admin needs to complete onboarding
-        const userStr = localStorage.getItem('vhc_user')
-        if (userStr) {
-          const user = JSON.parse(userStr)
-          if (user.isOrgAdmin && user.organization?.onboardingCompleted === false) {
-            navigate('/onboarding')
-            return
-          }
-        }
+      // Org admins who haven't finished onboarding go straight to the wizard.
+      if (user?.isOrgAdmin && user.organization?.onboardingCompleted === false) {
+        navigate('/onboarding')
+        return
       }
 
       // Regular user - redirect to dashboard
@@ -70,9 +54,10 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-8">
+    <div className="relative min-h-screen bg-gray-100 flex items-center justify-center p-4 overflow-hidden">
+      <AuthBackdrop />
+      <div className="relative w-full max-w-md">
+        <div className="bg-white border border-gray-200 rounded-2xl shadow-2xl ring-1 ring-black/5 p-8">
           <div className="text-center mb-8">
             <img
               src="/ollo-inspect-logo.png"
@@ -80,6 +65,14 @@ export default function Login() {
               className="h-24 mx-auto mb-4"
             />
             <p className="text-gray-600">Sign in to your account</p>
+          </div>
+
+          <GoogleAuthButton label="Sign in with Google" />
+
+          <div className="my-5 flex items-center gap-3">
+            <div className="h-px flex-1 bg-gray-200" />
+            <span className="text-xs text-gray-400 uppercase tracking-wide">or</span>
+            <div className="h-px flex-1 bg-gray-200" />
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -121,6 +114,12 @@ export default function Login() {
               />
             </div>
 
+            <div className="text-right -mt-2">
+              <Link to="/forgot-password" className="text-sm text-primary hover:underline">
+                Forgot password?
+              </Link>
+            </div>
+
             <button
               type="submit"
               disabled={loading}
@@ -129,6 +128,13 @@ export default function Login() {
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
+
+          <p className="mt-6 text-center text-sm text-gray-600">
+            Don't have an account?{' '}
+            <Link to="/signup" className="text-primary hover:underline font-medium">
+              Create one
+            </Link>
+          </p>
         </div>
       </div>
     </div>

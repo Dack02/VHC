@@ -6,21 +6,10 @@
 import type { RepairItemData, ResultData, CheckResultReasonsMap } from '../types.js'
 import { formatCurrency, formatFollowUp } from '../utils/formatters.js'
 import { getTyreDetails, getBrakeDetails, type TyreSpecData } from '../utils/measurements.js'
-
-// Map tyre position names to tyre_details keys
-type TyreDetailsKey = 'front_left' | 'front_right' | 'rear_left' | 'rear_right'
-
-function parseTyreDetailsKey(itemName: string): TyreDetailsKey | null {
-  const lower = itemName.toLowerCase()
-  if (lower.includes('front') && (lower.includes('left') || lower.includes('n/s'))) return 'front_left'
-  if (lower.includes('front') && (lower.includes('right') || lower.includes('o/s'))) return 'front_right'
-  if (lower.includes('rear') && (lower.includes('left') || lower.includes('n/s'))) return 'rear_left'
-  if (lower.includes('rear') && (lower.includes('right') || lower.includes('o/s'))) return 'rear_right'
-  return null
-}
+import { parseTyrePosition, type TyrePosition } from '../utils/positions.js'
 
 // Tyre details value type (all 4 tyres)
-export type TyreDetailsValue = Record<TyreDetailsKey, TyreSpecData>
+export type TyreDetailsValue = Record<TyrePosition, TyreSpecData>
 
 interface ItemRowOptions {
   item: RepairItemData
@@ -101,7 +90,7 @@ export function renderItemRow({ item, resultById, reasonsByCheckResult, showPric
   if (inputType === 'tyre_depth') {
     // Get tyre specs for this position from tyre_details
     const itemName = result?.template_item?.name || item.title
-    const detailsKey = parseTyreDetailsKey(itemName)
+    const detailsKey = parseTyrePosition(itemName)
     const specs = detailsKey && tyreDetailsValue ? tyreDetailsValue[detailsKey] : null
 
     details = getTyreDetails(

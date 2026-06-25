@@ -63,6 +63,10 @@ export type AuditAction =
   // Service package events
   | 'service_package.apply'
 
+  // Reporting (feature-adoption signal — see admin_feature_adoption RPC)
+  | 'report.view'
+  | 'report.export'
+
   // Admin actions
   | 'admin.impersonate_start'
   | 'admin.impersonate_end'

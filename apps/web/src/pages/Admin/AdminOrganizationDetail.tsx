@@ -14,6 +14,8 @@ interface Organization {
   subscription: {
     planId: string
     planName: string
+    status?: string
+    trialEndsAt?: string | null
     limits: {
       maxSites: number
       maxUsersPerSite: number
@@ -75,7 +77,40 @@ interface AISettings {
   periodEnd: string
 }
 
-type TabType = 'overview' | 'sites' | 'users' | 'billing' | 'activity' | 'ai'
+interface UsageHistoryRow {
+  periodStart: string
+  healthChecksCreated: number
+  healthChecksCompleted: number
+  smsSent: number
+  emailsSent: number
+  storageUsedBytes: number
+}
+
+interface OrgModule {
+  key: string
+  label: string
+  description: string
+  effective: boolean
+  override: boolean | null
+  planDefault: boolean
+  core: boolean
+}
+
+interface BillingSummary {
+  plan: { name: string; priceMonthly: number; currency: string } | null
+  usage: { smsSent: number; emailsSent: number; healthChecksCreated: number }
+  estimated: {
+    planCostGbp: number
+    smsCostGbp: number
+    emailCostGbp: number
+    totalGbp: number
+    aiCostUsd: number
+    aiChargeoutUsd: number
+    aiMarginPercent: number
+  }
+}
+
+type TabType = 'overview' | 'sites' | 'users' | 'billing' | 'communications' | 'modules' | 'activity' | 'ai'
 
 export default function AdminOrganizationDetail() {
   const { id } = useParams<{ id: string }>()
@@ -87,6 +122,11 @@ export default function AdminOrganizationDetail() {
   const [users, setUsers] = useState<User[]>([])
   const [activity, setActivity] = useState<ActivityItem[]>([])
   const [aiSettings, setAiSettings] = useState<AISettings | null>(null)
+  const [commsHistory, setCommsHistory] = useState<UsageHistoryRow[]>([])
+  const [billing, setBilling] = useState<BillingSummary | null>(null)
+  const [modules, setModules] = useState<OrgModule[]>([])
+  const [modulesSaving, setModulesSaving] = useState(false)
+  const [modulesMessage, setModulesMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const [loading, setLoading] = useState(true)
   const [activityLoading, setActivityLoading] = useState(false)
@@ -104,6 +144,9 @@ export default function AdminOrganizationDetail() {
   useEffect(() => {
     if (activeTab === 'sites') fetchSites()
     if (activeTab === 'users') fetchUsers()
+    if (activeTab === 'billing') fetchBilling()
+    if (activeTab === 'communications') fetchCommsHistory()
+    if (activeTab === 'modules') fetchModules()
     if (activeTab === 'activity') fetchActivity()
     if (activeTab === 'ai') fetchAiSettings()
   }, [activeTab])
@@ -183,6 +226,66 @@ export default function AdminOrganizationDetail() {
       setAiSettings(data)
     } catch (error) {
       console.error('Failed to fetch AI settings:', error)
+    }
+  }
+
+  const fetchCommsHistory = async () => {
+    if (!session?.accessToken || !id) return
+    try {
+      const data = await api<{ history: UsageHistoryRow[] }>(`/api/v1/admin/organizations/${id}/usage/history`, { token: session.accessToken })
+      setCommsHistory(data.history || [])
+    } catch (error) {
+      console.error('Failed to fetch usage history:', error)
+    }
+  }
+
+  const fetchModules = async () => {
+    if (!session?.accessToken || !id) return
+    try {
+      const data = await api<{ modules: OrgModule[] }>(`/api/v1/admin/organizations/${id}/modules`, { token: session.accessToken })
+      setModules(data.modules || [])
+    } catch (error) {
+      console.error('Failed to fetch modules:', error)
+    }
+  }
+
+  const fetchBilling = async () => {
+    if (!session?.accessToken || !id) return
+    try {
+      const data = await api<BillingSummary>(`/api/v1/admin/organizations/${id}/billing`, { token: session.accessToken })
+      setBilling(data)
+    } catch (error) {
+      console.error('Failed to fetch billing:', error)
+    }
+  }
+
+  const setOverride = (key: string, override: boolean | null) => {
+    setModules(prev => prev.map(m =>
+      m.key === key
+        ? { ...m, override, effective: m.core ? true : (override !== null ? override : m.planDefault) }
+        : m
+    ))
+  }
+
+  const handleSaveModules = async () => {
+    if (!session?.accessToken || !id) return
+    setModulesSaving(true)
+    setModulesMessage(null)
+    try {
+      const overrides = Object.fromEntries(modules.filter(m => !m.core).map(m => [m.key, m.override]))
+      const data = await api<{ modules: OrgModule[] }>(`/api/v1/admin/organizations/${id}/modules`, {
+        method: 'PATCH',
+        token: session.accessToken,
+        body: { overrides }
+      })
+      setModules(data.modules || [])
+      setModulesMessage({ type: 'success', text: 'Module access updated' })
+      setTimeout(() => setModulesMessage(null), 3000)
+    } catch (error) {
+      console.error('Failed to update modules:', error)
+      setModulesMessage({ type: 'error', text: 'Failed to update modules' })
+    } finally {
+      setModulesSaving(false)
     }
   }
 
@@ -321,6 +424,8 @@ export default function AdminOrganizationDetail() {
     { id: 'sites', label: 'Sites' },
     { id: 'users', label: 'Users' },
     { id: 'billing', label: 'Billing' },
+    { id: 'modules', label: 'Modules' },
+    { id: 'communications', label: 'Communications' },
     { id: 'ai', label: 'AI Settings' },
     { id: 'activity', label: 'Activity' }
   ]
@@ -553,6 +658,7 @@ export default function AdminOrganizationDetail() {
       )}
 
       {activeTab === 'billing' && (
+        <div className="space-y-6">
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <h3 className="font-semibold text-gray-900 mb-4">Subscription Details</h3>
           <dl className="space-y-4">
@@ -560,6 +666,20 @@ export default function AdminOrganizationDetail() {
               <dt className="text-gray-500">Current Plan</dt>
               <dd className="font-medium text-gray-900">{org.subscription?.planName || 'No plan'}</dd>
             </div>
+            {org.subscription?.status === 'trialing' && org.subscription?.trialEndsAt && (
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <dt className="text-gray-500">Trial</dt>
+                <dd className="font-medium text-gray-900">
+                  {(() => {
+                    const end = new Date(org.subscription!.trialEndsAt!)
+                    const days = Math.ceil((end.getTime() - Date.now()) / 86400000)
+                    return days > 0
+                      ? `${days} day${days === 1 ? '' : 's'} left — ends ${end.toLocaleDateString()}`
+                      : `Ended ${end.toLocaleDateString()}`
+                  })()}
+                </dd>
+              </div>
+            )}
             <div className="flex justify-between py-2 border-b border-gray-100">
               <dt className="text-gray-500">Max Sites</dt>
               <dd className="text-gray-900">{org.subscription?.limits?.maxSites || 0}</dd>
@@ -577,6 +697,156 @@ export default function AdminOrganizationDetail() {
               <dd className="text-gray-900">{org.subscription?.limits?.maxStorageGb || 0} GB</dd>
             </div>
           </dl>
+        </div>
+        {billing && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h3 className="font-semibold text-gray-900 mb-4">Estimated Spend (This Month)</h3>
+            <dl className="space-y-3">
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <dt className="text-gray-500">Plan</dt>
+                <dd className="font-medium text-gray-900">{formatGbp(billing.estimated.planCostGbp)}</dd>
+              </div>
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <dt className="text-gray-500">Est. SMS ({billing.usage.smsSent.toLocaleString()} sent)</dt>
+                <dd className="text-gray-900">{formatGbp(billing.estimated.smsCostGbp)}</dd>
+              </div>
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <dt className="text-gray-700 font-medium">Estimated Total (GBP)</dt>
+                <dd className="font-semibold text-gray-900">{formatGbp(billing.estimated.totalGbp)}</dd>
+              </div>
+              <div className="flex justify-between py-2 border-b border-gray-100">
+                <dt className="text-gray-500">AI Cost (USD)</dt>
+                <dd className="text-gray-900">${billing.estimated.aiCostUsd.toFixed(2)}</dd>
+              </div>
+              <div className="flex justify-between py-2">
+                <dt className="text-gray-500">AI Chargeout{billing.estimated.aiMarginPercent ? ` (+${billing.estimated.aiMarginPercent}%)` : ''} (USD)</dt>
+                <dd className="text-gray-900">${billing.estimated.aiChargeoutUsd.toFixed(2)}</dd>
+              </div>
+            </dl>
+            <p className="text-xs text-gray-400 mt-3">GBP plan + estimated SMS spend. AI is billed in USD — shown separately, not converted.</p>
+          </div>
+        )}
+        </div>
+      )}
+
+      {activeTab === 'modules' && (
+        <div className="space-y-6">
+          {modulesMessage && (
+            <div className={`px-4 py-3 rounded-lg ${modulesMessage.type === 'success' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+              {modulesMessage.text}
+            </div>
+          )}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="font-semibold text-gray-900">Module Access</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Control which modules this organisation can use. "Inherit" follows the subscription plan; override to force a module on or off for this org.
+              </p>
+            </div>
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Module</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Access</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Effective</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {modules.length === 0 ? (
+                  <tr><td colSpan={3} className="px-6 py-8 text-center text-gray-500">Loading modules...</td></tr>
+                ) : modules.map((m) => (
+                  <tr key={m.key}>
+                    <td className="px-6 py-4">
+                      <div className="font-medium text-gray-900">{m.label}</div>
+                      <div className="text-sm text-gray-500">{m.description}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      {m.core ? (
+                        <span className="text-sm text-gray-400">Always on (core)</span>
+                      ) : (
+                        <select
+                          value={m.override === null ? 'inherit' : m.override ? 'on' : 'off'}
+                          onChange={(e) => {
+                            const v = e.target.value
+                            setOverride(m.key, v === 'inherit' ? null : v === 'on')
+                          }}
+                          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+                        >
+                          <option value="inherit">Inherit (plan: {m.planDefault ? 'On' : 'Off'})</option>
+                          <option value="on">Force On</option>
+                          <option value="off">Force Off</option>
+                        </select>
+                      )}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${m.effective ? 'bg-rag-green text-white' : 'bg-gray-200 text-gray-700'}`}>
+                        {m.effective ? 'Enabled' : 'Disabled'}
+                      </span>
+                      {!m.core && m.override === null && (
+                        <span className="ml-2 text-xs text-gray-400">inherited</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-xs text-gray-500 max-w-2xl">
+              Disabling a module blocks its API and hides it in the app. This controls module <em>availability</em> — a module's own in-app settings (e.g. Follow-Up automation) are managed separately within the organisation.
+            </p>
+            <button
+              onClick={handleSaveModules}
+              disabled={modulesSaving || modules.length === 0}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 whitespace-nowrap"
+            >
+              {modulesSaving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'communications' && (
+        <div className="space-y-4">
+          <div className="flex justify-end">
+            <button
+              onClick={() => navigate(`/admin/communications?organization_id=${id}`)}
+              className="text-sm text-indigo-600 hover:text-indigo-700"
+            >
+              View all messages →
+            </button>
+          </div>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="font-semibold text-gray-900">Usage History (last 12 months)</h3>
+            </div>
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Month</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">SMS Sent</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Emails Sent</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">HC Created</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">HC Completed</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {commsHistory.length === 0 ? (
+                  <tr><td colSpan={5} className="px-6 py-8 text-center text-gray-500">No usage history</td></tr>
+                ) : (
+                  commsHistory.map((row) => (
+                    <tr key={row.periodStart}>
+                      <td className="px-6 py-4 text-gray-900">{new Date(row.periodStart).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</td>
+                      <td className="px-6 py-4 text-right text-gray-700">{(row.smsSent || 0).toLocaleString()}</td>
+                      <td className="px-6 py-4 text-right text-gray-700">{(row.emailsSent || 0).toLocaleString()}</td>
+                      <td className="px-6 py-4 text-right text-gray-500">{(row.healthChecksCreated || 0).toLocaleString()}</td>
+                      <td className="px-6 py-4 text-right text-gray-500">{(row.healthChecksCompleted || 0).toLocaleString()}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -808,6 +1078,10 @@ export default function AdminOrganizationDetail() {
       )}
     </div>
   )
+}
+
+function formatGbp(n: number): string {
+  return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n || 0)
 }
 
 function formatActionLabel(action: string): string {

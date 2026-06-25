@@ -7,6 +7,7 @@ import { useReportData } from './hooks/useReportData'
 import DataTable, { Column } from './components/DataTable'
 import ReportFiltersBar from './components/ReportFiltersBar'
 import { formatPercent } from './utils/formatters'
+import { jobPath } from '../../lib/jobLink'
 
 interface BrakeDiscTechnicianStat {
   technicianId: string
@@ -22,6 +23,13 @@ interface BrakeDiscData {
   unableToAccessCount: number
   notMeasuredCount: number
   byTechnician: BrakeDiscTechnicianStat[]
+}
+
+// Share of a technician's health checks where at least one disc was marked
+// "unable to access". High rates can indicate over-use of the checkbox rather
+// than genuine access issues. Counted per VHC, not per disc.
+function unableRate(r: BrakeDiscTechnicianStat): number {
+  return r.totalHealthChecks > 0 ? (r.unableToAccessCount / r.totalHealthChecks) * 100 : 0
 }
 
 interface MriBypassAdvisorStat {
@@ -57,6 +65,7 @@ interface MriBypassData {
 interface AuditEntry {
   id: string
   healthCheckId: string
+  jobsheetId: string | null
   vehicleReg: string
   fromStatus: string | null
   toStatus: string
@@ -131,6 +140,15 @@ export default function QualityCompliance() {
         ? <span className="font-medium text-gray-600">{r.unableToAccessCount}</span>
         : <span className="text-gray-400">0</span>
     ), align: 'right', sortable: true, sortValue: r => r.unableToAccessCount },
+    { key: 'unableRate', label: 'Unable Rate', render: r => {
+      const rate = unableRate(r)
+      if (r.totalHealthChecks === 0) return <span className="text-gray-400">&ndash;</span>
+      return (
+        <span className={rate >= 50 ? 'font-medium text-red-600' : rate >= 25 ? 'font-medium text-amber-600' : 'text-gray-600'}>
+          {formatPercent(rate)}
+        </span>
+      )
+    }, align: 'right', sortable: true, sortValue: r => unableRate(r) },
   ]
 
   const mriColumns: Column<MriBypassAdvisorStat>[] = [
@@ -155,7 +173,7 @@ export default function QualityCompliance() {
 
   const auditColumns: Column<AuditEntry>[] = [
     { key: 'vehicle', label: 'Vehicle', render: r => (
-      <Link to={`/health-checks/${r.healthCheckId}`} className="font-mono text-primary hover:underline">
+      <Link to={jobPath({ jobsheetId: r.jobsheetId, healthCheckId: r.healthCheckId })} className="font-mono text-primary hover:underline">
         {r.vehicleReg}
       </Link>
     ) },
@@ -211,20 +229,20 @@ export default function QualityCompliance() {
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
             <div className="border-b border-gray-200 p-4">
               <h2 className="font-semibold text-gray-900">Brake Disc Measurements</h2>
-              <p className="text-sm text-gray-500 mt-0.5">Tracking disc measurements not recorded by technicians</p>
+              <p className="text-sm text-gray-500 mt-0.5">Health checks with one or more brake discs left unmeasured or marked inaccessible. Drum brakes are excluded; each VHC is counted once regardless of how many discs are affected.</p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 border-b border-gray-200 bg-gray-50">
               <div>
-                <div className="text-sm text-gray-500">Total Health Checks</div>
+                <div className="text-sm text-gray-500">Health Checks</div>
                 <div className="text-xl font-bold text-gray-900">{brakeDiscData?.totalHealthChecks || 0}</div>
               </div>
               <div>
-                <div className="text-sm text-gray-500">Not Measured</div>
+                <div className="text-sm text-gray-500">VHCs with Disc Not Measured</div>
                 <div className="text-xl font-bold text-amber-600">{brakeDiscData?.notMeasuredCount || 0}</div>
               </div>
               <div>
-                <div className="text-sm text-gray-500">Unable to Access</div>
+                <div className="text-sm text-gray-500">VHCs Unable to Access</div>
                 <div className="text-xl font-bold text-gray-600">{brakeDiscData?.unableToAccessCount || 0}</div>
               </div>
             </div>

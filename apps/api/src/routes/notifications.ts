@@ -31,6 +31,7 @@ notificationRoutes.get('/', async (c) => {
       *,
       health_check:health_checks(
         id,
+        jobsheet_id,
         vehicle:vehicles(registration)
       )
     `)

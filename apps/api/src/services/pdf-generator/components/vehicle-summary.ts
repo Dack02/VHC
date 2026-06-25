@@ -7,50 +7,12 @@
 import type { ResultData } from '../types.js'
 import { renderTyreDetailsCard } from './measurements/tyre-details-card.js'
 import { renderBrakeMeasurementCard } from './measurements/brake-card.js'
-
-type TyrePosition = 'front-left' | 'front-right' | 'rear-left' | 'rear-right'
-type BrakePosition = 'front' | 'rear'
-
-/**
- * Parse tyre position from item name
- */
-function parseTyrePosition(itemName: string): TyrePosition | null {
-  const lower = itemName.toLowerCase()
-
-  // Check for specific positions
-  if (lower.includes('front') && (lower.includes('left') || lower.includes('n/s'))) return 'front-left'
-  if (lower.includes('front') && (lower.includes('right') || lower.includes('o/s'))) return 'front-right'
-  if (lower.includes('rear') && (lower.includes('left') || lower.includes('n/s'))) return 'rear-left'
-  if (lower.includes('rear') && (lower.includes('right') || lower.includes('o/s'))) return 'rear-right'
-
-  // Check for N/S O/S at beginning (e.g., "N/S Front Tyre")
-  if (lower.includes('n/s') && lower.includes('front')) return 'front-left'
-  if (lower.includes('o/s') && lower.includes('front')) return 'front-right'
-  if (lower.includes('n/s') && lower.includes('rear')) return 'rear-left'
-  if (lower.includes('o/s') && lower.includes('rear')) return 'rear-right'
-
-  return null
-}
-
-/**
- * Parse brake position from item name
- */
-function parseBrakePosition(itemName: string): BrakePosition | null {
-  const lower = itemName.toLowerCase()
-  if (lower.includes('front')) return 'front'
-  if (lower.includes('rear')) return 'rear'
-  return null
-}
-
-// Map position keys for tyre_details lookup (uses underscores)
-type TyreDetailsKey = 'front_left' | 'front_right' | 'rear_left' | 'rear_right'
-
-const positionToDetailsKey: Record<TyrePosition, TyreDetailsKey> = {
-  'front-left': 'front_left',
-  'front-right': 'front_right',
-  'rear-left': 'rear_left',
-  'rear-right': 'rear_right'
-}
+import {
+  parseTyrePosition,
+  parseBrakePosition,
+  type TyrePosition,
+  type BrakePosition
+} from '../utils/positions.js'
 
 // Tyre specification data from tyre_details item
 interface TyreSpecData {
@@ -108,9 +70,8 @@ export function renderVehicleSummary(results: ResultData[]): string {
       `
     }
 
-    // Get specs for this position from tyre_details
-    const detailsKey = positionToDetailsKey[position]
-    const specs = tyreDetailsValue?.[detailsKey]
+    // Get specs for this position from tyre_details (keys match the position)
+    const specs = tyreDetailsValue?.[position]
 
     // Merge depth measurements with specs
     const mergedValue = {
@@ -175,12 +136,12 @@ export function renderVehicleSummary(results: ResultData[]): string {
         </div>
         <div class="vehicle-summary-tyre-grid">
           <div class="vehicle-summary-tyre-row">
-            ${renderTyreCell('front-left', 'Front Left')}
-            ${renderTyreCell('front-right', 'Front Right')}
+            ${renderTyreCell('front_left', 'Front Left')}
+            ${renderTyreCell('front_right', 'Front Right')}
           </div>
           <div class="vehicle-summary-tyre-row">
-            ${renderTyreCell('rear-left', 'Rear Left')}
-            ${renderTyreCell('rear-right', 'Rear Right')}
+            ${renderTyreCell('rear_left', 'Rear Left')}
+            ${renderTyreCell('rear_right', 'Rear Right')}
           </div>
         </div>
       </div>

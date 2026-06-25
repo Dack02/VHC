@@ -7,7 +7,6 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '../../../contexts/AuthContext'
 import { useToast } from '../../../contexts/ToastContext'
 import { api } from '../../../lib/api'
-import { MriScanSection } from '../components/MriScanSection'
 import { CustomerEditModal } from '../components/CustomerEditModal'
 
 interface CheckInData {
@@ -697,13 +696,8 @@ export function CheckInTab({ healthCheckId, healthCheckStatus, onUpdate, onCheck
         </div>
       )}
 
-      {/* MRI Scan Section */}
-      <MriScanSection
-        healthCheckId={healthCheckId}
-        isReadOnly={isReadOnly}
-        allowEditWhenComplete={true}
-        onComplete={onUpdate}
-      />
+      {/* MRI scan lives on its own "MRI Scan" tab — kept out of here to avoid duplication.
+          The completion confirmation below still surfaces the MRI completion summary/warning. */}
 
       {/* Error Display (inline, when data exists) */}
       {error && data && (

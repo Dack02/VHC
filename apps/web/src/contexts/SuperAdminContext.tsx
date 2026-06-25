@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react'
 import { api } from '../lib/api'
 
 interface SuperAdmin {
@@ -39,30 +39,53 @@ export function SuperAdminProvider({ children }: { children: ReactNode }) {
   })
   const [loading, setLoading] = useState(true)
 
-  const refreshSession = async (): Promise<boolean> => {
-    if (!session?.refreshToken) return false
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isRefreshingRef = useRef(false)
+
+  const clearSession = () => {
+    setSuperAdmin(null)
+    setSession(null)
+    localStorage.removeItem(SUPER_ADMIN_SESSION_KEY)
+    localStorage.removeItem(SUPER_ADMIN_KEY)
+  }
+
+  // Refresh the super-admin access token using the stored refresh token.
+  // Reads the session from localStorage (not React state) to avoid a stale
+  // closure when invoked from the background timer or visibility listener.
+  // Throws if the refresh fails or the refreshed token no longer maps to an
+  // active super admin, so callers can clear the session.
+  const refreshSession = useCallback(async (): Promise<void> => {
+    const stored = localStorage.getItem(SUPER_ADMIN_SESSION_KEY)
+    const currentSession: SuperAdminSession | null = stored ? JSON.parse(stored) : null
+
+    if (!currentSession?.refreshToken) {
+      throw new Error('No refresh token')
+    }
+
+    if (isRefreshingRef.current) return
+    isRefreshingRef.current = true
 
     try {
       const data = await api<{ session: SuperAdminSession }>('/api/v1/auth/refresh', {
         method: 'POST',
-        body: { refreshToken: session.refreshToken }
+        body: { refreshToken: currentSession.refreshToken }
       })
 
       const newSession = data.session
       setSession(newSession)
       localStorage.setItem(SUPER_ADMIN_SESSION_KEY, JSON.stringify(newSession))
 
-      // Verify the refreshed token still has super admin access
+      // Confirm the refreshed token still maps to an active super admin —
+      // /auth/refresh renews the Supabase token regardless of super-admin status.
       await api('/api/v1/admin/stats', {
         token: newSession.accessToken
       })
-
-      return true
-    } catch {
-      return false
+    } finally {
+      isRefreshingRef.current = false
     }
-  }
+  }, [])
 
+  // Verify the stored session on mount; refresh once if the token has expired.
   useEffect(() => {
     const checkSession = async () => {
       if (session?.accessToken) {
@@ -74,12 +97,9 @@ export function SuperAdminProvider({ children }: { children: ReactNode }) {
           // If successful, session is valid
         } catch {
           // Token may be expired — try refreshing before giving up
-          if (session.refreshToken) {
-            const refreshed = await refreshSession()
-            if (!refreshed) {
-              clearSession()
-            }
-          } else {
+          try {
+            await refreshSession()
+          } catch {
             clearSession()
           }
         }
@@ -90,12 +110,68 @@ export function SuperAdminProvider({ children }: { children: ReactNode }) {
     checkSession()
   }, [])
 
-  const clearSession = () => {
-    setSuperAdmin(null)
-    setSession(null)
-    localStorage.removeItem(SUPER_ADMIN_SESSION_KEY)
-    localStorage.removeItem(SUPER_ADMIN_KEY)
-  }
+  // Background refresh timer: refresh 5 minutes before token expiry so the
+  // admin session never goes stale while the tab is open. Without this the
+  // super-admin JWT silently expires (~1h) and every admin call returns 401.
+  useEffect(() => {
+    if (!session?.expiresAt) return
+
+    const REFRESH_BUFFER_MS = 5 * 60 * 1000 // 5 minutes
+    const now = Date.now()
+    const expiresAtMs = session.expiresAt * 1000
+    const timeUntilRefresh = expiresAtMs - now - REFRESH_BUFFER_MS
+
+    // Refresh immediately if already within the buffer, otherwise at the right time.
+    const delay = Math.max(timeUntilRefresh, 0)
+    console.log(`[SuperAdmin] Token refresh scheduled in ${Math.round(delay / 1000)}s (expires at ${new Date(expiresAtMs).toLocaleTimeString()})`)
+
+    refreshTimerRef.current = setTimeout(async () => {
+      try {
+        await refreshSession()
+      } catch {
+        console.warn('[SuperAdmin] Background token refresh failed, clearing session')
+        clearSession()
+      }
+    }, delay)
+
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current)
+        refreshTimerRef.current = null
+      }
+    }
+  }, [session?.expiresAt, refreshSession])
+
+  // Visibility change listener: refresh when the user returns to the tab if the
+  // token has expired or is near expiry (covers laptop sleep / long idle, where
+  // the setTimeout above may have been throttled or not fired).
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState !== 'visible') return
+
+      const stored = localStorage.getItem(SUPER_ADMIN_SESSION_KEY)
+      if (!stored) return
+      const currentSession: SuperAdminSession = JSON.parse(stored)
+      if (!currentSession?.expiresAt) return
+
+      const REFRESH_BUFFER_MS = 5 * 60 * 1000
+      const now = Date.now()
+      const expiresAtMs = currentSession.expiresAt * 1000
+
+      if (now >= expiresAtMs - REFRESH_BUFFER_MS) {
+        console.log('[SuperAdmin] Tab became visible, token expired or near expiry — refreshing')
+        try {
+          await refreshSession()
+        } catch {
+          console.warn('[SuperAdmin] Visibility refresh failed, clearing session')
+          clearSession()
+        }
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [refreshSession])
 
   const login = async (email: string, password: string): Promise<boolean> => {
     try {

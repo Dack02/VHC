@@ -9,6 +9,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { encrypt, decrypt, isEncryptionConfigured, maskString } from '../lib/encryption.js'
 import { authMiddleware, requireOrgAdmin } from '../middleware/auth.js'
+import { requireModule } from '../middleware/require-module.js'
 import { logger } from '../lib/logger.js'
 import { runDmsImport } from '../jobs/dms-import.js'
 import { testConnection, isDmsAvailable, getDmsCredentials, fetchDiaryBookings } from '../services/gemini-osi.js'
@@ -26,6 +27,7 @@ const dmsSettings = new Hono()
 
 // All routes require authentication
 dmsSettings.use('*', authMiddleware)
+dmsSettings.use('*', requireModule('dms_integration'))
 
 // ============================================
 // DMS Settings Endpoints
@@ -64,6 +66,8 @@ dmsSettings.get('/settings', async (c) => {
         importScheduleDays: [1, 2, 3, 4, 5, 6],
         importServiceTypes: ['service', 'mot', 'repair'],
         dailyImportLimit: 100,
+        cancelMissingBookings: false,
+        geminiSiteId: 1,
         lastImportAt: null,
         lastImportStatus: null,
         lastSyncAt: null,
@@ -106,6 +110,8 @@ dmsSettings.get('/settings', async (c) => {
       importScheduleDays: settings.import_schedule_days,
       importServiceTypes: settings.import_service_types,
       dailyImportLimit: settings.daily_import_limit || 100,
+      cancelMissingBookings: settings.cancel_missing_bookings ?? false,
+      geminiSiteId: settings.gemini_site_id ?? 1,
       lastImportAt: settings.last_import_at,
       lastImportStatus: settings.last_import_status,
       lastSyncAt: settings.last_sync_at,
@@ -153,6 +159,14 @@ dmsSettings.patch('/settings', requireOrgAdmin(), async (c) => {
     }
     if (body.dailyImportLimit !== undefined || body.daily_import_limit !== undefined) {
       updateData.daily_import_limit = body.dailyImportLimit ?? body.daily_import_limit
+    }
+    if (body.cancelMissingBookings !== undefined || body.cancel_missing_bookings !== undefined) {
+      updateData.cancel_missing_bookings = !!(body.cancelMissingBookings ?? body.cancel_missing_bookings)
+    }
+    if (body.geminiSiteId !== undefined || body.gemini_site_id !== undefined) {
+      const raw = body.geminiSiteId ?? body.gemini_site_id
+      const parsed = parseInt(String(raw), 10)
+      updateData.gemini_site_id = Number.isFinite(parsed) && parsed > 0 ? parsed : 1
     }
 
     // Encrypt username and password if provided
@@ -271,6 +285,8 @@ dmsSettings.patch('/settings', requireOrgAdmin(), async (c) => {
       importScheduleDays: savedSettings.import_schedule_days,
       importServiceTypes: savedSettings.import_service_types,
       dailyImportLimit: savedSettings.daily_import_limit || 100,
+      cancelMissingBookings: savedSettings.cancel_missing_bookings ?? false,
+      geminiSiteId: savedSettings.gemini_site_id ?? 1,
       lastImportAt: savedSettings.last_import_at,
       lastImportStatus: savedSettings.last_import_status,
       lastSyncAt: savedSettings.last_sync_at,

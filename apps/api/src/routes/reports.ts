@@ -1,10 +1,44 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import { requireModule } from '../middleware/require-module.js'
+import { aggregateRepairItemsByHc, computeHcConversion, isHcPresented } from '../lib/metrics.js'
+import { buildItemList, buildItemDetail } from '../services/item-report-service.js'
+import { chunkIds, type GroupBy } from '../services/hc-period-service.js'
+import { logAudit, getRequestContext } from '../services/audit.js'
 
 const reports = new Hono()
 
+const parseGroupBy = (g: string | undefined): GroupBy =>
+  g === 'week' || g === 'month' ? g : 'day'
+
 reports.use('*', authMiddleware)
+reports.use('*', requireModule('reports'))
+
+// Reporting-adoption signal: record one event per report view/export. Runs after
+// the module gate (a disabled tenant 403s before this) and is best-effort and
+// non-blocking — logAudit swallows its own errors and we never await it, so it
+// adds no latency to the report response. Counted per-org by admin_feature_adoption.
+reports.use('*', async (c, next) => {
+  if (c.req.method === 'GET') {
+    const auth = c.get('auth')
+    if (auth?.orgId) {
+      const { ipAddress, userAgent } = getRequestContext(c)
+      void logAudit({
+        action: c.req.path.endsWith('/export') ? 'report.export' : 'report.view',
+        actorId: auth.user?.id,
+        actorType: 'user',
+        organizationId: auth.orgId,
+        resourceType: 'report',
+        resourceId: c.req.path,
+        metadata: { path: c.req.path },
+        ipAddress,
+        userAgent,
+      })
+    }
+  }
+  await next()
+})
 
 // GET /api/v1/reports - Reporting data with metrics
 reports.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
@@ -90,22 +124,24 @@ reports.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
     )].filter(id => !hcMap.has(id))
 
     if (outcomeHcIds.length > 0) {
-      let actionedQ = supabaseAdmin
-        .from('health_checks')
-        .select(mainSelect)
-        .in('id', outcomeHcIds)
-        .is('deleted_at', null)
+      for (const idChunk of chunkIds(outcomeHcIds)) {
+        let actionedQ = supabaseAdmin
+          .from('health_checks')
+          .select(mainSelect)
+          .in('id', idChunk)
+          .is('deleted_at', null)
 
-      if (technician_id) actionedQ = actionedQ.eq('technician_id', technician_id)
-      if (advisor_id) actionedQ = actionedQ.eq('advisor_id', advisor_id)
+        if (technician_id) actionedQ = actionedQ.eq('technician_id', technician_id)
+        if (advisor_id) actionedQ = actionedQ.eq('advisor_id', advisor_id)
 
-      const { data: actionedHcs, error: actionedError } = await actionedQ
+        const { data: actionedHcs, error: actionedError } = await actionedQ
 
-      if (actionedError) {
-        console.error('Financial report actioned HC query error:', actionedError)
-      } else if (actionedHcs) {
-        for (const hc of actionedHcs) {
-          if (!hcMap.has(hc.id)) hcMap.set(hc.id, hc)
+        if (actionedError) {
+          console.error('Financial report actioned HC query error:', actionedError)
+        } else if (actionedHcs) {
+          for (const hc of actionedHcs) {
+            if (!hcMap.has(hc.id)) hcMap.set(hc.id, hc)
+          }
         }
       }
     }
@@ -172,9 +208,15 @@ reports.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
       totalValueDeclined += vals.declined
     }
 
-    // Count HCs that have at least one authorized item
-    const authorizedCount = healthChecks.filter(hc => hcValuesMap[hc.id].authorized > 0).length
-    const conversionRate = sent > 0 ? (authorizedCount / sent) * 100 : 0
+    // Conversion: of HCs presented to customers (sent, or phone-actioned),
+    // how many had at least one item authorised. See lib/metrics.ts.
+    const flatItems = healthChecks.flatMap(hc =>
+      (((hc.repair_items as unknown) as any[]) || []).map(item => ({ ...item, health_check_id: hc.id }))
+    )
+    const conversionAgg = aggregateRepairItemsByHc(flatItems)
+    const conversion = computeHcConversion(healthChecks, conversionAgg)
+    const authorizedCount = conversion.convertedCount
+    const conversionRate = conversion.conversionRate
 
     // Group data for chart
     const groupedData = groupByPeriod(healthChecks, group_by as 'day' | 'week' | 'month', hcValuesMap)
@@ -183,7 +225,10 @@ reports.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
     const technicianMetrics = calculateTechnicianMetrics(healthChecks)
 
     // Calculate per-advisor metrics
-    const advisorMetrics = calculateAdvisorMetrics(healthChecks, hcValuesMap)
+    const presentedHcIds = new Set(
+      healthChecks.filter(hc => isHcPresented(hc.sent_at, conversionAgg.get(hc.id))).map(hc => hc.id)
+    )
+    const advisorMetrics = calculateAdvisorMetrics(healthChecks, hcValuesMap, presentedHcIds)
 
     return c.json({
       period: {
@@ -194,10 +239,11 @@ reports.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
         total,
         completed,
         sent,
+        presented: conversion.presentedCount,
         authorized: authorizedCount,
         declined,
         pending: total - completed,
-        conversionRate: Math.round(conversionRate * 10) / 10,
+        conversionRate,
         totalValueIdentified,
         totalValueAuthorized,
         totalValueDeclined
@@ -470,12 +516,17 @@ function calculateTechnicianMetrics(healthChecks: any[]) {
 }
 
 // Helper: Calculate per-advisor metrics (uses item-level values from hcValuesMap)
-function calculateAdvisorMetrics(healthChecks: any[], hcValuesMap?: Record<string, { identified: number; authorized: number; declined: number }>) {
+function calculateAdvisorMetrics(
+  healthChecks: any[],
+  hcValuesMap?: Record<string, { identified: number; authorized: number; declined: number }>,
+  presentedHcIds?: Set<string>
+) {
   const advisorMetrics: Record<string, {
     id: string,
     name: string,
     total: number,
     sent: number,
+    presented: number,
     authorized: number,
     conversionRate: number,
     totalValue: number
@@ -491,6 +542,7 @@ function calculateAdvisorMetrics(healthChecks: any[], hcValuesMap?: Record<strin
         name: `${hc.advisor.first_name} ${hc.advisor.last_name}`,
         total: 0,
         sent: 0,
+        presented: 0,
         authorized: 0,
         conversionRate: 0,
         totalValue: 0
@@ -499,6 +551,7 @@ function calculateAdvisorMetrics(healthChecks: any[], hcValuesMap?: Record<strin
 
     advisorMetrics[key].total++
     if (hc.sent_at) advisorMetrics[key].sent++
+    if (presentedHcIds?.has(hc.id)) advisorMetrics[key].presented++
 
     const vals = hcValuesMap?.[hc.id]
     if (vals && vals.authorized > 0) {
@@ -507,9 +560,11 @@ function calculateAdvisorMetrics(healthChecks: any[], hcValuesMap?: Record<strin
     }
   })
 
-  // Calculate conversion rates
+  // Conversion: authorised HCs out of HCs presented (sent or phone-actioned) — never >100%
   Object.values(advisorMetrics).forEach(m => {
-    m.conversionRate = m.sent > 0 ? Math.round((m.authorized / m.sent) * 100 * 10) / 10 : 0
+    m.conversionRate = m.presented > 0
+      ? Math.min(100, Math.round((m.authorized / m.presented) * 100 * 10) / 10)
+      : 0
   })
 
   return Object.values(advisorMetrics).sort((a, b) => b.totalValue - a.totalValue)
@@ -586,16 +641,26 @@ reports.get('/brake-disc-access', authorize(['super_admin', 'org_admin', 'site_a
       createdAt: string
     }> = []
 
-    const byTechnician: Record<string, { id: string; name: string; unableToAccess: number; notMeasured: number; healthCheckIds: Set<string> }> = {}
+    const byTechnician: Record<string, {
+      id: string
+      name: string
+      healthCheckIds: Set<string>
+      notMeasuredHcIds: Set<string>
+      unableHcIds: Set<string>
+    }> = {}
     const byAxle = {
       front: { nearside: 0, offside: 0 },
       rear: { nearside: 0, offside: 0 }
     }
 
-    let totalHealthChecks = 0
-    let unableToAccessCount = 0
-    let notMeasuredCount = 0
-    const seenHealthChecks = new Set<string>()
+    // Everything here is counted PER HEALTH CHECK, not per disc. A VHC is counted
+    // once if any of its discs were left unmeasured / inaccessible, so leaving all
+    // four discs unmeasured on one job is a single flagged health check (avoids
+    // one VHC distorting the totals). Denominator = VHCs with at least one
+    // disc-braked axle (drum-only vehicles have no disc to measure, so excluded).
+    const discHealthChecks = new Set<string>()
+    const notMeasuredHcs = new Set<string>()
+    const unableHcs = new Set<string>()
 
     for (const result of results || []) {
       // Supabase returns arrays for joins, but with !inner it's a single object
@@ -612,17 +677,16 @@ reports.get('/brake-disc-access', authorize(['super_admin', 'org_admin', 'site_a
 
       if (!value) continue
 
-      // Track unique health checks
-      if (!seenHealthChecks.has(healthCheck.id)) {
-        seenHealthChecks.add(healthCheck.id)
-        totalHealthChecks++
-      }
+      // Drum brakes are visual-only — there is no disc to measure (the disc
+      // fields are null by design), so they must NOT count as "not measured".
+      // Legacy records without a brake_type default to disc (matches the app).
+      const brakeType = (value.brake_type as string | undefined) || 'disc'
+      if (brakeType === 'drum') continue
 
-      // Check for nearside unable_to_access
       const nearside = value.nearside as Record<string, unknown> | undefined
       const offside = value.offside as Record<string, unknown> | undefined
 
-      // Determine axle from item name
+      // Determine axle from item name (for the secondary byAxle breakdown)
       const itemName = templateItem.name?.toLowerCase() || ''
       const axleKey = itemName.includes('front') ? 'front' : itemName.includes('rear') ? 'rear' : null
 
@@ -630,85 +694,62 @@ reports.get('/brake-disc-access', authorize(['super_admin', 'org_admin', 'site_a
         ? `${healthCheck.technician.first_name} ${healthCheck.technician.last_name}`
         : 'Unknown'
 
-      // Initialize technician tracking if needed
-      if (healthCheck.technician_id && !byTechnician[healthCheck.technician_id]) {
-        byTechnician[healthCheck.technician_id] = {
-          id: healthCheck.technician_id,
-          name: technicianName,
-          unableToAccess: 0,
-          notMeasured: 0,
-          healthCheckIds: new Set<string>()
+      // This VHC has at least one disc axle → it counts toward the denominator.
+      discHealthChecks.add(healthCheck.id)
+
+      const techId = healthCheck.technician_id
+      if (techId) {
+        if (!byTechnician[techId]) {
+          byTechnician[techId] = {
+            id: techId,
+            name: technicianName,
+            healthCheckIds: new Set<string>(),
+            notMeasuredHcIds: new Set<string>(),
+            unableHcIds: new Set<string>()
+          }
         }
+        byTechnician[techId].healthCheckIds.add(healthCheck.id)
       }
 
-      // Track health check for this technician
-      if (healthCheck.technician_id) {
-        byTechnician[healthCheck.technician_id].healthCheckIds.add(healthCheck.id)
-      }
+      // Evaluate both sides, but flag at the HEALTH CHECK level (Sets dedupe), so
+      // a VHC with several affected discs is still only counted once.
+      const sides: Array<['nearside' | 'offside', Record<string, unknown> | undefined]> = [
+        ['nearside', nearside],
+        ['offside', offside]
+      ]
+      for (const [sideName, side] of sides) {
+        if (side?.disc_unable_to_access) {
+          unableHcs.add(healthCheck.id)
+          if (techId) byTechnician[techId].unableHcIds.add(healthCheck.id)
+          if (axleKey) byAxle[axleKey][sideName]++
 
-      // Check nearside disc
-      if (nearside?.disc_unable_to_access) {
-        unableToAccessCount++
-        if (axleKey) byAxle[axleKey].nearside++
-
-        if (healthCheck.technician_id) {
-          byTechnician[healthCheck.technician_id].unableToAccess++
-        }
-
-        unableToAccessInstances.push({
-          healthCheckId: healthCheck.id,
-          vehicleReg: healthCheck.vehicle?.registration || 'Unknown',
-          technicianId: healthCheck.technician_id,
-          technicianName,
-          itemName: templateItem.name,
-          side: `${axleKey || 'unknown'}-nearside`,
-          createdAt: result.created_at as string
-        })
-      } else if (nearside?.disc === null || nearside?.disc === undefined) {
-        // Not measured: disc is null/undefined AND not marked as unable to access
-        notMeasuredCount++
-        if (healthCheck.technician_id) {
-          byTechnician[healthCheck.technician_id].notMeasured++
-        }
-      }
-
-      // Check offside disc
-      if (offside?.disc_unable_to_access) {
-        unableToAccessCount++
-        if (axleKey) byAxle[axleKey].offside++
-
-        if (healthCheck.technician_id) {
-          byTechnician[healthCheck.technician_id].unableToAccess++
-        }
-
-        unableToAccessInstances.push({
-          healthCheckId: healthCheck.id,
-          vehicleReg: healthCheck.vehicle?.registration || 'Unknown',
-          technicianId: healthCheck.technician_id,
-          technicianName,
-          itemName: templateItem.name,
-          side: `${axleKey || 'unknown'}-offside`,
-          createdAt: result.created_at as string
-        })
-      } else if (offside?.disc === null || offside?.disc === undefined) {
-        // Not measured: disc is null/undefined AND not marked as unable to access
-        notMeasuredCount++
-        if (healthCheck.technician_id) {
-          byTechnician[healthCheck.technician_id].notMeasured++
+          unableToAccessInstances.push({
+            healthCheckId: healthCheck.id,
+            vehicleReg: healthCheck.vehicle?.registration || 'Unknown',
+            technicianId: techId,
+            technicianName,
+            itemName: templateItem.name,
+            side: `${axleKey || 'unknown'}-${sideName}`,
+            createdAt: result.created_at as string
+          })
+        } else if (side?.disc === null || side?.disc === undefined) {
+          // Not measured: disc is null/undefined AND not marked unable to access
+          notMeasuredHcs.add(healthCheck.id)
+          if (techId) byTechnician[techId].notMeasuredHcIds.add(healthCheck.id)
         }
       }
     }
 
-    // Calculate percentages for technicians (including both metrics)
+    // All per-technician figures are counts of HEALTH CHECKS (deduped via Sets)
     const byTechnicianArray = Object.values(byTechnician)
       .map(tech => ({
         technicianId: tech.id,
         technicianName: tech.name,
-        unableToAccessCount: tech.unableToAccess,
-        notMeasuredCount: tech.notMeasured,
+        unableToAccessCount: tech.unableHcIds.size,
+        notMeasuredCount: tech.notMeasuredHcIds.size,
         totalHealthChecks: tech.healthCheckIds.size,
         // Legacy 'total' field for backwards compatibility
-        total: tech.unableToAccess
+        total: tech.unableHcIds.size
       }))
       .sort((a, b) => (b.unableToAccessCount + b.notMeasuredCount) - (a.unableToAccessCount + a.notMeasuredCount))
 
@@ -717,9 +758,9 @@ reports.get('/brake-disc-access', authorize(['super_admin', 'org_admin', 'site_a
         from: startDate,
         to: endDate
       },
-      totalHealthChecks,
-      unableToAccessCount,
-      notMeasuredCount,
+      totalHealthChecks: discHealthChecks.size,
+      unableToAccessCount: unableHcs.size,
+      notMeasuredCount: notMeasuredHcs.size,
       byTechnician: byTechnicianArray,
       byAxle,
       recentInstances: unableToAccessInstances.slice(0, 20)
@@ -1251,6 +1292,7 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       noReasonCount: number
       totalPhotos: number
       brakeDiscNotMeasured: number
+      brakeDiscUnableToAccess: number
     }> = {}
 
     // Time distribution buckets (minutes)
@@ -1280,6 +1322,7 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           noReasonCount: 0,
           totalPhotos: 0,
           brakeDiscNotMeasured: 0,
+          brakeDiscUnableToAccess: 0,
         }
       }
 
@@ -1396,43 +1439,94 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
       }
     }
 
-    // --- Brake disc "not measured" per technician (count of health checks with any unmeasured disc) ---
+    // --- Brake disc inspection gaps per technician (counts of health checks) ---
+    //   • brakeDiscNotMeasured     — disc left blank with NO reason given
+    //   • brakeDiscUnableToAccess  — disc left blank but flagged "unable to access"
+    // Both are deduped per health check (a job with several affected discs counts
+    // once). Drum axles have no disc to measure and are excluded entirely.
     if (hcIds.length > 0) {
-      // Track which health checks have at least one unmeasured disc per technician
       const hcsWithUnmeasuredDisc: Record<string, Set<string>> = {}
+      const hcsWithUnableDisc: Record<string, Set<string>> = {}
       const brakeBatchSize = 500
       for (let i = 0; i < hcIds.length; i += brakeBatchSize) {
         const batch = hcIds.slice(i, i + brakeBatchSize)
-        const { data: brakeResults } = await supabaseAdmin
-          .from('check_results')
-          .select('health_check_id, value, template_item:template_items!inner(item_type)')
-          .in('health_check_id', batch)
-          .eq('template_item.item_type', 'brake_measurement')
+        // Paginate within each batch — a 500-HC batch can exceed the 1000-row
+        // PostgREST cap (≈2 brake rows per HC), which would silently drop results
+        // and undercount these columns.
+        const pageSize = 1000
+        let offset = 0
+        let hasMore = true
+        while (hasMore) {
+          const { data: brakeResults } = await supabaseAdmin
+            .from('check_results')
+            .select('health_check_id, value, template_item:template_items!inner(item_type)')
+            .in('health_check_id', batch)
+            .eq('template_item.item_type', 'brake_measurement')
+            .range(offset, offset + pageSize - 1)
 
-        for (const br of brakeResults || []) {
-          const techId = hcTechMap[br.health_check_id]
-          if (!techId || !techData[techId]) continue
+          const rows = brakeResults || []
+          for (const br of rows) {
+            const techId = hcTechMap[br.health_check_id]
+            if (!techId || !techData[techId]) continue
 
-          const value = br.value as Record<string, unknown> | null
-          if (!value) continue
+            const value = br.value as Record<string, unknown> | null
+            if (!value) continue
 
-          const nearside = value.nearside as Record<string, unknown> | undefined
-          const offside = value.offside as Record<string, unknown> | undefined
+            // Drum brakes have no disc to measure — exclude them so a drum axle
+            // (disc fields null by design) is never flagged.
+            if (((value.brake_type as string | undefined) || 'disc') === 'drum') continue
 
-          const hasUnmeasured =
-            (!nearside?.disc_unable_to_access && (nearside?.disc === null || nearside?.disc === undefined)) ||
-            (!offside?.disc_unable_to_access && (offside?.disc === null || offside?.disc === undefined))
+            const nearside = value.nearside as Record<string, unknown> | undefined
+            const offside = value.offside as Record<string, unknown> | undefined
 
-          if (hasUnmeasured) {
-            if (!hcsWithUnmeasuredDisc[techId]) hcsWithUnmeasuredDisc[techId] = new Set()
-            hcsWithUnmeasuredDisc[techId].add(br.health_check_id)
+            // "Not measured": disc blank AND not flagged unable-to-access.
+            const hasUnmeasured =
+              (!nearside?.disc_unable_to_access && (nearside?.disc === null || nearside?.disc === undefined)) ||
+              (!offside?.disc_unable_to_access && (offside?.disc === null || offside?.disc === undefined))
+            if (hasUnmeasured) {
+              if (!hcsWithUnmeasuredDisc[techId]) hcsWithUnmeasuredDisc[techId] = new Set()
+              hcsWithUnmeasuredDisc[techId].add(br.health_check_id)
+            }
+
+            // "Unable to access": tech explicitly flagged a disc as inaccessible.
+            const hasUnable =
+              Boolean(nearside?.disc_unable_to_access) || Boolean(offside?.disc_unable_to_access)
+            if (hasUnable) {
+              if (!hcsWithUnableDisc[techId]) hcsWithUnableDisc[techId] = new Set()
+              hcsWithUnableDisc[techId].add(br.health_check_id)
+            }
           }
+
+          hasMore = rows.length === pageSize
+          offset += pageSize
         }
       }
-      // Set count of unique health checks with unmeasured discs
+      // Set per-technician counts of unique health checks
       for (const [techId, hcSet] of Object.entries(hcsWithUnmeasuredDisc)) {
         if (techData[techId]) techData[techId].brakeDiscNotMeasured = hcSet.size
       }
+      for (const [techId, hcSet] of Object.entries(hcsWithUnableDisc)) {
+        if (techData[techId]) techData[techId].brakeDiscUnableToAccess = hcSet.size
+      }
+    }
+
+    // Labour efficiency / utilisation, aggregated in the DB (dodges the row cap)
+    const { data: effRows, error: effErr } = await supabaseAdmin.rpc('report_technician_efficiency', {
+      p_org_id: auth.orgId,
+      p_site_id: site_id || null,
+      p_from: startDate,
+      p_to: endDate,
+      p_technician_id: technician_id || null,
+    })
+    if (effErr) console.error('Technician efficiency RPC error:', effErr)
+    const effByTech = new Map<string, { sold: number; clocked: number; days: number; avail: number }>()
+    for (const r of (effRows || []) as Array<Record<string, unknown>>) {
+      effByTech.set(r.technician_id as string, {
+        sold: Number(r.sold_hours) || 0,
+        clocked: Number(r.clocked_hours) || 0,
+        days: Number(r.days_clocked) || 0,
+        avail: Number(r.available_hours_per_day) || 8,
+      })
     }
 
     // Build leaderboard
@@ -1460,11 +1554,21 @@ reports.get('/technicians', authorize(['super_admin', 'org_admin', 'site_admin',
           ? Math.round((t.totalPhotos / t.completed) * 10) / 10
           : 0,
         brakeDiscNotMeasured: t.brakeDiscNotMeasured,
+        brakeDiscUnableToAccess: t.brakeDiscUnableToAccess,
         libraryUsageRate: (() => {
           const denominator = t.libraryOnlyCount + t.freeTextOnlyCount + t.bothCount
           return denominator > 0
             ? Math.round(((t.libraryOnlyCount + t.bothCount) / denominator) * 1000) / 10
             : 0
+        })(),
+        ...(() => {
+          const e = effByTech.get(t.id)
+          return {
+            soldHours: e ? Math.round(e.sold * 10) / 10 : 0,
+            clockedHours: e ? Math.round(e.clocked * 10) / 10 : 0,
+            efficiencyPct: e && e.clocked > 0 ? Math.round((e.sold / e.clocked) * 1000) / 10 : null,
+            utilisationPct: e && e.days > 0 && e.avail > 0 ? Math.round((e.clocked / (e.days * e.avail)) * 1000) / 10 : null,
+          }
         })(),
       }))
       .sort((a, b) => b.completed - a.completed)
@@ -1522,6 +1626,7 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
     // Dual-date approach
     const advSelect = `
       id,
+      jobsheet_id,
       status,
       created_at,
       due_date,
@@ -1571,6 +1676,7 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
       name: string
       managed: number
       sent: number
+      presented: number
       authorized: number
       pricingTimes: number[]
       valueIdentified: number
@@ -1586,6 +1692,7 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
     // Aging checks (sent but not responded)
     const agingChecks: Array<{
       healthCheckId: string
+      jobsheetId: string | null
       advisorName: string
       sentAt: string
       daysWaiting: number
@@ -1602,6 +1709,7 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
           name: `${advisor.first_name} ${advisor.last_name}`,
           managed: 0,
           sent: 0,
+          presented: 0,
           authorized: 0,
           pricingTimes: [],
           valueIdentified: 0,
@@ -1662,6 +1770,15 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
         }
       }
 
+      // Presented: has live work that reached the customer (digitally or via a recorded decision)
+      const hasDecision = (items || []).some(i =>
+        !i.deleted_at &&
+        (i.customer_approved === true || ['authorised', 'declined', 'deferred'].includes(i.outcome_status || ''))
+      )
+      if (topLevelActive.length > 0 && (hc.sent_at || hasDecision)) {
+        advisorData[key].presented++
+      }
+
       // MRI N/A count
       const mriResults = hc.mri_scan_results as Array<{ not_applicable?: boolean; completed_by?: string }> | null
       if (mriResults) {
@@ -1688,6 +1805,7 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
           if (daysWaiting >= 1) {
             agingChecks.push({
               healthCheckId: hc.id,
+              jobsheetId: hc.jobsheet_id ?? null,
               advisorName: `${advisor.first_name} ${advisor.last_name}`,
               sentAt: hc.sent_at,
               daysWaiting: Math.round(daysWaiting * 10) / 10,
@@ -1726,8 +1844,10 @@ reports.get('/advisors', authorize(['super_admin', 'org_admin', 'site_admin', 's
         managed: a.managed,
         sent: a.sent,
         sendRate: a.managed > 0 ? Math.round((a.sent / a.managed) * 100 * 10) / 10 : 0,
+        presented: a.presented,
         authorized: a.authorized,
-        conversionRate: a.sent > 0 ? Math.round((a.authorized / a.sent) * 100 * 10) / 10 : 0,
+        // Conversion: authorised HCs out of HCs presented (sent or phone-actioned) — never >100%
+        conversionRate: a.presented > 0 ? Math.min(100, Math.round((a.authorized / a.presented) * 100 * 10) / 10) : 0,
         valueIdentified: Math.round(a.valueIdentified * 100) / 100,
         valueAuthorized: Math.round(a.valueAuthorized * 100) / 100,
         valueDeclined: Math.round(a.valueDeclined * 100) / 100,
@@ -2001,13 +2121,18 @@ reports.get('/customers', authorize(['super_admin', 'org_admin', 'site_admin', '
     const healthCheckIds = (healthChecks || []).filter(hc => hc.sent_at).map(hc => hc.id)
     let deviceBreakdown: Record<string, number> = { mobile: 0, tablet: 0, desktop: 0 }
     if (healthCheckIds.length > 0) {
-      const { data: activities } = await supabaseAdmin
-        .from('customer_activities')
-        .select('device_type')
-        .in('health_check_id', healthCheckIds)
-        .eq('activity_type', 'viewed')
+      const activities = (await Promise.all(
+        chunkIds(healthCheckIds, 100).map(async chunk => {
+          const { data } = await supabaseAdmin
+            .from('customer_activities')
+            .select('device_type')
+            .in('health_check_id', chunk)
+            .eq('activity_type', 'viewed')
+          return data || []
+        })
+      )).flat()
 
-      if (activities) {
+      if (activities.length > 0) {
         const total = activities.length
         let mobile = 0, tablet = 0, desktop = 0
         for (const a of activities) {
@@ -2077,6 +2202,7 @@ reports.get('/operations', authorize(['super_admin', 'org_admin', 'site_admin', 
       .from('health_checks')
       .select(`
         id,
+        jobsheet_id,
         status,
         created_at,
         tech_started_at,
@@ -2117,6 +2243,7 @@ reports.get('/operations', authorize(['super_admin', 'org_admin', 'site_admin', 
     // Stuck checks
     const stuckChecks: Array<{
       healthCheckId: string
+      jobsheetId: string | null
       status: string
       daysInStatus: number
       siteName: string
@@ -2129,6 +2256,7 @@ reports.get('/operations', authorize(['super_admin', 'org_admin', 'site_admin', 
       turnaroundTimes: number[]
       authorizedCount: number
       sentCount: number
+      presentedCount: number
     }> = {}
 
     for (const hc of healthChecks || []) {
@@ -2141,10 +2269,14 @@ reports.get('/operations', authorize(['super_admin', 'org_admin', 'site_admin', 
       // Site comparison
       if (hc.site_id) {
         if (!siteData[hc.site_id]) {
-          siteData[hc.site_id] = { name: siteName, created: 0, turnaroundTimes: [], authorizedCount: 0, sentCount: 0 }
+          siteData[hc.site_id] = { name: siteName, created: 0, turnaroundTimes: [], authorizedCount: 0, sentCount: 0, presentedCount: 0 }
         }
         siteData[hc.site_id].created++
         if (hc.sent_at) siteData[hc.site_id].sentCount++
+        // Status-level proxy for "presented to customer" (this report doesn't fetch repair items)
+        if (hc.sent_at || ['sent', 'delivered', 'opened', 'partial_response', 'authorized', 'declined', 'completed', 'expired'].includes(hc.status)) {
+          siteData[hc.site_id].presentedCount++
+        }
         if (hc.status === 'authorized' || hc.status === 'completed') siteData[hc.site_id].authorizedCount++
       }
 
@@ -2219,6 +2351,7 @@ reports.get('/operations', authorize(['super_admin', 'org_admin', 'site_admin', 
         if (daysInStatus >= 3) {
           stuckChecks.push({
             healthCheckId: hc.id,
+            jobsheetId: hc.jobsheet_id ?? null,
             status: hc.status,
             daysInStatus: Math.round(daysInStatus * 10) / 10,
             siteName,
@@ -2248,7 +2381,9 @@ reports.get('/operations', authorize(['super_admin', 'org_admin', 'site_admin', 
         name: s.name,
         created: s.created,
         avgTurnaround: avg(s.turnaroundTimes),
-        conversionRate: s.sentCount > 0 ? Math.round((s.authorizedCount / s.sentCount) * 100 * 10) / 10 : 0,
+        conversionRate: s.presentedCount > 0
+          ? Math.min(100, Math.round((s.authorizedCount / s.presentedCount) * 100 * 10) / 10)
+          : 0,
       }))
       .sort((a, b) => b.created - a.created)
 
@@ -2300,6 +2435,7 @@ reports.get('/deferred', authorize(['super_admin', 'org_admin', 'site_admin', 's
         created_at,
         health_check:health_checks!inner(
           id,
+          jobsheet_id,
           organization_id,
           site_id,
           advisor_id,
@@ -2372,6 +2508,7 @@ reports.get('/deferred', authorize(['super_admin', 'org_admin', 'site_admin', 's
       deferredNotes: string | null
       isOverdue: boolean
       healthCheckId: string
+      jobsheetId: string | null
     }> = []
 
     // Calculate week and month boundaries
@@ -2486,6 +2623,7 @@ reports.get('/deferred', authorize(['super_admin', 'org_admin', 'site_admin', 's
         deferredNotes: item.deferred_notes as string | null,
         isOverdue,
         healthCheckId: hc?.id || '',
+        jobsheetId: (hc as any)?.jobsheet_id ?? null,
       })
     }
 
@@ -2558,6 +2696,7 @@ reports.get('/compliance/audit-trail', authorize(['super_admin', 'org_admin', 's
         user:users(first_name, last_name),
         health_check:health_checks!inner(
           id,
+          jobsheet_id,
           organization_id,
           site_id,
           vehicle:vehicles(registration)
@@ -2580,10 +2719,11 @@ reports.get('/compliance/audit-trail', authorize(['super_admin', 'org_admin', 's
 
     const auditEntries = (statusChanges || []).map(sc => {
       const user = sc.user as unknown as { first_name: string; last_name: string } | null
-      const hc = sc.health_check as unknown as { id: string; vehicle?: { registration: string } | null }
+      const hc = sc.health_check as unknown as { id: string; jobsheet_id?: string | null; vehicle?: { registration: string } | null }
       return {
         id: sc.id,
         healthCheckId: hc?.id,
+        jobsheetId: hc?.jobsheet_id ?? null,
         vehicleReg: (hc?.vehicle as any)?.registration || 'Unknown',
         fromStatus: sc.from_status,
         toStatus: sc.to_status,
@@ -3146,18 +3286,20 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
     )].filter(id => !healthCheckMap.has(id))
 
     if (outcomeDateHcIds.length > 0) {
-      const { data: actionedHcs, error: actionedError } = await supabaseAdmin
-        .from('health_checks')
-        .select(hcSelect)
-        .in('id', outcomeDateHcIds)
-        .is('deleted_at', null)
+      for (const idChunk of chunkIds(outcomeDateHcIds)) {
+        const { data: actionedHcs, error: actionedError } = await supabaseAdmin
+          .from('health_checks')
+          .select(hcSelect)
+          .in('id', idChunk)
+          .is('deleted_at', null)
 
-      if (actionedError) {
-        console.error('Daily overview actioned HC query error:', actionedError)
-      } else if (actionedHcs) {
-        for (const hc of actionedHcs) {
-          if (!healthCheckMap.has(hc.id)) {
-            healthCheckMap.set(hc.id, hc)
+        if (actionedError) {
+          console.error('Daily overview actioned HC query error:', actionedError)
+        } else if (actionedHcs) {
+          for (const hc of actionedHcs) {
+            if (!healthCheckMap.has(hc.id)) {
+              healthCheckMap.set(hc.id, hc)
+            }
           }
         }
       }
@@ -3946,6 +4088,60 @@ reports.get('/deleted-health-checks/export', authorize(['super_admin', 'org_admi
   } catch (error) {
     console.error('Deleted health checks export error:', error)
     return c.json({ error: 'Failed to export deleted health checks' }, 500)
+  }
+})
+
+// GET /api/v1/reports/items - Inspection-item performance (usage + revenue per item)
+reports.get('/items', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id, group_by, template_id, rag } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    const data = await buildItemList(
+      { orgId: auth.orgId, siteId: site_id },
+      startDate,
+      endDate,
+      {
+        groupBy: parseGroupBy(group_by),
+        templateId: template_id || undefined,
+        rag: rag === 'red' || rag === 'amber' ? rag : undefined
+      }
+    )
+    return c.json(data)
+  } catch (error) {
+    console.error('Item report error:', error)
+    return c.json({ error: 'Failed to build item report' }, 500)
+  }
+})
+
+// GET /api/v1/reports/items/detail?item=<name> - Drill-down for one inspection item
+reports.get('/items/detail', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { item, date_from, date_to, site_id, group_by, template_id } = c.req.query()
+    if (!item) return c.json({ error: 'item query param required' }, 400)
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    const data = await buildItemDetail(
+      { orgId: auth.orgId, siteId: site_id },
+      startDate,
+      endDate,
+      item,
+      { groupBy: parseGroupBy(group_by), templateId: template_id || undefined }
+    )
+    return c.json(data)
+  } catch (error) {
+    console.error('Item detail report error:', error)
+    return c.json({ error: 'Failed to build item detail' }, 500)
   }
 })
 

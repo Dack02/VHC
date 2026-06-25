@@ -38,6 +38,7 @@ export interface GeminiBooking {
   bookingTime: string
   promiseTime?: string
   estimatedDuration: number  // minutes
+  durationHours?: number     // raw Gemini top-level Duration (hours), when provided
 
   // Customer (from InvoiceTo)
   customerId: string
@@ -428,6 +429,7 @@ export async function fetchDiaryBookings(
           CustomerWaiting: boolean
           LoanCar: boolean
           Internal: boolean
+          Duration?: number  // estimated job hours
           Notes?: string
           Vehicle: {
             Registration: string
@@ -482,23 +484,27 @@ export async function fetchDiaryBookings(
       method: 'GET'
     })
 
-    // Log the full raw response for debugging
-    try {
-      // Navigate up from src/services to project root, then to docs folder
-      const docsDir = join(__dirname, '..', '..', '..', '..', 'docs')
-      const outputPath = join(docsDir, 'gemini-full-response-sample.json')
+    // Optionally dump the full raw response for debugging. Gated behind an env
+    // flag: with the import window now spanning a full year, writing every
+    // response to disk on each run would be a large, pointless blocking write.
+    if (process.env.DMS_DEBUG_DUMP === 'true') {
+      try {
+        // Navigate up from src/services to project root, then to docs folder
+        const docsDir = join(__dirname, '..', '..', '..', '..', 'docs')
+        const outputPath = join(docsDir, 'gemini-full-response-sample.json')
 
-      console.log('[Gemini] Saving full raw response to:', outputPath)
+        console.log('[Gemini] Saving full raw response to:', outputPath)
 
-      // Create docs directory if it doesn't exist
-      if (!existsSync(docsDir)) {
-        mkdirSync(docsDir, { recursive: true })
+        // Create docs directory if it doesn't exist
+        if (!existsSync(docsDir)) {
+          mkdirSync(docsDir, { recursive: true })
+        }
+
+        writeFileSync(outputPath, JSON.stringify(response, null, 2), 'utf-8')
+        console.log('[Gemini] Raw response saved successfully')
+      } catch (saveError) {
+        console.warn('[Gemini] Failed to save raw response:', saveError)
       }
-
-      writeFileSync(outputPath, JSON.stringify(response, null, 2), 'utf-8')
-      console.log('[Gemini] Raw response saved successfully')
-    } catch (saveError) {
-      console.warn('[Gemini] Failed to save raw response:', saveError)
     }
 
     // Check for API-level errors
@@ -520,7 +526,11 @@ export async function fetchDiaryBookings(
       bookingDate: b.DueDateTime?.split('T')[0] || '',
       bookingTime: b.DueDateTime?.split('T')[1]?.substring(0, 5) || '',
       promiseTime: b.CollectionDateTime?.split('T')[1]?.substring(0, 5),
-      estimatedDuration: 60, // Default, not provided by API
+      // Gemini sends a top-level Duration in HOURS; fall back to 60min when absent/zero.
+      estimatedDuration: typeof b.Duration === 'number' && b.Duration > 0
+        ? Math.round(b.Duration * 60)
+        : 60,
+      durationHours: typeof b.Duration === 'number' && b.Duration > 0 ? b.Duration : undefined,
 
       // Customer from InvoiceTo
       customerId: String(b.InvoiceTo?.CustomerID || b.InvoiceTo?.Reference || ''),

@@ -28,8 +28,23 @@ interface PlatformSettings {
     twilioAccountSid: string
     twilioAuthToken: string
     twilioFromNumber: string
-    // Other
-    dvlaApiKey: string
+    // True when supplied via env vars (Railway) instead of the admin UI
+    emailManagedByEnv?: boolean
+    smsManagedByEnv?: boolean
+  }
+  vehicleLookup: {
+    enabled: boolean
+    managedByEnv?: boolean
+    motClientId: string
+    motTenantId: string
+    motClientSecret: string
+    motApiKey: string
+  }
+  billing: {
+    smsUnitCost: number
+    emailUnitCost: number
+    aiMarginPercent: number
+    currency: string
   }
 }
 
@@ -55,6 +70,11 @@ export default function AdminSettings() {
   const [testEmailAddress, setTestEmailAddress] = useState('')
   const [testingSms, setTestingSms] = useState(false)
   const [testingEmail, setTestingEmail] = useState(false)
+
+  // Vehicle lookup (DVSA MOT History) test modal state
+  const [showTestLookupModal, setShowTestLookupModal] = useState(false)
+  const [testLookupReg, setTestLookupReg] = useState('')
+  const [testingLookup, setTestingLookup] = useState(false)
 
   useEffect(() => {
     fetchData()
@@ -184,6 +204,42 @@ export default function AdminSettings() {
     }
   }
 
+  const handleTestLookup = async () => {
+    if (!session?.accessToken) return
+
+    setTestingLookup(true)
+    setErrorMessage('')
+    setSuccessMessage('')
+
+    try {
+      const result = await api<{ success: boolean; message?: string }>(
+        '/api/v1/admin/platform/vehicle-lookup/test',
+        {
+          method: 'POST',
+          body: { registration: testLookupReg || undefined },
+          token: session.accessToken
+        }
+      )
+
+      if (result.success) {
+        setSuccessMessage(result.message || 'Vehicle lookup credentials are working')
+        setShowTestLookupModal(false)
+        setTestLookupReg('')
+      } else {
+        setErrorMessage(result.message || 'Vehicle lookup test failed')
+      }
+      setTimeout(() => {
+        setSuccessMessage('')
+        setErrorMessage('')
+      }, 6000)
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Vehicle lookup test failed')
+      setTimeout(() => setErrorMessage(''), 6000)
+    } finally {
+      setTestingLookup(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -204,7 +260,8 @@ export default function AdminSettings() {
     { id: 'general', label: 'General', icon: '⚙️' },
     { id: 'defaults', label: 'Defaults', icon: '📋' },
     { id: 'features', label: 'Features', icon: '✨' },
-    { id: 'credentials', label: 'Credentials', icon: '🔑' }
+    { id: 'credentials', label: 'Credentials', icon: '🔑' },
+    { id: 'billing', label: 'Billing', icon: '💷' }
   ]
 
   return (
@@ -421,15 +478,24 @@ export default function AdminSettings() {
                 <p className="text-xs text-gray-500 mb-3">
                   Platform default email credentials for organizations that don't have their own.
                 </p>
+                {settings.credentials.emailManagedByEnv && (
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                    <strong>Managed via environment variables.</strong> These credentials come from the
+                    <code className="mx-1 px-1 py-0.5 bg-blue-100 rounded text-xs">RESEND_*</code>
+                    env vars (set in Railway) and override anything entered here. Edit them in Railway; use
+                    Test Email below to verify.
+                  </div>
+                )}
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Resend API Key</label>
                     <input
                       type="password"
                       value={settings.credentials.resendApiKey}
+                      disabled={settings.credentials.emailManagedByEnv}
                       onChange={(e) => updateSettings('credentials', 'resendApiKey', e.target.value)}
                       placeholder="re_••••••••••••••••"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -438,9 +504,10 @@ export default function AdminSettings() {
                       <input
                         type="email"
                         value={settings.credentials.resendFromEmail}
+                        disabled={settings.credentials.emailManagedByEnv}
                         onChange={(e) => updateSettings('credentials', 'resendFromEmail', e.target.value)}
                         placeholder="noreply@vhc-platform.com"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                       />
                     </div>
                     <div>
@@ -448,9 +515,10 @@ export default function AdminSettings() {
                       <input
                         type="text"
                         value={settings.credentials.resendFromName}
+                        disabled={settings.credentials.emailManagedByEnv}
                         onChange={(e) => updateSettings('credentials', 'resendFromName', e.target.value)}
                         placeholder="VHC Platform"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                       />
                     </div>
                   </div>
@@ -463,14 +531,23 @@ export default function AdminSettings() {
                 <p className="text-xs text-gray-500 mb-3">
                   Platform default SMS credentials for organizations that don't have their own.
                 </p>
+                {settings.credentials.smsManagedByEnv && (
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                    <strong>Managed via environment variables.</strong> These credentials come from the
+                    <code className="mx-1 px-1 py-0.5 bg-blue-100 rounded text-xs">TWILIO_*</code>
+                    env vars (set in Railway) and override anything entered here. Edit them in Railway; use
+                    Test SMS below to verify.
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Account SID</label>
                     <input
                       type="text"
                       value={settings.credentials.twilioAccountSid}
+                      disabled={settings.credentials.smsManagedByEnv}
                       onChange={(e) => updateSettings('credentials', 'twilioAccountSid', e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                     />
                   </div>
                   <div>
@@ -478,9 +555,10 @@ export default function AdminSettings() {
                     <input
                       type="password"
                       value={settings.credentials.twilioAuthToken}
+                      disabled={settings.credentials.smsManagedByEnv}
                       onChange={(e) => updateSettings('credentials', 'twilioAuthToken', e.target.value)}
                       placeholder="••••••••••••••••"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                     />
                   </div>
                 </div>
@@ -489,22 +567,101 @@ export default function AdminSettings() {
                   <input
                     type="text"
                     value={settings.credentials.twilioFromNumber}
+                    disabled={settings.credentials.smsManagedByEnv}
                     onChange={(e) => updateSettings('credentials', 'twilioFromNumber', e.target.value)}
                     placeholder="+1234567890"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                   />
                 </div>
               </div>
 
+              {/* Vehicle Data Lookup - DVSA MOT History */}
               <div className="border-t border-gray-200 pt-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">DVLA API Key</label>
-                <input
-                  type="password"
-                  value={settings.credentials.dvlaApiKey}
-                  onChange={(e) => updateSettings('credentials', 'dvlaApiKey', e.target.value)}
-                  placeholder="••••••••••••••••"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-900">Vehicle Data Lookup (DVSA MOT History)</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Look up vehicle details &amp; MOT history by registration when creating a health check.
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.vehicleLookup.enabled}
+                      disabled={settings.vehicleLookup.managedByEnv}
+                      onChange={(e) => updateSettings('vehicleLookup', 'enabled', e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+                {settings.vehicleLookup.managedByEnv && (
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                    <strong>Managed via environment variables.</strong> These credentials come from the
+                    <code className="mx-1 px-1 py-0.5 bg-blue-100 rounded text-xs">DVSA_MOT_*</code>
+                    env vars (set in Railway) and override anything entered here. Edit them in Railway; use
+                    Test Lookup below to verify.
+                  </div>
+                )}
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Client ID</label>
+                      <input
+                        type="text"
+                        value={settings.vehicleLookup.motClientId}
+                        disabled={settings.vehicleLookup.managedByEnv}
+                        onChange={(e) => updateSettings('vehicleLookup', 'motClientId', e.target.value)}
+                        placeholder="00000000-0000-0000-0000-000000000000"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Tenant ID</label>
+                      <input
+                        type="text"
+                        value={settings.vehicleLookup.motTenantId}
+                        disabled={settings.vehicleLookup.managedByEnv}
+                        onChange={(e) => updateSettings('vehicleLookup', 'motTenantId', e.target.value)}
+                        placeholder="From your DVSA token URL"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Client Secret</label>
+                      <input
+                        type="password"
+                        value={settings.vehicleLookup.motClientSecret}
+                        disabled={settings.vehicleLookup.managedByEnv}
+                        onChange={(e) => updateSettings('vehicleLookup', 'motClientSecret', e.target.value)}
+                        placeholder="••••••••••••••••"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+                      <input
+                        type="password"
+                        value={settings.vehicleLookup.motApiKey}
+                        disabled={settings.vehicleLookup.managedByEnv}
+                        onChange={(e) => updateSettings('vehicleLookup', 'motApiKey', e.target.value)}
+                        placeholder="••••••••••••••••"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setShowTestLookupModal(true)}
+                      className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg font-medium hover:bg-gray-50"
+                    >
+                      Test Lookup
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {/* Test Notification Buttons */}
@@ -529,6 +686,49 @@ export default function AdminSettings() {
                     Test Email
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'billing' && (
+            <div className="space-y-4">
+              <p className="text-sm text-gray-500">
+                Rates used to estimate per-organisation spend on the Usage dashboard.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">SMS Unit Cost (£ per message)</label>
+                <input
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={settings.billing.smsUnitCost}
+                  onChange={(e) => updateSettings('billing', 'smsUnitCost', parseFloat(e.target.value) || 0)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">Estimated SMS spend = SMS sent × this rate (GBP).</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email Unit Cost (£ per email)</label>
+                <input
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={settings.billing.emailUnitCost}
+                  onChange={(e) => updateSettings('billing', 'emailUnitCost', parseFloat(e.target.value) || 0)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">AI Chargeout Margin (%)</label>
+                <input
+                  type="number"
+                  step="1"
+                  min="0"
+                  value={settings.billing.aiMarginPercent}
+                  onChange={(e) => updateSettings('billing', 'aiMarginPercent', parseFloat(e.target.value) || 0)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">Marks up the raw AI cost (USD) for the chargeout figure shown on the Usage dashboard.</p>
               </div>
             </div>
           )}
@@ -644,6 +844,57 @@ export default function AdminSettings() {
                 className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
               >
                 {testingEmail ? 'Sending...' : 'Send Test Email'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Test Vehicle Lookup Modal */}
+      {showTestLookupModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Test Vehicle Lookup</h2>
+              <button
+                onClick={() => { setShowTestLookupModal(false); setTestLookupReg('') }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-gray-600 mb-4">
+                Verifies the DVSA credentials. Leave blank to test authentication only, or enter a
+                registration to run a full vehicle + MOT history lookup.
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Registration (optional)</label>
+                <input
+                  type="text"
+                  value={testLookupReg}
+                  onChange={(e) => setTestLookupReg(e.target.value.toUpperCase())}
+                  placeholder="e.g. AB12CDE"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 uppercase"
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => { setShowTestLookupModal(false); setTestLookupReg('') }}
+                className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTestLookup}
+                disabled={testingLookup}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {testingLookup ? 'Testing...' : 'Run Test'}
               </button>
             </div>
           </div>

@@ -20,6 +20,7 @@ import { ReasonSelector } from '../components/ReasonSelector'
 import { LocationPicker } from '../components/LocationPicker'
 import { MriScanTab } from './MriScanTab'
 import type { VehicleLocation } from '../lib/api'
+import { JobTimeSummary } from '../components/JobTimeSummary'
 
 // State for tracking which item has ReasonSelector open
 interface ReasonSelectorState {
@@ -701,7 +702,7 @@ export function Inspection() {
       const formData = new FormData()
       formData.append('file', blob, `photo_${Date.now()}.jpg`)
 
-      await fetch(
+      const uploadResponse = await fetch(
         `${import.meta.env.VITE_API_URL}/api/v1/health-checks/${id}/results/${resultId}/media`,
         {
           method: 'POST',
@@ -709,6 +710,13 @@ export function Inspection() {
           body: formData
         }
       )
+
+      // fetch() resolves even for 4xx/5xx, so without this check an upload
+      // that the server rejected would look successful and the technician
+      // would never know the photo wasn't saved.
+      if (!uploadResponse.ok) {
+        throw new Error(`Failed to upload photo (status ${uploadResponse.status})`)
+      }
 
       fetchJob()
     } catch (err) {
@@ -879,6 +887,8 @@ export function Inspection() {
 
       {/* Section items or MRI Scan tab */}
       <main className="flex-1 p-4 space-y-3 overflow-auto pb-24">
+        {id && <JobTimeSummary healthCheckId={id} />}
+
         {error && (
           <div className="bg-rag-red-bg text-rag-red p-4 mb-4">{error}</div>
         )}

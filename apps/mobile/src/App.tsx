@@ -6,10 +6,15 @@ import { ToastProvider } from './context/ToastContext'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { Login } from './pages/Login'
 import { JobList } from './pages/JobList'
+import { FeedbackButton } from './components/feedback/FeedbackButton'
 
 const PreCheck = lazy(() => import('./pages/PreCheck').then(m => ({ default: m.PreCheck })))
+const MyBoard = lazy(() => import('./pages/MyBoard').then(m => ({ default: m.MyBoard })))
+const MyDay = lazy(() => import('./pages/MyDay').then(m => ({ default: m.MyDay })))
 const Inspection = lazy(() => import('./pages/Inspection').then(m => ({ default: m.Inspection })))
 const Summary = lazy(() => import('./pages/Summary').then(m => ({ default: m.Summary })))
+const Repair = lazy(() => import('./pages/Repair').then(m => ({ default: m.Repair })))
+const IndirectTime = lazy(() => import('./pages/IndirectTime').then(m => ({ default: m.IndirectTime })))
 
 const PageSpinner = () => (
   <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -55,6 +60,18 @@ function AppRoutes() {
           }
         />
         <Route
+          path="/board"
+          element={
+            session && user ? <MyBoard /> : <Navigate to="/login" replace />
+          }
+        />
+        <Route
+          path="/my-day"
+          element={
+            session && user ? <MyDay /> : <Navigate to="/login" replace />
+          }
+        />
+        <Route
           path="/job/:id/pre-check"
           element={
             session && user ? <PreCheck /> : <Navigate to="/login" replace />
@@ -72,10 +89,25 @@ function AppRoutes() {
             session && user ? <Summary /> : <Navigate to="/login" replace />
           }
         />
+        <Route
+          path="/job/:id/repair"
+          element={
+            session && user ? <Repair /> : <Navigate to="/login" replace />
+          }
+        />
+        <Route
+          path="/indirect"
+          element={
+            session && user ? <IndirectTime /> : <Navigate to="/login" replace />
+          }
+        />
 
         {/* Catch all */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+
+      {/* Floating in-app feedback / bug reporter (authed screens only) */}
+      {session && user && <FeedbackButton />}
     </Suspense>
   )
 }

@@ -18,12 +18,14 @@ import {
   type DmsImportJob,
   type DmsScheduledImportJob,
   type DmsJob,
-  type DailySmsOverviewJob
+  type DailySmsOverviewJob,
+  type CloseStaleEntriesJob
 } from './queue.js'
 import { runDmsImport } from '../jobs/dms-import.js'
 import { sendEmail, sendHealthCheckReadyEmail, sendReminderEmail, sendCustomerResponseNotification, sendWorkflowStatusNotification, RepairItemResponse } from './email.js'
-import { sendSms, sendHealthCheckReadySms, sendReminderSms, sendCustomerResponseNotificationSms } from './sms.js'
+import { sendSms, sendHealthCheckReadySms, sendReminderSms, sendCustomerResponseNotificationSms, recordOutboundSms } from './sms.js'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { suppressAutomatedComms } from '../lib/comms-guard.js'
 import { WS_EVENTS } from './websocket.js'
 import { sendPushNotification } from './web-push.js'
 
@@ -152,6 +154,17 @@ async function incrementOrgUsage(
   }
 }
 
+/** Resolve the org id for a comm-log row, falling back to the linked health check. */
+async function resolveCommOrgId(organizationId: string | undefined, healthCheckId: string): Promise<string | null> {
+  if (organizationId) return organizationId
+  const { data } = await supabaseAdmin
+    .from('health_checks')
+    .select('organization_id')
+    .eq('id', healthCheckId)
+    .single()
+  return data?.organization_id ?? null
+}
+
 /**
  * Email Worker
  */
@@ -175,6 +188,7 @@ const emailWorker = new Worker(
     // Log to database
     if (job.data.healthCheckId) {
       await supabaseAdmin.from('communication_logs').insert({
+        organization_id: await resolveCommOrgId(job.data.organizationId, job.data.healthCheckId),
         health_check_id: job.data.healthCheckId,
         channel: 'email',
         recipient: job.data.to,
@@ -219,6 +233,7 @@ const smsWorker = new Worker(
     // Log to database
     if (job.data.healthCheckId) {
       await supabaseAdmin.from('communication_logs').insert({
+        organization_id: await resolveCommOrgId(job.data.organizationId, job.data.healthCheckId),
         health_check_id: job.data.healthCheckId,
         channel: 'sms',
         recipient: job.data.to,
@@ -331,12 +346,23 @@ const dmsImportWorker = new Worker(
         bookingIds: importJob.bookingIds
       }
     } else {
-      // Scheduled import - use today's date and fetch next 2 working days ahead
+      // Scheduled import — fetch from today out to the org's configured forward
+      // horizon (import_window_days, default 365) so ALL future bookings are
+      // imported, not just the next couple of days. New bookings made since the
+      // last run are picked up by the importer's dedup/reconcile on each tick.
       const scheduledJob = job.data as DmsScheduledImportJob
-      const { getNextWorkingDays } = await import('../lib/date-utils.js')
       const today = new Date().toISOString().split('T')[0]
-      const futureDays = getNextWorkingDays(new Date(), 2)
-      const endDate = futureDays[futureDays.length - 1]
+
+      const { data: dms } = await supabaseAdmin
+        .from('organization_dms_settings')
+        .select('import_window_days')
+        .eq('organization_id', scheduledJob.organizationId)
+        .maybeSingle()
+      const windowDays = dms?.import_window_days && dms.import_window_days > 0 ? dms.import_window_days : 365
+
+      const end = new Date()
+      end.setUTCDate(end.getUTCDate() + windowDays)
+      const endDate = end.toISOString().split('T')[0]
 
       importOptions = {
         organizationId: scheduledJob.organizationId,
@@ -394,7 +420,7 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
       amber_count,
       green_count,
       vehicle:vehicles(registration, make, model),
-      customer:customers(first_name, last_name, email, mobile),
+      customer:customers(id, first_name, last_name, email, mobile),
       site:sites(name, phone, email)
     `)
     .eq('id', data.healthCheckId)
@@ -405,7 +431,7 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
   }
 
   // Cast nested relations for TypeScript
-  const customer = healthCheck.customer as unknown as { first_name: string; last_name: string; email: string; mobile: string }
+  const customer = healthCheck.customer as unknown as { id: string; first_name: string; last_name: string; email: string; mobile: string }
   const vehicle = healthCheck.vehicle as unknown as { registration: string; make: string; model: string }
   const site = healthCheck.site as unknown as { name: string; phone: string; email: string }
 
@@ -441,6 +467,7 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
     })
 
     await supabaseAdmin.from('communication_logs').insert({
+      organization_id: organizationId,
       health_check_id: data.healthCheckId,
       channel: 'email',
       recipient: data.customerEmail,
@@ -479,6 +506,7 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
     })
 
     await supabaseAdmin.from('communication_logs').insert({
+      organization_id: organizationId,
       health_check_id: data.healthCheckId,
       channel: 'sms',
       recipient: data.customerMobile,
@@ -490,6 +518,17 @@ async function processCustomerNotification(data: CustomerNotificationJob) {
     // Only track usage if actually sent
     if (smsResult.success) {
       await incrementOrgUsage(organizationId, { sms_sent: 1 })
+
+      // Mirror the outbound send into sms_messages so an inbound reply can thread back to it
+      // (recency-based tenant routing) and so it appears in the two-way conversation view.
+      await recordOutboundSms({
+        organizationId,
+        healthCheckId: data.healthCheckId,
+        customerId: customer.id || null,
+        toNumber: data.customerMobile,
+        result: smsResult,
+        kind: 'health_check_ready'
+      })
     } else {
       console.error(`[Customer Notification] SMS failed for ${data.healthCheckId}:`, smsResult.error)
     }
@@ -750,6 +789,12 @@ async function processStaffNotification(data: StaffNotificationJob) {
  * Process reminder
  */
 async function processReminder(data: SendReminderJob) {
+  // Skip scheduled reminders when automated comms are suppressed (e.g. on dev).
+  if (suppressAutomatedComms()) {
+    console.log('[Reminder] Suppressed via SUPPRESS_AUTOMATED_COMMS — skipping scheduled reminder send')
+    return
+  }
+
   // Get health check details
   const { data: healthCheck } = await supabaseAdmin
     .from('health_checks')
@@ -760,7 +805,7 @@ async function processReminder(data: SendReminderJob) {
       token_expires_at,
       public_token,
       vehicle:vehicles(registration),
-      customer:customers(first_name, last_name, email, mobile),
+      customer:customers(id, first_name, last_name, email, mobile),
       site:sites(name, phone, settings)
     `)
     .eq('id', data.healthCheckId)
@@ -796,7 +841,7 @@ async function processReminder(data: SendReminderJob) {
   }
 
   // Cast nested relations for TypeScript
-  const customer = healthCheck.customer as unknown as { first_name: string; last_name: string; email: string; mobile: string }
+  const customer = healthCheck.customer as unknown as { id: string; first_name: string; last_name: string; email: string; mobile: string }
   const vehicle = healthCheck.vehicle as unknown as { registration: string }
   const site = healthCheck.site as unknown as { name: string; phone: string; settings: unknown }
 
@@ -827,6 +872,7 @@ async function processReminder(data: SendReminderJob) {
       )
 
       await supabaseAdmin.from('communication_logs').insert({
+        organization_id: organizationId,
         health_check_id: data.healthCheckId,
         channel: 'email',
         recipient: customer.email,
@@ -843,7 +889,7 @@ async function processReminder(data: SendReminderJob) {
   // Send SMS reminder
   if (data.channel === 'sms' || data.channel === 'both') {
     if (customer.mobile) {
-      await sendReminderSms(
+      const smsResult = await sendReminderSms(
         customer.mobile,
         customerName,
         vehicleReg,
@@ -854,15 +900,29 @@ async function processReminder(data: SendReminderJob) {
       )
 
       await supabaseAdmin.from('communication_logs').insert({
+        organization_id: organizationId,
         health_check_id: data.healthCheckId,
         channel: 'sms',
         recipient: customer.mobile,
-        status: 'sent',
+        status: smsResult.success ? 'sent' : 'failed',
+        external_id: smsResult.messageId,
+        error_message: smsResult.error,
         template_id: 'reminder'
       })
 
-      // Track usage
-      await incrementOrgUsage(organizationId, { sms_sent: 1 })
+      // Track usage + mirror the send so an inbound reply can thread back to it
+      if (smsResult.success) {
+        await incrementOrgUsage(organizationId, { sms_sent: 1 })
+
+        await recordOutboundSms({
+          organizationId,
+          healthCheckId: data.healthCheckId,
+          customerId: customer.id || null,
+          toNumber: customer.mobile,
+          result: smsResult,
+          kind: 'reminder'
+        })
+      }
     }
   }
 
@@ -1079,6 +1139,11 @@ const dailySmsOverviewWorker = new Worker(
   async (job: Job<DailySmsOverviewJob>) => {
     console.log(`Processing daily SMS overview job ${job.id}: org ${job.data.organizationId}`)
 
+    if (suppressAutomatedComms()) {
+      console.log(`[Daily SMS Overview] Suppressed via SUPPRESS_AUTOMATED_COMMS — skipping send for org ${job.data.organizationId}`)
+      return
+    }
+
     const { sendDailySmsOverview } = await import('./daily-sms-overview.js')
     await sendDailySmsOverview(job.data.organizationId)
   },
@@ -1093,6 +1158,21 @@ dailySmsOverviewWorker.on('failed', (job, err) => {
   console.error(`Daily SMS overview job ${job?.id} failed:`, err.message)
 })
 
+const closeStaleEntriesWorker = new Worker(
+  QUEUE_NAMES.CLOSE_STALE_ENTRIES,
+  async (job: Job<CloseStaleEntriesJob>) => {
+    const { autoCloseStaleTimeEntries } = await import('./auto-close-time-entries.js')
+    const result = await autoCloseStaleTimeEntries(job.data.organizationId)
+    console.log(`Auto-closed ${result.closed} stale time entr${result.closed === 1 ? 'y' : 'ies'} for org ${job.data.organizationId}`)
+    return result
+  },
+  { connection: redis as any }
+)
+
+closeStaleEntriesWorker.on('failed', (job, err) => {
+  console.error(`Close stale entries job ${job?.id} failed:`, err.message)
+})
+
 /**
  * Graceful shutdown
  */
@@ -1104,7 +1184,8 @@ async function shutdown() {
     notificationWorker.close(),
     reminderWorker.close(),
     dmsImportWorker.close(),
-    dailySmsOverviewWorker.close()
+    dailySmsOverviewWorker.close(),
+    closeStaleEntriesWorker.close()
   ])
   await redis.quit()
   process.exit(0)

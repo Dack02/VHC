@@ -1,15 +1,21 @@
 import { useState } from 'react'
 import { api } from '../../../lib/api'
 
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5180'
+
 interface Props {
   token: string
+  orgId: string
   onNext: () => void
   onBack: () => void
 }
 
-export default function Step1BusinessDetails({ token, onNext }: Props) {
+export default function Step1BusinessDetails({ token, orgId, onNext, onBack }: Props) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  const [uploadingLogo, setUploadingLogo] = useState(false)
+  const [logoError, setLogoError] = useState('')
   const [form, setForm] = useState({
     legalName: '',
     companyNumber: '',
@@ -32,9 +38,39 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
     setForm({ ...form, [e.target.name]: e.target.value })
   }
 
+  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setLogoError('')
+    setUploadingLogo(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('type', 'logo')
+      const res = await fetch(`${API_URL}/api/v1/organizations/${orgId}/settings/logo`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: formData
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Upload failed')
+      setLogoUrl(data.url)
+    } catch (err) {
+      setLogoError(err instanceof Error ? err.message : 'Failed to upload logo')
+    } finally {
+      setUploadingLogo(false)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+
+    if (!form.legalName.trim() || !form.addressLine1.trim() || !form.city.trim() || !form.postcode.trim()) {
+      setError('Please complete your legal business name and address (these appear on customer reports)')
+      return
+    }
+
     setSaving(true)
 
     try {
@@ -69,7 +105,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Legal Business Name
+              Legal Business Name <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
@@ -78,6 +114,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
               onChange={handleChange}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
               placeholder="ABC Motors Ltd"
+              required
             />
           </div>
           <div>
@@ -114,7 +151,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Address Line 1
+                Address Line 1 <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -123,6 +160,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
                 onChange={handleChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                 placeholder="123 High Street"
+                required
               />
             </div>
             <div className="md:col-span-2">
@@ -140,7 +178,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                City
+                City <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -149,6 +187,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
                 onChange={handleChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                 placeholder="London"
+                required
               />
             </div>
             <div>
@@ -166,7 +205,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Postcode
+                Postcode <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -175,6 +214,7 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
                 onChange={handleChange}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
                 placeholder="SW1A 1AA"
+                required
               />
             </div>
             <div>
@@ -240,8 +280,40 @@ export default function Step1BusinessDetails({ token, onNext }: Props) {
           </div>
         </div>
 
+        {/* Logo & Branding */}
+        <div className="border-t pt-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-1">Logo &amp; Branding</h3>
+          <p className="text-sm text-gray-500 mb-4">Add your logo so it appears on customer-facing health check reports. You can change this later in Settings. (optional)</p>
+          {logoError && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded mb-3 text-sm">{logoError}</div>}
+          <div className="flex items-center space-x-4">
+            <div className="w-24 h-24 border border-gray-200 rounded-lg bg-gray-50 flex items-center justify-center overflow-hidden flex-shrink-0">
+              {logoUrl ? (
+                <img src={logoUrl} alt="Logo preview" className="max-w-full max-h-full object-contain" />
+              ) : (
+                <svg className="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              )}
+            </div>
+            <div>
+              <label className="inline-block px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors">
+                {uploadingLogo ? 'Uploading...' : logoUrl ? 'Replace logo' : 'Upload logo'}
+                <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" onChange={handleLogoChange} disabled={uploadingLogo} className="hidden" />
+              </label>
+              <p className="text-xs text-gray-400 mt-2">PNG, JPEG, SVG or WebP. Max 2MB.</p>
+            </div>
+          </div>
+        </div>
+
         {/* Actions */}
-        <div className="flex justify-end pt-6 border-t">
+        <div className="flex justify-between pt-6 border-t">
+          <button
+            type="button"
+            onClick={onBack}
+            className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            Back
+          </button>
           <button
             type="submit"
             disabled={saving}

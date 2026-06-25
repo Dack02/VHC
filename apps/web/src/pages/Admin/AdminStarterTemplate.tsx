@@ -151,6 +151,37 @@ export default function AdminStarterTemplate() {
     }
   }
 
+  const handleMarkAll = async () => {
+    if (!selectedOrgId || marking) return
+    const eligible = stats ? stats.totalReasons - stats.markedAsStarter : 0
+    if (eligible <= 0) return
+    if (!window.confirm(
+      `Mark all ${eligible} active reason${eligible === 1 ? '' : 's'} in this organisation as starter templates?\n\nThey will be copied into every new organisation created from here on.`
+    )) return
+
+    setMarking(true)
+    setErrorMessage('')
+
+    try {
+      const result = await api<{ marked: number }>(
+        '/api/v1/admin/starter-reasons/mark-as-starter',
+        {
+          method: 'POST',
+          body: { organization_id: selectedOrgId, mark_all: true },
+          token: session?.accessToken
+        }
+      )
+
+      setSuccessMessage(`Marked ${result.marked} reasons as starter templates`)
+      fetchStats()
+      setTimeout(() => setSuccessMessage(''), 5000)
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to mark reasons')
+    } finally {
+      setMarking(false)
+    }
+  }
+
   const handleSaveSettings = async () => {
     if (!settings || savingSettings) return
     setSavingSettings(true)
@@ -203,6 +234,9 @@ export default function AdminStarterTemplate() {
     return colors[rag] || 'bg-gray-100 text-gray-700'
   }
 
+  // Reasons not yet flagged as starter — what "Mark all active" will promote.
+  const eligibleCount = stats ? stats.totalReasons - stats.markedAsStarter : 0
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -215,8 +249,8 @@ export default function AdminStarterTemplate() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Starter Template</h1>
-          <p className="text-gray-500 mt-1">Manage starter reasons for new organizations</p>
+          <h1 className="text-2xl font-bold text-gray-900">Starter Reasons</h1>
+          <p className="text-gray-500 mt-1">Manage starter reasons copied to new organizations</p>
         </div>
         <button
           onClick={handleSaveSettings}
@@ -281,8 +315,8 @@ export default function AdminStarterTemplate() {
 
           <div className="flex gap-4">
             <button
-              onClick={handleMarkAllReviewed}
-              disabled={marking || !selectedOrgId || !stats?.pendingReview}
+              onClick={handleMarkAll}
+              disabled={marking || !selectedOrgId || eligibleCount <= 0}
               className="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {marking ? (
@@ -291,7 +325,7 @@ export default function AdminStarterTemplate() {
                   Marking...
                 </span>
               ) : (
-                `Mark All Reviewed as Starter (${stats?.pendingReview || 0})`
+                `Mark all active as Starter (${eligibleCount})`
               )}
             </button>
             <button
@@ -302,6 +336,16 @@ export default function AdminStarterTemplate() {
               Preview Starter Set
             </button>
           </div>
+
+          {stats && stats.pendingReview > 0 && (
+            <button
+              onClick={handleMarkAllReviewed}
+              disabled={marking || !selectedOrgId}
+              className="mt-3 text-sm text-indigo-600 hover:text-indigo-700 disabled:opacity-50"
+            >
+              Or mark only the {stats.pendingReview} AI-reviewed reason{stats.pendingReview === 1 ? '' : 's'} &rarr;
+            </button>
+          )}
         </div>
 
         {/* Global Settings */}

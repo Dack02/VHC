@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../../contexts/AuthContext'
 import { api } from '../../../lib/api'
+import { jobPath } from '../../../lib/jobLink'
 import type { CustomerDetail, CustomerCommRecord } from '../../../lib/api'
 
 interface NotesTabProps {
@@ -149,7 +150,7 @@ export default function NotesTab({ customer, onCustomerUpdate }: NotesTabProps) 
                   <span>To: {comm.recipient}</span>
                   {comm.healthCheckId && (
                     <Link
-                      to={`/health-checks/${comm.healthCheckId}`}
+                      to={jobPath({ jobsheetId: comm.jobsheetId, healthCheckId: comm.healthCheckId })}
                       className="text-primary hover:text-primary-dark"
                     >
                       {comm.vhcReference || 'View HC'} {comm.vehicleReg && `(${comm.vehicleReg})`}

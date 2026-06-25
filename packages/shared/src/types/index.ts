@@ -338,6 +338,89 @@ export interface StaffNotification {
   createdAt: Date
 }
 
+// ============================================================================
+// Workshop Management Board
+// ============================================================================
+
+export type WorkshopColumnType = 'technician' | 'queue'
+
+// 'auto' = position derived from the health check (status / technician).
+// 'queue' / 'work_complete' are manual placements that override derivation.
+export type WorkshopPlacement = 'auto' | 'queue' | 'work_complete'
+
+export type WorkshopCardPriority = 'normal' | 'high' | 'urgent'
+
+// Resolved board position of a card (computed server-side)
+export type WorkshopBoardPosition = 'due_in' | 'checked_in' | 'column' | 'work_complete'
+
+export interface WorkshopStatus {
+  id: string
+  organizationId: string
+  name: string
+  colour: string
+  icon?: string
+  smsMessage?: string
+  sortOrder: number
+  isActive: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface WorkshopColumn {
+  id: string
+  organizationId: string
+  siteId: string
+  columnType: WorkshopColumnType
+  technicianId?: string
+  name?: string
+  colour?: string
+  availableHours: number
+  sortOrder: number
+  isVisible: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface WorkshopCard {
+  id: string
+  organizationId: string
+  healthCheckId: string
+  placement: WorkshopPlacement
+  queueColumnId?: string
+  sortPosition: number
+  workshopStatusId?: string
+  priority: WorkshopCardPriority
+  estimatedHours?: number
+  plannedStartAt?: Date
+  workCompletedAt?: Date
+  workCompletedBy?: string
+  placedBy?: string
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface WorkshopNote {
+  id: string
+  organizationId: string
+  healthCheckId: string
+  userId: string
+  content: string
+  createdAt: Date
+}
+
+export interface WorkshopBoardConfig {
+  id: string
+  organizationId: string
+  siteId: string
+  defaultTechHours: number
+  dayStartTime: string
+  dayEndTime: string
+  lunchStartTime?: string
+  lunchEndTime?: string
+  createdAt: Date
+  updatedAt: Date
+}
+
 // Scheduled Job
 export interface ScheduledJob {
   id: string
@@ -351,4 +434,69 @@ export interface ScheduledJob {
   attempts: number
   payload: Record<string, unknown>
   createdAt: Date
+}
+
+// =============================================================================
+// In-app feedback / bug reporting (Ollo Inspect → Ollo Dev integration)
+// =============================================================================
+export type FeedbackType = 'bug' | 'feature' | 'question'
+export type FeedbackPriority = 'low' | 'normal' | 'high' | 'urgent'
+// Mirror of Ollo Dev's ticket lifecycle (NOT the HealthCheckStatus workflow).
+export type FeedbackStatus = 'open' | 'pending' | 'in_progress' | 'resolved' | 'closed'
+export type FeedbackSyncState = 'pending' | 'synced' | 'failed'
+export type FeedbackCommentAuthor = 'user' | 'dev'
+export type FeedbackCommentOrigin = 'inspect' | 'ollo_dev'
+export type FeedbackSourceApp = 'web' | 'mobile'
+
+export interface FeedbackConsoleError {
+  level: string
+  message: string
+  ts: string
+}
+
+export interface FeedbackDiagnostics {
+  route?: string
+  url?: string
+  appVersion?: string
+  build?: string
+  browser?: string
+  device?: string
+  viewport?: string
+  consoleErrors?: FeedbackConsoleError[]
+  timestamp?: string
+  timezone?: string
+}
+
+export interface FeedbackAttachment {
+  id: string
+  url: string
+  contentType: string
+  width?: number | null
+  height?: number | null
+}
+
+export interface FeedbackComment {
+  id: string
+  authorType: FeedbackCommentAuthor
+  authorName: string | null
+  body: string
+  origin: FeedbackCommentOrigin
+  createdAt: string
+}
+
+export interface FeedbackTicket {
+  id: string
+  type: FeedbackType
+  subject: string
+  description: string
+  priority: FeedbackPriority
+  status: FeedbackStatus
+  syncState: FeedbackSyncState
+  olloDevTicketId: string | null
+  sourceApp: FeedbackSourceApp
+  createdAt: string
+  updatedAt: string
+  attachments?: FeedbackAttachment[]
+  comments?: FeedbackComment[]
+  commentCount?: number
 }

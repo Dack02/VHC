@@ -22,6 +22,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { useAuth } from '../../contexts/AuthContext'
 import { useSocket, WS_EVENTS } from '../../contexts/SocketContext'
 import { api, HealthCheck, User } from '../../lib/api'
+import { jobPath } from '../../lib/jobLink'
 import { WorkflowBadges, WorkflowLegend, WorkflowStatus, CompletionInfo, AuthorisationInfo } from '../../components/WorkflowBadges'
 import { Tooltip } from '../../components/ui/Tooltip'
 import { InspectionTimer } from '../../components/InspectionTimer'
@@ -87,6 +88,7 @@ const statusColors: Record<string, string> = {
 // Kanban Board Types
 interface HealthCheckCard {
   id: string
+  jobsheet_id?: string | null
   status: string
   promise_time?: string
   created_at: string
@@ -189,7 +191,7 @@ function CardContent({ card }: { card: HealthCheckCard }) {
 
   return (
     <Link
-      to={`/health-checks/${card.id}${isAwaitingCheckin ? '?tab=checkin' : ''}`}
+      to={jobPath({ jobsheetId: card.jobsheet_id, healthCheckId: card.id }, isAwaitingCheckin ? { tab: 'checkin' } : undefined)}
       className={`block border rounded-lg shadow-sm p-3 mb-2 hover:shadow transition-shadow ${
         isAwaitingCheckin
           ? 'bg-red-50 border-red-300'
@@ -958,7 +960,7 @@ export default function HealthCheckList() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <Link
-                          to={`/health-checks/${hc.id}`}
+                          to={jobPath({ jobsheetId: hc.jobsheet_id, healthCheckId: hc.id })}
                           className="text-primary hover:underline text-sm font-medium"
                         >
                           View

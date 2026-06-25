@@ -4,9 +4,12 @@
  */
 
 import type { ResultData } from '../../types.js'
-
-// Tyre position keys
-type TyrePosition = 'front_left' | 'front_right' | 'rear_left' | 'rear_right'
+import {
+  parseTyrePosition,
+  TYRE_POSITION_LABELS,
+  TYRE_POSITIONS,
+  type TyrePosition
+} from '../../utils/positions.js'
 
 interface TyreReading {
   outer: number | null
@@ -38,27 +41,20 @@ export function extractTyreData(results: ResultData[]): TyreData[] {
     r.template_item?.name?.toLowerCase().includes('tyre')
   )
 
-  // Position mapping
-  const positionMap: Record<TyrePosition, string[]> = {
-    front_left: ['front left', 'front n/s', 'n/s front', 'fl'],
-    front_right: ['front right', 'front o/s', 'o/s front', 'fr'],
-    rear_left: ['rear left', 'rear n/s', 'n/s rear', 'rl'],
-    rear_right: ['rear right', 'rear o/s', 'o/s rear', 'rr']
-  }
-
-  const positionLabels: Record<TyrePosition, string> = {
-    front_left: 'Front Left',
-    front_right: 'Front Right',
-    rear_left: 'Rear Left',
-    rear_right: 'Rear Right'
+  // Resolve each tyre result to its position up front. Matching on the axle +
+  // side (see parseTyrePosition) means a position can only ever bind to its own
+  // result — the old keyword scan let front_right pick up the first front tyre.
+  const resultByPosition = new Map<TyrePosition, ResultData>()
+  for (const result of tyreResults) {
+    const position = parseTyrePosition(result.template_item?.name || '')
+    if (position && !resultByPosition.has(position)) {
+      resultByPosition.set(position, result)
+    }
   }
 
   // Process each position
-  for (const [position, keywords] of Object.entries(positionMap) as [TyrePosition, string[]][]) {
-    const result = tyreResults.find(r => {
-      const name = r.template_item?.name?.toLowerCase() || ''
-      return keywords.some(kw => name.includes(kw))
-    })
+  for (const position of TYRE_POSITIONS) {
+    const result = resultByPosition.get(position)
 
     if (result?.value) {
       const value = result.value as Record<string, unknown>
@@ -86,7 +82,7 @@ export function extractTyreData(results: ResultData[]): TyreData[] {
 
       tyres.push({
         position,
-        label: positionLabels[position],
+        label: TYRE_POSITION_LABELS[position],
         readings,
         status,
         minReading
@@ -153,23 +149,19 @@ export function renderTyreGrid(results: ResultData[]): string {
     `
   }
 
-  // Position order for grid layout (FL, FR, RL, RR)
-  const positionOrder: TyrePosition[] = ['front_left', 'front_right', 'rear_left', 'rear_right']
-
   // Create placeholder for missing tyres
-  const placeholderTyre = (position: TyrePosition, label: string): TyreData => ({
+  const placeholderTyre = (position: TyrePosition): TyreData => ({
     position,
-    label,
+    label: TYRE_POSITION_LABELS[position],
     readings: { outer: null, middle: null, inner: null },
     status: 'green',
     minReading: null
   })
 
-  // Ensure all 4 positions exist
-  const allTyres: TyreData[] = positionOrder.map((pos, i) => {
-    const labels = ['Front Left', 'Front Right', 'Rear Left', 'Rear Right']
-    return tyres.find(t => t.position === pos) || placeholderTyre(pos, labels[i])
-  })
+  // Ensure all 4 positions exist, in display order (FL, FR, RL, RR)
+  const allTyres: TyreData[] = TYRE_POSITIONS.map(
+    pos => tyres.find(t => t.position === pos) || placeholderTyre(pos)
+  )
 
   return `
     <div class="measurement-card">

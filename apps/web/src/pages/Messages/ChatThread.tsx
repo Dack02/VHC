@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { api, SmsMessage } from '../../lib/api'
+import { jobPath } from '../../lib/jobLink'
 import { useConversationMessages } from './useConversationMessages'
 
 interface ChatThreadProps {
@@ -141,7 +142,7 @@ export default function ChatThread({ phoneNumber, customerName, onMarkRead, onMe
               {thread.healthChecks.slice(0, 3).map(hc => (
                 <Link
                   key={hc.id}
-                  to={`/health-checks/${hc.id}`}
+                  to={jobPath({ jobsheetId: hc.jobsheetId, healthCheckId: hc.id })}
                   className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded hover:bg-primary/20 transition-colors whitespace-nowrap"
                 >
                   {hc.vhcReference || 'HC'}

@@ -5,10 +5,130 @@
 
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
-import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
+import { buildResetPasswordLink } from '../../lib/authLinks.js'
+import { superAdminMiddleware, logSuperAdminActivity, getClientIp } from '../../middleware/auth.js'
+import { provisionOrganization, ProvisionError } from '../../services/provisioning.js'
+import { getOrgModuleDetail } from '../../services/modules.js'
+import { MODULE_MAP, isModuleKey, type ModuleKey } from '../../lib/modules.js'
+import { sendEmail } from '../../services/email.js'
 import crypto from 'crypto'
 
 const adminOrgRoutes = new Hono()
+
+/**
+ * `organization_subscriptions` has a UNIQUE(organization_id) constraint, so PostgREST
+ * embeds it as a single object (a to-one relationship), not an array — yet supabase-js
+ * still types the embed as an array. Indexing `[0]` therefore yields `undefined` at
+ * runtime, which is why every org rendered "No plan" despite having a subscription.
+ * Normalise either runtime shape to the one subscription record, or null.
+ */
+function firstSubscription(embed: unknown): Record<string, unknown> | null {
+  if (!embed) return null
+  if (Array.isArray(embed)) return (embed[0] as Record<string, unknown>) ?? null
+  return embed as Record<string, unknown>
+}
+
+/**
+ * Best-effort: email a newly-added org user so they can get started. Two variants:
+ *  - Brand-new account  → "Set your password" with a recovery link (they have no
+ *    password yet).
+ *  - Existing account (opts.existingAccount) → the person already has a working VHC
+ *    login (they're a member of another org), so a "set your password" link would be
+ *    confusing. Instead we just tell them they've been added and point them at sign-in.
+ *
+ * Never throws — returns whether the email was actually sent so the caller can surface
+ * it (for new accounts the temp password remains the fallback when this returns false).
+ * Tries the org/platform sender first, then falls back to the platform env sender (e.g.
+ * on dev where org credentials may be missing).
+ */
+async function sendOrgUserInviteEmail(
+  orgId: string,
+  orgName: string,
+  email: string,
+  firstName: string,
+  role: string,
+  opts: { existingAccount?: boolean } = {}
+): Promise<boolean> {
+  try {
+    const roleLabel = role.replace(/_/g, ' ').replace(/\b\w/g, (ch: string) => ch.toUpperCase())
+    const loginUrl = process.env.WEB_URL || 'http://localhost:5181'
+
+    let subject: string
+    let heading: string
+    let introHtml: string
+    let ctaLabel: string
+    let ctaHref: string
+    let text: string
+
+    if (opts.existingAccount) {
+      // Already has a VHC login — notify and point at sign-in, no password CTA.
+      subject = `You've been added to ${orgName} on VHC`
+      heading = `Welcome to ${orgName}`
+      ctaLabel = 'Sign In'
+      ctaHref = loginUrl
+      introHtml = `
+        <p>Hi ${firstName},</p>
+        <p><strong>${orgName}</strong> has added you to their team as a <strong>${roleLabel}</strong> on the Vehicle Health Check platform.</p>
+        <p>You already have a VHC account, so just sign in with your existing email and password to get started — no new password needed.</p>
+      `
+      text = `You've been added to ${orgName} on VHC\n\nHi ${firstName},\n\n${orgName} has added you to their team as a ${roleLabel}.\n\nYou already have a VHC account — sign in with your existing email and password to get started: ${loginUrl}\n\nIf you've forgotten your password, use "Forgot password" on the sign-in page.`
+    } else {
+      // Brand-new account — email a "set your password" recovery link.
+      const resetRedirect = `${loginUrl}/reset-password`
+      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+        type: 'recovery',
+        email,
+        options: { redirectTo: resetRedirect }
+      })
+      const resetLink = buildResetPasswordLink(linkData?.properties)
+      if (!resetLink) {
+        console.warn(`Failed to generate invite link for ${email}:`, linkError?.message)
+        return false
+      }
+
+      // Outside production, surface the link in logs — dev/staging often can't send
+      // outbound email (e.g. platform credentials can't be decrypted there).
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[admin/add-user] Set-password link for ${email}: ${resetLink}`)
+      }
+
+      subject = `You've been invited to join ${orgName} on VHC`
+      heading = "You've Been Invited!"
+      ctaLabel = 'Set Your Password'
+      ctaHref = resetLink
+      introHtml = `
+        <p>Hi ${firstName},</p>
+        <p><strong>${orgName}</strong> has added you to their team as a <strong>${roleLabel}</strong> on the Vehicle Health Check platform.</p>
+        <p>Click the button below to set your password and get started:</p>
+      `
+      text = `You've been invited to join ${orgName} on VHC\n\nHi ${firstName},\n\n${orgName} has added you to their team as a ${roleLabel}.\n\nSet your password to get started: ${resetLink}\n\nIf you weren't expecting this, you can safely ignore this email.`
+    }
+
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #1a1a1a;">${heading}</h2>
+        ${introHtml}
+        <div style="text-align: center; margin: 32px 0;">
+          <a href="${ctaHref}" style="background-color: #2563eb; color: white; padding: 12px 32px; text-decoration: none; font-weight: bold; display: inline-block; border-radius: 6px;">${ctaLabel}</a>
+        </div>
+        <p style="color: #666; font-size: 14px;">If the button doesn't work, copy and paste this link into your browser:</p>
+        <p style="color: #666; font-size: 12px; word-break: break-all;">${ctaHref}</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;" />
+        <p style="color: #999; font-size: 12px;">This was sent by ${orgName} via Vehicle Health Check.</p>
+      </div>
+    `
+
+    const emailPayload = { to: email, subject, html, text }
+    let result = await sendEmail({ ...emailPayload, organizationId: orgId })
+    if (!result.success) {
+      result = await sendEmail(emailPayload)
+    }
+    return result.success
+  } catch (err) {
+    console.error('Failed to send org user invite email:', err)
+    return false
+  }
+}
 
 // All routes require super admin authentication
 adminOrgRoutes.use('*', superAdminMiddleware)
@@ -57,29 +177,36 @@ adminOrgRoutes.get('/', async (c) => {
   let filteredOrgs = organizations || []
   if (plan) {
     filteredOrgs = filteredOrgs.filter(org =>
-      org.organization_subscriptions?.[0]?.plan_id === plan
+      firstSubscription(org.organization_subscriptions)?.plan_id === plan
     )
   }
 
   // Transform to cleaner response
-  const orgs = filteredOrgs.map(org => ({
-    id: org.id,
-    name: org.name,
-    slug: org.slug,
-    status: org.status,
-    onboardingCompleted: org.onboarding_completed,
-    createdAt: org.created_at,
-    updatedAt: org.updated_at,
-    settings: org.organization_settings?.[0] || null,
-    subscription: org.organization_subscriptions?.[0] ? {
-      planId: org.organization_subscriptions[0].plan_id,
-      planName: org.organization_subscriptions[0].plan?.name,
-      status: org.organization_subscriptions[0].status,
-      currentPeriodEnd: org.organization_subscriptions[0].current_period_end
-    } : null,
-    sitesCount: org.sites?.[0]?.count || 0,
-    usersCount: org.users?.[0]?.count || 0
-  }))
+  const orgs = filteredOrgs.map(org => {
+    const sub = firstSubscription(org.organization_subscriptions)
+    const planRel = sub?.plan
+    const subPlan = (Array.isArray(planRel) ? planRel[0] : planRel) as Record<string, unknown> | null | undefined
+    return {
+      id: org.id,
+      name: org.name,
+      slug: org.slug,
+      status: org.status,
+      onboardingCompleted: org.onboarding_completed,
+      createdAt: org.created_at,
+      updatedAt: org.updated_at,
+      settings: org.organization_settings?.[0] || null,
+      subscription: sub ? {
+        planId: sub.plan_id,
+        planName: subPlan?.name ?? null,
+        status: sub.status,
+        currentPeriodEnd: sub.current_period_end,
+        trialStartedAt: sub.trial_started_at,
+        trialEndsAt: sub.trial_ends_at
+      } : null,
+      sitesCount: org.sites?.[0]?.count || 0,
+      usersCount: org.users?.[0]?.count || 0
+    }
+  })
 
   // Log activity
   await logSuperAdminActivity(
@@ -88,7 +215,7 @@ adminOrgRoutes.get('/', async (c) => {
     'organizations',
     undefined,
     { filters: { status, plan, search }, count: orgs.length },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -110,214 +237,49 @@ adminOrgRoutes.post('/', async (c) => {
   const superAdmin = c.get('superAdmin')
   const body = await c.req.json()
 
-  const {
-    name,
-    slug,
-    planId = 'starter',
-    // First admin user
-    adminEmail,
-    adminFirstName,
-    adminLastName,
-    adminPassword,
-    // Optional settings
-    settings = {}
-  } = body
-
-  if (!name || !adminEmail || !adminFirstName || !adminLastName) {
-    return c.json({
-      error: 'Name, adminEmail, adminFirstName, and adminLastName are required'
-    }, 400)
-  }
-
-  // Generate slug if not provided
-  const orgSlug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
-
-  // Check if slug is unique
-  const { data: existingOrg } = await supabaseAdmin
-    .from('organizations')
-    .select('id')
-    .eq('slug', orgSlug)
-    .single()
-
-  if (existingOrg) {
-    return c.json({ error: 'Organization slug already exists' }, 400)
-  }
-
   try {
-    // 1. Create the organization
-    const { data: org, error: orgError } = await supabaseAdmin
-      .from('organizations')
-      .insert({
-        name,
-        slug: orgSlug,
-        status: 'active',
-        onboarding_completed: false,
-        onboarding_step: 0
-      })
-      .select()
-      .single()
-
-    if (orgError) {
-      return c.json({ error: orgError.message }, 500)
-    }
-
-    // 2. Create organization settings
-    await supabaseAdmin
-      .from('organization_settings')
-      .insert({
-        organization_id: org.id,
-        ...settings
-      })
-
-    // 3. Create organization notification settings (with platform defaults)
-    await supabaseAdmin
-      .from('organization_notification_settings')
-      .insert({
-        organization_id: org.id,
-        use_platform_sms: true,
-        use_platform_email: true
-      })
-
-    // 4. Create organization subscription
-    const periodStart = new Date()
-    const periodEnd = new Date()
-    periodEnd.setMonth(periodEnd.getMonth() + 1)
-
-    await supabaseAdmin
-      .from('organization_subscriptions')
-      .insert({
-        organization_id: org.id,
-        plan_id: planId,
-        status: 'active',
-        current_period_start: periodStart.toISOString(),
-        current_period_end: periodEnd.toISOString()
-      })
-
-    // 5. Create first site (default)
-    const { data: site } = await supabaseAdmin
-      .from('sites')
-      .insert({
-        organization_id: org.id,
-        name: `${name} - Main Site`,
-        is_active: true
-      })
-      .select()
-      .single()
-
-    // 6. Create the admin user in Supabase Auth
-    const tempPassword = adminPassword || crypto.randomBytes(16).toString('hex')
-
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: adminEmail,
-      password: tempPassword,
-      email_confirm: true,
-      user_metadata: {
-        first_name: adminFirstName,
-        last_name: adminLastName
-      }
+    const result = await provisionOrganization({
+      name: body.name,
+      slug: body.slug,
+      planId: body.planId,
+      adminEmail: body.adminEmail,
+      adminFirstName: body.adminFirstName,
+      adminLastName: body.adminLastName,
+      adminPassword: body.adminPassword,
+      settings: body.settings || {}
     })
-
-    if (authError) {
-      // Rollback: delete organization
-      await supabaseAdmin.from('organizations').delete().eq('id', org.id)
-      return c.json({ error: `Failed to create admin user: ${authError.message}` }, 500)
-    }
-
-    // 7. Create the user record
-    const { data: user, error: userError } = await supabaseAdmin
-      .from('users')
-      .insert({
-        auth_id: authData.user.id,
-        organization_id: org.id,
-        site_id: site?.id,
-        email: adminEmail,
-        first_name: adminFirstName,
-        last_name: adminLastName,
-        role: 'org_admin',
-        is_org_admin: true,
-        is_active: true
-      })
-      .select()
-      .single()
-
-    if (userError) {
-      // Rollback: delete auth user and organization
-      await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
-      await supabaseAdmin.from('organizations').delete().eq('id', org.id)
-      return c.json({ error: `Failed to create user record: ${userError.message}` }, 500)
-    }
-
-    // 8. Initialize usage tracking for current period
-    const usagePeriodStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-    const usagePeriodEnd = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)
-    await supabaseAdmin
-      .from('organization_usage')
-      .insert({
-        organization_id: org.id,
-        period_start: usagePeriodStart.toISOString().split('T')[0],
-        period_end: usagePeriodEnd.toISOString().split('T')[0],
-        health_checks_created: 0,
-        health_checks_completed: 0,
-        sms_sent: 0,
-        emails_sent: 0,
-        storage_used_bytes: 0
-      })
-
-    // 9. Auto-copy starter reasons if enabled
-    let starterReasonsCopied = 0
-    try {
-      const { data: starterSettings } = await supabaseAdmin
-        .from('platform_settings')
-        .select('settings')
-        .eq('id', 'starter_reasons')
-        .single()
-
-      const starterConfig = starterSettings?.settings as { auto_copy_on_create?: boolean; source_organization_id?: string } | null
-      if (starterConfig?.auto_copy_on_create !== false) {
-        // Copy starter reasons to new organization
-        const { data: copyResult } = await supabaseAdmin.rpc('copy_starter_reasons_to_org', {
-          target_org_id: org.id,
-          source_org_id: starterConfig?.source_organization_id || null
-        })
-        starterReasonsCopied = copyResult || 0
-      }
-    } catch (starterError) {
-      console.error('Failed to copy starter reasons:', starterError)
-      // Non-blocking error - organization creation should still succeed
-    }
 
     // Log activity
     await logSuperAdminActivity(
       superAdmin.id,
       'create_organization',
       'organizations',
-      org.id,
-      { name, slug: orgSlug, planId, adminEmail },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      result.organization.id,
+      {
+        name: result.organization.name,
+        slug: result.organization.slug,
+        planId: body.planId || 'starter',
+        adminEmail: body.adminEmail
+      },
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
     return c.json({
-      organization: {
-        id: org.id,
-        name: org.name,
-        slug: org.slug,
-        status: org.status
-      },
-      adminUser: {
-        id: user.id,
-        email: user.email,
-        firstName: user.first_name,
-        lastName: user.last_name
-      },
-      site: site ? {
-        id: site.id,
-        name: site.name
-      } : null,
-      temporaryPassword: adminPassword ? undefined : tempPassword,
-      starterReasonsCopied
+      organization: result.organization,
+      adminUser: result.adminUser,
+      site: result.site,
+      inviteEmailSent: result.inviteEmailSent,
+      starterReasonsCopied: result.starterReasonsCopied,
+      starterTemplateCopied: result.starterTemplateCopied,
+      defaultsSeeded: result.defaultsSeeded
     }, 201)
   } catch (error) {
+    if (error instanceof ProvisionError) {
+      return error.statusCode === 400
+        ? c.json({ error: error.message }, 400)
+        : c.json({ error: error.message }, 500)
+    }
     console.error('Create organization error:', error)
     return c.json({ error: 'Failed to create organization' }, 500)
   }
@@ -380,7 +342,7 @@ adminOrgRoutes.get('/:id', async (c) => {
     'organizations',
     orgId,
     { name: org.name },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -402,17 +364,21 @@ adminOrgRoutes.get('/:id', async (c) => {
       hasCustomSmsCredentials: !!(org.organization_notification_settings[0].twilio_account_sid_encrypted),
       hasCustomEmailCredentials: !!(org.organization_notification_settings[0].resend_api_key_encrypted)
     } : null,
-    subscription: org.organization_subscriptions?.[0] ? (() => {
-      const sub = org.organization_subscriptions[0]
-      const planData = sub.plan as Record<string, unknown> | null
+    subscription: (() => {
+      const sub = firstSubscription(org.organization_subscriptions)
+      if (!sub) return null
+      const planRel = sub.plan
+      const planData = (Array.isArray(planRel) ? planRel[0] : planRel) as Record<string, unknown> | null
       return {
         id: sub.id,
         planId: sub.plan_id,
         planName: planData?.name || null,
-        plan: sub.plan,
+        plan: planData,
         status: sub.status,
         currentPeriodStart: sub.current_period_start,
         currentPeriodEnd: sub.current_period_end,
+        trialStartedAt: sub.trial_started_at,
+        trialEndsAt: sub.trial_ends_at,
         limits: planData ? {
           maxSites: planData.max_sites || 0,
           maxUsersPerSite: planData.max_users || 0,
@@ -420,7 +386,7 @@ adminOrgRoutes.get('/:id', async (c) => {
           maxStorageGb: planData.max_storage_gb || 0
         } : null
       }
-    })() : null,
+    })(),
     counts: {
       sites: sitesResult.count || 0,
       users: usersResult.count || 0,
@@ -496,7 +462,7 @@ adminOrgRoutes.patch('/:id', async (c) => {
     'organizations',
     orgId,
     { changes: Object.keys(updateData).filter(k => k !== 'updated_at') },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -557,7 +523,7 @@ adminOrgRoutes.delete('/:id', async (c) => {
     'organizations',
     orgId,
     { name: org.name },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -608,7 +574,7 @@ adminOrgRoutes.post('/:id/suspend', async (c) => {
     'organizations',
     orgId,
     { name: org.name, reason, previousStatus: org.status },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -657,7 +623,7 @@ adminOrgRoutes.post('/:id/activate', async (c) => {
     'organizations',
     orgId,
     { name: org.name, previousStatus: org.status },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -769,7 +735,7 @@ adminOrgRoutes.patch('/:id/subscription', async (c) => {
       previousStatus: currentSub.status,
       newStatus: status || currentSub.status
     },
-    c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+    getClientIp(c),
     c.req.header('User-Agent')
   )
 
@@ -840,30 +806,123 @@ adminOrgRoutes.get('/:id/usage', async (c) => {
 adminOrgRoutes.get('/:id/usage/history', async (c) => {
   const orgId = c.req.param('id')
 
-  // Get last 12 months of usage
-  const twelveMonthsAgo = new Date()
-  twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12)
+  // Last 12 months (including the current month). SMS/email/HC are counted live
+  // from communication_logs + health_checks via RPC — the organization_usage
+  // rollup counters are not maintained (only its storage_used_bytes is real,
+  // merged in below).
+  const now = new Date()
+  const fromStr = new Date(now.getFullYear(), now.getMonth() - 11, 1).toISOString().slice(0, 10)
+  const toStr = now.toISOString().slice(0, 10)
 
-  const { data: history, error } = await supabaseAdmin
-    .from('organization_usage')
-    .select('*')
-    .eq('organization_id', orgId)
-    .gte('period_start', twelveMonthsAgo.toISOString())
-    .order('period_start', { ascending: false })
+  const [historyRes, storageRes] = await Promise.all([
+    supabaseAdmin.rpc('admin_org_usage_history', { p_org: orgId, p_from: fromStr, p_to: toStr }),
+    supabaseAdmin
+      .from('organization_usage')
+      .select('period_start, storage_used_bytes')
+      .eq('organization_id', orgId)
+      .gte('period_start', fromStr)
+  ])
 
-  if (error) {
-    return c.json({ error: error.message }, 500)
+  if (historyRes.error) {
+    return c.json({ error: historyRes.error.message }, 500)
   }
 
+  // storage_used_bytes is a point-in-time gauge kept only in organization_usage
+  const storageByMonth = new Map<string, number>()
+  for (const r of (storageRes.data || []) as Array<{ period_start: string; storage_used_bytes: number | null }>) {
+    storageByMonth.set(String(r.period_start).slice(0, 7), r.storage_used_bytes || 0)
+  }
+
+  const history = (historyRes.data || []) as Array<{
+    period_start: string
+    sms_sent: number
+    emails_sent: number
+    health_checks_created: number
+    health_checks_completed: number
+  }>
+
   return c.json({
-    history: (history || []).map(period => ({
+    history: history.map(period => ({
       periodStart: period.period_start,
-      healthChecksCreated: period.health_checks_created,
-      healthChecksCompleted: period.health_checks_completed,
-      smsSent: period.sms_sent,
-      emailsSent: period.emails_sent,
-      storageUsedBytes: period.storage_used_bytes
+      healthChecksCreated: Number(period.health_checks_created) || 0,
+      healthChecksCompleted: Number(period.health_checks_completed) || 0,
+      smsSent: Number(period.sms_sent) || 0,
+      emailsSent: Number(period.emails_sent) || 0,
+      storageUsedBytes: storageByMonth.get(String(period.period_start).slice(0, 7)) || 0
     }))
+  })
+})
+
+/**
+ * GET /api/v1/admin/organizations/:id/billing
+ * Current-month billing/usage summary: plan price + comms/AI usage + estimated
+ * spend (GBP plan+SMS; AI cost/chargeout in USD, kept separate — no fake FX).
+ */
+adminOrgRoutes.get('/:id/billing', async (c) => {
+  const orgId = c.req.param('id')
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
+
+  const { data: org, error } = await supabaseAdmin
+    .from('organizations')
+    .select('id, name, organization_subscriptions(plan:subscription_plans(*))')
+    .eq('id', orgId)
+    .single()
+
+  if (error || !org) {
+    return c.json({ error: 'Organisation not found' }, 404)
+  }
+
+  const [smsRes, emailRes, hcRes, aiRes, billingRes, marginRes] = await Promise.all([
+    supabaseAdmin.from('communication_logs').select('id', { count: 'exact', head: true })
+      .eq('organization_id', orgId).eq('channel', 'sms').in('status', ['sent', 'delivered', 'bounced']).gte('created_at', monthStart),
+    supabaseAdmin.from('communication_logs').select('id', { count: 'exact', head: true })
+      .eq('organization_id', orgId).eq('channel', 'email').in('status', ['sent', 'delivered', 'bounced']).gte('created_at', monthStart),
+    supabaseAdmin.from('health_checks').select('id', { count: 'exact', head: true })
+      .eq('organization_id', orgId).gte('created_at', monthStart),
+    supabaseAdmin.from('organization_ai_settings').select('current_period_cost_usd').eq('organization_id', orgId).maybeSingle(),
+    supabaseAdmin.from('platform_settings').select('settings').eq('id', 'billing').maybeSingle(),
+    supabaseAdmin.from('platform_ai_settings').select('value').eq('key', 'ai_margin_percent').maybeSingle()
+  ])
+
+  const sub = firstSubscription(org.organization_subscriptions)
+  const planRel = sub?.plan as Record<string, unknown> | Record<string, unknown>[] | null | undefined
+  const plan = ((Array.isArray(planRel) ? planRel[0] : planRel) as Record<string, unknown> | null) || null
+
+  const billingSettings = (billingRes.data?.settings as Record<string, unknown> | null) || null
+  const smsRate = Number(billingSettings?.sms_unit_cost ?? 0.04)
+  const emailRate = Number(billingSettings?.email_unit_cost ?? 0)
+  const margin = marginRes.data?.value ? parseFloat(marginRes.data.value) : 0
+
+  const smsSent = smsRes.count || 0
+  const emailsSent = emailRes.count || 0
+  const planPrice = Number(plan?.price_monthly || 0)
+  const estSmsCost = Math.round(smsSent * smsRate * 100) / 100
+  const estEmailCost = Math.round(emailsSent * emailRate * 100) / 100
+  const aiCostUsd = Number(aiRes.data?.current_period_cost_usd || 0)
+
+  return c.json({
+    period: { start: monthStart },
+    plan: plan ? {
+      name: plan.name,
+      priceMonthly: planPrice,
+      currency: plan.currency || 'GBP',
+      limits: {
+        maxSites: plan.max_sites,
+        maxUsers: plan.max_users,
+        maxHealthChecksPerMonth: plan.max_health_checks_per_month,
+        maxStorageGb: plan.max_storage_gb
+      }
+    } : null,
+    usage: { smsSent, emailsSent, healthChecksCreated: hcRes.count || 0 },
+    estimated: {
+      planCostGbp: planPrice,
+      smsCostGbp: estSmsCost,
+      emailCostGbp: estEmailCost,
+      totalGbp: Math.round((planPrice + estSmsCost + estEmailCost) * 100) / 100,
+      aiCostUsd: Math.round(aiCostUsd * 100) / 100,
+      aiChargeoutUsd: Math.round(aiCostUsd * (1 + margin / 100) * 100) / 100,
+      aiMarginPercent: margin
+    }
   })
 })
 
@@ -1054,9 +1113,13 @@ adminOrgRoutes.post('/:id/users', async (c) => {
             'users',
             user.id,
             { email, organizationId: orgId, organizationName: org.name, role, note: 'Linked to existing auth account' },
-            c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+            getClientIp(c),
             c.req.header('User-Agent')
           )
+
+          // They already have a VHC login — notify them they've been added (no
+          // set-password link, which would confuse an existing account). Best-effort.
+          const emailSent = await sendOrgUserInviteEmail(orgId, org.name, email, firstName, role, { existingAccount: true })
 
           return c.json({
             id: user.id,
@@ -1064,6 +1127,7 @@ adminOrgRoutes.post('/:id/users', async (c) => {
             firstName: user.first_name,
             lastName: user.last_name,
             role: user.role,
+            emailSent,
             note: 'User linked to existing auth account'
           }, 201)
         }
@@ -1100,9 +1164,13 @@ adminOrgRoutes.post('/:id/users', async (c) => {
       'users',
       user.id,
       { email, organizationId: orgId, organizationName: org.name, role },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
+
+    // Email the new user a set-password link. Best-effort; the temp password below
+    // remains the fallback the super admin can hand over if email delivery fails.
+    const emailSent = await sendOrgUserInviteEmail(orgId, org.name, email, firstName, role)
 
     return c.json({
       id: user.id,
@@ -1110,7 +1178,8 @@ adminOrgRoutes.post('/:id/users', async (c) => {
       firstName: user.first_name,
       lastName: user.last_name,
       role: user.role,
-      temporaryPassword: tempPassword
+      temporaryPassword: tempPassword,
+      emailSent
     }, 201)
   } catch (error) {
     console.error('Admin user creation error:', error)
@@ -1249,7 +1318,7 @@ adminOrgRoutes.get('/:id/ai-settings', async (c) => {
       'organization_ai_settings',
       orgId,
       {},
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -1345,7 +1414,7 @@ adminOrgRoutes.patch('/:id/ai-settings', async (c) => {
       'organization_ai_settings',
       orgId,
       { changes: Object.keys(updateData).filter(k => k !== 'updated_at'), organizationName: org.name },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -1414,7 +1483,7 @@ adminOrgRoutes.post('/:id/ai-settings/reset-period', async (c) => {
       'organization_ai_settings',
       orgId,
       { organizationName: org.name, previous },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -1427,6 +1496,130 @@ adminOrgRoutes.post('/:id/ai-settings/reset-period', async (c) => {
     const message = error instanceof Error ? error.message : 'Failed to reset period'
     return c.json({ error: message }, 500)
   }
+})
+
+// =============================================================================
+// MODULES (per-org feature enablement)
+// =============================================================================
+
+/**
+ * GET /api/v1/admin/organizations/:id/modules
+ * Per-module effective state + override (true/false/null=inherit) + plan default.
+ */
+adminOrgRoutes.get('/:id/modules', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const orgId = c.req.param('id')
+
+  const { data: org } = await supabaseAdmin
+    .from('organizations')
+    .select('id, name')
+    .eq('id', orgId)
+    .single()
+
+  if (!org) {
+    return c.json({ error: 'Organisation not found' }, 404)
+  }
+
+  const detail = await getOrgModuleDetail(orgId)
+  const modules = detail.map((m) => ({
+    ...m,
+    label: MODULE_MAP[m.key].label,
+    description: MODULE_MAP[m.key].description
+  }))
+
+  await logSuperAdminActivity(
+    superAdmin.id,
+    'view_org_modules',
+    'organization_settings',
+    orgId,
+    {},
+    getClientIp(c),
+    c.req.header('User-Agent')
+  )
+
+  return c.json({ modules })
+})
+
+/**
+ * PATCH /api/v1/admin/organizations/:id/modules
+ * Body: { overrides: { [moduleKey]: boolean | null } }  (null clears -> inherit plan)
+ */
+adminOrgRoutes.patch('/:id/modules', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const orgId = c.req.param('id')
+  const body = await c.req.json()
+  const overrides = body?.overrides
+
+  if (!overrides || typeof overrides !== 'object') {
+    return c.json({ error: 'overrides object is required' }, 400)
+  }
+
+  // Validate keys and values
+  for (const [key, val] of Object.entries(overrides)) {
+    if (!isModuleKey(key)) {
+      return c.json({ error: `Unknown module: ${key}` }, 400)
+    }
+    if (MODULE_MAP[key as ModuleKey].core) {
+      return c.json({ error: `Module "${key}" is core and cannot be disabled` }, 400)
+    }
+    if (val !== null && typeof val !== 'boolean') {
+      return c.json({ error: `Override for "${key}" must be boolean or null` }, 400)
+    }
+  }
+
+  // Verify org exists
+  const { data: org } = await supabaseAdmin
+    .from('organizations')
+    .select('id, name')
+    .eq('id', orgId)
+    .single()
+
+  if (!org) {
+    return c.json({ error: 'Organisation not found' }, 404)
+  }
+
+  // Merge into existing overrides (null clears the key)
+  const { data: existing } = await supabaseAdmin
+    .from('organization_settings')
+    .select('module_overrides')
+    .eq('organization_id', orgId)
+    .maybeSingle()
+
+  const next: Record<string, boolean> = { ...((existing?.module_overrides as Record<string, boolean>) || {}) }
+  for (const [key, val] of Object.entries(overrides)) {
+    if (val === null) delete next[key]
+    else next[key] = val as boolean
+  }
+
+  const { error } = await supabaseAdmin
+    .from('organization_settings')
+    .upsert(
+      { organization_id: orgId, module_overrides: next, updated_at: new Date().toISOString() },
+      { onConflict: 'organization_id' }
+    )
+
+  if (error) {
+    return c.json({ error: error.message }, 500)
+  }
+
+  await logSuperAdminActivity(
+    superAdmin.id,
+    'update_org_modules',
+    'organization_settings',
+    orgId,
+    { organizationName: org.name, changes: Object.keys(overrides) },
+    getClientIp(c),
+    c.req.header('User-Agent')
+  )
+
+  const detail = await getOrgModuleDetail(orgId)
+  const modules = detail.map((m) => ({
+    ...m,
+    label: MODULE_MAP[m.key].label,
+    description: MODULE_MAP[m.key].description
+  }))
+
+  return c.json({ success: true, modules })
 })
 
 export default adminOrgRoutes

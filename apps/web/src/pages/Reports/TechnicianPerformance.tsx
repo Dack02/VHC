@@ -31,6 +31,11 @@ interface TechnicianData {
     libraryUsageRate: number
     avgPhotos: number
     brakeDiscNotMeasured: number
+    brakeDiscUnableToAccess: number
+    soldHours: number
+    clockedHours: number
+    efficiencyPct: number | null
+    utilisationPct: number | null
   }>
   timeByTech: Array<{ name: string; avgTime: number }>
   timeDistribution: Array<{ bucket: string; count: number }>
@@ -55,12 +60,29 @@ export default function TechnicianPerformance() {
     { key: 'avgRedAmber', label: 'Avg Red/Amber', render: r => r.avgRedAmber.toFixed(1), align: 'right', sortable: true, sortValue: r => r.avgRedAmber },
     { key: 'revenue', label: 'Revenue Found', render: r => <span className="font-medium">{formatCurrency(r.revenueIdentified)}</span>, align: 'right', sortable: true, sortValue: r => r.revenueIdentified },
     { key: 'revenueSold', label: 'Revenue Sold', render: r => <span className="font-medium">{formatCurrency(r.revenueSold)}</span>, align: 'right', sortable: true, sortValue: r => r.revenueSold },
+    { key: 'soldHours', label: 'Sold Hrs', render: r => r.soldHours > 0 ? `${r.soldHours.toFixed(1)}h` : <span className="text-gray-400">-</span>, align: 'right', sortable: true, sortValue: r => r.soldHours },
+    { key: 'clockedHours', label: 'Clocked Hrs', render: r => r.clockedHours > 0 ? `${r.clockedHours.toFixed(1)}h` : <span className="text-gray-400">-</span>, align: 'right', sortable: true, sortValue: r => r.clockedHours },
+    { key: 'efficiency', label: 'Efficiency', render: r => {
+      if (r.efficiencyPct == null) return <span className="text-gray-400">-</span>
+      const color = r.efficiencyPct >= 100 ? 'text-green-600' : r.efficiencyPct >= 85 ? 'text-amber-600' : 'text-red-600'
+      return <span className={`font-medium ${color}`}>{formatPercent(r.efficiencyPct)}</span>
+    }, align: 'right', sortable: true, sortValue: r => r.efficiencyPct ?? -1 },
+    { key: 'utilisation', label: 'Utilisation', render: r => {
+      if (r.utilisationPct == null) return <span className="text-gray-400">-</span>
+      const color = r.utilisationPct >= 85 ? 'text-green-600' : r.utilisationPct >= 60 ? 'text-amber-600' : 'text-red-600'
+      return <span className={`font-medium ${color}`}>{formatPercent(r.utilisationPct)}</span>
+    }, align: 'right', sortable: true, sortValue: r => r.utilisationPct ?? -1 },
     { key: 'avgPhotos', label: 'Avg Photos', render: r => r.avgPhotos > 0 ? r.avgPhotos.toFixed(1) : <span className="text-gray-400">-</span>, align: 'right', sortable: true, sortValue: r => r.avgPhotos },
     { key: 'brakeDiscNotMeasured', label: 'Discs Not Measured', render: r => {
       const count = r.brakeDiscNotMeasured
       const color = count === 0 ? 'text-green-600' : count <= 2 ? 'text-amber-600' : 'text-red-600'
       return <span className={`font-medium ${color}`}>{count}</span>
     }, align: 'right', sortable: true, sortValue: r => r.brakeDiscNotMeasured },
+    { key: 'brakeDiscUnableToAccess', label: 'Unable to Access', render: r => {
+      const count = r.brakeDiscUnableToAccess
+      const color = count === 0 ? 'text-green-600' : count <= 2 ? 'text-amber-600' : 'text-red-600'
+      return <span className={`font-medium ${color}`}>{count}</span>
+    }, align: 'right', sortable: true, sortValue: r => r.brakeDiscUnableToAccess },
     { key: 'libraryUsage', label: 'Library %', render: r => {
       const rate = r.libraryUsageRate
       const denominator = r.libraryOnlyCount + r.freeTextOnlyCount + r.bothCount

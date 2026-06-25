@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { useModules } from '../../contexts/ModulesContext'
 import { api } from '../../lib/api'
 import type { CustomerDetail as CustomerDetailType, CustomerStats, CustomerHealthCheckSummary } from '../../lib/api'
+import ComposeMessageModal from '../../components/ComposeMessageModal'
 import OverviewTab from './tabs/OverviewTab'
 import VehiclesTab from './tabs/VehiclesTab'
 import HealthCheckHistoryTab from './tabs/HealthCheckHistoryTab'
@@ -13,7 +15,10 @@ type Tab = 'overview' | 'vehicles' | 'health-checks' | 'notes'
 export default function CustomerDetail() {
   const { id } = useParams<{ id: string }>()
   const { session } = useAuth()
+  const { isEnabled } = useModules()
+  const navigate = useNavigate()
 
+  const [showCompose, setShowCompose] = useState(false)
   const [customer, setCustomer] = useState<CustomerDetailType | null>(null)
   const [stats, setStats] = useState<CustomerStats | null>(null)
   const [recentHealthChecks, setRecentHealthChecks] = useState<CustomerHealthCheckSummary[]>([])
@@ -150,6 +155,15 @@ export default function CustomerDetail() {
             <span className="hidden sm:inline">Edit Customer</span>
             <span className="sm:hidden">Edit</span>
           </button>
+          {isEnabled('customer_comms') && customer.mobile && (
+            <button
+              onClick={() => setShowCompose(true)}
+              className="px-3 py-1.5 text-sm text-gray-700 border border-gray-300 hover:bg-gray-50"
+            >
+              <span className="hidden sm:inline">Send Message</span>
+              <span className="sm:hidden">Message</span>
+            </button>
+          )}
           <Link
             to="/health-checks/new"
             className="px-3 py-1.5 text-sm bg-primary text-white font-semibold hover:bg-primary-dark"
@@ -268,6 +282,22 @@ export default function CustomerDetail() {
           />
         )}
       </div>
+
+      {showCompose && (
+        <ComposeMessageModal
+          customer={{
+            id: customer.id,
+            firstName: customer.firstName,
+            lastName: customer.lastName,
+            mobile: customer.mobile
+          }}
+          onClose={() => setShowCompose(false)}
+          onSent={(phoneNumber) => {
+            setShowCompose(false)
+            navigate(`/messages?phone=${encodeURIComponent(phoneNumber)}`)
+          }}
+        />
+      )}
     </div>
   )
 }

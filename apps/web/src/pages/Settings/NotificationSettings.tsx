@@ -166,7 +166,7 @@ export default function NotificationSettings() {
         `/api/v1/organizations/${organizationId}/notification-settings/test-sms`,
         {
           method: 'POST',
-          body: { phone_number: testPhoneNumber },
+          body: { to: testPhoneNumber },
           token: session?.accessToken
         }
       )
@@ -199,7 +199,7 @@ export default function NotificationSettings() {
         `/api/v1/organizations/${organizationId}/notification-settings/test-email`,
         {
           method: 'POST',
-          body: { email: testEmailAddress },
+          body: { to: testEmailAddress },
           token: session?.accessToken
         }
       )

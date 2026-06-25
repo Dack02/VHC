@@ -6,7 +6,7 @@
 import { Hono } from 'hono'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '../../lib/supabase.js'
-import { superAdminMiddleware, logSuperAdminActivity } from '../../middleware/auth.js'
+import { superAdminMiddleware, logSuperAdminActivity, getClientIp } from '../../middleware/auth.js'
 import { encrypt, decrypt, isEncryptionConfigured } from '../../lib/encryption.js'
 import { logger } from '../../lib/logger.js'
 import { clearSettingsCache } from '../../services/ai-reasons.js'
@@ -18,7 +18,7 @@ aiSettings.use('*', superAdminMiddleware)
 
 // Valid models
 const VALID_MODELS = [
-  'claude-sonnet-4-20250514',
+  'claude-sonnet-4-6',
   'claude-haiku-4-5-20251001'
 ]
 
@@ -75,7 +75,7 @@ aiSettings.get('/', async (c) => {
       'platform_ai_settings',
       undefined,
       {},
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -85,7 +85,9 @@ aiSettings.get('/', async (c) => {
       aiEnabled: settingsMap['ai_enabled']?.value === 'true',
       defaultMonthlyLimit: parseInt(settingsMap['default_monthly_ai_limit']?.value || '100'),
       costAlertThreshold: parseFloat(settingsMap['ai_cost_alert_threshold_usd']?.value || '50'),
-      model: settingsMap['ai_model']?.value || 'claude-sonnet-4-20250514',
+      model: settingsMap['ai_model']?.value || 'claude-sonnet-4-6',
+      marginPercent: parseFloat(settingsMap['ai_margin_percent']?.value || '0'),
+      usdToGbpRate: parseFloat(settingsMap['usd_to_gbp_rate']?.value || '0.79'),
       encryptionConfigured: isEncryptionConfigured()
     })
   } catch (error) {
@@ -108,6 +110,8 @@ aiSettings.patch('/', async (c) => {
       ai_enabled,
       default_monthly_ai_limit,
       ai_cost_alert_threshold_usd,
+      ai_margin_percent,
+      usd_to_gbp_rate,
       ai_model
     } = body
 
@@ -212,6 +216,46 @@ aiSettings.patch('/', async (c) => {
       updated.push('ai_cost_alert_threshold_usd')
     }
 
+    // Update chargeout margin percentage
+    if (ai_margin_percent !== undefined) {
+      const margin = parseFloat(ai_margin_percent)
+      if (isNaN(margin) || margin < 0 || margin > 1000) {
+        return c.json({ error: 'ai_margin_percent must be a number between 0 and 1000' }, 400)
+      }
+
+      const { error } = await supabaseAdmin
+        .from('platform_ai_settings')
+        .update({
+          value: String(margin),
+          updated_at: now,
+          updated_by: superAdmin.id
+        })
+        .eq('key', 'ai_margin_percent')
+
+      if (error) throw new Error(`Failed to update ai_margin_percent: ${error.message}`)
+      updated.push('ai_margin_percent')
+    }
+
+    // Update USD->GBP exchange rate (used to bill AI chargeout in GBP)
+    if (usd_to_gbp_rate !== undefined) {
+      const rate = parseFloat(usd_to_gbp_rate)
+      if (isNaN(rate) || rate <= 0 || rate > 100) {
+        return c.json({ error: 'usd_to_gbp_rate must be a positive number' }, 400)
+      }
+
+      const { error } = await supabaseAdmin
+        .from('platform_ai_settings')
+        .update({
+          value: String(rate),
+          updated_at: now,
+          updated_by: superAdmin.id
+        })
+        .eq('key', 'usd_to_gbp_rate')
+
+      if (error) throw new Error(`Failed to update usd_to_gbp_rate: ${error.message}`)
+      updated.push('usd_to_gbp_rate')
+    }
+
     // Update AI model
     if (ai_model !== undefined) {
       if (!VALID_MODELS.includes(ai_model)) {
@@ -240,7 +284,7 @@ aiSettings.patch('/', async (c) => {
       'platform_ai_settings',
       undefined,
       { updated },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -301,7 +345,7 @@ aiSettings.post('/test', async (c) => {
       .eq('key', 'ai_model')
       .single()
 
-    const model = modelSetting?.value || 'claude-sonnet-4-20250514'
+    const model = modelSetting?.value || 'claude-sonnet-4-6'
 
     // Test the connection with a simple request
     const anthropic = new Anthropic({ apiKey })
@@ -327,7 +371,7 @@ aiSettings.post('/test', async (c) => {
       'platform_ai_settings',
       undefined,
       { success: true, model, duration },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 
@@ -379,7 +423,7 @@ aiSettings.post('/test', async (c) => {
       'platform_ai_settings',
       undefined,
       { success: false, error: errorMessage, errorCode },
-      c.req.header('X-Forwarded-For') || c.req.header('X-Real-IP'),
+      getClientIp(c),
       c.req.header('User-Agent')
     )
 

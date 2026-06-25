@@ -6,8 +6,13 @@ interface OnboardingStatus {
   hasSettings: boolean
   hasSites: boolean
   hasTeamMembers: boolean
+  hasTemplates: boolean
   sitesCount: number
   teamMembersCount: number
+  templatesCount: number
+  planName?: string | null
+  trialEndsAt?: string | null
+  subscriptionStatus?: string | null
 }
 
 interface Props {
@@ -16,14 +21,30 @@ interface Props {
 }
 
 export default function Step5Ready({ status, onComplete }: Props) {
+  const hasTemplates = status?.hasTemplates ?? false
+  const trialDate = status?.trialEndsAt
+    ? new Date(status.trialEndsAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+    : null
   const checkmarks = [
+    {
+      label: status?.planName ? `${status.planName} plan selected` : 'Plan selected',
+      completed: !!status?.planName
+    },
     {
       label: 'Business details configured',
       completed: status?.hasSettings || false
     },
     {
+      label: 'Inspection template ready',
+      completed: hasTemplates
+    },
+    {
       label: 'First site created',
       completed: status?.hasSites || false
+    },
+    {
+      label: 'Pricing defaults set',
+      completed: true
     },
     {
       label: 'Team members invited',
@@ -31,7 +52,7 @@ export default function Step5Ready({ status, onComplete }: Props) {
       optional: true
     },
     {
-      label: 'Notifications configured',
+      label: 'Notifications & daily overview',
       completed: true,
       optional: true
     }
@@ -48,9 +69,16 @@ export default function Step5Ready({ status, onComplete }: Props) {
 
       <h2 className="text-2xl font-bold text-gray-900 mb-2">You're All Set!</h2>
       <p className="text-gray-500 mb-8 max-w-md mx-auto">
-        Your organization is ready to start creating vehicle health checks.
-        Here's what we've set up for you:
+        {hasTemplates
+          ? "Your organization is ready to start creating vehicle health checks. Here's what we've set up for you:"
+          : "Your organization is set up. One more step — create your first inspection template so you can start running health checks. Here's where things stand:"}
       </p>
+
+      {trialDate && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-8 max-w-md mx-auto text-sm text-green-800">
+          Your <strong>1-month free trial</strong> is active until <strong>{trialDate}</strong>.
+        </div>
+      )}
 
       {/* Checklist */}
       <div className="bg-gray-50 rounded-lg p-6 mb-8 max-w-md mx-auto text-left">
@@ -93,20 +121,26 @@ export default function Step5Ready({ status, onComplete }: Props) {
       <div className="bg-blue-50 rounded-lg p-6 mb-8 max-w-lg mx-auto text-left">
         <h3 className="text-lg font-medium text-blue-900 mb-3">What's Next?</h3>
         <ul className="space-y-2 text-sm text-blue-800">
+          {!hasTemplates && (
+            <li className="flex items-start space-x-2">
+              <span className="text-blue-500">1.</span>
+              <span><strong>Create your first inspection template</strong> in Settings &rarr; Templates &mdash; you'll need one before you can run a health check</span>
+            </li>
+          )}
           <li className="flex items-start space-x-2">
-            <span className="text-blue-500">1.</span>
-            <span>Create your first health check from the dashboard</span>
+            <span className="text-blue-500">{hasTemplates ? '1.' : '2.'}</span>
+            <span>{hasTemplates ? 'Create your first health check from the dashboard' : 'Then create your first health check from the dashboard'}</span>
           </li>
           <li className="flex items-start space-x-2">
-            <span className="text-blue-500">2.</span>
+            <span className="text-blue-500">{hasTemplates ? '2.' : '3.'}</span>
             <span>Customize your check template with items relevant to your business</span>
           </li>
           <li className="flex items-start space-x-2">
-            <span className="text-blue-500">3.</span>
+            <span className="text-blue-500">{hasTemplates ? '3.' : '4.'}</span>
             <span>Add your company logo in Settings to personalize reports</span>
           </li>
           <li className="flex items-start space-x-2">
-            <span className="text-blue-500">4.</span>
+            <span className="text-blue-500">{hasTemplates ? '4.' : '5.'}</span>
             <span>Invite more team members as your business grows</span>
           </li>
         </ul>
@@ -122,13 +156,9 @@ export default function Step5Ready({ status, onComplete }: Props) {
 
       {/* Help Link */}
       <p className="mt-6 text-sm text-gray-500">
-        Need help? Check out our{' '}
-        <a href="#" className="text-primary hover:underline">
-          getting started guide
-        </a>{' '}
-        or{' '}
+        Need help?{' '}
         <a href="mailto:support@ollosoft.co.uk" className="text-primary hover:underline">
-          contact support
+          Contact support
         </a>
       </p>
     </div>

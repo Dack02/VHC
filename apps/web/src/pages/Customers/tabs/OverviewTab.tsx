@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../../contexts/AuthContext'
 import { api } from '../../../lib/api'
+import { jobPath } from '../../../lib/jobLink'
 import type { CustomerDetail, CustomerStats, CustomerHealthCheckSummary } from '../../../lib/api'
 
 const statusLabels: Record<string, string> = {
@@ -256,7 +257,7 @@ export default function OverviewTab({ customer, stats, recentHealthChecks, onCus
             {recentHealthChecks.map((hc) => (
               <Link
                 key={hc.id}
-                to={`/health-checks/${hc.id}`}
+                to={jobPath({ jobsheetId: hc.jobsheetId, healthCheckId: hc.id })}
                 className="block border border-gray-200 p-3 hover:bg-gray-50 transition-colors"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">

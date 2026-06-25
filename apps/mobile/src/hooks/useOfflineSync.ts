@@ -3,6 +3,13 @@ import { db } from '../lib/db'
 import { api } from '../lib/api'
 import { usePWA } from './usePWA'
 
+// Stop re-sending a queued item (a result/status POST or a photo upload) that
+// keeps being rejected by the server so a permanently-failing item (e.g. a
+// 400/404) can't loop forever. The item is left in the queue (never deleted)
+// to avoid silent data loss; it is simply no longer retried once the cap is
+// reached.
+const MAX_SYNC_RETRIES = 5
+
 interface SyncStatus {
   isSyncing: boolean
   pendingCount: number
@@ -40,6 +47,12 @@ export function useOfflineSync(token: string | undefined) {
       const queue = await db.getSyncQueue()
 
       for (const item of queue) {
+        // Skip items that have exhausted their retries so a permanently-failing
+        // item can't retry forever (matches the media-queue handling below).
+        if (item.retries >= MAX_SYNC_RETRIES) {
+          continue
+        }
+
         try {
           if (item.type === 'result') {
             await api(`/api/v1/health-checks/${item.health_check_id}/results`, {
@@ -72,6 +85,15 @@ export function useOfflineSync(token: string | undefined) {
       const mediaQueue = await db.getQueuedMedia()
 
       for (const media of mediaQueue) {
+        const retries = media.retries ?? 0
+
+        // Skip items that have exhausted their retries. They stay in the
+        // queue (the photo is never discarded) but are no longer uploaded,
+        // so a permanently-failing item can't retry forever.
+        if (retries >= MAX_SYNC_RETRIES) {
+          continue
+        }
+
         try {
           // Convert base64 to blob
           const response = await fetch(media.photo_data)
@@ -80,7 +102,7 @@ export function useOfflineSync(token: string | undefined) {
           const formData = new FormData()
           formData.append('file', blob, `photo_${Date.now()}.jpg`)
 
-          await fetch(
+          const uploadResponse = await fetch(
             `${import.meta.env.VITE_API_URL}/api/v1/health-checks/${media.health_check_id}/results/${media.result_id}/media`,
             {
               method: 'POST',
@@ -91,10 +113,21 @@ export function useOfflineSync(token: string | undefined) {
             }
           )
 
+          // fetch() only rejects on network errors, so a 4xx/5xx still
+          // resolves here. Only drop the queued photo on a genuine 2xx —
+          // otherwise a server-side rejection would silently delete a photo
+          // that was never saved.
+          if (!uploadResponse.ok) {
+            throw new Error(`Media upload failed with status ${uploadResponse.status}`)
+          }
+
           // Remove from queue on success
           await db.removeQueuedMedia(media.id)
         } catch (err) {
           console.error('Media sync error:', err)
+          // Leave the photo queued and increment its retry count so it is
+          // retried on a later sync (mirrors the sync-queue handling above).
+          await db.updateQueuedMedia(media.id, retries + 1)
         }
       }
 

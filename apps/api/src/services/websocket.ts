@@ -27,6 +27,8 @@ export const WS_EVENTS = {
   LINK_EXPIRED: 'alert:link_expired',
   SMS_RECEIVED: 'sms:received',
   SMS_SENT: 'sms:sent',
+  WORKSHOP_BOARD_UPDATED: 'workshop:board_updated',
+  FEEDBACK_UPDATED: 'feedback:updated',
 
   // Client -> Server
   JOIN_SITE: 'join_site',

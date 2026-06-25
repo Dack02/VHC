@@ -83,8 +83,16 @@ export interface FollowUpBooking {
   id: string
   due_date: string | null
   promise_time: string | null
-  booked_repairs: Array<{ code?: string; description?: string }> | null
+  // Raw DMS shape: the descriptive work is often on the labour line(s) (the repair
+  // `code` is frequently a bare letter like "A"), with extra context in `notes`.
+  booked_repairs: Array<{
+    code?: string | null
+    description?: string | null
+    notes?: string | null
+    labourItems?: Array<{ description?: string | null }> | null
+  }> | null
   jobsheet_number?: string | null
+  notes?: string | null
   verdict?: BookingMatchVerdict | null
 }
 

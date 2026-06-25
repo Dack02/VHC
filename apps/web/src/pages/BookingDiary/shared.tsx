@@ -5,6 +5,7 @@ import { useState, type ReactNode } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { jobPath } from '../../lib/jobLink'
 import DmsBookingModal from './DmsBookingModal'
+import { useDiaryDay } from './useDiaryData'
 import {
   formatTime, loadTone, toneBarClass, statusStripeClass,
   type DiaryBooking
@@ -185,5 +186,44 @@ export function RefreshButton({ onClick }: { onClick: () => void }) {
       </svg>
       Refresh
     </button>
+  )
+}
+
+// The selected day's bookings + capacity header. Shared by the Week and Month views.
+export function DayDetail({ date, density }: { date: string; density: Density }) {
+  const { detail, loading, error } = useDiaryDay(date)
+  const { open, modal } = useBookingOpener()
+
+  const heading = new Date(`${date}T12:00:00`).toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long'
+  })
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <h2 className="text-base font-semibold text-gray-900">{heading}</h2>
+        {detail && (
+          <CapacityFigures
+            bookedHours={detail.capacity.bookedHours}
+            availableHours={detail.capacity.availableHours}
+            bookedPct={detail.capacity.bookedPct}
+            freeHours={detail.capacity.freeHours}
+          />
+        )}
+      </div>
+
+      {loading && !detail ? (
+        <Spinner />
+      ) : error ? (
+        <ErrorNote message={error} />
+      ) : !detail || detail.bookings.length === 0 ? (
+        <div className="px-4 py-12 text-center text-sm text-gray-400">No bookings for this day.</div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {detail.bookings.map(b => <BookingRow key={b.bookingId} booking={b} onOpen={() => open(b)} density={density} />)}
+        </div>
+      )}
+      {modal}
+    </div>
   )
 }

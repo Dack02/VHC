@@ -1,22 +1,24 @@
 import { useState, useCallback } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
-import { useDiarySummary, useDiaryDay } from './useDiaryData'
+import { useDiarySummary } from './useDiaryData'
 import {
-  Spinner, ErrorNote, LoadBar, CapacityFigures, CountPills, BookingRow,
-  useBookingOpener, RefreshButton, type Density
+  Spinner, ErrorNote, LoadBar, CountPills, RefreshButton, DayDetail, type Density
 } from './shared'
-import { addDays, weekStart, loadTone, type DiaryDay, type GroupBy } from './types'
+import { addDays, weekStart, addMonths, monthFirst, loadTone, type DiaryDay, type GroupBy } from './types'
 import AgendaListView from './AgendaListView'
 import GroupedListView from './GroupedListView'
 import TableListView from './TableListView'
+import MonthView from './MonthView'
 
-type ViewMode = 'agenda' | 'grouped' | 'table' | 'week'
+type ViewMode = 'month' | 'agenda' | 'grouped' | 'table' | 'week'
 
-const VIEW_KEY = 'vhc_diary_view'
+// v2: bumped so the new Month default applies (supersedes any earlier saved choice).
+const VIEW_KEY = 'vhc_diary_view_v2'
 const GROUP_KEY = 'vhc_diary_groupby'
 const DENSITY_KEY = 'vhc_diary_density'
 
 const VIEWS: { key: ViewMode; label: string }[] = [
+  { key: 'month', label: 'Month' },
   { key: 'agenda', label: 'Agenda' },
   { key: 'grouped', label: 'Grouped' },
   { key: 'table', label: 'Table' },
@@ -70,45 +72,6 @@ function DayCard({ day, isSelected, isToday, onClick }: {
 
       <CountPills mots={day.totalMots} waiting={day.totalWaiting} loans={day.totalLoans} outreach={day.totalOutreach} />
     </button>
-  )
-}
-
-// The selected day's bookings (under the Week strip).
-function DayDetail({ date, density }: { date: string; density: Density }) {
-  const { detail, loading, error } = useDiaryDay(date)
-  const { open, modal } = useBookingOpener()
-
-  const heading = new Date(`${date}T12:00:00`).toLocaleDateString('en-GB', {
-    weekday: 'long', day: 'numeric', month: 'long'
-  })
-
-  return (
-    <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <h2 className="text-base font-semibold text-gray-900">{heading}</h2>
-        {detail && (
-          <CapacityFigures
-            bookedHours={detail.capacity.bookedHours}
-            availableHours={detail.capacity.availableHours}
-            bookedPct={detail.capacity.bookedPct}
-            freeHours={detail.capacity.freeHours}
-          />
-        )}
-      </div>
-
-      {loading && !detail ? (
-        <Spinner />
-      ) : error ? (
-        <ErrorNote message={error} />
-      ) : !detail || detail.bookings.length === 0 ? (
-        <div className="px-4 py-12 text-center text-sm text-gray-400">No bookings for this day.</div>
-      ) : (
-        <div className="flex flex-col gap-1.5">
-          {detail.bookings.map(b => <BookingRow key={b.bookingId} booking={b} onOpen={() => open(b)} density={density} />)}
-        </div>
-      )}
-      {modal}
-    </div>
   )
 }
 
@@ -167,8 +130,9 @@ export default function BookingDiaryPage() {
   const { user } = useAuth()
   const today = todayStr()
 
-  const [view, setView] = useState<ViewMode>(() => loadPref(VIEW_KEY, ['agenda', 'grouped', 'table', 'week'] as const, 'agenda'))
+  const [view, setView] = useState<ViewMode>(() => loadPref(VIEW_KEY, ['month', 'agenda', 'grouped', 'table', 'week'] as const, 'month'))
   const [weekOffset, setWeekOffset] = useState(0)
+  const [monthOffset, setMonthOffset] = useState(0)
   const [selectedDate, setSelectedDate] = useState(today)
   const [groupBy, setGroupBy] = useState<GroupBy>(() => loadPref(GROUP_KEY, ['advisor', 'type', 'technician'] as const, 'advisor'))
   const [density, setDensity] = useState<Density>(() => loadPref(DENSITY_KEY, ['normal', 'compact'] as const, 'normal'))
@@ -184,6 +148,13 @@ export default function BookingDiaryPage() {
     setWeekOffset(next)
     setSelectedDate(next === 0 ? today : weekStart(addDays(today, next * 7)))
   }, [weekOffset, today])
+
+  // Stepping months points the drill-in at today (this month) or the 1st (others).
+  const goMonth = useCallback((delta: number) => {
+    const next = monthOffset + delta
+    setMonthOffset(next)
+    setSelectedDate(next === 0 ? today : addMonths(monthFirst(today), next))
+  }, [monthOffset, today])
 
   return (
     <div className={`${view === 'table' ? 'max-w-7xl' : 'max-w-6xl'} mx-auto`}>
@@ -209,6 +180,16 @@ export default function BookingDiaryPage() {
         </div>
       </div>
 
+      {view === 'month' && (
+        <MonthView
+          today={today}
+          monthOffset={monthOffset}
+          onMonth={goMonth}
+          selectedDate={selectedDate}
+          onSelectDate={setSelectedDate}
+          density={density}
+        />
+      )}
       {view === 'agenda' && (
         <AgendaListView
           today={today}

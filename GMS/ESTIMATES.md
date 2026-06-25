@@ -1,7 +1,8 @@
 # GMS — Estimates module (design / plan)
 
-Status: **P0 + P1 + P2 BUILT (uncommitted on `dev`, 2026-06-26)** — migrations NOT yet deployed.
-Companion to `GMS/JOBSHEET.md`. Module is part of the GMS line and ships **off by default**.
+Status: **P0–P3 BUILT (uncommitted on `dev`, 2026-06-26)** — P1+P2 migrations DEPLOYED to cloud dev
+(verified: estimates table, repair_items.estimate_id, 4 settings cols, comm_logs/activities estimate_id,
+ref trigger fn all present). P3 adds NO migration. Companion to `GMS/JOBSHEET.md`. Ships **off by default**.
 
 ## Build status
 - **P0 (Documents nav) — DONE.** Expandable "Documents" nav group (Jobsheets + Estimates,
@@ -39,8 +40,19 @@ Companion to `GMS/JOBSHEET.md`. Module is part of the GMS line and ships **off b
 - **Deliberately deferred:** estimate send is inline (no BullMQ worker dependency); no acceptance
   *confirmation* email yet; estimate message template not yet customizable in the Customer Messages
   hub (uses the built-in default); auto-expire scheduler not built (flag + valid_until stored).
-- **Not yet built (P3–P4):** Make-Jobsheet conversion; shared smart banners (the [[estimates-module-initiative]]
-  4-badge `<CustomerInsightsBanner>`). See §6 phasing.
+- **P3 (Make Jobsheet) — DONE. No migration.** `POST /estimates/:id/make-jobsheet`
+  (gated `requireModule('jobsheets')` too) deep-copies the chosen lines (approved-only default,
+  or all) onto a NEW jobsheet as pre-authorised booked work (`copyLineToJobsheet` copies the
+  repair_item + its repair_labour + repair_parts; pricing triggers recompute), creates a
+  **VHC-less** jobsheet (vhc_required=false; the work is already agreed), links
+  `estimates.converted_to_jobsheet_id` + `converted_at` → status `converted`. Web: a "Make
+  Jobsheet" button + modal on EstimateDetail (line selection, due-in date/time, service type,
+  advisor, booking notes; defaults approved-only when accepted/partial) → navigates to the new
+  jobsheet. Garage-Hive "Make Jobsheet" / "Copy Authorised Lines" pattern. tsc(api+web)+web build green.
+- **Not yet built (P4):** shared smart banners (the [[estimates-module-initiative]] 4-badge
+  `<CustomerInsightsBanner>` across Estimate/Jobsheet/VHC). See §6 phasing.
+- **Go-live now unblocked for P1–P3:** super-admin Force-On `estimates` (+ `jobsheets` for
+  conversion) for the org; real SMS/email needs Railway TWILIO_*/RESEND_* env.
 
 ---
 

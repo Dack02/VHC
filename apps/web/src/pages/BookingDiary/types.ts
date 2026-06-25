@@ -3,6 +3,16 @@
 // the Workshop Board so the two stay consistent.
 export { addDays, weekStart } from '../WorkshopBoard/types'
 
+// Month helpers (noon-anchored, like addDays/weekStart, to stay DST-safe).
+export function addMonths(ymd: string, n: number): string {
+  const d = new Date(`${ymd}T12:00:00`)
+  d.setMonth(d.getMonth() + n)
+  return d.toISOString().slice(0, 10)
+}
+export function monthFirst(ymd: string): string {
+  return `${ymd.slice(0, 7)}-01`
+}
+
 export interface DiaryDay {
   date: string
   totalJobs: number

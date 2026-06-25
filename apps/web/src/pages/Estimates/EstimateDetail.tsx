@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { useModules } from '../../contexts/ModulesContext'
 import { api, User } from '../../lib/api'
 import { useToast } from '../../contexts/ToastContext'
 import WorkDetailsPanel from '../Jobsheets/WorkDetailsPanel'
@@ -53,6 +54,7 @@ type EstimateTab = 'overview' | 'work'
 export default function EstimateDetail() {
   const { id } = useParams<{ id: string }>()
   const { session, user } = useAuth()
+  const { isEnabled } = useModules()
   const navigate = useNavigate()
   const toast = useToast()
   const token = session?.accessToken
@@ -68,6 +70,10 @@ export default function EstimateDetail() {
   const [showSend, setShowSend] = useState(false)
   const [sending, setSending] = useState(false)
   const [sendOpts, setSendOpts] = useState({ email: true, sms: false, message: '' })
+  const [showConvert, setShowConvert] = useState(false)
+  const [converting, setConverting] = useState(false)
+  const [serviceTypes, setServiceTypes] = useState<{ id: string; code: string }[]>([])
+  const [convertOpts, setConvertOpts] = useState({ lineSelection: 'approved' as 'approved' | 'all', dueInDate: '', dueInTime: '', serviceTypeId: '', advisorId: '', bookingNotes: '' })
 
   const load = useCallback(async () => {
     if (!token || !id) return
@@ -155,6 +161,48 @@ export default function EstimateDetail() {
     } finally { setSending(false) }
   }
 
+  const openConvert = () => {
+    if (!est || !token) return
+    setConvertOpts({
+      lineSelection: ['accepted', 'partial'].includes(est.status) ? 'approved' : 'all',
+      dueInDate: new Date().toISOString().slice(0, 10),
+      dueInTime: '',
+      serviceTypeId: '',
+      advisorId: est.advisor?.id || '',
+      bookingNotes: ''
+    })
+    setShowConvert(true)
+    api<{ serviceTypes: { id: string; code: string }[] }>('/api/v1/service-types?active_only=true', { token })
+      .then(d => setServiceTypes(d.serviceTypes || [])).catch(() => {})
+    if (!advisors.length) {
+      api<{ users: User[] }>('/api/v1/users', { token })
+        .then(d => setAdvisors((d.users || []).filter(u => u.role !== 'technician'))).catch(() => {})
+    }
+  }
+
+  const handleMakeJobsheet = async () => {
+    if (!token || !id) return
+    if (!convertOpts.dueInDate) { toast.error('Choose a due-in date'); return }
+    setConverting(true)
+    try {
+      const res = await api<{ jobsheetId: string }>(`/api/v1/estimates/${id}/make-jobsheet`, {
+        method: 'POST', token,
+        body: {
+          dueInDate: convertOpts.dueInDate,
+          dueInTime: convertOpts.dueInTime || undefined,
+          serviceTypeId: convertOpts.serviceTypeId || undefined,
+          advisorId: convertOpts.advisorId || undefined,
+          bookingNotes: convertOpts.bookingNotes || undefined,
+          lineSelection: convertOpts.lineSelection
+        }
+      })
+      toast.success('Jobsheet created from estimate')
+      navigate(`/jobsheets/${res.jobsheetId}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to convert estimate')
+    } finally { setConverting(false) }
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center p-8"><div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" /></div>
   }
@@ -191,6 +239,11 @@ export default function EstimateDetail() {
               {!['converted', 'cancelled'].includes(est.status) && (
                 <button onClick={() => setShowSend(true)} className="px-3 py-1.5 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-dark">
                   {est.sentAt ? 'Resend' : 'Send to customer'}
+                </button>
+              )}
+              {!['converted', 'cancelled'].includes(est.status) && isEnabled('jobsheets') && (
+                <button onClick={openConvert} className="px-3 py-1.5 text-sm font-medium text-primary border border-indigo-200 rounded-lg hover:bg-indigo-50">
+                  Make Jobsheet
                 </button>
               )}
               <button onClick={() => setEditing(true)} className="px-3 py-1.5 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">Edit</button>
@@ -334,6 +387,69 @@ export default function EstimateDetail() {
               <button onClick={() => setShowSend(false)} disabled={sending} className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
               <button onClick={handleSend} disabled={sending || (!sendOpts.email && !sendOpts.sms)} className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-dark disabled:opacity-50">
                 {sending ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Make Jobsheet modal */}
+      {showConvert && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => !converting && setShowConvert(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Make jobsheet from {est.reference}</h2>
+            <p className="text-sm text-gray-500 mb-4">Copies the chosen lines onto a new jobsheet as pre-authorised booked work.</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Lines to copy</label>
+                <div className="flex gap-2">
+                  {(['approved', 'all'] as const).map(opt => (
+                    <button key={opt} onClick={() => setConvertOpts(o => ({ ...o, lineSelection: opt }))}
+                      className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-lg border ${convertOpts.lineSelection === opt ? 'bg-primary/10 text-primary border-primary/30' : 'text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
+                      {opt === 'approved' ? 'Approved only' : 'All lines'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Due in date *</label>
+                  <input type="date" value={convertOpts.dueInDate} onChange={e => setConvertOpts(o => ({ ...o, dueInDate: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Time</label>
+                  <input type="time" value={convertOpts.dueInTime} onChange={e => setConvertOpts(o => ({ ...o, dueInTime: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Service type</label>
+                  <select value={convertOpts.serviceTypeId} onChange={e => setConvertOpts(o => ({ ...o, serviceTypeId: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+                    <option value="">None</option>
+                    {serviceTypes.map(st => <option key={st.id} value={st.id}>{st.code}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Advisor</label>
+                  <select value={convertOpts.advisorId} onChange={e => setConvertOpts(o => ({ ...o, advisorId: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary">
+                    <option value="">Unassigned</option>
+                    {advisors.map(a => <option key={a.id} value={a.id}>{a.firstName} {a.lastName}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Booking notes</label>
+                <textarea value={convertOpts.bookingNotes} onChange={e => setConvertOpts(o => ({ ...o, bookingNotes: e.target.value }))} rows={2}
+                  placeholder={est.customerNotes ? 'Defaults to the estimate notes if left blank' : 'Optional'}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setShowConvert(false)} disabled={converting} className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
+              <button onClick={handleMakeJobsheet} disabled={converting || !convertOpts.dueInDate} className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-dark disabled:opacity-50">
+                {converting ? 'Creating…' : 'Create jobsheet'}
               </button>
             </div>
           </div>

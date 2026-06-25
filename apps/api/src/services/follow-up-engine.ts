@@ -32,6 +32,13 @@ const CHUNK = 100
 const MAX_DEFERRED_SCAN = 5000   // safety cap per org per sweep (logged if hit)
 const MAX_DUE_CASES = 1000
 
+// Staleness guard: a customer-facing send step that ends up this many days past
+// its own scheduled date is never sent (e.g. the org ran with automation off for
+// weeks) — the case is parked for a manual call instead of firing a stale
+// reminder. Overridable per-deployment; default 40 days. manual_call / auto_close
+// steps are exempt (they don't send).
+const STALE_SEND_DAYS = Math.max(1, parseInt(process.env.FOLLOW_UP_STALE_SEND_DAYS || '40', 10))
+
 function gbp(n: unknown): string {
   return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(Number(n) || 0)
 }
@@ -963,10 +970,33 @@ async function processCase(c: CaseRow, tlCache: Map<string, Timeline | null>, se
     return
   }
 
+  const isSendStep = next.action === 'send_sms' || next.action === 'send_email' || next.action === 'send_both'
+
+  // Staleness guard — never fire a customer send that has run badly late (e.g.
+  // the org had automation off for weeks). Park the case for a manual call
+  // instead of blasting a stale reminder. Checked before the send-window gate
+  // because parking is not a send. manual_call / auto_close are exempt above.
+  if (isSendStep) {
+    const daysLate = Math.floor((todayStart().getTime() - schedDate.getTime()) / 86_400_000)
+    if (daysLate >= STALE_SEND_DAYS) {
+      const nowIso = new Date().toISOString()
+      await supabaseAdmin
+        .from('follow_up_cases')
+        .update({ status: 'manual', next_action_at: nowIso, updated_at: nowIso })
+        .eq('id', c.id)
+      await logEvent(c.id, org, 'status_change', {
+        channel: 'system',
+        stepOrder: next.step_order,
+        body: `Reminder was ${daysLate} days overdue — parked for a manual call instead of sending a stale message`,
+        metadata: { to: 'manual', reason: 'stale_send', daysLate, action: next.action, threshold: STALE_SEND_DAYS },
+      })
+      return
+    }
+  }
+
   // Quiet hours — only gate customer-facing send steps. Leave the case due (no
   // state change, no log) so a later tick inside the window dispatches it.
   // manual_call / auto_close steps advance any time.
-  const isSendStep = next.action === 'send_sms' || next.action === 'send_email' || next.action === 'send_both'
   if (isSendStep && !withinSendWindow(settings)) return
 
   await executeStep(c, next, timeline.steps, timeline, settings.simulationMode)

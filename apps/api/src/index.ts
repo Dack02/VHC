@@ -69,6 +69,7 @@ import messages from './routes/messages.js'
 import dailySmsOverview from './routes/daily-sms-overview.js'
 import libraryGapReport from './routes/library-gap-report.js'
 import workshopBoard from './routes/workshop-board.js'
+import bookingDiary from './routes/booking-diary.js'
 import followUps from './routes/follow-ups.js'
 import followUpOutcomes from './routes/follow-up-outcomes.js'
 import followUpDispositions from './routes/follow-up-dispositions.js'
@@ -159,6 +160,7 @@ app.route('/api/v1/health-checks', healthChecks)
 app.route('/api/v1', smsConversations)
 app.route('/api/v1/messages', messages)
 app.route('/api/v1/workshop-board', workshopBoard)
+app.route('/api/v1/booking-diary', bookingDiary)
 app.route('/api/v1', results)
 app.route('/api/v1', repairItems)
 app.route('/api/v1', media)

@@ -110,6 +110,7 @@ const LibraryGapReport = lazy(() => import('./pages/Settings/LibraryGapReport'))
 const WorkshopBoard = lazy(() => import('./pages/WorkshopBoard/WorkshopBoard'))
 const WorkshopDaySheet = lazy(() => import('./pages/WorkshopBoard/PrintDaySheet'))
 const TileStatus = lazy(() => import('./pages/TileStatus/TileStatusPage'))
+const BookingDiary = lazy(() => import('./pages/BookingDiary/BookingDiaryPage'))
 const WorkshopStatuses = lazy(() => import('./pages/Settings/WorkshopStatuses'))
 const WorkshopBoardSettings = lazy(() => import('./pages/Settings/WorkshopBoardSettings'))
 const TimeTrackingSettings = lazy(() => import('./pages/Settings/TimeTrackingSettings'))
@@ -198,6 +199,7 @@ function App() {
                         <Route path="/" element={<HomeLanding />} />
                         <Route path="/dashboard" element={<Dashboard />} />
                         <Route path="/tiles" element={<RequireModule module="workshop_board"><TileStatus /></RequireModule>} />
+                        <Route path="/diary" element={<RequireModule module="booking_diary"><BookingDiary /></RequireModule>} />
                         <Route path="/dashboard/technicians" element={<TechnicianWorkload />} />
                         <Route path="/today" element={<Today />} />
                         <Route path="/upcoming" element={<Upcoming />} />

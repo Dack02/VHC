@@ -15,6 +15,7 @@ export type ModuleKey =
   | 'ai_generation'
   | 'vehicle_lookup'
   | 'jobsheets'
+  | 'booking_diary'
 
 export interface ModuleDefinition {
   key: ModuleKey
@@ -35,7 +36,8 @@ export const MODULES: ModuleDefinition[] = [
   { key: 'reports',            label: 'Reports',            description: 'Reporting & analytics dashboards', defaultOn: true },
   { key: 'ai_generation',      label: 'AI Generation',      description: 'AI-assisted reason & note generation', defaultOn: true },
   { key: 'vehicle_lookup',     label: 'Vehicle Data Lookup', description: 'DVSA MOT history & vehicle lookup by registration', defaultOn: true },
-  { key: 'jobsheets',          label: 'Jobsheets (GMS)',    description: 'Top-level booking document with attached health checks', defaultOn: false }
+  { key: 'jobsheets',          label: 'Jobsheets (GMS)',    description: 'Top-level booking document with attached health checks', defaultOn: false },
+  { key: 'booking_diary',      label: 'Booking Diary',      description: 'Daily/weekly booking diary with workshop capacity and job-type counts', defaultOn: true }
 ]
 
 export const MODULE_KEYS: ModuleKey[] = MODULES.map((m) => m.key)

@@ -22,10 +22,12 @@ import { sendSms, formatPhoneNumber } from './sms.js'
 import { sendEmail, getOrganizationBranding } from './email.js'
 import { getSmsCredentials } from './credentials.js'
 import { emitToOrganization, emitToHealthCheck, WS_EVENTS } from './websocket.js'
-import { suppressAutomatedComms } from '../lib/comms-guard.js'
+import { gbp, fmtDate, startOfDay, addDays, todayStart, calendarDate, dateStr, chunk, render, followUpDryRun } from './follow-up-utils.js'
+import { buildEmail, type CaseItemSnapshot } from './follow-up-email.js'
+import { getFollowUpSettings, withinSendWindow, nowInOrgTz, type FollowUpSettings } from './follow-up-settings.js'
 
 // ---------------------------------------------------------------------------
-// Small helpers
+// Tuning constants
 // ---------------------------------------------------------------------------
 
 const CHUNK = 100
@@ -39,143 +41,10 @@ const MAX_DUE_CASES = 1000
 // steps are exempt (they don't send).
 const STALE_SEND_DAYS = Math.max(1, parseInt(process.env.FOLLOW_UP_STALE_SEND_DAYS || '40', 10))
 
-function gbp(n: unknown): string {
-  return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(Number(n) || 0)
-}
+// Pure helpers (gbp/date math/render/dry-run) → ./follow-up-utils.ts
 
-function fmtDate(d: string | Date | null | undefined): string {
-  if (!d) return ''
-  return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
-}
-
-function startOfDay(date: Date): Date {
-  const d = new Date(date)
-  d.setHours(0, 0, 0, 0)
-  return d
-}
-
-function addDays(date: Date, days: number): Date {
-  const d = new Date(date)
-  d.setDate(d.getDate() + days)
-  return d
-}
-
-function todayStart(): Date {
-  return startOfDay(new Date())
-}
-
-// Treat a date-only "due"/"deferral" value as a plain calendar date pinned to UTC
-// midnight. Date-only strings ('2026-06-25') parse as UTC midnight, but snapping
-// them to *local* midnight and re-serialising via toISOString() rolled the date
-// back a day whenever the process ran ahead of UTC (e.g. UK summer time) — the
-// anchor_date drift bug. Working in UTC keeps a calendar date stable regardless
-// of the server timezone.
-function calendarDate(d: string | Date): Date {
-  const dt = new Date(d)
-  return new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()))
-}
-// Serialise a Date to a plain 'YYYY-MM-DD' calendar string (UTC).
-function dateStr(d: Date): string {
-  return d.toISOString().slice(0, 10)
-}
-
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = []
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
-  return out
-}
-
-function escapeHtml(s: unknown): string {
-  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-function render(tpl: string | null | undefined, vars: Record<string, string>): string {
-  if (!tpl) return ''
-  return tpl.replace(/\{\{(\w+)\}\}/g, (_, k: string) => vars[k] ?? '')
-}
-
-/**
- * Dry-run guard. When FOLLOW_UP_DRY_RUN is truthy, the engine renders and logs
- * every SMS/email step (so you can preview exactly what would go out and watch
- * the timeline advance) but never calls sendSms/sendEmail. Default OFF, so
- * production behaviour is unchanged. Intended for safe testing on dev.
- */
-function followUpDryRun(): boolean {
-  // The master automated-comms suppression switch also forces follow-up dry-run.
-  if (suppressAutomatedComms()) return true
-  const v = (process.env.FOLLOW_UP_DRY_RUN || '').trim().toLowerCase()
-  return v === 'true' || v === '1' || v === 'yes' || v === 'on'
-}
-
-// ---------------------------------------------------------------------------
-// Per-org settings (organization_settings columns) — gate the sweep, simulation
-// mode, and the send window / quiet hours. Defaults are opt-in: an org with no
-// settings row (or follow_up_enabled = false) is treated as disabled.
-// ---------------------------------------------------------------------------
-
-export interface FollowUpSettings {
-  enabled: boolean
-  autoSweepEnabled: boolean
-  simulationMode: boolean
-  sendWindowEnabled: boolean
-  sendWindowStart: string // 'HH:MM'
-  sendWindowEnd: string // 'HH:MM'
-  skipWeekends: boolean
-  timezone: string
-  lastCreatedOn: string | null // 'YYYY-MM-DD' (org-local)
-}
-
-export async function getFollowUpSettings(organizationId: string): Promise<FollowUpSettings> {
-  const { data } = await supabaseAdmin
-    .from('organization_settings')
-    .select(
-      'follow_up_enabled, follow_up_auto_sweep_enabled, follow_up_simulation_mode, follow_up_send_window_enabled, follow_up_send_window_start, follow_up_send_window_end, follow_up_skip_weekends, follow_up_last_created_on, timezone'
-    )
-    .eq('organization_id', organizationId)
-    .maybeSingle()
-  return {
-    enabled: data?.follow_up_enabled === true,
-    autoSweepEnabled: data?.follow_up_auto_sweep_enabled !== false,
-    simulationMode: data?.follow_up_simulation_mode === true,
-    sendWindowEnabled: data?.follow_up_send_window_enabled === true,
-    sendWindowStart: data?.follow_up_send_window_start || '08:00',
-    sendWindowEnd: data?.follow_up_send_window_end || '18:00',
-    skipWeekends: data?.follow_up_skip_weekends === true,
-    timezone: data?.timezone || 'Europe/London',
-    lastCreatedOn: data?.follow_up_last_created_on || null,
-  }
-}
-
-function hmToMinutes(hm: string): number {
-  const [h, m] = (hm || '').split(':').map(Number)
-  return (h || 0) * 60 + (m || 0)
-}
-
-/** Current org-local date (YYYY-MM-DD), minutes-since-midnight, and weekday (0=Sun..6=Sat). */
-function nowInOrgTz(tz: string): { dateStr: string; minutes: number; weekday: number } {
-  const now = new Date()
-  const dateStr = now.toLocaleDateString('en-CA', { timeZone: tz })
-  const hm = now.toLocaleTimeString('en-GB', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit' })
-  const wd = now.toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' })
-  const wdMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }
-  return { dateStr, minutes: hmToMinutes(hm), weekday: wdMap[wd] ?? 0 }
-}
-
-/**
- * Is "now" inside the org's configured send window? Customer-facing SMS/email is
- * only dispatched when this is true; out-of-window cases are left due and picked
- * up on a later tick once the window opens. A misconfigured window (start >= end)
- * is treated as always-open so a typo can't silently halt all follow-ups.
- */
-function withinSendWindow(s: FollowUpSettings): boolean {
-  if (!s.sendWindowEnabled) return true
-  const { minutes, weekday } = nowInOrgTz(s.timezone)
-  if (s.skipWeekends && (weekday === 0 || weekday === 6)) return false
-  const start = hmToMinutes(s.sendWindowStart)
-  const end = hmToMinutes(s.sendWindowEnd)
-  if (start >= end) return true
-  return minutes >= start && minutes < end
-}
+// Per-org settings + send-window / quiet-hours logic → ./follow-up-settings.ts
+// (FollowUpSettings, getFollowUpSettings, withinSendWindow, nowInOrgTz).
 
 // Fallback sample templates for the "test send" preview, used when the org has no
 // default timeline yet. Mirror the seeded "Standard recovery" cadence.
@@ -229,11 +98,7 @@ interface CaseRow {
   created_at: string
 }
 
-interface CaseItemSnapshot {
-  name_snapshot: string | null
-  value_snapshot: number | null
-  due_date_snapshot: string | null
-}
+// CaseItemSnapshot (the email item shape) is defined in ./follow-up-email.ts.
 
 // ---------------------------------------------------------------------------
 // Event + comms logging
@@ -378,83 +243,8 @@ async function loadTimeline(timelineId: string, cache: Map<string, Timeline | nu
   return timeline
 }
 
-// ---------------------------------------------------------------------------
-// Email rendering (branded, with deferred-items table)
-// ---------------------------------------------------------------------------
-
-const ITEMS_MARKER = ' ITEMS '
-
-function buildItemsHtml(items: CaseItemSnapshot[], color: string): string {
-  const rows = items
-    .map(
-      (it) => `<tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;">${escapeHtml(it.name_snapshot || 'Repair')}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#666;">${it.due_date_snapshot ? escapeHtml(fmtDate(it.due_date_snapshot)) : ''}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;">${escapeHtml(gbp(it.value_snapshot))}</td>
-      </tr>`
-    )
-    .join('')
-  return `<table style="width:100%;border-collapse:collapse;font-size:14px;margin:8px 0 4px;">
-    <thead><tr>
-      <th style="text-align:left;padding:8px 12px;border-bottom:2px solid ${color};">Work</th>
-      <th style="text-align:left;padding:8px 12px;border-bottom:2px solid ${color};">Due</th>
-      <th style="text-align:right;padding:8px 12px;border-bottom:2px solid ${color};">Price</th>
-    </tr></thead><tbody>${rows}</tbody></table>`
-}
-
-function buildItemsText(items: CaseItemSnapshot[]): string {
-  return items
-    .map((it) => `• ${it.name_snapshot || 'Repair'}${it.due_date_snapshot ? ` (due ${fmtDate(it.due_date_snapshot)})` : ''} — ${gbp(it.value_snapshot)}`)
-    .join('\n')
-}
-
-function buildEmail(
-  bodyTemplate: string,
-  vars: Record<string, string>,
-  items: CaseItemSnapshot[],
-  branding: { logoUrl?: string | null; primaryColor?: string; organizationName?: string; phone?: string }
-): { html: string; text: string } {
-  const color = branding.primaryColor || '#3B82F6'
-
-  // Text version
-  const text = render(bodyTemplate, { ...vars, deferredItemsTable: buildItemsText(items) })
-
-  // HTML version — substitute everything except the items marker, then lay out
-  const withMarker = render(bodyTemplate, { ...vars, deferredItemsTable: ITEMS_MARKER })
-  const itemsHtml = buildItemsHtml(items, color)
-  const bodyHtml = withMarker
-    .split('\n')
-    .map((line) => {
-      if (line.includes(ITEMS_MARKER)) return itemsHtml
-      if (!line.trim()) return ''
-      return `<p style="margin:0 0 12px;line-height:1.5;">${escapeHtml(line)}</p>`
-    })
-    .join('')
-
-  const header = branding.logoUrl
-    ? `<img src="${branding.logoUrl}" alt="${escapeHtml(branding.organizationName)}" style="max-height:48px;" />`
-    : `<span style="color:#fff;font-size:18px;font-weight:700;">${escapeHtml(branding.organizationName || 'Vehicle Health Check')}</span>`
-
-  const cta = vars.followUpUrl
-    ? `<div style="margin:20px 0;"><a href="${escapeHtml(vars.followUpUrl)}" style="display:inline-block;background:${color};color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;">View &amp; book</a></div>`
-    : ''
-
-  const html = `<!DOCTYPE html><html><body style="margin:0;background:#f4f5f7;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;">
-    <div style="max-width:600px;margin:0 auto;padding:16px;">
-      <div style="background:${color};padding:16px 20px;border-radius:12px 12px 0 0;">${header}</div>
-      <div style="background:#fff;border-bottom:1px solid #eee;padding:12px 20px;font-size:13px;color:#374151;">
-        <strong>${escapeHtml(vars.vehicleReg)}</strong> &middot; ${escapeHtml(vars.itemCount)} item(s) &middot; <strong>${escapeHtml(vars.deferredTotal)}</strong>${vars.dueDate ? ` &middot; due ${escapeHtml(vars.dueDate)}` : ''}
-      </div>
-      <div style="background:#fff;padding:24px 20px;border-radius:0 0 12px 12px;">
-        ${bodyHtml}
-        ${cta}
-        <p style="margin:24px 0 0;font-size:12px;color:#9ca3af;">You're receiving this because you have outstanding recommended work with ${escapeHtml(branding.organizationName || 'us')}. Reply STOP to opt out.</p>
-      </div>
-    </div>
-  </body></html>`
-
-  return { html, text }
-}
+// Branded customer email rendering → ./follow-up-email.ts
+// (exports buildEmail; owns the items table + the ITEMS_MARKER sentinel).
 
 // ---------------------------------------------------------------------------
 // Public-link helper (re-uses the existing /view portal page)

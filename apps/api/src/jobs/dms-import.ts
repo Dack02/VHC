@@ -381,6 +381,19 @@ async function createHealthCheck(
     }
   }
 
+  // Gemini sends no MOT flag — infer one from the booked work / notes text.
+  // The real payload exposes MOT only as "MOT Labour" repair lines or "MOT" in notes.
+  const motText = [
+    booking.description || '',
+    booking.serviceType || '',
+    ...(booking.bookedRepairs || []).flatMap(r => [
+      r.description || '',
+      r.notes || '',
+      ...(r.labourItems || []).map(l => l.description || '')
+    ])
+  ].join(' ').toLowerCase()
+  const isMotBooking = /\bmot\b/.test(motText)
+
   const insertData = {
     organization_id: organizationId,
     site_id: siteId,
@@ -404,7 +417,11 @@ async function createHealthCheck(
     jobsheet_status: booking.jobsheetStatus || null,
     booked_repairs: booking.bookedRepairs && booking.bookedRepairs.length > 0
       ? booking.bookedRepairs
-      : []
+      : [],
+    // Booking Diary metadata (previously dropped on import)
+    estimated_hours: booking.durationHours && booking.durationHours > 0 ? booking.durationHours : null,
+    booked_service_type: booking.serviceType || null,
+    is_mot_booking: isMotBooking
   }
   console.log('[DMS Import] Creating health check with data:', insertData)
 

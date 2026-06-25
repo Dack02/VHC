@@ -38,6 +38,7 @@ export interface GeminiBooking {
   bookingTime: string
   promiseTime?: string
   estimatedDuration: number  // minutes
+  durationHours?: number     // raw Gemini top-level Duration (hours), when provided
 
   // Customer (from InvoiceTo)
   customerId: string
@@ -428,6 +429,7 @@ export async function fetchDiaryBookings(
           CustomerWaiting: boolean
           LoanCar: boolean
           Internal: boolean
+          Duration?: number  // estimated job hours
           Notes?: string
           Vehicle: {
             Registration: string
@@ -520,7 +522,11 @@ export async function fetchDiaryBookings(
       bookingDate: b.DueDateTime?.split('T')[0] || '',
       bookingTime: b.DueDateTime?.split('T')[1]?.substring(0, 5) || '',
       promiseTime: b.CollectionDateTime?.split('T')[1]?.substring(0, 5),
-      estimatedDuration: 60, // Default, not provided by API
+      // Gemini sends a top-level Duration in HOURS; fall back to 60min when absent/zero.
+      estimatedDuration: typeof b.Duration === 'number' && b.Duration > 0
+        ? Math.round(b.Duration * 60)
+        : 60,
+      durationHours: typeof b.Duration === 'number' && b.Duration > 0 ? b.Duration : undefined,
 
       // Customer from InvoiceTo
       customerId: String(b.InvoiceTo?.CustomerID || b.InvoiceTo?.Reference || ''),

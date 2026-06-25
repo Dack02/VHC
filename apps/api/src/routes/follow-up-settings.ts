@@ -14,7 +14,8 @@ import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { sendSms } from '../services/sms.js'
 import { sendEmail } from '../services/email.js'
-import { getFollowUpSettings, renderFollowUpSample } from '../services/follow-up-engine.js'
+import { renderFollowUpSample } from '../services/follow-up-engine.js'
+import { getFollowUpSettings } from '../services/follow-up-settings.js'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/

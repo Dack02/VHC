@@ -6,7 +6,8 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
-import { runFollowUpSweep, findFutureBooking, getFollowUpSettings } from '../services/follow-up-engine.js'
+import { runFollowUpSweep, findFutureBooking } from '../services/follow-up-engine.js'
+import { getFollowUpSettings } from '../services/follow-up-settings.js'
 
 const followUps = new Hono()
 followUps.use('*', authMiddleware)

@@ -96,6 +96,7 @@ const OperationalEfficiency = lazy(() => import('./pages/Reports/OperationalEffi
 const QualityCompliance = lazy(() => import('./pages/Reports/QualityCompliance'))
 const DeferredWork = lazy(() => import('./pages/Reports/DeferredWork'))
 const FollowUpRecovery = lazy(() => import('./pages/Reports/FollowUpRecovery'))
+const OutreachBookings = lazy(() => import('./pages/Reports/OutreachBookings'))
 const MriPerformance = lazy(() => import('./pages/Reports/MriPerformance'))
 const DailyOverview = lazy(() => import('./pages/Reports/DailyOverview'))
 const DeletedHealthChecks = lazy(() => import('./pages/Reports/DeletedHealthChecks'))
@@ -213,6 +214,7 @@ function App() {
                         <Route path="/reports/compliance" element={<QualityCompliance />} />
                         <Route path="/reports/deferred" element={<DeferredWork />} />
                         <Route path="/reports/follow-up-recovery" element={<FollowUpRecovery />} />
+                        <Route path="/reports/outreach-bookings" element={<OutreachBookings />} />
                         <Route path="/reports/mri-performance" element={<MriPerformance />} />
                         <Route path="/reports/daily-overview" element={<DailyOverview />} />
                         <Route path="/reports/deleted-health-checks" element={<DeletedHealthChecks />} />

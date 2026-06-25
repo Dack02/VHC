@@ -13,6 +13,8 @@ interface DmsSettings {
   importScheduleDays: number[]
   importServiceTypes: string[]
   dailyImportLimit: number
+  cancelMissingBookings: boolean
+  geminiSiteId: number
   lastImportAt: string | null
   lastImportStatus: string | null
   lastSyncAt: string | null
@@ -222,7 +224,9 @@ export default function DMSIntegration() {
         importScheduleHours: settings.importScheduleHours,
         importScheduleDays: settings.importScheduleDays,
         importServiceTypes: settings.importServiceTypes,
-        dailyImportLimit: settings.dailyImportLimit
+        dailyImportLimit: settings.dailyImportLimit,
+        cancelMissingBookings: settings.cancelMissingBookings,
+        geminiSiteId: settings.geminiSiteId
       }
 
       // Only include credentials if they were changed
@@ -753,6 +757,32 @@ export default function DMSIntegration() {
                 <p className="text-xs text-gray-500 mt-1">
                   Maximum health checks to import per day (safety limit)
                 </p>
+              </div>
+
+              {/* Auto-cancel bookings that vanish from the DMS feed */}
+              <div className="pt-4 border-t border-gray-100">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Auto-cancel removed bookings
+                    </label>
+                    <p className="text-xs text-gray-500 mt-1 max-w-xl">
+                      When a booking is cancelled in your DMS it simply disappears from the diary feed.
+                      Enable this to automatically cancel the matching "Awaiting Arrival" health check —
+                      but only after it has been missing from several consecutive scheduled imports, and
+                      only on single-site setups. A booking that reappears is automatically restored.
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer flex-shrink-0 mt-1">
+                    <input
+                      type="checkbox"
+                      checked={settings?.cancelMissingBookings || false}
+                      onChange={(e) => settings && setSettings({ ...settings, cancelMissingBookings: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                  </label>
+                </div>
               </div>
             </div>
           )}

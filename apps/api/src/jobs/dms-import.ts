@@ -41,6 +41,8 @@ export interface ImportResult {
   bookingsImported: number
   bookingsUpdated: number    // existing awaiting_arrival bookings refreshed/rescheduled
   bookingsCancelled: number  // existing bookings cancelled (explicit DMS status or vanished from feed)
+  bookingsRevived: number    // sweep-cancelled bookings revived after reappearing in the feed
+  bookingsFlaggedMissing: number  // awaiting_arrival bookings newly/again flagged absent (soft, not yet cancelled)
   bookingsSkipped: number
   bookingsFailed: number
   customersCreated: number
@@ -48,6 +50,33 @@ export interface ImportResult {
   healthChecksCreated: number
   errors: Array<{ bookingId: string; error: string }>
 }
+
+// ============================================
+// Cancellation-sweep configuration
+// ============================================
+// All env-overridable so the safety margins can be tuned without a deploy.
+function envInt(name: string, def: number): number {
+  const v = parseInt(process.env[name] || '', 10)
+  return Number.isFinite(v) && v > 0 ? v : def
+}
+function envFloat(name: string, def: number): number {
+  const v = parseFloat(process.env[name] || '')
+  return Number.isFinite(v) && v > 0 ? v : def
+}
+
+// A vanished booking is hard-cancelled only after it has been absent across this
+// many CONSECUTIVE scheduled runs AND this many wall-clock hours — both, so that
+// neither a flurry of intraday runs nor a single overnight gap can cancel alone.
+const SWEEP_CANCEL_AFTER_RUNS = envInt('DMS_CANCEL_AFTER_MISSING_RUNS', 3)
+const SWEEP_CANCEL_MIN_HOURS = envInt('DMS_CANCEL_MIN_MISSING_HOURS', 24)
+
+// Partial-feed detection. A truncated HTTP 200 is indistinguishable from a batch
+// of cancellations, so we refuse to act when the feed looks implausibly small
+// relative to what we hold, or when too many rows vanish in one run.
+const SWEEP_MIN_HELD_FOR_RATIO = envInt('DMS_SWEEP_MIN_HELD', 5)       // below this, the ratio floor is meaningless
+const SWEEP_MIN_FEED_RATIO = envFloat('DMS_SWEEP_MIN_FEED_RATIO', 0.5) // abort if feedCount < held * this
+const SWEEP_MAX_MISSING_ABS = envInt('DMS_SWEEP_MAX_MISSING', 25)      // abort if more than this many vanish at once
+const SWEEP_MAX_MISSING_RATIO = envFloat('DMS_SWEEP_MAX_MISSING_RATIO', 0.5) // ...or more than this fraction of held
 
 // ============================================
 // Helper Functions
@@ -443,6 +472,157 @@ async function createHealthCheck(
   return data.id
 }
 
+/**
+ * Soft, reversible cancellation sweep for SCHEDULED imports.
+ *
+ * Gemini never emits a "cancelled" status — a cancelled booking simply drops out
+ * of the diary feed. Reconciling that safely needs three guarantees, all enforced
+ * here / by the caller:
+ *
+ *  1. Site mapping — the caller passes an UNAMBIGUOUS sweepSiteId (an explicit
+ *     site, or the org's single active site). Multi-site orgs without an explicit
+ *     site are skipped upstream, because the feed is scoped to one Gemini Site and
+ *     "Gemini Site=1" is not "all VHC sites".
+ *  2. Partial-feed detection — a truncated 200 looks identical to a batch of
+ *     cancellations, so we abort and touch NOTHING when the feed is implausibly
+ *     small vs what we hold, or when too many rows vanish at once.
+ *  3. Reversibility — a vanished booking is first only *flagged* (dms_missing_since
+ *     / dms_missing_runs). It is hard-cancelled only after it has been absent
+ *     across N consecutive scheduled runs AND a wall-clock floor. Reappearance
+ *     clears the flag; a sweep-cancelled booking that reappears is revived in the
+ *     main reconcile loop (deletion_reason='dms_missing').
+ *
+ * Every write is guarded on the expected status so it can't race an advisor who
+ * progressed/cancelled the booking between the held-set read and here.
+ */
+async function reconcileMissingBookings(params: {
+  organizationId: string
+  externalSource: string
+  sweepSiteId: string
+  windowStartUtc: string
+  windowEndUtc: string
+  feedIds: Set<string>
+  feedCount: number
+  result: ImportResult
+}): Promise<void> {
+  const {
+    organizationId, externalSource, sweepSiteId,
+    windowStartUtc, windowEndUtc, feedIds, feedCount, result
+  } = params
+
+  // Held set: in-window awaiting_arrival Gemini bookings for this ONE site. The
+  // window bounds are explicit-UTC ('Z') to match how due_date (TIMESTAMPTZ) is
+  // written — new Date(booking.dueDateTime).toISOString(). Past-due awaiting_arrival
+  // rows fall outside the window and are intentionally excluded: they are absent
+  // from the feed because they are in the past, not because they were cancelled.
+  const { data: heldRows, error: heldErr } = await supabaseAdmin
+    .from('health_checks')
+    .select('id, external_id, due_date, dms_missing_since, dms_missing_runs')
+    .eq('organization_id', organizationId)
+    .eq('external_source', externalSource)
+    .eq('status', 'awaiting_arrival')
+    .eq('site_id', sweepSiteId)
+    .is('deleted_at', null)
+    .gte('due_date', windowStartUtc)
+    .lte('due_date', windowEndUtc)
+
+  if (heldErr) {
+    console.error('[DMS Import] Cancellation sweep: failed to load held set:', heldErr.message)
+    return
+  }
+
+  const held = (heldRows || []) as Array<{
+    id: string
+    external_id: string | null
+    due_date: string | null
+    dms_missing_since: string | null
+    dms_missing_runs: number | null
+  }>
+  const heldCount = held.length
+  if (heldCount === 0) {
+    console.log('[DMS Import] Cancellation sweep: nothing held in window, skipping')
+    return
+  }
+
+  const missing = held.filter(r => r.external_id && !feedIds.has(r.external_id))
+
+  // ---- Safety net 2a: implausibly small feed vs held → suspected partial feed.
+  if (heldCount >= SWEEP_MIN_HELD_FOR_RATIO && feedCount < heldCount * SWEEP_MIN_FEED_RATIO) {
+    const msg = `Cancellation sweep ABORTED: feed returned ${feedCount} bookings vs ${heldCount} in-window awaiting_arrival held (below ${SWEEP_MIN_FEED_RATIO}× floor). Suspected partial/truncated feed — nothing cancelled.`
+    console.error('[DMS Import]', msg)
+    logger.error('DMS cancellation sweep aborted (suspected partial feed)', { organizationId, feedCount, heldCount })
+    result.errors.push({ bookingId: 'sweep', error: msg })
+    return
+  }
+
+  // ---- Safety net 2b: too many vanish at once → suspected partial feed / mass error.
+  const maxMissing = Math.max(1, Math.min(SWEEP_MAX_MISSING_ABS, Math.ceil(heldCount * SWEEP_MAX_MISSING_RATIO)))
+  if (missing.length > maxMissing) {
+    const msg = `Cancellation sweep ABORTED: ${missing.length} of ${heldCount} held bookings vanished from the feed in one run (cap ${maxMissing}). Suspected partial feed — nothing cancelled.`
+    console.error('[DMS Import]', msg)
+    logger.error('DMS cancellation sweep aborted (mass disappearance)', { organizationId, missing: missing.length, heldCount, maxMissing })
+    result.errors.push({ bookingId: 'sweep', error: msg })
+    return
+  }
+
+  if (missing.length === 0) {
+    console.log(`[DMS Import] Cancellation sweep: all ${heldCount} held bookings present in feed`)
+    return
+  }
+
+  const nowIso = new Date().toISOString()
+  const nowMs = Date.now()
+  let flaggedThisRun = 0
+  let cancelledThisRun = 0
+
+  for (const row of missing) {
+    const runs = (row.dms_missing_runs ?? 0) + 1
+    const missingSince = row.dms_missing_since || nowIso
+    const ageHours = (nowMs - new Date(missingSince).getTime()) / 3_600_000
+    const eligibleToCancel = runs >= SWEEP_CANCEL_AFTER_RUNS && ageHours >= SWEEP_CANCEL_MIN_HOURS
+
+    if (eligibleToCancel) {
+      // Hard-cancel. Keep the missing markers for audit + so a reappearance can
+      // revive it (deletion_reason='dms_missing' is the revival key).
+      const { data: cancelled } = await supabaseAdmin
+        .from('health_checks')
+        .update({
+          status: 'cancelled',
+          deletion_reason: 'dms_missing',
+          deletion_notes: `Auto-cancelled: absent from the Gemini diary feed across ${runs} consecutive scheduled imports (first missing ${missingSince}).`,
+          dms_missing_since: missingSince,
+          dms_missing_runs: runs,
+          updated_at: nowIso,
+        })
+        .eq('id', row.id)
+        .eq('status', 'awaiting_arrival')
+        .select('id')
+      if (cancelled && cancelled.length > 0) {
+        cancelledThisRun++
+        result.bookingsCancelled++
+      }
+    } else {
+      // Not yet eligible — only advance the soft flag.
+      const { data: flagged } = await supabaseAdmin
+        .from('health_checks')
+        .update({
+          dms_missing_since: missingSince,
+          dms_missing_runs: runs,
+          updated_at: nowIso,
+        })
+        .eq('id', row.id)
+        .eq('status', 'awaiting_arrival')
+        .select('id')
+      if (flagged && flagged.length > 0) {
+        flaggedThisRun++
+        result.bookingsFlaggedMissing++
+      }
+    }
+  }
+
+  console.log(`[DMS Import] Cancellation sweep: held=${heldCount} feed=${feedCount} missing=${missing.length} flagged=${flaggedThisRun} cancelled=${cancelledThisRun}`)
+}
+
 // ============================================
 // Main Import Function
 // ============================================
@@ -471,6 +651,8 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
     bookingsImported: 0,
     bookingsUpdated: 0,
     bookingsCancelled: 0,
+    bookingsRevived: 0,
+    bookingsFlaggedMissing: 0,
     bookingsSkipped: 0,
     bookingsFailed: 0,
     customersCreated: 0,
@@ -512,9 +694,15 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
     // Get DMS settings for template and filters
     const { data: dmsSettings } = await supabaseAdmin
       .from('organization_dms_settings')
-      .select('default_template_id, import_service_types')
+      .select('default_template_id, import_service_types, cancel_missing_bookings, gemini_site_id')
       .eq('organization_id', organizationId)
       .single()
+
+    // Cancellation sweep opt-in (off by default) + which Gemini Site the feed maps to.
+    const cancelMissingBookings = dmsSettings?.cancel_missing_bookings === true
+    const geminiSiteId = typeof dmsSettings?.gemini_site_id === 'number' && dmsSettings.gemini_site_id > 0
+      ? dmsSettings.gemini_site_id
+      : 1
 
     // Get default template if not specified
     let templateId = dmsSettings?.default_template_id
@@ -556,9 +744,12 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
     }
 
     // Fetch bookings from DMS
-    // Note: serviceTypes filtering is not yet supported by fetchDiaryBookings
+    // Note: serviceTypes filtering is not yet supported by fetchDiaryBookings.
+    // siteId scopes the feed to the org's mapped Gemini Site (default 1) so the
+    // feed and the cancellation sweep agree on which site's bookings we're seeing.
     const diaryResponse = await fetchDiaryBookings(credentials, date, {
-      endDate: options.endDate
+      endDate: options.endDate,
+      siteId: geminiSiteId
     })
 
     if (!diaryResponse.success) {
@@ -589,13 +780,16 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
       loan_car_required: boolean | null
       jobsheet_status: string | null
       is_internal: boolean | null
+      deletion_reason: string | null
+      dms_missing_since: string | null
+      dms_missing_runs: number | null
     }>()
     for (let j = 0; j < allExternalIds.length; j += 200) {
       const chunkIds = allExternalIds.slice(j, j + 200)
       if (chunkIds.length === 0) continue
       const { data: existingRows } = await supabaseAdmin
         .from('health_checks')
-        .select('id, external_id, status, due_date, promise_time, booked_repairs, estimated_hours, booked_service_type, is_mot_booking, customer_waiting, loan_car_required, jobsheet_status, is_internal')
+        .select('id, external_id, status, due_date, promise_time, booked_repairs, estimated_hours, booked_service_type, is_mot_booking, customer_waiting, loan_car_required, jobsheet_status, is_internal, deletion_reason, dms_missing_since, dms_missing_runs')
         .eq('organization_id', organizationId)
         .eq('external_source', externalSource)
         .in('external_id', chunkIds)
@@ -620,6 +814,41 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
 
         // ---- Existing booking: reconcile, don't re-insert ----
         if (existing) {
+          // Revive a booking the cancellation sweep previously cancelled, now that
+          // it has REAPPEARED in the feed (we only reach here for feed-present
+          // external_ids). This is the reversibility guarantee: an over-eager
+          // sweep-cancel self-heals on the next run. It only ever touches
+          // sweep-cancelled rows (deletion_reason='dms_missing') — never an
+          // advisor's deliberate cancel — and re-syncs the DMS fields.
+          if (existing.status === 'cancelled') {
+            if (existing.deletion_reason === 'dms_missing' && !isCancelSignal && !isCompletedSignal) {
+              const { data: revived } = await supabaseAdmin
+                .from('health_checks')
+                .update({
+                  status: 'awaiting_arrival',
+                  deletion_reason: null,
+                  deletion_notes: null,
+                  dms_missing_since: null,
+                  dms_missing_runs: 0,
+                  ...deriveBookingFields(booking),
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', existing.id)
+                .eq('status', 'cancelled')
+                .eq('deletion_reason', 'dms_missing')
+                .select('id')
+              if (revived && revived.length > 0) {
+                result.bookingsRevived++
+              } else {
+                result.bookingsSkipped++
+              }
+            } else {
+              // Manually cancelled (or cancel/complete signalled now) → leave terminal.
+              result.bookingsSkipped++
+            }
+            continue
+          }
+
           // Never touch a check that has progressed past awaiting_arrival — that
           // would clobber real workshop state (arrived / in-progress / etc.).
           if (existing.status !== 'awaiting_arrival') {
@@ -665,6 +894,14 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
           if (Boolean(existing.is_internal) !== fields.is_internal) changed.is_internal = fields.is_internal
           if (Boolean(existing.customer_waiting) !== fields.customer_waiting) changed.customer_waiting = fields.customer_waiting
           if (Boolean(existing.loan_car_required) !== fields.loan_car_required) changed.loan_car_required = fields.loan_car_required
+
+          // Present in the feed again → reset the "missing" counters so that
+          // "N CONSECUTIVE absent runs" stays genuinely consecutive. (Reaching
+          // here means present: existingByExtId only holds feed external_ids.)
+          if (existing.dms_missing_since != null || (existing.dms_missing_runs ?? 0) > 0) {
+            changed.dms_missing_since = null
+            changed.dms_missing_runs = 0
+          }
 
           if (Object.keys(changed).length > 0) {
             changed.updated_at = new Date().toISOString()
@@ -732,20 +969,62 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
       }
     }
 
-    // NOTE: automatic cancellation of bookings that have VANISHED from the DMS
-    // feed is deliberately NOT done here. Gemini's diary feed has no explicit
-    // cancelled signal, and "absent from the feed" is unsafe to treat as cancelled
-    // without (a) a Gemini-site ↔ VHC-site mapping, (b) partial/truncated-feed
-    // detection, and (c) a soft, reversible cancel — otherwise one bad feed could
-    // permanently delete real future bookings (cancelled is a terminal status).
-    // Tracked as a follow-up. Re-imports still refresh/reschedule existing
-    // bookings above, and an explicit DMS cancel status is handled in the loop.
+    // ---- Cancellation sync sweep (soft + reversible) ----
+    // Gemini has no explicit cancelled signal — cancelled bookings just drop out
+    // of the feed. We reconcile that here, but ONLY for SCHEDULED, non-selective
+    // imports: a manual day-pull or a selective import sees a partial slice of the
+    // diary and would wrongly flag every other booking as "missing". Opt-in per
+    // org, off by default.
+    if (importType === 'scheduled' && !isSelective && cancelMissingBookings) {
+      // Resolve the ONE VHC site this sweep may touch. The feed is scoped to a
+      // single Gemini Site (geminiSiteId) which maps to a single VHC site — but on
+      // a multi-site org the "most recent active site" fallback used for imports is
+      // NOT a safe mapping (other sites' bookings live on Gemini Sites we never
+      // queried). So we only sweep when the target site is unambiguous: an explicit
+      // site was supplied, or the org has exactly one active site. Otherwise skip.
+      let sweepSiteId: string | null = null
+      if (siteId) {
+        sweepSiteId = siteId
+      } else {
+        const { data: activeSites } = await supabaseAdmin
+          .from('sites')
+          .select('id')
+          .eq('organization_id', organizationId)
+          .eq('is_active', true)
+        if ((activeSites?.length ?? 0) === 1) {
+          sweepSiteId = activeSites![0].id
+        }
+      }
+
+      if (!sweepSiteId) {
+        console.warn('[DMS Import] Cancellation sweep skipped: ambiguous Gemini↔VHC site mapping (multi-site org without an explicit site). Imports keep working; auto-cancel stays off for this org until a single mapped site is configured.')
+      } else {
+        // Window bounds explicit-UTC ('Z') to match how due_date (TIMESTAMPTZ) is
+        // stored, and exactly matching the fetched window so the held set and the
+        // feed cover the same span.
+        const windowStartUtc = `${date}T00:00:00Z`
+        const windowEndUtc = `${options.endDate || date}T23:59:59Z`
+        const feedIds = new Set(diaryResponse.bookings.map(b => b.bookingId))
+        await reconcileMissingBookings({
+          organizationId,
+          externalSource,
+          sweepSiteId,
+          windowStartUtc,
+          windowEndUtc,
+          feedIds,
+          feedCount: diaryResponse.bookings.length,
+          result
+        })
+      }
+    }
 
     console.log('\n[DMS Import] ========== Import Summary ==========')
     console.log('[DMS Import] Bookings found:', result.bookingsFound)
     console.log('[DMS Import] Bookings imported:', result.bookingsImported)
     console.log('[DMS Import] Bookings updated:', result.bookingsUpdated)
     console.log('[DMS Import] Bookings cancelled:', result.bookingsCancelled)
+    console.log('[DMS Import] Bookings revived:', result.bookingsRevived)
+    console.log('[DMS Import] Bookings flagged missing:', result.bookingsFlaggedMissing)
     console.log('[DMS Import] Bookings skipped:', result.bookingsSkipped)
     console.log('[DMS Import] Bookings failed:', result.bookingsFailed)
     console.log('[DMS Import] Customers created:', result.customersCreated)
@@ -802,6 +1081,8 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
       imported: result.bookingsImported,
       updated: result.bookingsUpdated,
       cancelled: result.bookingsCancelled,
+      revived: result.bookingsRevived,
+      flaggedMissing: result.bookingsFlaggedMissing,
       skipped: result.bookingsSkipped,
       failed: result.bookingsFailed
     })

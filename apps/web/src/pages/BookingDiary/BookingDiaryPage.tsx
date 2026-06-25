@@ -74,6 +74,9 @@ function DayCard({ day, isSelected, isToday, onClick }: {
         <CountPill label="MOT" count={day.totalMots} classes="bg-blue-50 text-blue-700" />
         <CountPill label="Wait" count={day.totalWaiting} classes="bg-amber-50 text-amber-700" />
         <CountPill label="Loan" count={day.totalLoans} classes="bg-indigo-50 text-indigo-700" />
+        {day.totalOutreach > 0 && (
+          <CountPill label="Outreach" count={day.totalOutreach} classes="bg-emerald-50 text-emerald-700" />
+        )}
       </div>
     </button>
   )
@@ -99,6 +102,7 @@ function BookingRow({ booking, onOpen }: { booking: DiaryBooking; onOpen: () => 
         )}
       </span>
       <span className="flex items-center gap-1 shrink-0">
+        {booking.isOutreach && <Badge label="Outreach" classes="bg-emerald-50 text-emerald-700" />}
         {booking.isMot && <Badge label="MOT" classes="bg-blue-50 text-blue-700" />}
         {booking.isWaiting && <Badge label="Wait" classes="bg-amber-50 text-amber-700" />}
         {booking.isLoan && <Badge label="Loan" classes="bg-indigo-50 text-indigo-700" />}

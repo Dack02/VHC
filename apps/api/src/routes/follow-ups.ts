@@ -193,6 +193,39 @@ followUps.get('/reports/conversion', async (c) => {
   }
 })
 
+// GET /api/v1/follow-ups/reports/outreach — bookings attributed to outreach,
+// grouped by timeline | advisor | site | month (over an attribution-date window).
+followUps.get('/reports/outreach', async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id, group_by } = c.req.query()
+    const from = date_from || new Date(Date.now() - 90 * 86400000).toISOString()
+    const to = date_to || new Date().toISOString()
+    const groupBy = ['timeline', 'advisor', 'site', 'month'].includes(group_by || '') ? group_by : 'timeline'
+    const { data, error } = await supabaseAdmin.rpc('follow_up_outreach', {
+      p_org: auth.orgId, p_from: from, p_to: to, p_site: site_id || null, p_group_by: groupBy
+    })
+    if (error) {
+      console.error('Outreach report error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+    const rows = (data || []) as Array<{ group_key: string; group_label: string; bookings_attributed: number; est_recovered: number; avg_touches: number }>
+    let totalBookings = 0
+    let totalRecovered = 0
+    const groups = rows.map((r) => {
+      const bookings = Number(r.bookings_attributed) || 0
+      const recovered = Number(r.est_recovered) || 0
+      totalBookings += bookings
+      totalRecovered += recovered
+      return { key: r.group_key, label: r.group_label, bookings, recovered, avgTouches: Number(r.avg_touches) || 0 }
+    })
+    return c.json({ period: { from, to }, groupBy, totalBookings, totalRecovered, groups })
+  } catch (err) {
+    console.error('Outreach report error:', err)
+    return c.json({ error: 'Failed to load outreach report' }, 500)
+  }
+})
+
 // GET /api/v1/follow-ups — worklist
 followUps.get('/', async (c) => {
   try {

@@ -722,6 +722,22 @@ async function processCase(c: CaseRow, tlCache: Map<string, Timeline | null>, se
       .from('follow_up_cases')
       .update({ status: 'booking_found', linked_booking_id: booking.id, next_action_at: nowIso, updated_at: nowIso })
       .eq('id', c.id)
+    // Attribute the booking to outreach (auto-on-detection). linked_booking_id is
+    // the canonical case→booking pointer; this stamps the durable reverse marker
+    // on the booking so the diary can flag it and reports can credit recovered £
+    // even after the case closes. First-attribution-wins (is null guard) so a
+    // booking already credited to another case isn't reassigned.
+    await supabaseAdmin
+      .from('health_checks')
+      .update({
+        origin_source: 'follow_up',
+        follow_up_case_id: c.id,
+        follow_up_attributed_at: nowIso,
+        follow_up_attributed_value: c.deferred_value_snapshot ?? 0,
+        updated_at: nowIso,
+      })
+      .eq('id', booking.id)
+      .is('follow_up_case_id', null)
     await logEvent(c.id, org, 'booking_found', {
       channel: 'system',
       body: `Existing booking found for ${fmtDate(booking.due_date)} — paused for confirmation`,

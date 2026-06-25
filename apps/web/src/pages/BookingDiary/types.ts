@@ -13,6 +13,7 @@ export interface DiaryDay {
   totalMots: number
   totalWaiting: number
   totalLoans: number
+  totalOutreach: number
 }
 
 export interface DiarySummaryResponse {
@@ -34,6 +35,8 @@ export interface DiaryBooking {
   isMot: boolean
   isWaiting: boolean
   isLoan: boolean
+  isOutreach: boolean
+  followUpCaseId: string | null
   status: string | null
   jobState: string | null
   routeTarget: { jobsheetId: string | null; healthCheckId: string | null }
@@ -51,6 +54,7 @@ export interface DiaryDayDetail {
     totalMots: number
     totalWaiting: number
     totalLoans: number
+    totalOutreach: number
   }
   bookings: DiaryBooking[]
 }
@@ -87,6 +91,8 @@ export interface DmsBookingDetail {
   isWaiting: boolean
   isLoan: boolean
   isInternal: boolean
+  isOutreach: boolean
+  followUpCaseId: string | null
   notes: string | null
   customer: {
     name: string | null

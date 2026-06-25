@@ -95,7 +95,8 @@ bookingDiary.get('/summary', authorize([...ADVISOR_ROLES]), async (c) => {
       freeHours: round2(available - booked),
       totalMots: r.total_mots,
       totalWaiting: r.total_waiting,
-      totalLoans: r.total_loans
+      totalLoans: r.total_loans,
+      totalOutreach: r.total_outreach ?? 0
     }
   })
 
@@ -144,7 +145,8 @@ bookingDiary.get('/day', authorize([...ADVISOR_ROLES]), async (c) => {
     totalJobs: s.total_jobs ?? 0,
     totalMots: s.total_mots ?? 0,
     totalWaiting: s.total_waiting ?? 0,
-    totalLoans: s.total_loans ?? 0
+    totalLoans: s.total_loans ?? 0,
+    totalOutreach: s.total_outreach ?? 0
   }
 
   const bookings = (bookingsRes.data || []).map((r: any) => ({
@@ -159,6 +161,8 @@ bookingDiary.get('/day', authorize([...ADVISOR_ROLES]), async (c) => {
     isMot: r.is_mot,
     isWaiting: r.is_waiting,
     isLoan: r.is_loan,
+    isOutreach: r.origin_source === 'follow_up',
+    followUpCaseId: r.follow_up_case_id,
     status: r.status,
     jobState: r.job_state,
     routeTarget: { jobsheetId: r.jobsheet_id, healthCheckId: r.health_check_id }
@@ -181,6 +185,7 @@ bookingDiary.get('/booking', authorize([...ADVISOR_ROLES]), async (c) => {
       due_date, promise_time, booked_date, mileage_in, key_location,
       jobsheet_number, jobsheet_status, notes,
       booked_service_type, estimated_hours, is_mot_booking,
+      origin_source, follow_up_case_id,
       customer_waiting, loan_car_required, is_internal, booked_repairs,
       customer:customers(title, first_name, last_name, contact_name, email, mobile, phone, address_line1, address_line2, town, county, postcode),
       vehicle:vehicles(registration, make, model, color, fuel_type, year, vin, mileage)
@@ -218,6 +223,8 @@ bookingDiary.get('/booking', authorize([...ADVISOR_ROLES]), async (c) => {
     isWaiting: !!row.customer_waiting,
     isLoan: !!row.loan_car_required,
     isInternal: !!row.is_internal,
+    isOutreach: row.origin_source === 'follow_up',
+    followUpCaseId: row.follow_up_case_id,
     notes: row.notes,
     customer: cust ? {
       name: [cust.title, cust.first_name, cust.last_name].filter(Boolean).join(' ').trim() || null,

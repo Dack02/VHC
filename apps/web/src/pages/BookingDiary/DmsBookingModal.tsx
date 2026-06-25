@@ -111,8 +111,9 @@ export default function DmsBookingModal({ healthCheckId, onClose, onOpenFull }: 
           ) : detail ? (
             <>
               {/* Flags */}
-              {(detail.isMot || detail.isWaiting || detail.isLoan || detail.isInternal) && (
+              {(detail.isMot || detail.isWaiting || detail.isLoan || detail.isInternal || detail.isOutreach) && (
                 <div className="flex flex-wrap gap-1.5">
+                  {detail.isOutreach && <Flag label="Outreach booking" classes="bg-emerald-50 text-emerald-700" />}
                   {detail.isMot && <Flag label="MOT" classes="bg-blue-50 text-blue-700" />}
                   {detail.isWaiting && <Flag label="While you wait" classes="bg-amber-50 text-amber-700" />}
                   {detail.isLoan && <Flag label="Loan car" classes="bg-indigo-50 text-indigo-700" />}

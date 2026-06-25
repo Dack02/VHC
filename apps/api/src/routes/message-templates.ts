@@ -6,13 +6,16 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, requireOrgAdmin } from '../middleware/auth.js'
+import { sendSms } from '../services/sms.js'
+import { sendEmail } from '../services/email.js'
 import {
   getOrganizationTemplate,
   renderTemplate,
   renderEmailHtml,
   renderEmailText,
   SAMPLE_CONTEXT,
-  MessageTemplate
+  MessageTemplate,
+  TemplateContext
 } from '../services/template-renderer.js'
 import {
   DEFAULT_TEMPLATES,
@@ -34,6 +37,136 @@ const VALID_TEMPLATE_TYPES: TemplateType[] = [
 ]
 
 const VALID_CHANNELS = ['sms', 'email'] as const
+
+interface PreviewBranding {
+  primaryColor: string
+  organizationName: string
+  logoUrl: string | null
+}
+
+/**
+ * Resolve org branding + a sample render context, shared by the preview and
+ * test-send routes so both render identically.
+ */
+async function resolvePreviewContext(
+  organizationId: string
+): Promise<{ branding: PreviewBranding; context: TemplateContext }> {
+  let branding: PreviewBranding = {
+    primaryColor: '#3B82F6',
+    organizationName: SAMPLE_CONTEXT.dealershipName,
+    logoUrl: null
+  }
+
+  const { data: settings } = await supabaseAdmin
+    .from('organization_settings')
+    .select('logo_url, primary_color')
+    .eq('organization_id', organizationId)
+    .single()
+
+  const { data: org } = await supabaseAdmin
+    .from('organizations')
+    .select('name')
+    .eq('id', organizationId)
+    .single()
+
+  if (settings || org) {
+    branding = {
+      logoUrl: settings?.logo_url || null,
+      primaryColor: settings?.primary_color || '#3B82F6',
+      organizationName: org?.name || SAMPLE_CONTEXT.dealershipName
+    }
+  }
+
+  return {
+    branding,
+    context: {
+      ...SAMPLE_CONTEXT,
+      dealershipName: branding.organizationName || SAMPLE_CONTEXT.dealershipName
+    }
+  }
+}
+
+/**
+ * Render a draft template (from the request body) against the sample context.
+ * Returns the SMS body, or the email subject/html/text, ready to preview or send.
+ */
+function renderDraft(
+  templateType: TemplateType,
+  channel: 'sms' | 'email',
+  body: Record<string, unknown>,
+  branding: PreviewBranding,
+  context: TemplateContext
+): { sms?: string; subject?: string; html?: string; text?: string } {
+  if (channel === 'sms') {
+    return { sms: renderTemplate((body.smsContent as string) || '', context) }
+  }
+
+  const template: MessageTemplate = {
+    templateType,
+    channel: 'email',
+    isCustom: true,
+    emailSubject: (body.emailSubject as string) || '',
+    emailGreeting: (body.emailGreeting as string) || '',
+    emailBody: (body.emailBody as string) || '',
+    emailClosing: (body.emailClosing as string) || '',
+    emailSignature: (body.emailSignature as string) || '',
+    emailCtaText: (body.emailCtaText as string) || ''
+  }
+
+  // health_check_ready shows the system-generated RAG summary + repair items block
+  const showRich = templateType === 'health_check_ready'
+  const sampleRepairItems = showRich
+    ? [
+        {
+          id: '1',
+          name: 'Front Brake Pads',
+          description: 'Replace worn brake pads',
+          totalIncVat: 125.0,
+          options: [],
+          linkedCheckResults: ['Front Brakes']
+        },
+        {
+          id: '2',
+          name: 'Oil Service',
+          description: 'Full oil and filter change',
+          totalIncVat: 89.0,
+          options: [
+            { id: '1', name: 'Standard Oil', totalIncVat: 89.0, isRecommended: true },
+            { id: '2', name: 'Premium Oil', totalIncVat: 129.0, isRecommended: false }
+          ],
+          linkedCheckResults: []
+        }
+      ]
+    : undefined
+
+  const headerBackgroundColor =
+    templateType === 'reminder_urgent' ? '#dc2626' : undefined
+
+  const html = renderEmailHtml({
+    template,
+    context,
+    branding,
+    showRagSummary: showRich,
+    repairItems: sampleRepairItems,
+    quoteTotalIncVat: showRich ? 214.0 : undefined,
+    headerBackgroundColor
+  })
+
+  const text = renderEmailText({
+    template,
+    context,
+    branding,
+    showRagSummary: showRich,
+    repairItems: sampleRepairItems,
+    quoteTotalIncVat: showRich ? 214.0 : undefined
+  })
+
+  return {
+    subject: renderTemplate(template.emailSubject || '', context),
+    html,
+    text
+  }
+}
 
 /**
  * GET /api/v1/organizations/:id/message-templates
@@ -101,9 +234,20 @@ messageTemplatesRoutes.get('/:id/message-templates', async c => {
     }
   }
 
+  // Resolve where a "send test" would go (the logged-in admin's own account)
+  const { data: me } = await supabaseAdmin
+    .from('users')
+    .select('phone')
+    .eq('id', auth.user.id)
+    .maybeSingle()
+
   return c.json({
     templates,
-    placeholders: AVAILABLE_PLACEHOLDERS
+    placeholders: AVAILABLE_PLACEHOLDERS,
+    testRecipients: {
+      email: auth.user.email,
+      phone: me?.phone || null
+    }
   })
 })
 
@@ -300,129 +444,105 @@ messageTemplatesRoutes.post(
 
     const body = await c.req.json()
 
-    // Get organization branding for email preview
-    let branding = {
-      primaryColor: '#3B82F6',
-      organizationName: SAMPLE_CONTEXT.dealershipName,
-      logoUrl: null as string | null
-    }
-
-    if (organizationId) {
-      const { data: settings } = await supabaseAdmin
-        .from('organization_settings')
-        .select('logo_url, primary_color')
-        .eq('organization_id', organizationId)
-        .single()
-
-      const { data: org } = await supabaseAdmin
-        .from('organizations')
-        .select('name')
-        .eq('id', organizationId)
-        .single()
-
-      if (settings || org) {
-        branding = {
-          logoUrl: settings?.logo_url || null,
-          primaryColor: settings?.primary_color || '#3B82F6',
-          organizationName: org?.name || SAMPLE_CONTEXT.dealershipName
-        }
-      }
-    }
-
-    // Update sample context with org name
-    const previewContext = {
-      ...SAMPLE_CONTEXT,
-      dealershipName: branding.organizationName || SAMPLE_CONTEXT.dealershipName
-    }
+    const { branding, context } = await resolvePreviewContext(organizationId)
+    const rendered = renderDraft(templateType, channel, body, branding, context)
 
     if (channel === 'sms') {
-      // Preview SMS
-      const smsContent = body.smsContent || ''
-      const preview = renderTemplate(smsContent, previewContext)
+      const preview = rendered.sms || ''
       const characterCount = preview.length
-
       return c.json({
         preview,
         characterCount,
         segmentCount: Math.ceil(characterCount / 160),
-        warning: characterCount > 160 ? 'Message exceeds 160 characters and will be split into multiple SMS' : null
-      })
-    } else {
-      // Preview Email - build a template from request body
-      const template: MessageTemplate = {
-        templateType,
-        channel: 'email',
-        isCustom: true,
-        emailSubject: body.emailSubject || '',
-        emailGreeting: body.emailGreeting || '',
-        emailBody: body.emailBody || '',
-        emailClosing: body.emailClosing || '',
-        emailSignature: body.emailSignature || '',
-        emailCtaText: body.emailCtaText || ''
-      }
-
-      // Determine what to show based on template type
-      const showRagSummary = templateType === 'health_check_ready'
-      const showRepairItems = templateType === 'health_check_ready'
-
-      // Sample repair items for preview
-      const sampleRepairItems = showRepairItems
-        ? [
-            {
-              id: '1',
-              name: 'Front Brake Pads',
-              description: 'Replace worn brake pads',
-              totalIncVat: 125.0,
-              options: [],
-              linkedCheckResults: ['Front Brakes']
-            },
-            {
-              id: '2',
-              name: 'Oil Service',
-              description: 'Full oil and filter change',
-              totalIncVat: 89.0,
-              options: [
-                { id: '1', name: 'Standard Oil', totalIncVat: 89.0, isRecommended: true },
-                { id: '2', name: 'Premium Oil', totalIncVat: 129.0, isRecommended: false }
-              ],
-              linkedCheckResults: []
-            }
-          ]
-        : undefined
-
-      // Determine header color based on template type
-      let headerBackgroundColor: string | undefined
-      if (templateType === 'reminder_urgent') {
-        headerBackgroundColor = '#dc2626' // Red for urgent
-      }
-
-      const htmlPreview = renderEmailHtml({
-        template,
-        context: previewContext,
-        branding,
-        showRagSummary,
-        repairItems: sampleRepairItems,
-        quoteTotalIncVat: showRepairItems ? 214.0 : undefined,
-        headerBackgroundColor
-      })
-
-      const textPreview = renderEmailText({
-        template,
-        context: previewContext,
-        branding,
-        showRagSummary,
-        repairItems: sampleRepairItems,
-        quoteTotalIncVat: showRepairItems ? 214.0 : undefined
-      })
-
-      const subjectPreview = renderTemplate(template.emailSubject || '', previewContext)
-
-      return c.json({
-        subject: subjectPreview,
-        html: htmlPreview,
-        text: textPreview
+        warning:
+          characterCount > 160
+            ? 'Message exceeds 160 characters and will be split into multiple SMS'
+            : null
       })
     }
+
+    return c.json({
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text
+    })
+  }
+)
+
+/**
+ * POST /api/v1/organizations/:id/message-templates/:templateType/:channel/test-send
+ * Render the draft (from the request body) with sample data and send it to the
+ * logged-in admin's own account — email to their account email, SMS to the mobile
+ * on their user profile. Lets admins verify a template end-to-end before saving.
+ */
+messageTemplatesRoutes.post(
+  '/:id/message-templates/:templateType/:channel/test-send',
+  requireOrgAdmin(),
+  async c => {
+    const auth = c.get('auth')
+    const organizationId = c.req.param('id')
+    const templateType = c.req.param('templateType') as TemplateType
+    const channel = c.req.param('channel') as 'sms' | 'email'
+
+    if (auth.orgId !== organizationId) {
+      return c.json({ error: 'Access denied' }, 403)
+    }
+    if (!VALID_TEMPLATE_TYPES.includes(templateType)) {
+      return c.json({ error: 'Invalid template type' }, 400)
+    }
+    if (!VALID_CHANNELS.includes(channel)) {
+      return c.json({ error: 'Invalid channel' }, 400)
+    }
+
+    const body = await c.req.json().catch(() => ({}))
+    const { branding, context } = await resolvePreviewContext(organizationId)
+    const rendered = renderDraft(templateType, channel, body, branding, context)
+
+    if (channel === 'sms') {
+      // Resolve the admin's own mobile from their profile.
+      const { data: me } = await supabaseAdmin
+        .from('users')
+        .select('phone')
+        .eq('id', auth.user.id)
+        .maybeSingle()
+
+      const to = me?.phone?.trim()
+      if (!to) {
+        return c.json(
+          {
+            success: false,
+            error:
+              'No mobile number on your profile. Add one to your account before sending an SMS test.'
+          },
+          400
+        )
+      }
+
+      const message = `[TEST] ${rendered.sms || ''}`
+      const result = await sendSms(to, message, organizationId)
+      // Return 200 even on failure so the api() client doesn't retry (and re-send).
+      return result.success
+        ? c.json({ success: true, to, channel, source: result.source })
+        : c.json({ success: false, error: result.error || 'Failed to send test SMS' })
+    }
+
+    // Email — send to the admin's own account email.
+    const to = auth.user.email
+    if (!to) {
+      return c.json({ success: false, error: 'No email on your account' }, 400)
+    }
+
+    const result = await sendEmail({
+      to,
+      subject: `[TEST] ${rendered.subject || 'Message template test'}`,
+      html: rendered.html || '',
+      text: rendered.text || '',
+      organizationId
+    })
+    // Return 200 even on failure so the api() client doesn't retry (and re-send).
+    return result.success
+      ? c.json({ success: true, to, channel, source: result.source })
+      : c.json({ success: false, error: result.error || 'Failed to send test email' })
   }
 )
 

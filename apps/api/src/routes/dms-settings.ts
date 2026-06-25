@@ -417,13 +417,38 @@ dmsSettings.post('/test-connection', requireOrgAdmin(), async (c) => {
  * Preview what would be imported WITHOUT creating any data
  * Returns bookings categorized into: willImport, willSkip (with reasons)
  */
+/**
+ * Resolve the import end date. When `allUpcoming` is set, fetch the org's
+ * configured forward horizon (import_window_days, default 365) so a manual
+ * import can pull every future booking — keeping the window logic in one place
+ * (mirrors the scheduled import in services/worker.ts). Otherwise honour the
+ * explicit endDate.
+ */
+async function resolveImportEndDate(
+  organizationId: string,
+  allUpcoming: boolean,
+  explicitEndDate?: string
+): Promise<string | undefined> {
+  if (!allUpcoming) return explicitEndDate
+  const { data } = await supabaseAdmin
+    .from('organization_dms_settings')
+    .select('import_window_days')
+    .eq('organization_id', organizationId)
+    .maybeSingle()
+  const windowDays = data?.import_window_days && data.import_window_days > 0 ? data.import_window_days : 365
+  const end = new Date()
+  end.setUTCDate(end.getUTCDate() + windowDays)
+  return end.toISOString().split('T')[0]
+}
+
 dmsSettings.get('/preview', async (c) => {
   const auth = c.get('auth')
   const organizationId = auth.orgId
 
   try {
     const date = c.req.query('date') || new Date().toISOString().split('T')[0]
-    const endDate = c.req.query('endDate') || undefined
+    const allUpcoming = c.req.query('allUpcoming') === 'true'
+    const endDate = await resolveImportEndDate(organizationId, allUpcoming, c.req.query('endDate') || undefined)
 
     // Get DMS credentials
     const credResult = await getDmsCredentials(organizationId)
@@ -640,9 +665,12 @@ dmsSettings.post('/import', async (c) => {
   try {
     const body = await c.req.json()
     const date = body.date || new Date().toISOString().split('T')[0]
-    const endDate: string | undefined = body.endDate || undefined
+    const allUpcoming = body.allUpcoming === true
+    const endDate: string | undefined = await resolveImportEndDate(organizationId, allUpcoming, body.endDate || undefined)
     const siteId = body.site_id
-    const skipLimitCheck = body.skipLimitCheck === true  // Allow override with confirmation
+    // A full forward-window backfill will exceed the per-day cap by design, so
+    // allUpcoming implies skipLimitCheck.
+    const skipLimitCheck = body.skipLimitCheck === true || allUpcoming
     const bookingIds: string[] | undefined = Array.isArray(body.bookingIds) ? body.bookingIds : undefined
 
     // Check if DMS is available

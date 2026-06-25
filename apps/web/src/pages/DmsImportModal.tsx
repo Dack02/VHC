@@ -102,6 +102,9 @@ export default function DmsImportModal({ open, onClose, onImportComplete, token 
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<ImportResult | null>(null)
   const [showSkipped, setShowSkipped] = useState(false)
+  // 'next2' = today + 2 working days (the default daily pull); 'all' = the org's
+  // full configured forward window (import_window_days), resolved server-side.
+  const [range, setRange] = useState<'next2' | 'all'>('next2')
 
   // Calculate endDate: 2 working days from today
   const { today, endDate } = useMemo(() => {
@@ -114,7 +117,10 @@ export default function DmsImportModal({ open, onClose, onImportComplete, token 
     setState('loading')
     setError(null)
     try {
-      const data = await api<PreviewData>(`/api/v1/dms-settings/preview?date=${today}&endDate=${endDate}`, { token })
+      const qs = range === 'all'
+        ? `date=${today}&allUpcoming=true`
+        : `date=${today}&endDate=${endDate}`
+      const data = await api<PreviewData>(`/api/v1/dms-settings/preview?${qs}`, { token })
 
       if (!data.success) {
         setError((data as unknown as { error?: string }).error || 'Failed to fetch preview')
@@ -135,7 +141,7 @@ export default function DmsImportModal({ open, onClose, onImportComplete, token 
       setError(err instanceof Error ? err.message : 'Failed to fetch bookings')
       setState('error')
     }
-  }, [token, today, endDate])
+  }, [token, today, endDate, range])
 
   useEffect(() => {
     if (open) {
@@ -172,10 +178,16 @@ export default function DmsImportModal({ open, onClose, onImportComplete, token 
     setError(null)
 
     try {
+      // For the full-window backfill, run queued (no `sync`) so a large import
+      // can't time out the request, and skip the per-day cap. The 2-day pull
+      // stays synchronous for the instant-feedback default flow.
+      const body = range === 'all'
+        ? { date: today, allUpcoming: true, skipLimitCheck: true, bookingIds: Array.from(selected) }
+        : { date: today, endDate, bookingIds: Array.from(selected), sync: true }
       const data = await api<ImportResult>('/api/v1/dms-settings/import', {
         method: 'POST',
         token,
-        body: { date: today, endDate, bookingIds: Array.from(selected), sync: true },
+        body,
         timeout: 60000
       })
 
@@ -248,6 +260,30 @@ export default function DmsImportModal({ open, onClose, onImportComplete, token 
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-4">
+          {/* Range toggle — switch between the daily 2-day pull and a full backfill */}
+          {(state === 'loading' || state === 'preview' || state === 'empty') && (
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <span className="text-xs text-gray-400">Range</span>
+              <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-sm">
+                <button
+                  onClick={() => setRange('next2')}
+                  className={`px-3 py-1 ${range === 'next2' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                >
+                  Next 2 days
+                </button>
+                <button
+                  onClick={() => setRange('all')}
+                  className={`px-3 py-1 ${range === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                >
+                  All upcoming
+                </button>
+              </div>
+              {range === 'all' && (
+                <span className="text-xs text-gray-400">· full forward window, imported in the background</span>
+              )}
+            </div>
+          )}
+
           {/* Loading */}
           {state === 'loading' && (
             <div className="flex flex-col items-center justify-center py-12">
@@ -463,7 +499,7 @@ export default function DmsImportModal({ open, onClose, onImportComplete, token 
                 disabled={selected.size === 0}
                 className="px-4 py-2 bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Import Selected ({selected.size})
+                {range === 'all' ? `Import all upcoming (${selected.size})` : `Import Selected (${selected.size})`}
               </button>
             </>
           )}

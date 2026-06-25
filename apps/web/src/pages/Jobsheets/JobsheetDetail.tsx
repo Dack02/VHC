@@ -2,11 +2,15 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
-import { api, User } from '../../lib/api'
+import { useModules } from '../../contexts/ModulesContext'
+import { api, User, TimelineEvent } from '../../lib/api'
+import ComposeMessageModal from '../../components/ComposeMessageModal'
+import FollowUpDetailModal from '../FollowUps/FollowUpDetailModal'
 import WorkDetailsPanel from './WorkDetailsPanel'
 import { CheckInTab } from '../HealthChecks/tabs/CheckInTab'
 import { MriScanSection } from '../HealthChecks/components/MriScanSection'
 import { MriTab } from '../HealthChecks/tabs/MriTab'
+import { TimelineTab } from '../HealthChecks/tabs/TimelineTab'
 
 interface LookupOption { id: string; code: string; colour: string }
 
@@ -27,12 +31,12 @@ interface Jobsheet {
   bookingNotes: string | null
   vehicleStatus: string
   customer: { id: string; firstName: string; lastName: string; mobile: string | null; email: string | null; phone: string | null; contactName: string | null } | null
-  vehicle: { id: string; registration: string; make: string | null; model: string | null; year: number | null; fuelType: string | null } | null
+  vehicle: { id: string; registration: string; make: string | null; model: string | null; year: number | null; fuelType: string | null; motExpiryDate: string | null; motStatus: string | null; motLastSyncedAt: string | null } | null
   serviceType: { id: string; code: string; colour: string } | null
   advisor: { id: string; firstName: string; lastName: string } | null
   createdBy: { id: string; firstName: string; lastName: string } | null
   // inspectionRequired distinguishes a real VHC from a check-in-only "visit" shell.
-  healthCheck: { id: string; status: string; vehicleStatus: string; vhcReference: string | null; inspectionRequired: boolean } | null
+  healthCheck: { id: string; status: string; vehicleStatus: string; vhcReference: string | null; inspectionRequired: boolean; redCount: number; amberCount: number; greenCount: number; completedAt: string | null } | null
   checkIn: {
     status: string
     arrivedAt: string | null
@@ -45,6 +49,11 @@ interface Jobsheet {
     checkinNotes: string | null
   } | null
   bookingCodes: LookupOption[]
+  // Detail-only enrichment (see loadJobsheetExtras in the API).
+  history?: { totalVisits: number; lastVisitAt: string | null }
+  deferred?: { count: number; totalValue: number; caseId: string | null }
+  recentMessages?: { id: string; direction: 'inbound' | 'outbound'; body: string; status: string; createdAt: string; senderName: string | null }[]
+  work?: { itemCount: number; totalIncVat: number; vat: number; net: number }
 }
 
 const VEHICLE_STATUS_LABELS: Record<string, string> = {
@@ -62,6 +71,43 @@ function formatDate(iso: string | null): string {
     ' · ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 }
 
+function formatDateOnly(value: string | null): string {
+  if (!value) return '—'
+  const d = new Date(value.length <= 10 ? `${value}T00:00:00` : value)
+  if (isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+const GBP = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' })
+
+function humanizeStatus(status: string): string {
+  return status.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase())
+}
+
+// MOT pill colour from the DVSA-derived status / expiry.
+function motTone(status: string | null, expiry: string | null): string {
+  if (status === 'Valid') {
+    if (expiry) {
+      const days = Math.round((new Date(`${expiry}T00:00:00`).getTime() - Date.now()) / 86400000)
+      if (days <= 30) return 'bg-amber-100 text-amber-700' // due soon
+    }
+    return 'bg-green-100 text-green-700'
+  }
+  if (status === 'Expired') return 'bg-red-100 text-red-700'
+  return 'bg-gray-100 text-gray-600'
+}
+
+function timeAgo(iso: string): string {
+  const then = new Date(iso).getTime()
+  const mins = Math.round((Date.now() - then) / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.round(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.round(hrs / 24)
+  return `${days}d ago`
+}
+
 function formatDueIn(dateStr: string, time: string | null): string {
   if (!dateStr) return '—'
   const d = new Date(`${dateStr}T00:00:00`)
@@ -77,15 +123,21 @@ function toLocalInput(iso: string | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-type JobsheetTab = 'overview' | 'checkin' | 'mri' | 'work'
+type JobsheetTab = 'overview' | 'checkin' | 'mri' | 'work' | 'timeline'
 
 export default function JobsheetDetail() {
   const { id } = useParams<{ id: string }>()
   const { session, user } = useAuth()
   const toast = useToast()
   const navigate = useNavigate()
+  const { isEnabled } = useModules()
   const [searchParams, setSearchParams] = useSearchParams()
   const token = session?.accessToken
+
+  // Origin-aware back link: callers (e.g. the Booking Diary) pass ?from=&fromLabel=
+  // so we return to where the user came from; otherwise fall back to the list.
+  const backTo = searchParams.get('from') || '/jobsheets'
+  const backLabel = searchParams.get('fromLabel') || 'Jobsheets'
 
   const [js, setJs] = useState<Jobsheet | null>(null)
   const [loading, setLoading] = useState(true)
@@ -93,6 +145,10 @@ export default function JobsheetDetail() {
   const [saving, setSaving] = useState(false)
   const [ensuring, setEnsuring] = useState(false)
   const [checkinEnabled, setCheckinEnabled] = useState(false)
+  const [showCompose, setShowCompose] = useState(false)
+  const [followUpCaseId, setFollowUpCaseId] = useState<string | null>(null)
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([])
+  const [timelineLoaded, setTimelineLoaded] = useState(false)
 
   const [serviceTypes, setServiceTypes] = useState<LookupOption[]>([])
   const [bookingCodeOptions, setBookingCodeOptions] = useState<LookupOption[]>([])
@@ -140,6 +196,15 @@ export default function JobsheetDetail() {
     api<{ checkinEnabled: boolean }>(`/api/v1/organizations/${user.organization.id}/checkin-settings`, { token })
       .then(d => setCheckinEnabled(!!d.checkinEnabled)).catch(() => setCheckinEnabled(false))
   }, [token, user?.organization?.id])
+
+  // Timeline reuses the unified VHC timeline endpoint — fetched lazily when the tab opens.
+  const hcId = js?.healthCheck?.id
+  useEffect(() => {
+    if (searchParams.get('tab') !== 'timeline' || !token || !hcId || timelineLoaded) return
+    api<{ timeline: TimelineEvent[] }>(`/api/v1/health-checks/${hcId}/timeline`, { token })
+      .then(d => { setTimeline(d.timeline || []); setTimelineLoaded(true) })
+      .catch(() => setTimelineLoaded(true))
+  }, [searchParams, token, hcId, timelineLoaded])
 
   // lookups for edit mode
   useEffect(() => {
@@ -229,7 +294,7 @@ export default function JobsheetDetail() {
     return <div className="flex justify-center py-12"><div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" /></div>
   }
   if (!js) {
-    return <div className="max-w-3xl mx-auto py-12 text-center text-gray-500">Jobsheet not found. <Link to="/jobsheets" className="text-primary hover:underline">Back to jobsheets</Link></div>
+    return <div className="max-w-3xl mx-auto py-12 text-center text-gray-500">Jobsheet not found. <Link to={backTo} className="text-primary hover:underline">Back to {backLabel.toLowerCase()}</Link></div>
   }
 
   const inputCls = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary'
@@ -244,7 +309,8 @@ export default function JobsheetDetail() {
     { id: 'overview', label: 'Overview' },
     ...(checkinEnabled ? [{ id: 'checkin' as JobsheetTab, label: 'Check-In' }] : []),
     ...(checkinEnabled ? [{ id: 'mri' as JobsheetTab, label: 'MRI Scan' }] : []),
-    { id: 'work', label: 'Work' }
+    { id: 'work', label: 'Work' },
+    ...(hc ? [{ id: 'timeline' as JobsheetTab, label: 'Timeline' }] : [])
   ]
   const tabIds = tabs.map(t => t.id)
   const rawTab = (searchParams.get('tab') || 'overview') as JobsheetTab
@@ -258,7 +324,7 @@ export default function JobsheetDetail() {
     <div className="max-w-5xl mx-auto">
       {/* Header */}
       <div className="mb-4">
-        <Link to="/jobsheets" className="text-sm text-gray-500 hover:text-gray-700">← Jobsheets</Link>
+        <Link to={backTo} className="text-sm text-gray-500 hover:text-gray-700">← {backLabel}</Link>
         <div className="flex items-start justify-between mt-2 gap-4">
           <div>
             <div className="flex items-center gap-3">
@@ -275,6 +341,13 @@ export default function JobsheetDetail() {
             <p className="text-xs text-gray-400 mt-1">Document date: {formatDate(js.createdAt)}{js.createdBy && ` · by ${js.createdBy.firstName} ${js.createdBy.lastName}`}</p>
           </div>
           <div className="flex items-center gap-2">
+            {js.customer && (
+              <Link to={`/customers/${js.customer.id}`} target="_blank" rel="noopener noreferrer"
+                className="px-3 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 inline-flex items-center gap-1.5">
+                Customer
+                <svg className="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+              </Link>
+            )}
             {realVhc && hc && (
               <Link to={`/health-checks/${hc.id}`} className="px-3 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50">
                 Open VHC{hc.vhcReference ? ` · ${hc.vhcReference}` : ''}
@@ -328,9 +401,111 @@ export default function JobsheetDetail() {
                 <div className="flex justify-between"><dt className="text-gray-500">Description</dt><dd className="text-gray-900 ml-4 text-right">{[js.vehicle.make, js.vehicle.model].filter(Boolean).join(' ') || '—'}</dd></div>
                 <div className="flex justify-between"><dt className="text-gray-500">Year</dt><dd className="text-gray-900">{js.vehicle.year || '—'}</dd></div>
                 <div className="flex justify-between"><dt className="text-gray-500">Fuel</dt><dd className="text-gray-900">{js.vehicle.fuelType || '—'}</dd></div>
+                {(js.vehicle.motStatus || js.vehicle.motExpiryDate) && (
+                  <div className="flex justify-between items-center"><dt className="text-gray-500">MOT</dt><dd>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${motTone(js.vehicle.motStatus, js.vehicle.motExpiryDate)}`}>
+                      {js.vehicle.motExpiryDate ? `Due ${formatDateOnly(js.vehicle.motExpiryDate)}` : (js.vehicle.motStatus || '—')}
+                    </span>
+                  </dd></div>
+                )}
+                {js.history && (
+                  <>
+                    <div className="flex justify-between pt-1.5 border-t border-gray-100"><dt className="text-gray-500">Last visit</dt><dd className="text-gray-900">{formatDateOnly(js.history.lastVisitAt)}</dd></div>
+                    <div className="flex justify-between"><dt className="text-gray-500">Total visits</dt><dd className="text-gray-900">{js.history.totalVisits}</dd></div>
+                  </>
+                )}
               </dl>
             ) : <p className="text-sm text-gray-400">No vehicle.</p>}
           </div>
+
+          {/* Outstanding deferred work — recovery opportunity from prior visits.
+              When a follow-up case exists for this vehicle, open it directly in the
+              modal; otherwise fall back to the full follow-up worklist. */}
+          {js.deferred && js.deferred.count > 0 && (() => {
+            const bannerCls = 'lg:col-span-2 w-full text-left flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl p-4 hover:bg-amber-100/70 transition-colors'
+            const inner = (
+              <>
+                <div className="flex items-center gap-3">
+                  <svg className="w-5 h-5 text-amber-600 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M5 19h14a2 2 0 001.84-2.75L13.74 4a2 2 0 00-3.48 0L3.16 16.25A2 2 0 005 19z" /></svg>
+                  <div>
+                    <p className="text-sm font-semibold text-amber-900">{js.deferred.count} item{js.deferred.count === 1 ? '' : 's'} of deferred work outstanding</p>
+                    <p className="text-xs text-amber-700">{GBP.format(js.deferred.totalValue)} from previous inspections · review for this visit</p>
+                  </div>
+                </div>
+                <span className="text-sm font-medium text-amber-700 whitespace-nowrap">Follow up →</span>
+              </>
+            )
+            return js.deferred.caseId ? (
+              <button type="button" onClick={() => setFollowUpCaseId(js.deferred!.caseId)} className={bannerCls}>{inner}</button>
+            ) : (
+              <Link to="/follow-ups" className={bannerCls}>{inner}</Link>
+            )
+          })()}
+
+          {/* Quoted total — grand total inc VAT for the booked + inspection work */}
+          {js.work && js.work.itemCount > 0 && (
+            <button onClick={() => setTab('work')} className="text-left bg-white border border-gray-200 rounded-xl shadow-sm p-5 hover:border-gray-300 transition-colors">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-sm font-semibold text-gray-900">Quoted total</h2>
+                <span className="text-sm font-medium text-primary">Work →</span>
+              </div>
+              <div className="text-3xl font-bold text-gray-900 leading-none">{GBP.format(js.work.totalIncVat)}</div>
+              <p className="text-xs text-gray-500 mt-1.5">
+                {GBP.format(js.work.net)} net + {GBP.format(js.work.vat)} VAT · {js.work.itemCount} item{js.work.itemCount === 1 ? '' : 's'}
+              </p>
+            </button>
+          )}
+
+          {/* Inspection (VHC) summary — RAG at a glance without opening the VHC */}
+          {realVhc && hc && (
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-900">Inspection</h2>
+                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">{humanizeStatus(hc.status)}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {([
+                  { label: 'Red', count: hc.redCount, cls: 'bg-rag-red' },
+                  { label: 'Amber', count: hc.amberCount, cls: 'bg-rag-amber' },
+                  { label: 'Green', count: hc.greenCount, cls: 'bg-rag-green' }
+                ]).map(r => (
+                  <div key={r.label} className={`${r.cls} text-white rounded-lg py-2 text-center`}>
+                    <div className="text-xl font-bold leading-none">{r.count}</div>
+                    <div className="text-[11px] font-medium opacity-90 mt-0.5">{r.label}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between text-xs text-gray-500">
+                <span>{hc.completedAt ? `Completed ${formatDateOnly(hc.completedAt)}` : 'In progress'}</span>
+                <Link to={`/health-checks/${hc.id}`} className="font-medium text-primary hover:text-primary-dark">Open VHC →</Link>
+              </div>
+            </div>
+          )}
+
+          {/* Recent customer messages */}
+          {isEnabled('customer_comms') && (
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-900">Messages</h2>
+                {js.customer?.mobile && (
+                  <button onClick={() => setShowCompose(true)} className="text-sm font-medium text-primary hover:text-primary-dark">Send message</button>
+                )}
+              </div>
+              {js.recentMessages && js.recentMessages.length > 0 ? (
+                <ul className="space-y-2">
+                  {js.recentMessages.slice(0, 4).map(m => (
+                    <li key={m.id} className="flex items-start gap-2 text-sm">
+                      <span className={`mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide flex-shrink-0 ${m.direction === 'inbound' ? 'bg-gray-100 text-gray-600' : 'bg-primary/10 text-primary'}`}>{m.direction === 'inbound' ? 'In' : 'Out'}</span>
+                      <span className="text-gray-700 line-clamp-2 flex-1">{m.body}</span>
+                      <span className="text-[11px] text-gray-400 whitespace-nowrap flex-shrink-0">{timeAgo(m.createdAt)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-gray-400">{js.customer?.mobile ? 'No messages yet.' : 'No mobile number on file.'}</p>
+              )}
+            </div>
+          )}
 
           {/* Booking details */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 lg:col-span-2">
@@ -481,11 +656,38 @@ export default function JobsheetDetail() {
       {/* Work tab — labour + parts + packages + booking notes */}
       {activeTab === 'work' && token && (
         <WorkDetailsPanel
-          jobsheetId={js.id}
+          parent={{ type: 'jobsheet', id: js.id }}
           token={token}
           organizationId={user?.organization?.id}
-          initialBookingNotes={js.bookingNotes}
+          notes={{ label: 'Booking Notes', value: js.bookingNotes, onSave: (v) => api(`/api/v1/jobsheets/${js.id}`, { method: 'PATCH', token, body: { bookingNotes: v } }).then(() => {}) }}
           onChange={load}
+        />
+      )}
+
+      {/* Timeline tab — the linked VHC's unified activity feed (status, work, comms, arrival) */}
+      {activeTab === 'timeline' && (
+        hc ? <TimelineTab timeline={timeline} />
+          : <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-8 text-center text-gray-500">No activity yet.</div>
+      )}
+
+      {showCompose && js.customer && (
+        <ComposeMessageModal
+          customer={{
+            id: js.customer.id,
+            firstName: js.customer.firstName,
+            lastName: js.customer.lastName,
+            mobile: js.customer.mobile
+          }}
+          onClose={() => setShowCompose(false)}
+          onSent={() => { setShowCompose(false); load() }}
+        />
+      )}
+
+      {followUpCaseId && (
+        <FollowUpDetailModal
+          caseId={followUpCaseId}
+          onClose={() => { setFollowUpCaseId(null); load() }}
+          onChanged={load}
         />
       )}
     </div>

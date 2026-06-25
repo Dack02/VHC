@@ -783,6 +783,9 @@ export interface TimelineEvent {
     repair_item_id?: string
     health_check_id?: string
     outcome_status?: string
+    channel?: string
+    body?: string
+    recipient?: string
   }
 }
 

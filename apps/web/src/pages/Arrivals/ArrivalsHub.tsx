@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
+import { useModules } from '../../contexts/ModulesContext'
 import { api } from '../../lib/api'
+import { UpcomingPanel } from '../Upcoming'
 
 /**
- * Arrivals hub — the unified queue of vehicles due in, across DMS-imported bookings AND GMS
+ * Arrivals queue — the unified list of vehicles due in, across DMS-imported bookings AND GMS
  * jobsheet bookings (both are health_checks in awaiting_arrival / awaiting_checkin). This is the
  * primary place to bring a booked vehicle into the workshop: mark it arrived, then check it in
  * (the check-in form itself is the existing VHC Check-In tab, reached via deep-link).
@@ -13,6 +15,9 @@ import { api } from '../../lib/api'
  * Fed by GET /api/v1/arrivals. Actions reuse the existing endpoints:
  *   - mark-arrived / mark-no-show on the VHC
  *   - PATCH /jobsheets/:id for no-VHC jobsheets ("Mark on site")
+ *
+ * Rendered as the "Arrivals" tab inside ArrivalsHub (default export at the bottom of this file),
+ * which only mounts it when the jobsheets module is enabled.
  */
 
 interface ArrivalItem {
@@ -79,7 +84,7 @@ function dueLabel(item: ArrivalItem): string | null {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' }) + ` · ${time}`
 }
 
-export default function ArrivalsHub() {
+function ArrivalsQueue() {
   const { session, user } = useAuth()
   const toast = useToast()
   const navigate = useNavigate()
@@ -188,17 +193,7 @@ export default function ArrivalsHub() {
     `px-3 py-1.5 text-sm font-medium rounded-lg ${on ? 'bg-primary text-white' : 'text-gray-600 hover:bg-gray-100'}`
 
   return (
-    <div className="max-w-5xl mx-auto">
-      <div className="flex items-start justify-between mb-6 gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Arrivals</h1>
-          <p className="text-gray-600 mt-1">Vehicles due in — mark them arrived and check them in. Covers DMS bookings and jobsheets.</p>
-        </div>
-        <button onClick={load} disabled={loading} className="px-3 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50">
-          {loading ? 'Refreshing…' : 'Refresh'}
-        </button>
-      </div>
-
+    <div>
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <input
           type="text"
@@ -211,6 +206,9 @@ export default function ArrivalsHub() {
           <button className={toggleCls(windowMode === 'soon')} onClick={() => setWindowMode('soon')}>Due soon</button>
           <button className={toggleCls(windowMode === 'all')} onClick={() => setWindowMode('all')}>All</button>
         </div>
+        <button onClick={load} disabled={loading} className="px-3 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50">
+          {loading ? 'Refreshing…' : 'Refresh'}
+        </button>
       </div>
 
       {loading ? (
@@ -324,6 +322,67 @@ export default function ArrivalsHub() {
       <p className="text-xs text-gray-400 mt-4">
         {counts.awaitingArrival} awaiting arrival · {counts.awaitingCheckin} to check in
       </p>
+    </div>
+  )
+}
+
+type HubTab = 'arrivals' | 'upcoming'
+
+/**
+ * Arrivals hub — the front-desk landing for the booking arrival pipeline, with two tabs:
+ *   - "Arrivals": today's due-in / check-in queue (ArrivalsQueue) — jobsheets-module only
+ *   - "Upcoming": the next 2 working days of bookings + MRI prep (UpcomingPanel) — always on
+ *
+ * The page is NOT hard-gated on the jobsheets module (the route used to be): Upcoming must stay
+ * reachable for tenants without jobsheets, so gating happens per-tab here. The active tab is
+ * URL-driven (?tab=) so /arrivals?tab=upcoming deep-links (and the old /upcoming redirect lands here).
+ */
+export default function ArrivalsHub() {
+  const { isEnabled } = useModules()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const jobsheetsOn = isEnabled('jobsheets')
+
+  const tabs: { id: HubTab; label: string }[] = [
+    ...(jobsheetsOn ? [{ id: 'arrivals' as const, label: 'Arrivals' }] : []),
+    { id: 'upcoming', label: 'Upcoming' },
+  ]
+  const defaultTab: HubTab = jobsheetsOn ? 'arrivals' : 'upcoming'
+  const urlTab = searchParams.get('tab') as HubTab | null
+  const activeTab: HubTab = urlTab && tabs.some(t => t.id === urlTab) ? urlTab : defaultTab
+
+  const setTab = (t: HubTab) =>
+    setSearchParams(prev => { prev.set('tab', t); return prev }, { replace: true })
+
+  return (
+    <div className="max-w-5xl mx-auto">
+      <div className="mb-5">
+        <h1 className="text-2xl font-bold text-gray-900">{jobsheetsOn ? 'Arrivals' : 'Upcoming'}</h1>
+        <p className="text-gray-600 mt-1">
+          {activeTab === 'upcoming'
+            ? 'Bookings on their way in — prep MRIs before the vehicle arrives.'
+            : 'Vehicles due in — mark them arrived and check them in. Covers DMS bookings and jobsheets.'}
+        </p>
+      </div>
+
+      {tabs.length > 1 && (
+        <div className="flex items-center gap-1 border-b border-gray-200 mb-5">
+          {tabs.map(t => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                activeTab === t.id
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {activeTab === 'arrivals' && jobsheetsOn ? <ArrivalsQueue /> : <UpcomingPanel />}
     </div>
   )
 }

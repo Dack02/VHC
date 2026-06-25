@@ -4,12 +4,13 @@ import { useToast } from '../../contexts/ToastContext'
 import PackagePickerModal from './components/PackagePickerModal'
 
 /**
- * Work Details — the jobsheet's labour + parts lines.
+ * Work Details — a document's labour + parts lines. Shared by the Jobsheet and the
+ * Estimate (parameterised by `parent`).
  *
- * A work line IS a repair_item. Booked lines (origin 'booking') are added here and
- * are fully editable + pre-authorised. Inspection findings (origin 'inspection') from
- * the linked VHC are shown read-only — edit those in the VHC. All pricing/VAT/totals
- * come from the server (the repair pricing engine), so this panel just renders + sums.
+ * A work line IS a repair_item. Editable lines (jobsheet 'booking' / estimate 'estimate')
+ * are added here. Inspection findings (origin 'inspection') from a linked VHC are shown
+ * read-only — edit those in the VHC. All pricing/VAT/totals come from the server (the
+ * repair pricing engine), so this panel just renders + sums.
  */
 
 interface LabourCode { id: string; code: string; description: string; hourlyRate: number; isDefault?: boolean }
@@ -19,7 +20,7 @@ interface PackageOpt { id: string; name: string; description?: string | null }
 interface WLLabour { id: string; labourCode: { code: string; description: string } | null; hours: number; rate: number; total: number; isVatExempt: boolean; notes: string | null }
 interface WLPart { id: string; partNumber: string | null; description: string; quantity: number; sellPrice: number; costPrice: number; lineTotal: number; marginPercent: number | null; supplierName: string | null }
 interface WorkLine {
-  id: string; name: string; description: string | null; origin: 'booking' | 'inspection'
+  id: string; name: string; description: string | null; origin: 'booking' | 'inspection' | 'estimate'
   labourTotal: number; partsTotal: number; subtotal: number; vatAmount: number; totalIncVat: number
   outcomeStatus: string | null; labour: WLLabour[]; parts: WLPart[]
 }
@@ -28,16 +29,22 @@ interface Totals { labourTotal: number; partsTotal: number; subtotal: number; va
 const ZERO: Totals = { labourTotal: 0, partsTotal: 0, subtotal: 0, vatAmount: 0, totalIncVat: 0 }
 const money = (n: number) => `£${(n || 0).toFixed(2)}`
 
+export interface WorkDetailsParent { type: 'jobsheet' | 'estimate'; id: string }
+
 export default function WorkDetailsPanel({
-  jobsheetId, token, organizationId, initialBookingNotes, onChange, className = 'lg:col-span-2'
+  parent, token, organizationId, notes: notesConfig, primaryLabel, onChange, className = 'lg:col-span-2'
 }: {
-  jobsheetId: string
+  parent: WorkDetailsParent
   token: string
   organizationId: string | undefined
-  initialBookingNotes: string | null
+  /** Optional notes box (e.g. jobsheet Booking Notes). Omit to hide it. */
+  notes?: { label: string; value: string | null; onSave: (value: string) => Promise<void> }
+  /** Section header for the editable lines. Defaults by parent type. */
+  primaryLabel?: string
   onChange?: () => void
   className?: string
 }) {
+  const basePath = `/api/v1/${parent.type}s/${parent.id}`
   const toast = useToast()
   const [lines, setLines] = useState<WorkLine[]>([])
   const [totals, setTotals] = useState<Totals>(ZERO)
@@ -45,7 +52,7 @@ export default function WorkDetailsPanel({
   const [labourCodes, setLabourCodes] = useState<LabourCode[]>([])
   const [suppliers, setSuppliers] = useState<SupplierOpt[]>([])
   const [packages, setPackages] = useState<PackageOpt[]>([])
-  const [notes, setNotes] = useState(initialBookingNotes || '')
+  const [notes, setNotes] = useState(notesConfig?.value || '')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [newLineName, setNewLineName] = useState('')
   const [addingLine, setAddingLine] = useState(false)
@@ -54,7 +61,7 @@ export default function WorkDetailsPanel({
 
   const load = useCallback(async () => {
     try {
-      const data = await api<{ workLines: WorkLine[]; totals: Totals }>(`/api/v1/jobsheets/${jobsheetId}/work-lines`, { token })
+      const data = await api<{ workLines: WorkLine[]; totals: Totals }>(`${basePath}/work-lines`, { token })
       setLines(data.workLines || [])
       setTotals(data.totals || ZERO)
     } catch (err) {
@@ -63,10 +70,10 @@ export default function WorkDetailsPanel({
       setLoading(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobsheetId, token])
+  }, [basePath, token])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setNotes(initialBookingNotes || '') }, [initialBookingNotes])
+  useEffect(() => { setNotes(notesConfig?.value || '') }, [notesConfig?.value])
 
   useEffect(() => {
     if (!organizationId) return
@@ -81,9 +88,9 @@ export default function WorkDetailsPanel({
   const refresh = useCallback(async () => { await load(); onChange?.() }, [load, onChange])
 
   const saveNotes = async () => {
-    if ((initialBookingNotes || '') === notes) return
+    if (!notesConfig || (notesConfig.value || '') === notes) return
     try {
-      await api(`/api/v1/jobsheets/${jobsheetId}`, { method: 'PATCH', token, body: { bookingNotes: notes } })
+      await notesConfig.onSave(notes)
       onChange?.()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save notes')
@@ -94,7 +101,7 @@ export default function WorkDetailsPanel({
     if (!newLineName.trim()) return
     setBusy(true)
     try {
-      const created = await api<WorkLine>(`/api/v1/jobsheets/${jobsheetId}/work-lines`, { method: 'POST', token, body: { name: newLineName.trim() } })
+      const created = await api<WorkLine>(`${basePath}/work-lines`, { method: 'POST', token, body: { name: newLineName.trim() } })
       setNewLineName(''); setAddingLine(false)
       setExpanded(s => new Set(s).add(created.id))
       await refresh()
@@ -108,7 +115,7 @@ export default function WorkDetailsPanel({
     setBusy(true)
     try {
       for (const pkgId of pkgIds) {
-        await api(`/api/v1/jobsheets/${jobsheetId}/work-lines/from-package`, { method: 'POST', token, body: { servicePackageId: pkgId } })
+        await api(`${basePath}/work-lines/from-package`, { method: 'POST', token, body: { servicePackageId: pkgId } })
       }
       await refresh()
       toast.success(pkgIds.length === 1 ? 'Package added' : `${pkgIds.length} packages added`)
@@ -142,8 +149,10 @@ export default function WorkDetailsPanel({
 
   const toggle = (id: string) => setExpanded(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
 
-  const booked = lines.filter(l => l.origin === 'booking')
+  const editableLines = lines.filter(l => l.origin !== 'inspection')
   const inspection = lines.filter(l => l.origin === 'inspection')
+  const sectionLabel = primaryLabel ?? (parent.type === 'estimate' ? 'Quote lines' : 'Booked work')
+  const emptyLabel = parent.type === 'estimate' ? 'No quote lines yet.' : 'No booked work yet.'
 
   return (
     <div className={`bg-white border border-gray-200 rounded-xl shadow-sm p-5 ${className}`}>
@@ -155,29 +164,31 @@ export default function WorkDetailsPanel({
         </div>
       </div>
 
-      {/* Booking notes — overview of the work / customer concern */}
-      <div className="mb-4">
-        <label className="block text-xs font-medium text-gray-500 mb-1">Booking Notes</label>
-        <textarea
-          value={notes}
-          onChange={e => setNotes(e.target.value)}
-          onBlur={saveNotes}
-          rows={2}
-          placeholder="Overview of the job / customer concern…"
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-        />
-      </div>
+      {/* Optional notes box — overview of the work / customer concern */}
+      {notesConfig && (
+        <div className="mb-4">
+          <label className="block text-xs font-medium text-gray-500 mb-1">{notesConfig.label}</label>
+          <textarea
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            onBlur={saveNotes}
+            rows={2}
+            placeholder="Overview of the job / customer concern…"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+      )}
 
       {loading ? (
         <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary border-t-transparent rounded-full" /></div>
       ) : (
         <div className="space-y-4">
-          {/* Booked work */}
+          {/* Editable work (booked / quote lines) */}
           <div>
-            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">Booked work</p>
+            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">{sectionLabel}</p>
             <div className="space-y-2">
-              {booked.length === 0 && <p className="text-sm text-gray-400 py-1">No booked work yet.</p>}
-              {booked.map(line => (
+              {editableLines.length === 0 && <p className="text-sm text-gray-400 py-1">{emptyLabel}</p>}
+              {editableLines.map(line => (
                 <WorkLineCard key={line.id} line={line} editable expanded={expanded.has(line.id)}
                   labourCodes={labourCodes} suppliers={suppliers}
                   onToggle={() => toggle(line.id)} onDeleteLine={() => deleteLine(line.id)}
@@ -307,9 +318,8 @@ function WorkLineCard({
         <div className="flex items-center gap-2 min-w-0">
           <svg className={`w-4 h-4 text-gray-400 transition-transform shrink-0 ${expanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
           <span className="font-medium text-gray-900 truncate">{line.name}</span>
-          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium shrink-0 ${line.origin === 'booking' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-600'}`}>
-            {line.origin === 'booking' ? 'Booked' : 'Inspection'}
-          </span>
+          {line.origin === 'booking' && <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium shrink-0 bg-indigo-100 text-indigo-700">Booked</span>}
+          {line.origin === 'inspection' && <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium shrink-0 bg-gray-100 text-gray-600">Inspection</span>}
           {line.outcomeStatus === 'authorised' && <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-700 shrink-0">Authorised</span>}
         </div>
         <span className="text-sm font-semibold text-gray-900 shrink-0 ml-2">{money(line.totalIncVat)}</span>

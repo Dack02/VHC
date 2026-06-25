@@ -20,7 +20,8 @@ const CARD_MODULE: Record<string, ModuleKey> = {
   '/settings/daily-sms-overview': 'customer_comms',
   '/settings/message-templates': 'customer_comms',
   '/settings/service-types': 'jobsheets',
-  '/settings/booking-codes': 'jobsheets'
+  '/settings/booking-codes': 'jobsheets',
+  '/settings/estimate-settings': 'estimates'
 }
 
 interface SettingsCard {
@@ -180,6 +181,17 @@ export default function SettingsHub() {
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/estimate-settings',
+      title: 'Estimate Settings',
+      description: 'Link expiry, validity, signature requirement and terms for estimates',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m-6 4h6m-6 4h4M5 4h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z" />
         </svg>
       ),
       roles: ['super_admin', 'org_admin', 'site_admin']
@@ -511,6 +523,10 @@ export default function SettingsHub() {
     {
       title: 'Jobsheets (GMS)',
       routes: ['/settings/service-types', '/settings/booking-codes']
+    },
+    {
+      title: 'Estimates (GMS)',
+      routes: ['/settings/estimate-settings']
     },
     {
       title: 'Inspections',

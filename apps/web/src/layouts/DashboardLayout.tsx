@@ -21,7 +21,11 @@ interface NavItem {
   roles: UserRole[]
   badge?: number
   module?: ModuleKey
+  /** When present, this is an expandable group; `to` points at the group's hub. */
+  children?: NavItem[]
 }
+
+const NAV_GROUPS_KEY = 'vhc-nav-expanded-groups'
 
 const NAV_COLLAPSED_KEY = 'vhc-nav-collapsed'
 
@@ -123,26 +127,52 @@ export default function DashboardLayout() {
       roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']
     },
     {
-      to: '/jobsheets',
-      label: 'Jobsheets',
+      // Documents — an expandable group housing the booking/quoting documents.
+      // `to` is the Documents hub; children are individually module-gated.
+      to: '/documents',
+      label: 'Documents',
       icon: (
         <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h4l2 2h6a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
         </svg>
       ),
       roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor'],
-      module: 'jobsheets'
+      children: [
+        {
+          to: '/jobsheets',
+          label: 'Jobsheets',
+          icon: (
+            <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          ),
+          roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor'],
+          module: 'jobsheets'
+        },
+        {
+          to: '/estimates',
+          label: 'Estimates',
+          icon: (
+            <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m-6 4h6m-6 4h4M5 4h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z" />
+            </svg>
+          ),
+          roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor'],
+          module: 'estimates'
+        }
+      ]
     },
     {
+      // Arrivals hub also hosts the Upcoming tab. Not module-gated: when jobsheets is off the
+      // hub shows Upcoming only, so the item stays visible (labelled "Upcoming") for those tenants.
       to: '/arrivals',
-      label: 'Arrivals',
+      label: isEnabled('jobsheets') ? 'Arrivals' : 'Upcoming',
       icon: (
         <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12h13m0 0l-4-4m4 4l-4 4M21 4v16" />
         </svg>
       ),
-      roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor'],
-      module: 'jobsheets'
+      roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor']
     },
     {
       to: '/health-checks',
@@ -175,16 +205,6 @@ export default function DashboardLayout() {
       ),
       roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor'],
       badge: attentionNotesCount
-    },
-    {
-      to: '/upcoming',
-      label: 'Upcoming',
-      icon: (
-        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-      ),
-      roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor']
     },
     {
       to: '/customers',
@@ -284,15 +304,36 @@ export default function DashboardLayout() {
     }
   ]
 
-  // Filter nav items based on user role
-  const visibleMainNav = mainNavItems.filter(item =>
-    item.roles.includes(userRole) && (!item.module || isEnabled(item.module))
-  )
+  // Filter nav items based on user role + module. For groups, filter the children and
+  // drop the whole group if none remain visible.
+  const visibleMainNav = mainNavItems
+    .filter(item => item.roles.includes(userRole))
+    .map(item => item.children
+      ? { ...item, children: item.children.filter(ch => ch.roles.includes(userRole) && (!ch.module || isEnabled(ch.module))) }
+      : item)
+    .filter(item => item.children ? item.children.length > 0 : (!item.module || isEnabled(item.module)))
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/'
     return location.pathname.startsWith(path)
   }
+
+  // A group is active when its hub or any child route is active.
+  const groupActive = (item: NavItem) =>
+    isActive(item.to) || (item.children?.some(ch => isActive(ch.to)) ?? false)
+
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
+    if (typeof window !== 'undefined') {
+      try { return new Set(JSON.parse(localStorage.getItem(NAV_GROUPS_KEY) || '[]')) } catch { /* ignore */ }
+    }
+    return new Set()
+  })
+  const toggleGroup = (key: string) => setExpandedGroups(s => {
+    const n = new Set(s)
+    if (n.has(key)) n.delete(key); else n.add(key)
+    localStorage.setItem(NAV_GROUPS_KEY, JSON.stringify([...n]))
+    return n
+  })
 
   const navLinkClass = (path: string) => {
     const active = isActive(path)
@@ -319,6 +360,52 @@ export default function DashboardLayout() {
       )}
     </div>
   )
+
+  // Expandable nav group (e.g. Documents → Jobsheets, Estimates). Collapsed sidebar
+  // shows the group icon only (atomic, links to the hub); expanded shows children.
+  const NavGroup = ({ item }: { item: NavItem }) => {
+    const active = groupActive(item)
+    const open = expandedGroups.has(item.to) || active
+    const tone = active ? 'bg-primary/10 text-primary font-semibold' : 'text-[#5f636c] font-medium hover:bg-[#f3f3f1]'
+
+    if (isCollapsed) {
+      return (
+        <NavTooltip label={item.label}>
+          <Link to={item.to} className={`flex items-center justify-center text-[13.5px] rounded-[9px] px-2 py-[9px] transition-colors duration-150 ${tone}`}>
+            {item.icon}
+          </Link>
+        </NavTooltip>
+      )
+    }
+
+    return (
+      <div>
+        <div className={`flex items-center rounded-[9px] pr-1 transition-colors duration-150 ${tone}`}>
+          <Link to={item.to} className="flex items-center gap-[11px] flex-1 min-w-0 text-[13.5px] px-[11px] py-[9px]">
+            {item.icon}
+            <span className="flex-1 truncate">{item.label}</span>
+          </Link>
+          <button onClick={() => toggleGroup(item.to)} className="p-1 text-[#a4a8b0] hover:text-[#5f636c]" aria-label={open ? 'Collapse section' : 'Expand section'}>
+            <svg className={`w-4 h-4 transition-transform duration-150 ${open ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+        {open && (
+          <div className="mt-0.5 ml-[22px] space-y-0.5 border-l border-[#ededeb] pl-2">
+            {(item.children || []).map(ch => (
+              <Link key={ch.to} to={ch.to}
+                className={`flex items-center text-[13px] rounded-[8px] px-[10px] py-[7px] transition-colors duration-150 ${
+                  isActive(ch.to) ? 'bg-primary/10 text-primary font-semibold' : 'text-[#5f636c] font-medium hover:bg-[#f3f3f1]'
+                }`}>
+                {ch.label}
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   // Sidebar width classes
   const sidebarWidth = isCollapsed ? 'w-16' : 'w-[234px]'
@@ -407,7 +494,9 @@ export default function DashboardLayout() {
         <div className="relative flex-1 overflow-hidden">
           <nav ref={navRef} className={`h-full overflow-y-auto ${isCollapsed ? 'p-2 space-y-1' : 'px-3 py-2 space-y-0.5'}`}>
             {/* Main Navigation */}
-            {visibleMainNav.map(item => (
+            {visibleMainNav.map(item => item.children ? (
+              <NavGroup key={item.to} item={item} />
+            ) : (
               <NavTooltip key={item.to} label={item.label}>
                 <Link to={item.to} className={navLinkClass(item.to)}>
                   <span className="relative flex items-center justify-center">

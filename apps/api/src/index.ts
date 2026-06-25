@@ -78,6 +78,9 @@ import followUpSettings from './routes/follow-up-settings.js'
 import modulesRoute from './routes/modules.js'
 import vehicleLookup from './routes/vehicle-lookup.js'
 import jobsheetsRoute from './routes/jobsheets.js'
+import estimatesRoute from './routes/estimates.js'
+import estimateSettings from './routes/estimate-settings.js'
+import publicEstimateRoutes from './routes/public-estimate.js'
 import arrivalsRoute from './routes/arrivals.js'
 import bookingCodes from './routes/booking-codes.js'
 import serviceTypes from './routes/service-types.js'
@@ -181,6 +184,7 @@ app.route('/api/v1/vehicle-lookup', vehicleLookup)
 
 // Jobsheets (GMS) — top-level booking document + booking-code / service-type lookups
 app.route('/api/v1/jobsheets', jobsheetsRoute)
+app.route('/api/v1/estimates', estimatesRoute)
 app.route('/api/v1/booking-codes', bookingCodes)
 // Unified arrivals queue (DMS + jobsheet bookings) — feeds the Arrivals hub + dashboard widget
 app.route('/api/v1/arrivals', arrivalsRoute)
@@ -241,6 +245,7 @@ app.route('/api/v1/organizations/:orgId/follow-up-outcomes', followUpOutcomes)
 app.route('/api/v1/organizations/:orgId/follow-up-dispositions', followUpDispositions)
 app.route('/api/v1/organizations/:orgId/follow-up-timelines', followUpTimelines)
 app.route('/api/v1/organizations/:orgId/follow-up-settings', followUpSettings)
+app.route('/api/v1/organizations/:orgId/estimate-settings', estimateSettings)
 
 // Unable to send reasons routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/unable-to-send-reasons', unableToSendReasons)
@@ -279,6 +284,7 @@ app.route('/api/v1/pricing', pricing)
 
 // Public routes (no auth required)
 app.route('/api/public', publicRoutes)
+app.route('/api/public', publicEstimateRoutes)
 
 // Webhook routes (unauthenticated, validated by provider signature)
 app.use('/api/webhooks/*', RateLimiters.webhook())

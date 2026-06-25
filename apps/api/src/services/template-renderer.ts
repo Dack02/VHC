@@ -33,6 +33,7 @@ export interface TemplateContext {
   approvedCount?: number
   authorizedTotal?: number
   expiryDate?: string
+  estimateNumber?: string
 }
 
 /**

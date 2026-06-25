@@ -21,11 +21,11 @@ jobsheets.use('*', requireModule('jobsheets'))
 const SELECT = `
   *,
   customer:customers(id, first_name, last_name, mobile, email, phone, contact_name),
-  vehicle:vehicles(id, registration, make, model, year, fuel_type),
+  vehicle:vehicles(id, registration, make, model, year, fuel_type, mot_expiry_date, mot_status, mot_last_synced_at),
   service_type:service_types(id, code, label, colour),
   advisor:users!jobsheets_advisor_id_fkey(id, first_name, last_name),
   created_by_user:users!jobsheets_created_by_fkey(id, first_name, last_name),
-  linked_checks:health_checks!health_checks_jobsheet_id_fkey(id, status, job_state, inspection_required, vhc_reference, deleted_at, arrived_at, checked_in_at, mileage_in, key_location, time_required, customer_waiting, checkin_notes, checked_in_by_user:users!health_checks_checked_in_by_fkey(id, first_name, last_name)),
+  linked_checks:health_checks!health_checks_jobsheet_id_fkey(id, status, job_state, inspection_required, vhc_reference, deleted_at, arrived_at, checked_in_at, mileage_in, key_location, time_required, customer_waiting, checkin_notes, red_count, amber_count, green_count, completed_at, checked_in_by_user:users!health_checks_checked_in_by_fkey(id, first_name, last_name)),
   codes:jobsheet_booking_codes(booking_code:booking_codes(id, code, label, colour))
 `
 
@@ -72,7 +72,10 @@ function shapeJobsheet(row: any) {
           make: row.vehicle.make,
           model: row.vehicle.model,
           year: row.vehicle.year,
-          fuelType: row.vehicle.fuel_type
+          fuelType: row.vehicle.fuel_type,
+          motExpiryDate: row.vehicle.mot_expiry_date ?? null,
+          motStatus: row.vehicle.mot_status ?? null,
+          motLastSyncedAt: row.vehicle.mot_last_synced_at ?? null
         }
       : null,
     serviceType: row.service_type
@@ -82,7 +85,7 @@ function shapeJobsheet(row: any) {
     createdBy: row.created_by_user ? { id: row.created_by_user.id, firstName: row.created_by_user.first_name, lastName: row.created_by_user.last_name } : null,
     // Vehicle Status ("Work Status Code") is read through from the linked VHC
     // inspectionRequired distinguishes a real VHC (true) from a check-in-only visit shell (false).
-    healthCheck: hc ? { id: hc.id, status: hc.status, vehicleStatus: hc.job_state, vhcReference: hc.vhc_reference, inspectionRequired: hc.inspection_required ?? true } : null,
+    healthCheck: hc ? { id: hc.id, status: hc.status, vehicleStatus: hc.job_state, vhcReference: hc.vhc_reference, inspectionRequired: hc.inspection_required ?? true, redCount: hc.red_count ?? 0, amberCount: hc.amber_count ?? 0, greenCount: hc.green_count ?? 0, completedAt: hc.completed_at ?? null } : null,
     // Check-in details read through from the linked VHC (arrival → check-in happens on the VHC;
     // the check-in form writes these fields). null when no VHC or not yet arrived/checked in.
     checkIn: hc
@@ -106,6 +109,134 @@ function shapeJobsheet(row: any) {
           .filter(Boolean)
           .map((b: any) => ({ id: b.id, code: b.code, label: b.label ?? b.code, colour: b.colour }))
       : []
+  }
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/**
+ * Detail-only enrichment for the jobsheet card: vehicle service history, outstanding
+ * deferred work, and the recent customer message thread. Kept out of shapeJobsheet
+ * (and the list query) because each is a separate per-record query — fine for one
+ * detail page, too costly for a list.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+async function loadJobsheetExtras(orgId: string, shaped: any) {
+  const jobsheetId: string = shaped.id
+  const customerId: string | null = shaped.customer?.id ?? null
+  const vehicleId: string | null = shaped.vehicle?.id ?? null
+  const currentHcId: string | null = shaped.healthCheck?.id ?? null
+
+  // Quoted-work pricing — booked lines (jobsheet) ∪ the linked VHC's findings, top-level
+  // non-deleted only (mirrors GET /:id/work-lines). VAT is DB-trigger maintained, so we
+  // just sum the stored figures (price_override wins for the inc-VAT headline).
+  const pricingQuery = supabaseAdmin
+    .from('repair_items')
+    .select('subtotal, vat_amount, total_inc_vat, price_override, outcome_status')
+    .eq('organization_id', orgId)
+    .is('parent_repair_item_id', null)
+    .is('deleted_at', null)
+  const pricingPromise = currentHcId
+    ? pricingQuery.or(`jobsheet_id.eq.${jobsheetId},health_check_id.eq.${currentHcId}`)
+    : pricingQuery.eq('jobsheet_id', jobsheetId)
+
+  // Run the independent queries concurrently.
+  const [visitsRes, deferredRes, messagesRes, pricingRes, followUpRes] = await Promise.all([
+    // Vehicle service history (real VHCs for this vehicle, most recent first).
+    vehicleId
+      ? supabaseAdmin
+          .from('health_checks')
+          .select('id, created_at, completed_at, status')
+          .eq('organization_id', orgId)
+          .eq('vehicle_id', vehicleId)
+          .eq('inspection_required', true)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false })
+          .limit(50)
+      : Promise.resolve({ data: [] as any[] }),
+    // Outstanding deferred work for this vehicle (top-level items only — avoids
+    // double-counting grouped children, mirrors follow_up_pipeline).
+    vehicleId
+      ? supabaseAdmin
+          .from('repair_items')
+          .select('id, price_override, total_inc_vat, health_check:health_checks!inner(vehicle_id, organization_id)')
+          .eq('outcome_status', 'deferred')
+          .is('deleted_at', null)
+          .is('parent_repair_item_id', null)
+          .eq('health_check.organization_id', orgId)
+          .eq('health_check.vehicle_id', vehicleId)
+      : Promise.resolve({ data: [] as any[] }),
+    // Recent customer message thread (SMS), newest first.
+    customerId
+      ? supabaseAdmin
+          .from('sms_messages')
+          .select('id, direction, body, twilio_status, created_at, sender:users!sms_messages_sent_by_fkey(id, first_name, last_name)')
+          .eq('organization_id', orgId)
+          .eq('customer_id', customerId)
+          .order('created_at', { ascending: false })
+          .limit(6)
+      : Promise.resolve({ data: [] as any[] }),
+    pricingPromise,
+    // Follow-up case for this vehicle (if the sweep has created one) — lets the
+    // deferred-work banner open the case modal directly instead of the full list.
+    vehicleId
+      ? supabaseAdmin
+          .from('follow_up_cases')
+          .select('id, status, created_at')
+          .eq('organization_id', orgId)
+          .eq('vehicle_id', vehicleId)
+          .order('created_at', { ascending: false })
+          .limit(20)
+      : Promise.resolve({ data: [] as any[] })
+  ])
+
+  const visits = (visitsRes.data || []) as any[]
+  const previous = visits.find(v => v.id !== currentHcId) || null
+
+  const deferredItems = (deferredRes.data || []) as any[]
+  const deferredValue = deferredItems.reduce(
+    (sum, ri) => sum + Number(ri.price_override ?? ri.total_inc_vat ?? 0),
+    0
+  )
+
+  // Pick the follow-up case to deep-link the banner at: prefer an open one
+  // (most recent), else fall back to the most recent case of any status.
+  const followUpCases = (followUpRes.data || []) as any[]
+  const OPEN_FOLLOW_UP = ['active', 'booking_found', 'engaged', 'manual']
+  const followUpCaseId =
+    (followUpCases.find(c => OPEN_FOLLOW_UP.includes(c.status))?.id ?? followUpCases[0]?.id) || null
+
+  const recentMessages = ((messagesRes.data || []) as any[]).map(m => ({
+    id: m.id,
+    direction: m.direction,
+    body: m.body,
+    status: m.twilio_status,
+    createdAt: m.created_at,
+    senderName: m.sender ? `${m.sender.first_name} ${m.sender.last_name}`.trim() : null
+  }))
+
+  const priceItems = ((pricingRes.data || []) as any[]).filter(ri => ri.outcome_status !== 'deleted')
+  const totalIncVat = priceItems.reduce((sum, ri) => sum + Number(ri.price_override ?? ri.total_inc_vat ?? 0), 0)
+  const vatAmount = priceItems.reduce((sum, ri) => sum + Number(ri.vat_amount ?? 0), 0)
+
+  return {
+    history: {
+      totalVisits: visits.length,
+      lastVisitAt: previous ? (previous.completed_at || previous.created_at) : null
+    },
+    deferred: {
+      count: deferredItems.length,
+      totalValue: deferredValue,
+      caseId: followUpCaseId
+    },
+    recentMessages,
+    // Quoted total for the Overview card. net = inc − VAT keeps the subline consistent
+    // even when a price_override diverges from the stored subtotal/VAT.
+    work: {
+      itemCount: priceItems.length,
+      totalIncVat,
+      vat: vatAmount,
+      net: totalIncVat - vatAmount
+    }
   }
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -161,7 +292,9 @@ jobsheets.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'serv
       .single()
 
     if (error || !data) return c.json({ error: 'Jobsheet not found' }, 404)
-    return c.json(shapeJobsheet(data))
+    const shaped = shapeJobsheet(data)
+    const extras = await loadJobsheetExtras(auth.orgId, shaped)
+    return c.json({ ...shaped, ...extras })
   } catch (error) {
     console.error('Get jobsheet error:', error)
     return c.json({ error: 'Failed to get jobsheet' }, 500)

@@ -33,7 +33,10 @@ timeline.get('/:id/timeline', authorize(['super_admin', 'org_admin', 'site_admin
     // Verify health check belongs to org
     const { data: healthCheck } = await supabaseAdmin
       .from('health_checks')
-      .select('id, created_at')
+      .select(`
+        id, created_at, arrived_at, checked_in_at, checked_in_by,
+        checked_in_by_user:users!health_checks_checked_in_by_fkey(first_name, last_name)
+      `)
       .eq('id', id)
       .eq('organization_id', auth.orgId)
       .single()
@@ -288,6 +291,76 @@ timeline.get('/:id/timeline', authorize(['super_admin', 'org_admin', 'site_admin
             })
           }
         }
+      }
+    }
+
+    // 4. Arrival / check-in milestones — labelled events (clearer than the raw status
+    // change that backs them). checked_in_by is the one actor column on health_checks.
+    if (healthCheck.arrived_at) {
+      events.push({
+        id: `arrived_${healthCheck.id}`,
+        event_type: 'arrived',
+        timestamp: healthCheck.arrived_at as string,
+        user: null,
+        description: 'Vehicle arrived',
+        details: {}
+      })
+    }
+    if (healthCheck.checked_in_at) {
+      events.push({
+        id: `checkin_${healthCheck.id}`,
+        event_type: 'checked_in',
+        timestamp: healthCheck.checked_in_at as string,
+        user: extractUser(healthCheck.checked_in_by_user),
+        description: 'Vehicle checked in',
+        details: {}
+      })
+    }
+
+    // 5. Communications. SMS (both directions) comes from sms_messages; email sends come
+    // from communication_logs (SMS lives in sms_messages, so we only take email here to
+    // avoid double-counting).
+    const { data: smsData } = await supabaseAdmin
+      .from('sms_messages')
+      .select(`
+        id, direction, body, created_at,
+        sender:users!sms_messages_sent_by_fkey(first_name, last_name)
+      `)
+      .eq('health_check_id', id)
+      .order('created_at', { ascending: true })
+
+    if (smsData) {
+      for (const m of smsData) {
+        const inbound = m.direction === 'inbound'
+        events.push({
+          id: `sms_${m.id}`,
+          event_type: inbound ? 'message_received' : 'message_sent',
+          timestamp: m.created_at as string,
+          user: inbound ? null : extractUser(m.sender),
+          description: inbound ? 'Customer replied by SMS' : 'SMS sent to customer',
+          details: { channel: 'sms', body: m.body as string }
+        })
+      }
+    }
+
+    const { data: emailLogs } = await supabaseAdmin
+      .from('communication_logs')
+      .select('id, recipient, status, created_at')
+      .eq('health_check_id', id)
+      .eq('channel', 'email')
+      .in('status', ['sent', 'delivered'])
+      .order('created_at', { ascending: true })
+
+    if (emailLogs) {
+      for (const log of emailLogs) {
+        events.push({
+          id: `email_${log.id}`,
+          event_type: 'email_sent',
+          timestamp: log.created_at as string,
+          user: null,
+          description: 'Email sent to customer',
+          details: { channel: 'email', recipient: (log.recipient as string) || undefined }
+        })
       }
     }
 

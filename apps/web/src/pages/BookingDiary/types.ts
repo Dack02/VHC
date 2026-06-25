@@ -23,9 +23,25 @@ export interface DiarySummaryResponse {
   days: DiaryDay[]
 }
 
+// Whole-window payload (per-day headers + every booking across the range) used by
+// the Agenda and Table list views — one round-trip, grouped client-side.
+export interface DiaryRangeResponse {
+  siteId: string
+  from: string
+  to: string
+  days: DiaryDay[]
+  bookings: DiaryBooking[]
+}
+
+export interface DiaryPerson {
+  id: string
+  name: string | null
+}
+
 export interface DiaryBooking {
   bookingId: string
   source: 'gms' | 'dms'
+  apptDate: string           // YYYY-MM-DD (the day this booking sits on)
   apptTime: string | null
   registration: string | null
   customerName: string | null
@@ -39,6 +55,9 @@ export interface DiaryBooking {
   followUpCaseId: string | null
   status: string | null
   jobState: string | null
+  technician: DiaryPerson | null   // assigned tech (NULL = unassigned / future booking)
+  advisor: DiaryPerson | null      // service advisor who took the booking
+  bayNumber: string | null
   routeTarget: { jobsheetId: string | null; healthCheckId: string | null }
 }
 
@@ -141,4 +160,55 @@ export function formatTime(t: string | null): string {
   if (!t) return '—'
   const hhmm = t.slice(0, 5)
   return hhmm === '00:00' ? '—' : hhmm
+}
+
+// ---------------------------------------------------------------------------
+// List-view grouping + status helpers
+// ---------------------------------------------------------------------------
+
+// Secondary grouping dimension for the Grouped list view (the primary grouping
+// is always the day).
+export type GroupBy = 'advisor' | 'type' | 'technician'
+
+export const GROUP_BY_LABELS: Record<GroupBy, string> = {
+  advisor: 'Advisor',
+  type: 'Job type',
+  technician: 'Technician'
+}
+
+// A booking's primary job type. MOT wins (it's a hard capacity/lane concept);
+// otherwise the booking's service-type label, falling back to 'General'.
+// While-you-wait / loan stay as flags (a job can be MOT *and* a waiter).
+export function jobTypeOf(b: DiaryBooking): string {
+  if (b.isMot) return 'MOT'
+  const st = b.serviceType?.trim()
+  return st && st.length ? st : 'General'
+}
+
+// Resolve a booking's { key, label } for a grouping dimension. Unassigned
+// advisor/technician collapse into a single trailing 'Unassigned' bucket.
+export function groupValue(b: DiaryBooking, by: GroupBy): { key: string; label: string } {
+  if (by === 'type') {
+    const label = jobTypeOf(b)
+    return { key: `type:${label.toLowerCase()}`, label }
+  }
+  const person = by === 'advisor' ? b.advisor : b.technician
+  if (!person) return { key: 'unassigned', label: 'Unassigned' }
+  return { key: person.id, label: person.name || 'Unknown' }
+}
+
+// Left status stripe colour for a booking row: amber while it's being worked,
+// green once complete, otherwise neutral. Reads job_state first (workshop board
+// state) then falls back to the VHC pipeline status.
+export function statusStripeClass(b: DiaryBooking): string {
+  const s = (b.jobState || b.status || '').toLowerCase()
+  if (['in_workshop', 'work_in_progress', 'in_progress', 'paused'].includes(s)) return 'bg-rag-amber'
+  if (['work_complete', 'collected', 'completed'].includes(s)) return 'bg-rag-green'
+  return 'bg-gray-300'
+}
+
+// Humanise a workshop/VHC state token for display ('in_workshop' → 'In workshop').
+export function humanizeState(s: string | null): string {
+  if (!s) return '—'
+  return s.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase())
 }

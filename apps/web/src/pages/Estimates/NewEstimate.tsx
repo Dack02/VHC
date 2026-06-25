@@ -3,8 +3,8 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useModules } from '../../contexts/ModulesContext'
 import { api, Vehicle, Customer, User, Site } from '../../lib/api'
-import WorkDetailsPanel from './WorkDetailsPanel'
-import CustomerCardModal from './components/CustomerCardModal'
+import WorkDetailsPanel from '../Jobsheets/WorkDetailsPanel'
+import CustomerCardModal from '../Jobsheets/components/CustomerCardModal'
 
 interface VehicleLookupResponse {
   found: boolean
@@ -22,9 +22,8 @@ interface VehicleLookupDraft {
   engineSize: string; year: string; motStatus: string | null; motExpiryDate: string | null; motTestCount: number
 }
 interface CustomerSearchResult { id: string; firstName: string; lastName: string; email: string | null; mobile: string | null }
-interface LookupOption { id: string; code: string; colour: string }
 
-export default function NewJobsheet() {
+export default function NewEstimate() {
   const { session, user } = useAuth()
   const navigate = useNavigate()
   const { isEnabled } = useModules()
@@ -33,8 +32,6 @@ export default function NewJobsheet() {
 
   const [sites, setSites] = useState<Site[]>([])
   const [advisors, setAdvisors] = useState<User[]>([])
-  const [serviceTypes, setServiceTypes] = useState<LookupOption[]>([])
-  const [bookingCodeOptions, setBookingCodeOptions] = useState<LookupOption[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,45 +57,28 @@ export default function NewJobsheet() {
   const [linkingCustomer, setLinkingCustomer] = useState(false)
   const [customerError, setCustomerError] = useState<string | null>(null)
 
-  // jobsheet fields
-  const [form, setForm] = useState({
-    siteId: '', serviceTypeId: '', advisorId: '', mileage: '', dueInDate: '', dueInTime: '', requestedDeliveryAt: '',
-    courtesyVehicleRequired: false, collectionAndDelivery: false, vehicleOnSite: false, customerContactNotes: ''
-  })
-  const [bookingCodeIds, setBookingCodeIds] = useState<string[]>([])
+  // estimate fields
+  const [form, setForm] = useState({ siteId: '', advisorId: '', mileage: '', validUntil: '', customerNotes: '', internalNotes: '' })
 
-  // work required
-  const [requiresVhc, setRequiresVhc] = useState(true)
-
-  // Draft jobsheet — created once a vehicle + customer exist so the Work Details
-  // panel can attach priced work lines on this same screen. Committed on submit,
-  // discarded on cancel / navigate-away (no reference or VHC until commit).
+  // Draft estimate — created once a vehicle + customer exist so the Work Details panel
+  // can attach priced quote lines on this same screen. Committed on submit, discarded
+  // on cancel / navigate-away (no reference until commit).
   const [draftId, setDraftId] = useState<string | null>(null)
   const draftIdRef = useRef<string | null>(null)
   const committedRef = useRef(false)
   const creatingDraftRef = useRef(false)
   useEffect(() => { draftIdRef.current = draftId }, [draftId])
 
-  // inline-add state
-  const [addingServiceType, setAddingServiceType] = useState(false)
-  const [newServiceType, setNewServiceType] = useState('')
-  const [addingCode, setAddingCode] = useState(false)
-  const [newCode, setNewCode] = useState('')
-
   useEffect(() => {
     const load = async () => {
       if (!token) return
       try {
-        const [siteData, userData, stData, bcData] = await Promise.all([
+        const [siteData, userData] = await Promise.all([
           api<{ sites: Site[] }>('/api/v1/sites', { token }),
-          api<{ users: User[] }>('/api/v1/users', { token }),
-          api<{ serviceTypes: LookupOption[] }>('/api/v1/service-types?active_only=true', { token }),
-          api<{ bookingCodes: LookupOption[] }>('/api/v1/booking-codes?active_only=true', { token })
+          api<{ users: User[] }>('/api/v1/users', { token })
         ])
         setSites(siteData.sites || [])
         setAdvisors((userData.users || []).filter(u => u.role !== 'technician'))
-        setServiceTypes(stData.serviceTypes || [])
-        setBookingCodeOptions(bcData.bookingCodes || [])
         const me = user?.id
         setForm(f => ({
           ...f,
@@ -106,7 +86,7 @@ export default function NewJobsheet() {
           advisorId: me && (userData.users || []).some(u => u.id === me) ? me : ''
         }))
       } catch (err) {
-        console.error('Failed to load jobsheet form data:', err)
+        console.error('Failed to load estimate form data:', err)
       } finally {
         setLoading(false)
       }
@@ -149,14 +129,9 @@ export default function NewJobsheet() {
     if (creatingDraftRef.current) return null
     creatingDraftRef.current = true
     try {
-      const res = await api<{ id: string }>('/api/v1/jobsheets/draft', {
+      const res = await api<{ id: string }>('/api/v1/estimates/draft', {
         method: 'POST', token,
-        body: {
-          vehicleId: selectedVehicle.id,
-          dueInDate: form.dueInDate || undefined,
-          siteId: form.siteId || undefined,
-          advisorId: form.advisorId || undefined
-        }
+        body: { vehicleId: selectedVehicle.id, siteId: form.siteId || undefined, advisorId: form.advisorId || undefined }
       })
       setDraftId(res.id); draftIdRef.current = res.id
       return res.id
@@ -165,11 +140,11 @@ export default function NewJobsheet() {
     } finally {
       creatingDraftRef.current = false
     }
-  }, [token, selectedVehicle?.id, selectedVehicle?.customer_id, form.dueInDate, form.siteId, form.advisorId])
+  }, [token, selectedVehicle?.id, selectedVehicle?.customer_id, form.siteId, form.advisorId])
 
-  const discardDraft = useCallback((jid: string) => {
+  const discardDraft = useCallback((eid: string) => {
     if (!token) return
-    api(`/api/v1/jobsheets/${jid}/discard`, { method: 'POST', token }).catch(() => {})
+    api(`/api/v1/estimates/${eid}/discard`, { method: 'POST', token }).catch(() => {})
   }, [token])
 
   // Create the draft as soon as a vehicle has a linked customer.
@@ -180,8 +155,8 @@ export default function NewJobsheet() {
   // Discard an uncommitted draft when leaving the page (in-app navigation).
   useEffect(() => {
     return () => {
-      const jid = draftIdRef.current
-      if (jid && !committedRef.current) discardDraft(jid)
+      const eid = draftIdRef.current
+      if (eid && !committedRef.current) discardDraft(eid)
     }
   }, [discardDraft])
 
@@ -193,8 +168,8 @@ export default function NewJobsheet() {
     setSelectedVehicle(vehicle); setSearchQuery(''); setSearchResults([]); resetCustomerUi()
   }
   const clearVehicle = () => {
-    const jid = draftIdRef.current
-    if (jid) { discardDraft(jid); setDraftId(null); draftIdRef.current = null }
+    const eid = draftIdRef.current
+    if (eid) { discardDraft(eid); setDraftId(null); draftIdRef.current = null }
     setSelectedVehicle(null); resetCustomerUi()
   }
 
@@ -276,75 +251,39 @@ export default function NewJobsheet() {
     } finally { setLinkingCustomer(false) }
   }
 
-  const handleAddServiceType = async () => {
-    if (!token || !newServiceType.trim()) return
-    try {
-      const created = await api<LookupOption>('/api/v1/service-types', { method: 'POST', token, body: { code: newServiceType.trim() } })
-      setServiceTypes(s => [...s, created])
-      setForm(f => ({ ...f, serviceTypeId: created.id }))
-      setNewServiceType(''); setAddingServiceType(false)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add service type')
-    }
-  }
-  const handleAddCode = async () => {
-    if (!token || !newCode.trim()) return
-    try {
-      const created = await api<LookupOption>('/api/v1/booking-codes', { method: 'POST', token, body: { code: newCode.trim() } })
-      setBookingCodeOptions(s => [...s, created])
-      setBookingCodeIds(ids => [...ids, created.id])
-      setNewCode(''); setAddingCode(false)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add booking code')
-    }
-  }
-  const toggleCode = (codeId: string) =>
-    setBookingCodeIds(ids => ids.includes(codeId) ? ids.filter(c => c !== codeId) : [...ids, codeId])
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!token) return
     if (!selectedVehicle) { setError('Please select a vehicle'); return }
     if (!selectedVehicle.customer_id) { setError('Please add a customer for this vehicle'); return }
-    if (!form.dueInDate) { setError('Please set a due-in date'); return }
     setSubmitting(true); setError(null)
     try {
-      // The draft normally exists already (created when the customer was linked); create it
-      // now if a race left it unset. Commit assigns the JS reference + kicks off the VHC.
-      let jid = draftIdRef.current
-      if (!jid) jid = await createDraft()
-      if (!jid) throw new Error('Could not start the jobsheet — please try again.')
-      const res = await api<{ id: string }>(`/api/v1/jobsheets/${jid}/commit`, {
+      let eid = draftIdRef.current
+      if (!eid) eid = await createDraft()
+      if (!eid) throw new Error('Could not start the estimate — please try again.')
+      const res = await api<{ id: string }>(`/api/v1/estimates/${eid}/commit`, {
         method: 'POST', token,
         body: {
-          dueInDate: form.dueInDate,
-          dueInTime: form.dueInTime || undefined,
           siteId: form.siteId || undefined,
-          serviceTypeId: form.serviceTypeId || undefined,
           advisorId: form.advisorId || undefined,
           mileage: form.mileage ? parseInt(form.mileage, 10) : undefined,
-          requestedDeliveryAt: form.requestedDeliveryAt ? new Date(form.requestedDeliveryAt).toISOString() : undefined,
-          courtesyVehicleRequired: form.courtesyVehicleRequired,
-          collectionAndDelivery: form.collectionAndDelivery,
-          vehicleOnSite: form.vehicleOnSite,
-          customerContactNotes: form.customerContactNotes || undefined,
-          bookingCodeIds,
-          vhcRequired: requiresVhc
-          // bookingNotes is owned by the Work Details panel (saved on the draft as you type)
+          validUntil: form.validUntil || undefined,
+          customerNotes: form.customerNotes || undefined,
+          internalNotes: form.internalNotes || undefined
         }
       })
       committedRef.current = true
-      navigate(`/jobsheets/${res.id}`)
+      navigate(`/estimates/${res.id}`)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create jobsheet')
+      setError(err instanceof Error ? err.message : 'Failed to create estimate')
     } finally { setSubmitting(false) }
   }
 
   const handleCancel = () => {
-    const jid = draftIdRef.current
-    if (jid && !committedRef.current) discardDraft(jid)
+    const eid = draftIdRef.current
+    if (eid && !committedRef.current) discardDraft(eid)
     draftIdRef.current = null // prevent the unmount cleanup discarding again
-    navigate('/jobsheets')
+    navigate('/estimates')
   }
 
   if (loading) {
@@ -357,10 +296,10 @@ export default function NewJobsheet() {
   return (
     <div className="max-w-7xl">
       <div className="flex items-center gap-3 mb-6">
-        <Link to="/jobsheets" className="text-gray-500 hover:text-gray-700">
+        <Link to="/estimates" className="text-gray-500 hover:text-gray-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900">New Jobsheet</h1>
+        <h1 className="text-2xl font-bold text-gray-900">New Estimate</h1>
       </div>
 
       {error && <div className="bg-red-50 text-red-700 p-4 mb-6 rounded-lg text-sm">{error}</div>}
@@ -449,7 +388,7 @@ export default function NewJobsheet() {
               </div>
             ) : (
               <div className="border border-amber-200 bg-amber-50/40 rounded-xl p-4 space-y-3">
-                <p className="text-xs text-amber-700">Search for an existing customer or add a new one — a jobsheet needs one.</p>
+                <p className="text-xs text-amber-700">Search for an existing customer or add a new one — an estimate needs one.</p>
                 {!showNewCustomer ? (
                   <>
                     <div className="relative">
@@ -495,34 +434,12 @@ export default function NewJobsheet() {
           </div>
         )}
 
-        {/* Booking details */}
+        {/* Estimate details */}
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className={labelCls}>Due In Date *</label>
-            <input type="date" value={form.dueInDate} onChange={(e) => setForm({ ...form, dueInDate: e.target.value })} className={inputCls} required />
+            <label className={labelCls}>Valid Until <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input type="date" value={form.validUntil} onChange={(e) => setForm({ ...form, validUntil: e.target.value })} className={inputCls} />
           </div>
-          <div>
-            <label className={labelCls}>Due In Time <span className="text-gray-400 font-normal">(optional — blank = flexible)</span></label>
-            <input type="time" value={form.dueInTime} onChange={(e) => setForm({ ...form, dueInTime: e.target.value })} className={inputCls} />
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-sm font-medium text-gray-700">Service Type</label>
-              <button type="button" onClick={() => setAddingServiceType(v => !v)} className="text-xs text-primary hover:underline">+ New</button>
-            </div>
-            <select value={form.serviceTypeId} onChange={(e) => setForm({ ...form, serviceTypeId: e.target.value })} className={inputCls}>
-              <option value="">Select…</option>
-              {serviceTypes.map(st => <option key={st.id} value={st.id}>{st.code}</option>)}
-            </select>
-            {addingServiceType && (
-              <div className="flex gap-2 mt-2">
-                <input type="text" value={newServiceType} onChange={e => setNewServiceType(e.target.value)} placeholder="New service type" className={inputCls} />
-                <button type="button" onClick={handleAddServiceType} className="px-3 py-2 bg-primary text-white text-sm rounded-lg shrink-0">Add</button>
-              </div>
-            )}
-          </div>
-
           <div>
             <label className={labelCls}>Service Advisor</label>
             <select value={form.advisorId} onChange={(e) => setForm({ ...form, advisorId: e.target.value })} className={inputCls}>
@@ -530,17 +447,10 @@ export default function NewJobsheet() {
               {advisors.map(a => <option key={a.id} value={a.id}>{a.firstName} {a.lastName}</option>)}
             </select>
           </div>
-
           <div>
             <label className={labelCls}>Mileage (optional)</label>
             <input type="number" value={form.mileage} onChange={(e) => setForm({ ...form, mileage: e.target.value })} placeholder="Optional" className={inputCls} />
           </div>
-
-          <div>
-            <label className={labelCls}>Requested delivery date/time</label>
-            <input type="datetime-local" value={form.requestedDeliveryAt} onChange={(e) => setForm({ ...form, requestedDeliveryAt: e.target.value })} className={inputCls} />
-          </div>
-
           {sites.length > 1 && (
             <div>
               <label className={labelCls}>Site</label>
@@ -549,79 +459,36 @@ export default function NewJobsheet() {
               </select>
             </div>
           )}
-
-          <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {([['courtesyVehicleRequired', 'Courtesy Vehicle Required'], ['collectionAndDelivery', 'Collection and Delivery'], ['vehicleOnSite', 'Vehicle on Site']] as const).map(([key, label]) => (
-              <label key={key} className="flex items-center gap-2 text-sm text-gray-700">
-                <input type="checkbox" checked={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.checked })} className="rounded border-gray-300 text-primary focus:ring-primary" />
-                {label}
-              </label>
-            ))}
-          </div>
-
           <div className="sm:col-span-2">
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-sm font-medium text-gray-700">Booking Codes</label>
-              <button type="button" onClick={() => setAddingCode(v => !v)} className="text-xs text-primary hover:underline">+ New</button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {bookingCodeOptions.map(bc => {
-                const on = bookingCodeIds.includes(bc.id)
-                return (
-                  <button type="button" key={bc.id} onClick={() => toggleCode(bc.id)}
-                    className={`px-2.5 py-1 rounded-full text-xs font-medium border ${on ? 'text-white border-transparent' : 'text-gray-600 border-gray-300 bg-white'}`}
-                    style={on ? { backgroundColor: bc.colour } : undefined}>
-                    {bc.code}
-                  </button>
-                )
-              })}
-              {bookingCodeOptions.length === 0 && <span className="text-xs text-gray-400">No booking codes yet.</span>}
-            </div>
-            {addingCode && (
-              <div className="flex gap-2 mt-2">
-                <input type="text" value={newCode} onChange={e => setNewCode(e.target.value)} placeholder="New booking code" className={inputCls} />
-                <button type="button" onClick={handleAddCode} className="px-3 py-2 bg-primary text-white text-sm rounded-lg shrink-0">Add</button>
-              </div>
-            )}
+            <label className={labelCls}>Notes to Customer <span className="text-gray-400 font-normal">(shown on the estimate)</span></label>
+            <textarea value={form.customerNotes} onChange={(e) => setForm({ ...form, customerNotes: e.target.value })} rows={2} className={inputCls} />
           </div>
-
           <div className="sm:col-span-2">
-            <label className={labelCls}>Customer Contact Notes</label>
-            <textarea value={form.customerContactNotes} onChange={(e) => setForm({ ...form, customerContactNotes: e.target.value })} rows={3} className={inputCls} />
+            <label className={labelCls}>Internal Notes <span className="text-gray-400 font-normal">(staff only)</span></label>
+            <textarea value={form.internalNotes} onChange={(e) => setForm({ ...form, internalNotes: e.target.value })} rows={2} className={inputCls} />
           </div>
-        </div>
-
-        {/* Work Required */}
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-3">
-          <h2 className="text-sm font-semibold text-gray-900">Work Required</h2>
-          <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input type="checkbox" checked={requiresVhc} onChange={(e) => setRequiresVhc(e.target.checked)} className="rounded border-gray-300 text-primary focus:ring-primary" />
-            Requires VHC (health check)
-          </label>
-          <p className="text-xs text-gray-400">A health check is created with the booking by default. Untick if this job doesn’t need an inspection — booked work stays on the jobsheet either way. Add labour, parts and packages under <span className="font-medium text-gray-500">Work Details</span> →</p>
         </div>
 
         <div className="flex gap-3">
-          <button type="submit" disabled={submitting || !selectedVehicle?.customer_id || !form.dueInDate} className="px-6 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50">
-            {submitting ? 'Creating…' : 'Create Jobsheet'}
+          <button type="submit" disabled={submitting || !selectedVehicle?.customer_id} className="px-6 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50">
+            {submitting ? 'Creating…' : 'Create Estimate'}
           </button>
           <button type="button" onClick={handleCancel} className="px-6 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50">Cancel</button>
         </div>
         </form>
 
-        {/* Right: priced work built live on the draft jobsheet */}
+        {/* Right: priced quote lines built live on the draft estimate */}
         {draftId && token ? (
           <WorkDetailsPanel
             className="lg:col-span-1 lg:sticky lg:top-6"
-            parent={{ type: 'jobsheet', id: draftId }}
+            parent={{ type: 'estimate', id: draftId }}
             token={token}
             organizationId={user?.organization?.id}
-            notes={{ label: 'Booking Notes', value: null, onSave: (v) => api(`/api/v1/jobsheets/${draftId}`, { method: 'PATCH', token, body: { bookingNotes: v } }).then(() => {}) }}
           />
         ) : (
           <div className="lg:col-span-1 lg:sticky lg:top-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
             <h2 className="text-sm font-semibold text-gray-900 mb-2">Work Details</h2>
-            <p className="text-sm text-gray-400">Select a vehicle and customer to start adding labour, parts and packages — they’ll be saved to this booking as you go.</p>
+            <p className="text-sm text-gray-400">Select a vehicle and customer to start adding labour, parts and packages — they’ll be saved to this estimate as you go.</p>
           </div>
         )}
       </div>

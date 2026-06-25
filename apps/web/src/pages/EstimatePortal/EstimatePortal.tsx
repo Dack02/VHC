@@ -116,9 +116,15 @@ export default function EstimatePortal() {
     if (colour) document.documentElement.style.setProperty('--est-brand', colour)
   }, [data?.organization?.primaryColor])
 
+  // Background line-save promises in flight. A finalising action (submit / approve-all /
+  // decline-all) awaits these first so a just-tapped line can't persist *after* finalisation
+  // and get rejected.
+  const pendingLineSaves = useRef<Promise<unknown>[]>([])
+
   const post = async (path: string, body?: Record<string, unknown>) => {
     setBusy(true)
     try {
+      if (pendingLineSaves.current.length) await Promise.allSettled(pendingLineSaves.current)
       const res = await fetch(`${API_URL}/api/public/estimate/${token}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -132,7 +138,25 @@ export default function EstimatePortal() {
     } finally { setBusy(false) }
   }
 
-  if (loading) {
+  // A single line's approve/decline updates that line locally first (instant, no flicker),
+  // then persists in the background. The priced totals don't change and the page stays open
+  // until the customer submits, so there's no need to refetch — we only resync on failure.
+  const decideLine = (lineId: string, approved: boolean) => {
+    setError(null)
+    setData(prev => prev ? { ...prev, lines: prev.lines.map(l => l.id === lineId ? { ...l, customerApproved: approved } : l) } : prev)
+    const p = fetch(`${API_URL}/api/public/estimate/${token}/lines/${lineId}/${approved ? 'approve' : 'decline'}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+    }).then(async res => {
+      if (res.status === 410) { setExpired(true); return }
+      if (!res.ok) { setError('Could not save your response. Please try again.'); await load() }
+    }).catch(async () => { setError('Could not save your response. Please try again.'); await load() })
+    pendingLineSaves.current.push(p)
+    p.finally(() => { pendingLineSaves.current = pendingLineSaves.current.filter(x => x !== p) })
+  }
+
+  // Full-screen spinner only on the very first load — never on a refetch, which would tear
+  // the whole page down and flash (the flicker on each per-line decision).
+  if (loading && !data) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-spin h-8 w-8 border-4 border-gray-300 border-t-gray-600 rounded-full" /></div>
   }
   if (expired) {
@@ -206,12 +230,12 @@ export default function EstimatePortal() {
               {/* Per-line decision (only when no signature gate + not yet finalised) */}
               {!responded && !requireSig && (
                 <div className="flex items-center gap-2 mt-3">
-                  <button disabled={busy} onClick={() => post(`/lines/${line.id}/approve`)}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-lg border ${line.customerApproved === true ? 'bg-green-600 text-white border-green-600' : 'text-gray-700 border-gray-300 hover:bg-gray-50'}`}>
+                  <button onClick={() => decideLine(line.id, true)}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors ${line.customerApproved === true ? 'bg-green-600 text-white border-green-600' : 'text-gray-700 border-gray-300 hover:bg-gray-50'}`}>
                     {line.customerApproved === true ? 'Approved' : 'Approve'}
                   </button>
-                  <button disabled={busy} onClick={() => post(`/lines/${line.id}/decline`)}
-                    className={`px-3 py-1.5 text-sm font-medium rounded-lg border ${line.customerApproved === false ? 'bg-red-600 text-white border-red-600' : 'text-gray-700 border-gray-300 hover:bg-gray-50'}`}>
+                  <button onClick={() => decideLine(line.id, false)}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors ${line.customerApproved === false ? 'bg-red-600 text-white border-red-600' : 'text-gray-700 border-gray-300 hover:bg-gray-50'}`}>
                     {line.customerApproved === false ? 'Declined' : 'Decline'}
                   </button>
                 </div>

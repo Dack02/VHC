@@ -7,8 +7,9 @@
 
 Introduce a **Repair Type** — an org-configurable classification chosen **per work group** when pricing
 (Clutch, Suspension, Service, MOT, Diagnostic…). It **drives the labour rate** (each Repair Type points
-at a labour code), becomes the backbone of new **profitability/mix reporting** (by repair type, sliced by
-vehicle brand/fuel), and later will anchor **parts pricing**. Separately, the existing jobsheet
+at a labour code), becomes the backbone of new **revenue/mix reporting** (by repair type, sliced by
+vehicle brand/fuel), and later will anchor **parts pricing** (and, with it, true-margin reporting).
+Separately, the existing jobsheet
 **"Service Type" is relabelled "Main Booking Requirement"** (the single main reason the car is in).
 
 Because a work group is already a polymorphic `repair_items` row shared by VHC / Jobsheet / Estimate,
@@ -30,9 +31,10 @@ mostly additive + UI; the one behavioural change is making the labour rate deriv
 5. ✅ **VHC default derivation: template-driven, advisor-overridable.** A check item carries a default
    Repair Type (`template_items.repair_type_id`); when an advisor builds a work group from findings, the
    type is pre-filled from the linked items (heuristic) and can be overridden at pricing.
-6. ✅ **Reporting scope:** revenue/conversion per Repair Type **+** vehicle brand/fuel slicing **+** TRUE
-   MARGIN (requires new cost capture — see §8). **Efficiency (actual vs sold time per type) is DEFERRED**
-   (needs a clocking→repair-item link the model doesn't have).
+6. ✅ **Reporting scope:** revenue/conversion per Repair Type **+** vehicle brand/fuel slicing.
+   **TRUE MARGIN is DEFERRED** (Leo, 2026-06-25) until the **Parts module** exists — cost capture belongs
+   with parts pricing, so margin is revisited then, not here. **Efficiency (actual vs sold time per type)
+   is also DEFERRED** (needs a clocking→repair-item link the model doesn't have). See §12.
 7. ✅ **`repair_types` is NOT gated behind the `jobsheets` module** — VHC repair items need it, and they
    exist without GMS. It is a core pricing primitive (like `labour_codes`).
 8. ✅ **Soft delete** `repair_types` (`is_active`), so historical reports keep a resolvable type.
@@ -125,36 +127,23 @@ ALTER TABLE template_items ADD COLUMN IF NOT EXISTS repair_type_id UUID
 Assignable per item in `TemplateBuilder.tsx`; **must also be copied in the template clone path**
 (`templates.ts` ≈L322, next to `reason_type`) and in starter-template seeding, or new orgs lose it.
 
-### 4.4 Cost capture (for TRUE MARGIN — §6 reporting)
+### 4.4 Cost capture — DEFERRED (with the Parts module)
 
-Margin needs cost, which the model lacks today. Two additive pieces:
-
-```sql
--- Internal labour cost rate (cost vs the existing sell rate hourly_rate)
-ALTER TABLE labour_codes  ADD COLUMN IF NOT EXISTS cost_rate DECIMAL(10,2);     -- e.g. tech wage £/h
-ALTER TABLE repair_labour ADD COLUMN IF NOT EXISTS cost_total DECIMAL(10,2) DEFAULT 0; -- hours * cost_rate (snapshot)
-
--- Roll up parts cost (repair_parts.cost_price already exists per line) onto the item/option
-ALTER TABLE repair_items   ADD COLUMN IF NOT EXISTS parts_cost_total  DECIMAL(10,2) DEFAULT 0;
-ALTER TABLE repair_items   ADD COLUMN IF NOT EXISTS labour_cost_total DECIMAL(10,2) DEFAULT 0;
-ALTER TABLE repair_options ADD COLUMN IF NOT EXISTS parts_cost_total  DECIMAL(10,2) DEFAULT 0;
-ALTER TABLE repair_options ADD COLUMN IF NOT EXISTS labour_cost_total DECIMAL(10,2) DEFAULT 0;
-```
-
-`calculate_repair_item_totals()` / `..._option_totals()` extend to also sum `repair_parts.cost_price *
-quantity` → `parts_cost_total` and `repair_labour.cost_total` → `labour_cost_total`. **Margin** (ex-VAT)
-= `subtotal − (parts_cost_total + labour_cost_total)`. Cost is **snapshotted** like the sell rate, so
-historical quotes/reports stay stable. (Labour cost is org-level via `labour_codes.cost_rate`, not a
-per-technician wage model — a deliberate simplification.)
+> **Deferred (Leo, 2026-06-25).** True-margin reporting needs cost (a labour `cost_rate` + a parts-cost
+> rollup), and cost belongs with **parts pricing**. We do NOT build cost capture in this initiative — it
+> is revisited once the **Parts module** exists. No `cost_rate` / `cost_total` / `*_cost_total` columns
+> here. Repair Type still cleanly anchors it later (a repair type → labour code already carries a rate; a
+> cost rate slots alongside without reshaping anything). See §12.
 
 ## 5. Behaviour — labour LOCKED to Repair Type
 
 - The group header gains a **Repair Type selector**. Setting it resolves
-  `repair_types.default_labour_code_id` and **that** labour code's `hourly_rate`, `cost_rate`, and
-  `is_vat_exempt` are what new `repair_labour` lines use. **The per-line labour-code dropdown is hidden.**
+  `repair_types.default_labour_code_id` and **that** labour code's `hourly_rate` and `is_vat_exempt` are
+  what new `repair_labour` lines use. **The per-line labour-code dropdown is hidden.** (When cost capture
+  lands with the Parts module, the same labour code's future `cost_rate` rides along — §4.4/§12.)
 - **Gate:** "Add labour" is disabled until a Repair Type is set (no type → no rate). UI nudge: "Pick a
   Repair Type first."
-- **Snapshot preserved:** rate/cost are still copied onto `repair_labour` at entry; changing a Repair
+- **Snapshot preserved:** the rate is still copied onto `repair_labour` at entry; changing a Repair
   Type's labour code later does **not** reprice existing lines (quote integrity). Reports read stored
   values, not the current code.
 - **VAT:** `is_vat_exempt` flows from the resolved labour code into `repair_labour.is_vat_exempt`, so
@@ -168,6 +157,65 @@ per-technician wage model — a deliberate simplification.)
   add `service_packages.default_repair_type_id`) so packaged work is typed; reconcile the package's stored
   labour rate vs the repair-type rate (`apply-service-package.ts` ≈L49-87) — prefer the repair-type rate
   under the lock model for consistency.
+
+### 5.1 Two moments — copy-time vs entry-time (build checklist)
+
+Repair Type touches pricing at **two distinct moments**. They have different fixes and different rules —
+keep them separate or you get the silent bugs below.
+
+**(A) Entry-time — when a labour line is ADDED (live pricing).** Applies while building an Estimate, a
+Jobsheet, OR a VHC. Because all three share the same labour endpoints, **this is ONE fix that covers all
+three documents.** The rate is resolved from the group's `repair_type → default_labour_code` and
+**snapshotted** onto `repair_labour`. Every site that resolves a rate must honour the lock, or pricing
+diverges between groups/options/edits/packages:
+  - `POST /repair-items/:id/labour` — the group path (`labour.ts` ≈L60-172)
+  - `POST /repair-options/:id/labour` — the **option** (Standard/Premium) path, a SEPARATE endpoint that's
+    easy to miss (`labour.ts` ≈L218-293) → resolve via the option's parent group's `repair_type_id`
+  - `PATCH /repair-labour/:id` — the re-resolve-on-edit path (`labour.ts` ≈L341-355)
+  - `apply-service-package.ts` — the package-apply rate fallback (≈L49-87)
+  - **Recommended:** extract one `resolveLockedRate(repairItemId)` helper used by all four, so the lock
+    cannot drift.
+
+**(B) Copy-time — when an estimate CONVERTS to a jobsheet.** This is a **pure deep-copy, NOT a
+re-resolution.** `copyLineToJobsheet` (`estimates.ts` ≈L438) must copy `repair_type_id` **alongside** the
+already-snapshotted labour + parts rows. The rate is **not** re-derived from the repair type — the
+customer-approved price is preserved verbatim; the copied `repair_type_id` is carried for
+**reporting/display only**. (So later changing a repair type's rate never alters a won job.) Concrete fix:
+add `repair_type_id` to the `.select()` (≈L441) and the `.insert()` (≈L450). (When cost capture lands
+later, the labour `cost_total` snapshot joins this copy too — §4.4/§12.)
+
+**Why they coexist cleanly:** copy-time writes `repair_labour` rows directly (it never calls the
+entry-time endpoints), so the snapshot is preserved and the two paths never collide. Fresh work typed
+straight onto a jobsheet still uses path (A).
+
+**Rule of thumb:** *(A) = derive + snapshot; (B) = copy the snapshot.* Miss (A)'s option/PATCH/package
+siblings → divergent rates. Miss (B)'s `repair_type_id` → won work falls into "Unassigned" in reports.
+
+### 5.2 Service packages — one package, one Repair Type (decision: Leo 2026-06-25)
+
+A package pours labour + parts into **one** group via `applyServicePackageToRepairItem` (called from
+VHC/MRI, jobsheet, estimate, and manual apply — all through that one service). The lock changes packages:
+
+- **`service_packages.default_repair_type_id`** (NEW, FK → `repair_types`, ON DELETE SET NULL) — now
+  **required** for any package with labour (no type → no rate). The group-creating wrappers stamp the new
+  group's `repair_type_id` from it: `createBookedLineFromPackage` (`jobsheets.ts` ≈L978-1008), the estimate
+  equivalent (`estimates.ts` ≈L647-671), the manual apply-package route, and the MRI path
+  (`health-checks/helpers.ts` ≈L270).
+- **Rate comes from the type, not the package.** `apply-service-package.ts` (≈L49-86) stops using
+  `service_package_labour.labour_code_id` / stored `rate`; it resolves the rate (and `is_vat_exempt`) from
+  the group's repair type's default labour code — the same `resolveLockedRate` helper as the live editor
+  (§5.1-A). Package labour lines then contribute **hours** (+ discount/notes) only.
+- **Combined menus = two packages.** "Service & MOT" is built by applying the Service package AND the MOT
+  package → two groups (correct VAT + correct repair-type reporting). The existing multi-select apply
+  (`servicePackageIds`, `jobsheets.ts` ≈L510) makes that one action.
+- **Package builder UI** (Settings → Service Packages): add a Repair Type selector per package; **retire
+  the per-line labour-code column** (rate now derives from the type). Labour rows become hours + notes.
+
+**Migration wrinkle — legacy packages.** `service_package_labour.labour_code_id` is NOT NULL today and some
+packages mix codes (e.g. a Service+MOT package with a VAT-exempt MOT line) — those can't stay one group
+under the lock. Plan: **keep** the column (don't drop), backfill `service_packages.default_repair_type_id`
+from each package's dominant labour code (code→type map), and **flag mixed-VAT packages for manual split**
+rather than silently forcing them onto one rate. Never auto-destroy package data.
 
 ## 6. VHC default derivation
 
@@ -200,9 +248,9 @@ New **Repair Types** report (catalogue tile in `ReportsHub.tsx`; page modelled o
 
 - **Aggregation via a Postgres RPC** (mirror `item_report_usage`, `20260613120000_item_report_usage_fn.sql`)
   to dodge the ~1000-row PostgREST cap. Returns one row per `repair_type` (× optional `make`/`fuel_type`)
-  with: identified £, authorised/sold £, declined £, deferred £, conversion %, work-mix %, and
-  **margin** (sell − parts_cost − labour_cost via §4.4).
-- **Plumbing:** add `repair_type_id` (+ the cost columns) to the repair-item SELECT lists in
+  with: identified £, authorised/sold £, declined £, deferred £, conversion %, work-mix %. (Revenue-side
+  only — **no margin** this initiative; cost is deferred with the Parts module, §4.4/§12.)
+- **Plumbing:** add `repair_type_id` to the repair-item SELECT lists in
   `hc-period-service.ts` (`ITEM_LINK_SELECT` ≈L226, `itemSelect` ≈L142) and `RepairItemLike`
   (`lib/metrics.ts` ≈L14); extend `aggregateRepairItemsByHc` (≈L208) with a repair-type bucket OR do it
   all in the RPC (preferred for the brand/fuel cross-tab).
@@ -211,8 +259,8 @@ New **Repair Types** report (catalogue tile in `ReportsHub.tsx`; page modelled o
   `normalizeName`. (Could later promote to a make-reference table, reusing the tyre-make-reference pattern.)
 - **Group rollup:** respect the parent/child de-dup already in `aggregateRepairItemsByHc` so per-type
   totals don't double-count group + children.
-- **Deferred:** efficiency (actual vs sold hours per type) — `technician_time_entries` are job-level with
-  no repair-item link; would need a new linkage. Not in scope.
+- **Deferred:** margin/profitability (needs cost capture — Parts module, §12) and efficiency (actual vs
+  sold hours per type — `technician_time_entries` are job-level with no repair-item link). Not in scope.
 
 ## 9. Settings, module, seeding
 
@@ -234,27 +282,36 @@ New **Repair Types** report (catalogue tile in `ReportsHub.tsx`; page modelled o
 One additive, `IF NOT EXISTS` / guarded migration (e.g. `YYYYMMDDHHMMSS_repair_types.sql`), **ordered
 AFTER** the GMS stack (jobsheets `20260623*`, estimates `20260626*`, which are uncommitted + not yet on
 dev). Contents: §4.1 table + trigger + RLS + index; §4.2 `repair_items.repair_type_id`; §4.3
-`template_items.repair_type_id`; §4.4 cost columns; update `calculate_repair_item_totals()` /
-`..._option_totals()` for cost rollup; default-seed CROSS JOIN; (optional) `seed_repair_types_for_org`.
-Deploy via the pipeline (`supabase db push`), **never** out-of-band MCP SQL (migration-drift rule).
+`template_items.repair_type_id`; §5.2 `service_packages.default_repair_type_id` + dominant-code backfill
+(+ flag mixed-VAT packages, don't drop `service_package_labour.labour_code_id`); default-seed CROSS JOIN;
+(optional) `seed_repair_types_for_org`. (No cost columns / trigger changes — cost capture is deferred to
+the Parts module, §4.4/§12.) Deploy via the pipeline (`supabase db push`), **never** out-of-band MCP SQL
+(migration-drift rule).
 
 ## 11. Phasing
 
 - **P1 — Foundation:** `repair_types` table + CRUD + Settings page + `repair_items.repair_type_id`;
   label-rename Service Type → Main Booking Requirement. No behaviour change yet.
 - **P2 — Labour lock:** Repair Type selector on the group header in `LabourTab.tsx` (≈L660-697) +
-  `WorkDetailsPanel.tsx` (≈L343-354); rate resolution from repair type in `labour.ts` (item + option
-  paths); hide per-line code selector; gate "add labour". Carry `repair_type_id` through
-  `formatRepairItem` (≈L235-289), create/PATCH, and `copyLineToJobsheet`.
+  `WorkDetailsPanel.tsx` (≈L343-354); one `resolveLockedRate` helper used by the item + option + PATCH +
+  package-apply paths (§5.1-A); hide per-line code selector; gate "add labour". Carry `repair_type_id`
+  through `formatRepairItem` (≈L235-289), create/PATCH, and `copyLineToJobsheet`.
+- **P2.5 — Packages:** `service_packages.default_repair_type_id` + apply-path rate-from-type + builder UI
+  (type selector, retire per-line labour-code column) + legacy backfill/flagging (§5.2).
 - **P3 — VHC defaults:** `template_items.repair_type_id` in TemplateBuilder + clone/seed; derive default in
   `CreateRepairGroupModal.tsx`.
-- **P4 — Cost capture:** §4.4 columns + trigger maths + the parts cost-price/labour cost-rate UI.
-- **P5 — Reporting:** repair-type RPC + report page + brand/fuel slicing + margin.
+- **P4 — Reporting:** repair-type RPC + report page + brand/fuel slicing (revenue/conversion only).
+- **(Later, with Parts module) — Margin:** cost capture + margin reporting (§4.4/§12). Not in this initiative.
 
 ## 12. Open / future
 
-- **Parts pricing link** (user's stated future): `repair_types` can later carry a default parts markup /
-  price matrix — the table is shaped to grow.
+- **Parts module + true-margin (deferred, Leo 2026-06-25):** the Parts module is the home for cost. When
+  it lands, add the §4.4 cost layer (labour `cost_rate` + parts-cost rollup) and margin reporting. Repair
+  Type already anchors this (type → labour code carries a rate; a cost rate slots alongside). `repair_types`
+  can also carry a default parts markup / price matrix then — the table is shaped to grow.
+- **Multi-type packages** (Option 2 — `service_package_labour.repair_type_id` per line, one package →
+  several groups) — a future enhancement if combined "Service & MOT"-in-one-package proves worth it; for
+  now combined menus = apply two packages (§5.2).
 - **Efficiency reporting** needs a clocking→repair-item link (deferred).
 - **DMS Main Booking Requirement** (map free-text `booked_service_type` to structured) — separate effort.
 - **Reviving `@vhc/shared`** as the real source of truth — out of scope; add types locally per current
@@ -262,9 +319,10 @@ Deploy via the pipeline (`supabase db push`), **never** out-of-band MCP SQL (mig
 
 ## 13. Gotchas (carry into the build)
 
-- `copyLineToJobsheet` (estimates) silently drops new columns — add `repair_type_id` + cost columns.
-- The `repair_options` labour path must honour the repair-type rate too, or pricing diverges.
-- Rate/cost are snapshots — Repair Type rate changes don't reprice existing lines (intended).
+- `copyLineToJobsheet` (estimates) silently drops new columns — add `repair_type_id` (see §5.1-B). When cost capture lands later, add its snapshot here too.
+- The `repair_options` labour path (+ PATCH + package apply) must honour the repair-type rate too, or pricing diverges (see §5.1-A).
+- Service packages must carry a Repair Type (`default_repair_type_id`) and resolve rate from it; legacy mixed-VAT packages need split, not silent re-rating (see §5.2).
+- The labour rate is snapshotted — Repair Type rate changes don't reprice existing lines (intended).
 - `repair_types` ungated (not behind `jobsheets`) so VHC-only orgs get it.
 - Soft-delete repair types (history); reports need an "Unassigned" bucket for NULLs.
 - Normalise free-text `make`/`fuel_type` before grouping.

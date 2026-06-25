@@ -83,6 +83,25 @@ export function daysLabel(days: number | null): string | null {
   return `${days} days`
 }
 
+// Relative countdown to a not-yet-arrived booking's due date, compared by calendar
+// day: "Today" / "Tomorrow" / "in N days" (or "Yesterday" / "N days ago" if it slipped
+// past). Used by the Future Bookings tile, where days-since-import is meaningless.
+export function dueCountdownLabel(iso: string | null): string | null {
+  if (!iso) return null
+  const due = new Date(iso)
+  if (isNaN(due.getTime())) return null
+  const startOfToday = new Date()
+  startOfToday.setHours(0, 0, 0, 0)
+  const startOfDue = new Date(due)
+  startOfDue.setHours(0, 0, 0, 0)
+  const days = Math.round((startOfDue.getTime() - startOfToday.getTime()) / 86400000)
+  if (days === 0) return 'Today'
+  if (days === 1) return 'Tomorrow'
+  if (days > 1) return `in ${days} days`
+  if (days === -1) return 'Yesterday'
+  return `${Math.abs(days)} days ago`
+}
+
 export function labelForVhc(status: string): string {
   return vhcStateLabels[status] || status.replace(/_/g, ' ')
 }

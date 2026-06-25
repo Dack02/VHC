@@ -346,12 +346,23 @@ const dmsImportWorker = new Worker(
         bookingIds: importJob.bookingIds
       }
     } else {
-      // Scheduled import - use today's date and fetch next 2 working days ahead
+      // Scheduled import — fetch from today out to the org's configured forward
+      // horizon (import_window_days, default 365) so ALL future bookings are
+      // imported, not just the next couple of days. New bookings made since the
+      // last run are picked up by the importer's dedup/reconcile on each tick.
       const scheduledJob = job.data as DmsScheduledImportJob
-      const { getNextWorkingDays } = await import('../lib/date-utils.js')
       const today = new Date().toISOString().split('T')[0]
-      const futureDays = getNextWorkingDays(new Date(), 2)
-      const endDate = futureDays[futureDays.length - 1]
+
+      const { data: dms } = await supabaseAdmin
+        .from('organization_dms_settings')
+        .select('import_window_days')
+        .eq('organization_id', scheduledJob.organizationId)
+        .maybeSingle()
+      const windowDays = dms?.import_window_days && dms.import_window_days > 0 ? dms.import_window_days : 365
+
+      const end = new Date()
+      end.setUTCDate(end.getUTCDate() + windowDays)
+      const endDate = end.toISOString().split('T')[0]
 
       importOptions = {
         organizationId: scheduledJob.organizationId,

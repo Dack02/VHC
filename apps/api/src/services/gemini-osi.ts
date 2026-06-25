@@ -484,23 +484,27 @@ export async function fetchDiaryBookings(
       method: 'GET'
     })
 
-    // Log the full raw response for debugging
-    try {
-      // Navigate up from src/services to project root, then to docs folder
-      const docsDir = join(__dirname, '..', '..', '..', '..', 'docs')
-      const outputPath = join(docsDir, 'gemini-full-response-sample.json')
+    // Optionally dump the full raw response for debugging. Gated behind an env
+    // flag: with the import window now spanning a full year, writing every
+    // response to disk on each run would be a large, pointless blocking write.
+    if (process.env.DMS_DEBUG_DUMP === 'true') {
+      try {
+        // Navigate up from src/services to project root, then to docs folder
+        const docsDir = join(__dirname, '..', '..', '..', '..', 'docs')
+        const outputPath = join(docsDir, 'gemini-full-response-sample.json')
 
-      console.log('[Gemini] Saving full raw response to:', outputPath)
+        console.log('[Gemini] Saving full raw response to:', outputPath)
 
-      // Create docs directory if it doesn't exist
-      if (!existsSync(docsDir)) {
-        mkdirSync(docsDir, { recursive: true })
+        // Create docs directory if it doesn't exist
+        if (!existsSync(docsDir)) {
+          mkdirSync(docsDir, { recursive: true })
+        }
+
+        writeFileSync(outputPath, JSON.stringify(response, null, 2), 'utf-8')
+        console.log('[Gemini] Raw response saved successfully')
+      } catch (saveError) {
+        console.warn('[Gemini] Failed to save raw response:', saveError)
       }
-
-      writeFileSync(outputPath, JSON.stringify(response, null, 2), 'utf-8')
-      console.log('[Gemini] Raw response saved successfully')
-    } catch (saveError) {
-      console.warn('[Gemini] Failed to save raw response:', saveError)
     }
 
     // Check for API-level errors

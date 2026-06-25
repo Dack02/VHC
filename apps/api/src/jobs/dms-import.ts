@@ -39,6 +39,8 @@ export interface ImportResult {
   importId: string
   bookingsFound: number
   bookingsImported: number
+  bookingsUpdated: number    // existing awaiting_arrival bookings refreshed/rescheduled
+  bookingsCancelled: number  // existing bookings cancelled (explicit DMS status or vanished from feed)
   bookingsSkipped: number
   bookingsFailed: number
   customersCreated: number
@@ -318,54 +320,28 @@ async function findOrCreateVehicle(
   return { vehicleId: newVehicle.id, created: true }
 }
 
-/**
- * Check if health check already exists for this booking
- */
-async function healthCheckExists(
-  organizationId: string,
-  externalSource: string,
-  externalId: string
-): Promise<boolean> {
-  const { data } = await supabaseAdmin
-    .from('health_checks')
-    .select('id')
-    .eq('organization_id', organizationId)
-    .eq('external_source', externalSource)
-    .eq('external_id', externalId)
-    .single()
-
-  return !!data
+/** Compare two timestamp values for equality, tolerant of ISO format differences. */
+function timestampsEqual(a: string | null, b: string | null): boolean {
+  if (!a && !b) return true
+  if (!a || !b) return false
+  const ta = new Date(a).getTime()
+  const tb = new Date(b).getTime()
+  if (isNaN(ta) || isNaN(tb)) return a === b
+  return ta === tb
 }
 
 /**
- * Create a health check from a booking
+ * Derive the mutable booking fields VHC syncs from a Gemini booking. Shared by
+ * the create (insert) and reconcile (update) paths so a freshly-imported health
+ * check and a re-imported / rescheduled one are derived identically — the keys
+ * map 1:1 to health_checks columns.
  */
-async function createHealthCheck(
-  organizationId: string,
-  siteId: string | null,
-  customerId: string,
-  vehicleId: string,
-  booking: GeminiBooking,
-  templateId: string,
-  importBatchId: string,
-  externalSource: string
-): Promise<string> {
-  console.log('[DMS Import] createHealthCheck called with:', {
-    organizationId,
-    siteId,
-    customerId,
-    vehicleId,
-    templateId,
-    importBatchId,
-    bookingId: booking.bookingId
-  })
-
+function deriveBookingFields(booking: GeminiBooking) {
   // Parse promise time from booking
   let promiseTime: string | null = null
   if (booking.bookingDate && booking.bookingTime) {
     try {
       promiseTime = new Date(`${booking.bookingDate}T${booking.bookingTime}`).toISOString()
-      console.log('[DMS Import] Parsed promise time:', promiseTime)
     } catch (e) {
       console.warn('[DMS Import] Failed to parse promise time:', e)
     }
@@ -392,27 +368,15 @@ async function createHealthCheck(
       ...(r.labourItems || []).map(l => l.description || '')
     ])
   ].join(' ').toLowerCase()
-  const isMotBooking = /\bmot\b/.test(motText)
 
-  const insertData = {
-    organization_id: organizationId,
-    site_id: siteId,
-    customer_id: customerId,
-    vehicle_id: vehicleId,
-    template_id: templateId,
-    status: 'awaiting_arrival',  // DMS imports start in awaiting_arrival status
+  return {
     mileage_in: booking.vehicleMileage || null,
     promise_time: promiseTime,
     notes: booking.description || null,
-    external_id: booking.bookingId,
-    external_source: externalSource,
-    import_batch_id: importBatchId,
-    // Phase 1 Quick Wins - Additional fields
     customer_waiting: booking.customerWaiting || false,
     loan_car_required: booking.loanCarRequired || false,
     is_internal: booking.isInternal || false,
     due_date: dueDate,
-    booked_date: new Date().toISOString(), // Record when booking was imported
     jobsheet_number: booking.jobsheetNumber || null,
     jobsheet_status: booking.jobsheetStatus || null,
     booked_repairs: booking.bookedRepairs && booking.bookedRepairs.length > 0
@@ -421,7 +385,46 @@ async function createHealthCheck(
     // Booking Diary metadata (previously dropped on import)
     estimated_hours: booking.durationHours && booking.durationHours > 0 ? booking.durationHours : null,
     booked_service_type: booking.serviceType || null,
-    is_mot_booking: isMotBooking
+    is_mot_booking: /\bmot\b/.test(motText),
+  }
+}
+
+/**
+ * Create a health check from a booking
+ */
+async function createHealthCheck(
+  organizationId: string,
+  siteId: string | null,
+  customerId: string,
+  vehicleId: string,
+  booking: GeminiBooking,
+  templateId: string,
+  importBatchId: string,
+  externalSource: string
+): Promise<string> {
+  console.log('[DMS Import] createHealthCheck called with:', {
+    organizationId,
+    siteId,
+    customerId,
+    vehicleId,
+    templateId,
+    importBatchId,
+    bookingId: booking.bookingId
+  })
+
+  const insertData = {
+    organization_id: organizationId,
+    site_id: siteId,
+    customer_id: customerId,
+    vehicle_id: vehicleId,
+    template_id: templateId,
+    status: 'awaiting_arrival',  // DMS imports start in awaiting_arrival status
+    external_id: booking.bookingId,
+    external_source: externalSource,
+    import_batch_id: importBatchId,
+    booked_date: new Date().toISOString(), // Record when booking was imported
+    // Mutable booking fields (kept in sync on re-import via the reconcile path)
+    ...deriveBookingFields(booking)
   }
   console.log('[DMS Import] Creating health check with data:', insertData)
 
@@ -466,6 +469,8 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
     importId: '',
     bookingsFound: 0,
     bookingsImported: 0,
+    bookingsUpdated: 0,
+    bookingsCancelled: 0,
     bookingsSkipped: 0,
     bookingsFailed: 0,
     customersCreated: 0,
@@ -565,43 +570,129 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
 
     // Process each booking
     const externalSource = 'gemini_osi'
+    const isSelective = !!(bookingIds && bookingIds.length > 0)
+
+    // Batch-fetch existing health checks for these bookings up front (chunked)
+    // rather than an N+1 existence check per booking — important now that a
+    // single run can span a full year of bookings.
+    const allExternalIds = diaryResponse.bookings.map(b => b.bookingId)
+    const existingByExtId = new Map<string, {
+      id: string
+      status: string
+      due_date: string | null
+      promise_time: string | null
+      booked_repairs: unknown
+      estimated_hours: number | string | null
+      booked_service_type: string | null
+      is_mot_booking: boolean | null
+      customer_waiting: boolean | null
+      loan_car_required: boolean | null
+      jobsheet_status: string | null
+      is_internal: boolean | null
+    }>()
+    for (let j = 0; j < allExternalIds.length; j += 200) {
+      const chunkIds = allExternalIds.slice(j, j + 200)
+      if (chunkIds.length === 0) continue
+      const { data: existingRows } = await supabaseAdmin
+        .from('health_checks')
+        .select('id, external_id, status, due_date, promise_time, booked_repairs, estimated_hours, booked_service_type, is_mot_booking, customer_waiting, loan_car_required, jobsheet_status, is_internal')
+        .eq('organization_id', organizationId)
+        .eq('external_source', externalSource)
+        .in('external_id', chunkIds)
+        .is('deleted_at', null)
+      for (const r of existingRows || []) existingByExtId.set(r.external_id, r)
+    }
 
     for (let i = 0; i < diaryResponse.bookings.length; i++) {
       const booking = diaryResponse.bookings[i]
-      console.log(`\n[DMS Import] ========== Processing booking ${i + 1}/${diaryResponse.bookings.length} ==========`)
-      console.log('[DMS Import] Booking raw data:', JSON.stringify(booking, null, 2))
 
       try {
         // If selective import, skip bookings not in the list
-        if (bookingIds && bookingIds.length > 0 && !bookingIds.includes(booking.bookingId)) {
+        if (isSelective && bookingIds && !bookingIds.includes(booking.bookingId)) {
           result.bookingsSkipped++
           continue
         }
 
-        // Skip cancelled/completed bookings
-        if (['cancelled', 'completed'].includes(booking.status.toLowerCase())) {
-          console.log('[DMS Import] Skipping - status is:', booking.status)
+        const existing = existingByExtId.get(booking.bookingId)
+        const statusLower = (booking.status || '').toLowerCase()
+        const isCancelSignal = ['cancelled', 'canceled', 'no show', 'no-show', 'noshow'].includes(statusLower)
+        const isCompletedSignal = statusLower === 'completed'
+
+        // ---- Existing booking: reconcile, don't re-insert ----
+        if (existing) {
+          // Never touch a check that has progressed past awaiting_arrival — that
+          // would clobber real workshop state (arrived / in-progress / etc.).
+          if (existing.status !== 'awaiting_arrival') {
+            result.bookingsSkipped++
+            continue
+          }
+
+          // Cancelled in the DMS → cancel our check so it drops out of the diary.
+          // Defensive: Gemini's diary feed does not currently emit a cancelled
+          // ArrivalStatus (cancelled bookings simply drop out of the feed), so this
+          // rarely fires in practice — it's here for if/when an explicit signal
+          // appears. The status guard in the WHERE keeps it atomic against a
+          // booking an advisor just progressed between the batch read and here.
+          if (isCancelSignal) {
+            await supabaseAdmin
+              .from('health_checks')
+              .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+              .eq('id', existing.id)
+              .eq('status', 'awaiting_arrival')
+            result.bookingsCancelled++
+            continue
+          }
+          // Completed directly in the DMS (never processed in VHC) → leave as-is.
+          if (isCompletedSignal) {
+            result.bookingsSkipped++
+            continue
+          }
+
+          // Reschedule / refresh: write back only the DMS-authoritative fields
+          // that changed. notes, mileage_in and jobsheet_number are intentionally
+          // NOT reconciled — they can be edited in VHC (advisor notes, actual
+          // mileage captured on arrival) and a re-import must not clobber that.
+          const fields = deriveBookingFields(booking)
+          const changed: Record<string, unknown> = {}
+          if (!timestampsEqual(existing.due_date, fields.due_date)) changed.due_date = fields.due_date
+          if (!timestampsEqual(existing.promise_time, fields.promise_time)) changed.promise_time = fields.promise_time
+          if (JSON.stringify(existing.booked_repairs ?? []) !== JSON.stringify(fields.booked_repairs)) changed.booked_repairs = fields.booked_repairs
+          const existingHours = existing.estimated_hours == null ? null : Number(existing.estimated_hours)
+          if (existingHours !== fields.estimated_hours) changed.estimated_hours = fields.estimated_hours
+          if ((existing.booked_service_type ?? null) !== fields.booked_service_type) changed.booked_service_type = fields.booked_service_type
+          if ((existing.jobsheet_status ?? null) !== fields.jobsheet_status) changed.jobsheet_status = fields.jobsheet_status
+          if (Boolean(existing.is_mot_booking) !== fields.is_mot_booking) changed.is_mot_booking = fields.is_mot_booking
+          if (Boolean(existing.is_internal) !== fields.is_internal) changed.is_internal = fields.is_internal
+          if (Boolean(existing.customer_waiting) !== fields.customer_waiting) changed.customer_waiting = fields.customer_waiting
+          if (Boolean(existing.loan_car_required) !== fields.loan_car_required) changed.loan_car_required = fields.loan_car_required
+
+          if (Object.keys(changed).length > 0) {
+            changed.updated_at = new Date().toISOString()
+            // Re-assert the awaiting_arrival guard at write time so we can't race a
+            // booking an advisor just progressed between the batch read and here.
+            await supabaseAdmin
+              .from('health_checks')
+              .update(changed)
+              .eq('id', existing.id)
+              .eq('status', 'awaiting_arrival')
+            result.bookingsUpdated++
+          } else {
+            result.bookingsSkipped++
+          }
+          continue
+        }
+
+        // ---- New booking ----
+        // Don't import a booking already cancelled/completed in the DMS.
+        if (isCancelSignal || isCompletedSignal) {
           result.bookingsSkipped++
           continue
         }
 
-        // Check if already imported
-        const exists = await healthCheckExists(organizationId, externalSource, booking.bookingId)
-        if (exists) {
-          console.log('[DMS Import] Skipping - already imported')
-          result.bookingsSkipped++
-          continue
-        }
-
-        console.log('[DMS Import] Step 1: Finding or creating customer...')
         // Find or create customer
         const customerResult = await findOrCreateCustomer(organizationId, booking, externalSource)
-        console.log('[DMS Import] Customer result:', customerResult)
-        if (customerResult.created) {
-          result.customersCreated++
-        }
+        if (customerResult.created) result.customersCreated++
 
-        console.log('[DMS Import] Step 2: Finding or creating vehicle...')
         // Find or create vehicle
         const vehicleResult = await findOrCreateVehicle(
           organizationId,
@@ -609,14 +700,10 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
           booking,
           externalSource
         )
-        console.log('[DMS Import] Vehicle result:', vehicleResult)
-        if (vehicleResult.created) {
-          result.vehiclesCreated++
-        }
+        if (vehicleResult.created) result.vehiclesCreated++
 
-        console.log('[DMS Import] Step 3: Creating health check...')
         // Create health check
-        const healthCheckId = await createHealthCheck(
+        await createHealthCheck(
           organizationId,
           effectiveSiteId,
           customerResult.customerId,
@@ -626,17 +713,14 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
           result.importId,
           externalSource
         )
-        console.log('[DMS Import] Health check created:', healthCheckId)
 
         result.bookingsImported++
         result.healthChecksCreated++
-        console.log('[DMS Import] Booking imported successfully!')
 
       } catch (bookingError) {
         result.bookingsFailed++
         const errorMessage = bookingError instanceof Error ? bookingError.message : 'Unknown error'
-        console.error('[DMS Import] FAILED to import booking:', errorMessage)
-        console.error('[DMS Import] Full error:', bookingError)
+        console.error('[DMS Import] FAILED to process booking:', errorMessage)
         result.errors.push({
           bookingId: booking.bookingId,
           error: errorMessage
@@ -648,9 +732,20 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
       }
     }
 
+    // NOTE: automatic cancellation of bookings that have VANISHED from the DMS
+    // feed is deliberately NOT done here. Gemini's diary feed has no explicit
+    // cancelled signal, and "absent from the feed" is unsafe to treat as cancelled
+    // without (a) a Gemini-site ↔ VHC-site mapping, (b) partial/truncated-feed
+    // detection, and (c) a soft, reversible cancel — otherwise one bad feed could
+    // permanently delete real future bookings (cancelled is a terminal status).
+    // Tracked as a follow-up. Re-imports still refresh/reschedule existing
+    // bookings above, and an explicit DMS cancel status is handled in the loop.
+
     console.log('\n[DMS Import] ========== Import Summary ==========')
     console.log('[DMS Import] Bookings found:', result.bookingsFound)
     console.log('[DMS Import] Bookings imported:', result.bookingsImported)
+    console.log('[DMS Import] Bookings updated:', result.bookingsUpdated)
+    console.log('[DMS Import] Bookings cancelled:', result.bookingsCancelled)
     console.log('[DMS Import] Bookings skipped:', result.bookingsSkipped)
     console.log('[DMS Import] Bookings failed:', result.bookingsFailed)
     console.log('[DMS Import] Customers created:', result.customersCreated)
@@ -705,6 +800,8 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
     logger.info('DMS import completed', {
       ...logContext,
       imported: result.bookingsImported,
+      updated: result.bookingsUpdated,
+      cancelled: result.bookingsCancelled,
       skipped: result.bookingsSkipped,
       failed: result.bookingsFailed
     })

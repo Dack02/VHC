@@ -568,8 +568,10 @@ dmsSettings.get('/preview', async (c) => {
       })
     }
 
-    // Check if would exceed daily limit
-    const limitExceeded = willImport.length > remainingCapacity
+    // Daily-limit gating. Skipped for a full backfill (allUpcoming): that import
+    // runs queued in the background and bypasses the per-day cap, so the preview
+    // must not park the overflow into "would exceed" (which the modal can't select).
+    const limitExceeded = !allUpcoming && willImport.length > remainingCapacity
     const actualWillImport = limitExceeded ? willImport.slice(0, remainingCapacity) : willImport
     const wouldExceedLimit = limitExceeded ? willImport.slice(remainingCapacity) : []
 

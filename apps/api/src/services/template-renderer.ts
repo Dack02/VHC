@@ -576,7 +576,7 @@ export const SAMPLE_CONTEXT: TemplateContext = {
   vehicleMakeModel: 'BMW 3 Series',
   publicUrl: 'https://inspect.ollosoft.io/view/abc123',
   dealershipName: 'Premier Motors',
-  dealershipPhone: '01onal 123456',
+  dealershipPhone: '01234 567890',
   redCount: 2,
   amberCount: 3,
   greenCount: 15,

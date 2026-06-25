@@ -11,7 +11,7 @@ import {
   Spinner, ErrorNote, LoadBar, CapacityFigures, CountPills, BookingRow,
   useBookingOpener, RefreshButton, ToolbarButton, type Density
 } from './shared'
-import { addDays, type DiaryDay, type DiaryBooking } from './types'
+import { addDays, isoDow, ALL_DOWS, type DiaryDay, type DiaryBooking } from './types'
 
 const COLLAPSED_KEY = 'vhc_diary_agenda_collapsed'
 
@@ -95,7 +95,14 @@ export default function AgendaListView({ today, windowDays, onChangeWindow, dens
 }) {
   const from = today
   const to = useMemo(() => addDays(today, windowDays - 1), [today, windowDays])
-  const { days, bookings, loading, error, refresh } = useDiaryRange(from, to)
+  const { days, bookings, operatingDays, loading, error, refresh } = useDiaryRange(from, to)
+
+  // Skip non-operating weekdays (closed days), but keep any day that has bookings.
+  const opSet = useMemo(() => new Set(operatingDays && operatingDays.length ? operatingDays : ALL_DOWS), [operatingDays])
+  const visibleDays = useMemo(
+    () => (days || []).filter(d => opSet.has(isoDow(d.date)) || d.totalJobs > 0),
+    [days, opSet]
+  )
   const { open, modal } = useBookingOpener()
 
   const [collapsed, setCollapsed] = useState<Set<string>>(loadCollapsed)
@@ -138,7 +145,7 @@ export default function AgendaListView({ today, windowDays, onChangeWindow, dens
         <ErrorNote message={error} />
       ) : (
         <div className="flex flex-col gap-3">
-          {(days || []).map(day => (
+          {visibleDays.map(day => (
             <AgendaDay
               key={day.date}
               day={day}

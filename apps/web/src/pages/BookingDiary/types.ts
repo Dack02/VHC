@@ -13,6 +13,14 @@ export function monthFirst(ymd: string): string {
   return `${ymd.slice(0, 7)}-01`
 }
 
+// ISO day-of-week for a YYYY-MM-DD string: 1=Mon .. 7=Sun.
+export function isoDow(ymd: string): number {
+  const day = new Date(`${ymd}T12:00:00`).getDay() // 0=Sun..6=Sat
+  return ((day + 6) % 7) + 1
+}
+
+export const ALL_DOWS = [1, 2, 3, 4, 5, 6, 7]
+
 export interface DiaryDay {
   date: string
   totalJobs: number
@@ -31,6 +39,7 @@ export interface DiarySummaryResponse {
   from: string
   to: string
   days: DiaryDay[]
+  operatingDays?: number[]   // ISO dow (1=Mon..7=Sun) the site is open
 }
 
 // Whole-window payload (per-day headers + every booking across the range) used by
@@ -41,6 +50,7 @@ export interface DiaryRangeResponse {
   to: string
   days: DiaryDay[]
   bookings: DiaryBooking[]
+  operatingDays?: number[]   // ISO dow (1=Mon..7=Sun) the site is open
 }
 
 export interface DiaryPerson {

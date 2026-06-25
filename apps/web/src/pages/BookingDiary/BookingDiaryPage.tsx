@@ -4,7 +4,7 @@ import { useDiarySummary } from './useDiaryData'
 import {
   Spinner, ErrorNote, LoadBar, CountPills, RefreshButton, DayDetail, type Density
 } from './shared'
-import { addDays, weekStart, addMonths, monthFirst, loadTone, type DiaryDay, type GroupBy } from './types'
+import { addDays, weekStart, addMonths, monthFirst, loadTone, isoDow, ALL_DOWS, type DiaryDay, type GroupBy } from './types'
 import AgendaListView from './AgendaListView'
 import GroupedListView from './GroupedListView'
 import TableListView from './TableListView'
@@ -86,7 +86,11 @@ function WeekView({ today, weekOffset, onWeek, selectedDate, onSelectDate, densi
 }) {
   const weekFrom = weekStart(addDays(today, weekOffset * 7))
   const weekTo = addDays(weekFrom, 6)
-  const { days, loading, error, refresh } = useDiarySummary(weekFrom, weekTo)
+  const { days, operatingDays, loading, error, refresh } = useDiarySummary(weekFrom, weekTo)
+
+  // Hide non-operating weekday cards, but keep any day that has bookings.
+  const opSet = new Set(operatingDays && operatingDays.length ? operatingDays : ALL_DOWS)
+  const visibleDays = (days || []).filter(d => opSet.has(isoDow(d.date)) || d.totalJobs > 0)
 
   const rangeLabel = `${new Date(`${weekFrom}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${new Date(`${weekTo}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
 
@@ -109,7 +113,7 @@ function WeekView({ today, weekOffset, onWeek, selectedDate, onSelectDate, densi
       ) : (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-6">
-            {(days || []).map(day => (
+            {visibleDays.map(day => (
               <DayCard
                 key={day.date}
                 day={day}
@@ -188,6 +192,7 @@ export default function BookingDiaryPage() {
           selectedDate={selectedDate}
           onSelectDate={setSelectedDate}
           density={density}
+          onChangeDensity={changeDensity}
         />
       )}
       {view === 'agenda' && (

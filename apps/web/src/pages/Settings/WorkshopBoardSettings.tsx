@@ -24,9 +24,16 @@ interface BoardResponse {
     dayEndTime: string
     lunchStartTime: string | null
     lunchEndTime: string | null
+    operatingDays: number[]
   }
   columns: BoardColumnRow[]
 }
+
+// ISO dow (1=Mon..7=Sun) for the Operating days picker.
+const DOWS: { d: number; l: string }[] = [
+  { d: 1, l: 'Mon' }, { d: 2, l: 'Tue' }, { d: 3, l: 'Wed' }, { d: 4, l: 'Thu' },
+  { d: 5, l: 'Fri' }, { d: 6, l: 'Sat' }, { d: 7, l: 'Sun' }
+]
 
 export default function WorkshopBoardSettings() {
   const { session, user } = useAuth()
@@ -38,8 +45,12 @@ export default function WorkshopBoardSettings() {
   const [dayEnd, setDayEnd] = useState('17:30')
   const [lunchStart, setLunchStart] = useState('')
   const [lunchEnd, setLunchEnd] = useState('')
+  const [operatingDays, setOperatingDays] = useState<number[]>([1, 2, 3, 4, 5, 6, 7])
   const [loading, setLoading] = useState(true)
   const [savingConfig, setSavingConfig] = useState(false)
+
+  const toggleDay = (d: number) =>
+    setOperatingDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort((a, b) => a - b))
 
   const token = session?.accessToken
 
@@ -56,6 +67,7 @@ export default function WorkshopBoardSettings() {
       setDayEnd(data.config.dayEndTime)
       setLunchStart(data.config.lunchStartTime || '')
       setLunchEnd(data.config.lunchEndTime || '')
+      setOperatingDays(data.config.operatingDays?.length ? data.config.operatingDays : [1, 2, 3, 4, 5, 6, 7])
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load board settings')
     } finally {
@@ -83,6 +95,10 @@ export default function WorkshopBoardSettings() {
       toast.error('Set both lunch times, or neither')
       return
     }
+    if (operatingDays.length === 0) {
+      toast.error('Select at least one operating day')
+      return
+    }
     setSavingConfig(true)
     try {
       await api(`/api/v1/workshop-board/config?siteId=${siteId}`, {
@@ -93,7 +109,8 @@ export default function WorkshopBoardSettings() {
           dayStartTime: dayStart,
           dayEndTime: dayEnd,
           lunchStartTime: lunchStart || null,
-          lunchEndTime: lunchEnd || null
+          lunchEndTime: lunchEnd || null,
+          operatingDays
         }
       })
       toast.success('Planner settings saved')
@@ -173,6 +190,25 @@ export default function WorkshopBoardSettings() {
           {/* Working day + capacity defaults */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
             <h2 className="text-sm font-semibold text-gray-800 mb-3">Working day & capacity</h2>
+            <div className="mb-4">
+              <label className="block text-xs font-medium text-gray-500 mb-1">Operating days</label>
+              <div className="flex flex-wrap gap-2">
+                {DOWS.map(({ d, l }) => {
+                  const on = operatingDays.includes(d)
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => toggleDay(d)}
+                      className={`px-3 py-1.5 text-sm font-medium rounded-lg border ${on ? 'bg-primary text-white border-primary' : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'}`}
+                    >
+                      {l}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-gray-400 mt-1">Days the workshop is open. The Booking Diary hides closed weekdays (a day that has bookings still shows). Click Save to apply.</p>
+            </div>
             <div className="flex flex-wrap items-end gap-4">
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Day starts</label>

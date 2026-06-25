@@ -2,7 +2,9 @@
 
 Status: **P0–P4 BUILT — the initiative is feature-complete (uncommitted on `dev`, 2026-06-26).**
 P1+P2 migrations DEPLOYED to cloud dev (verified live). P3 + P4 add NO migration. Companion to
-`GMS/JOBSHEET.md`. Ships **off by default**.
+`GMS/JOBSHEET.md`. **Now ON by default** for all orgs (Leo, 2026-06-26 — diverges from Jobsheets,
+which stays opt-in): registry `defaultOn: true` + migration `20260626180000_estimates_default_on.sql`
+flips the plan feature `estimates → true` (applied to dev). An org override can still disable it.
 
 ## Build status
 - **P0 (Documents nav) — DONE.** Expandable "Documents" nav group (Jobsheets + Estimates,
@@ -98,8 +100,9 @@ every quote kills the phone-quote use case. So Estimates is the **standalone** d
 3. **Smart banners v1:** the **4 build-first badges** (New customer · Lapsed/At-risk ·
    £X advised work outstanding · MOT due/expired/recall), as ONE shared component rendered on
    **Estimate + Jobsheet + VHC**.
-4. **Module:** new **`estimates`** module key, `defaultOn: false` (own per-tenant gate,
-   sibling to `jobsheets`).
+4. **Module:** new **`estimates`** module key (own per-tenant gate, sibling to `jobsheets`).
+   **ON by default** (`defaultOn: true` + plan feature `true` via `20260626180000`); revised from
+   the original opt-in default at Leo's request 2026-06-26. Per-org override can still turn it off.
 5. **Per-line authorisation** internally (customer action stays simple: Approve / Approve
    selected / Decline). Only authorised lines copy to the jobsheet.
 

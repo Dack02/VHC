@@ -55,6 +55,19 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
+// Weekdays the site operates (ISO dow 1=Mon..7=Sun); defaults to all seven when
+// unset. Drives which weekday columns the diary's calendar views show.
+async function resolveOperatingDays(orgId: string, siteId: string): Promise<number[]> {
+  const { data } = await supabaseAdmin
+    .from('workshop_board_config')
+    .select('operating_days')
+    .eq('organization_id', orgId)
+    .eq('site_id', siteId)
+    .maybeSingle()
+  const od = data?.operating_days as number[] | null | undefined
+  return od && od.length ? od : [1, 2, 3, 4, 5, 6, 7]
+}
+
 // Shape a diary_day_summary row into the API's per-day DiaryDay.
 function mapSummaryDay(r: any) {
   const booked = Number(r.booked_hours) || 0
@@ -130,8 +143,9 @@ bookingDiary.get('/summary', authorize([...ADVISOR_ROLES]), async (c) => {
   }
 
   const days = (data || []).map(mapSummaryDay)
+  const operatingDays = await resolveOperatingDays(auth.orgId, siteId)
 
-  return c.json({ siteId, from, to, days })
+  return c.json({ siteId, from, to, days, operatingDays })
 })
 
 // GET /range?from=YYYY-MM-DD&to=YYYY-MM-DD&siteId=...
@@ -153,7 +167,7 @@ bookingDiary.get('/range', authorize([...ADVISOR_ROLES]), async (c) => {
   const siteId = await resolveSiteId(c)
   if (!siteId) return c.json({ error: 'No site selected' }, 400)
 
-  const [summaryRes, bookingsRes] = await Promise.all([
+  const [summaryRes, bookingsRes, operatingDays] = await Promise.all([
     supabaseAdmin.rpc('diary_day_summary', {
       p_org_id: auth.orgId,
       p_site_id: siteId,
@@ -165,7 +179,8 @@ bookingDiary.get('/range', authorize([...ADVISOR_ROLES]), async (c) => {
       p_site_id: siteId,
       p_from: from,
       p_to: to
-    })
+    }),
+    resolveOperatingDays(auth.orgId, siteId)
   ])
 
   if (summaryRes.error || bookingsRes.error) {
@@ -176,7 +191,7 @@ bookingDiary.get('/range', authorize([...ADVISOR_ROLES]), async (c) => {
   const days = (summaryRes.data || []).map(mapSummaryDay)
   const bookings = (bookingsRes.data || []).map((r: any) => mapBookingRow(r))
 
-  return c.json({ siteId, from, to, days, bookings })
+  return c.json({ siteId, from, to, days, bookings, operatingDays })
 })
 
 // GET /day?date=YYYY-MM-DD&siteId=...  → capacity header + every booking

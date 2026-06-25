@@ -21,6 +21,7 @@ export function useDiarySummary(from: string, to: string) {
   const { session, user } = useAuth()
   const { socket } = useSocket()
   const [days, setDays] = useState<DiaryDay[] | null>(null)
+  const [operatingDays, setOperatingDays] = useState<number[] | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -42,6 +43,7 @@ export function useDiarySummary(from: string, to: string) {
         { token: session.accessToken }
       )
       setDays(data.days)
+      setOperatingDays(data.operatingDays)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load diary')
     } finally {
@@ -71,7 +73,7 @@ export function useDiarySummary(from: string, to: string) {
     return () => clearInterval(interval)
   }, [fetchSummary])
 
-  return { days, loading, error, refresh: fetchSummary }
+  return { days, operatingDays, loading, error, refresh: fetchSummary }
 }
 
 /**
@@ -86,6 +88,7 @@ export function useDiaryRange(from: string, to: string) {
   const { socket } = useSocket()
   const [days, setDays] = useState<DiaryDay[] | null>(null)
   const [bookings, setBookings] = useState<DiaryBooking[] | null>(null)
+  const [operatingDays, setOperatingDays] = useState<number[] | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -108,6 +111,7 @@ export function useDiaryRange(from: string, to: string) {
       )
       setDays(data.days)
       setBookings(data.bookings)
+      setOperatingDays(data.operatingDays)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load diary')
     } finally {
@@ -137,7 +141,7 @@ export function useDiaryRange(from: string, to: string) {
     return () => clearInterval(interval)
   }, [fetchRange])
 
-  return { days, bookings, loading, error, refresh: fetchRange }
+  return { days, bookings, operatingDays, loading, error, refresh: fetchRange }
 }
 
 /**

@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { authorize } from '../../middleware/auth.js'
-import { updateHealthCheckTotals } from './helpers.js'
+import { updateHealthCheckTotals, checkQuoteEditable } from './helpers.js'
 
 const repairItemsHC = new Hono()
 
@@ -455,7 +455,7 @@ repairItemsHC.post('/:id/repair-items/generate', authorize(['super_admin', 'org_
     const { data: healthCheck } = await supabaseAdmin
       .from('health_checks')
       .select(`
-        id, organization_id,
+        id, organization_id, status,
         results:check_results(
           id, rag_status, notes, is_mot_failure,
           template_item:template_items(name, description)
@@ -467,6 +467,12 @@ repairItemsHC.post('/:id/repair-items/generate', authorize(['super_admin', 'org_
 
     if (!healthCheck) {
       return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Block changing the quote contents once it has been sent (admin can override)
+    const gate = checkQuoteEditable(healthCheck.status, auth.user.role, c.req.query('override') === 'true')
+    if (!gate.allowed) {
+      return c.json({ error: gate.error, code: gate.code }, 403)
     }
 
     // Get existing linked check results via junction table to avoid duplicates
@@ -564,13 +570,19 @@ repairItemsHC.patch('/:healthCheckId/repair-items/:itemId', authorize(['super_ad
     // Verify health check belongs to org
     const { data: healthCheck } = await supabaseAdmin
       .from('health_checks')
-      .select('id')
+      .select('id, status')
       .eq('id', healthCheckId)
       .eq('organization_id', auth.orgId)
       .single()
 
     if (!healthCheck) {
       return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Block editing quote line content once it has been sent (admin can override)
+    const gate = checkQuoteEditable(healthCheck.status, auth.user.role, body?.override === true)
+    if (!gate.allowed) {
+      return c.json({ error: gate.error, code: gate.code }, 403)
     }
 
     // Map legacy field names to NEW schema columns
@@ -666,13 +678,19 @@ repairItemsHC.delete('/:healthCheckId/repair-items/:itemId', authorize(['super_a
     // Verify health check belongs to org
     const { data: healthCheck } = await supabaseAdmin
       .from('health_checks')
-      .select('id')
+      .select('id, status')
       .eq('id', healthCheckId)
       .eq('organization_id', auth.orgId)
       .single()
 
     if (!healthCheck) {
       return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Block removing quote lines once it has been sent (admin can override)
+    const gate = checkQuoteEditable(healthCheck.status, auth.user.role, c.req.query('override') === 'true')
+    if (!gate.allowed) {
+      return c.json({ error: gate.error, code: gate.code }, 403)
     }
 
     const { error } = await supabaseAdmin

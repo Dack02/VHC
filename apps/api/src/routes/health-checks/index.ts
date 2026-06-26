@@ -16,6 +16,7 @@ import mriResultsRouter from './mri-results.js'
 import customerActivityRouter from './customer-activity.js'
 import advisorAuthorizeRouter from './advisor-authorize.js'
 import unableToSendRouter from './unable-to-send.js'
+import reopenRouter from './reopen.js'
 
 const healthChecks = new Hono()
 
@@ -35,6 +36,7 @@ healthChecks.route('/', mriResultsRouter)           // /:id/mri-results
 healthChecks.route('/', customerActivityRouter)     // /:id/customer-activity
 healthChecks.route('/', advisorAuthorizeRouter)     // /:id/advisor-authorize
 healthChecks.route('/', unableToSendRouter)          // PATCH /:id/unable-to-send
+healthChecks.route('/', reopenRouter)               // POST /:id/reopen (admin/advisor reset)
 healthChecks.route('/', statusRouter)               // /:id/status, /:id/clock-in, /:id/clock-out, etc.
 healthChecks.route('/', sendCustomerRouter)         // /:id/publish
 healthChecks.route('/', deletionRouter)             // DELETE /:id, POST /:id/delete, /bulk-delete, /:id/restore

@@ -2,11 +2,12 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useModules } from '../../contexts/ModulesContext'
-import { api, User } from '../../lib/api'
+import { api, User, TimelineEvent } from '../../lib/api'
 import { useToast } from '../../contexts/ToastContext'
 import WorkDetailsPanel from '../Jobsheets/WorkDetailsPanel'
 import CustomerCardModal from '../Jobsheets/components/CustomerCardModal'
 import CustomerInsightsBanner from '../../components/CustomerInsightsBanner'
+import { TimelineTab } from '../HealthChecks/tabs/TimelineTab'
 
 interface Estimate {
   id: string
@@ -17,10 +18,14 @@ interface Estimate {
   customerNotes: string | null
   internalNotes: string | null
   convertedToJobsheetId: string | null
+  convertedToJobsheetReference: string | null
+  convertedAt: string | null
   sentAt: string | null
   firstOpenedAt: string | null
   respondedAt: string | null
   responseFinalisedAt: string | null
+  authorisedAt: string | null
+  authorisedTotal: number | null
   createdAt: string
   customer: { id: string; firstName: string; lastName: string; mobile: string | null; email: string | null; phone: string | null } | null
   vehicle: { id: string; registration: string; make: string | null; model: string | null; year: number | null; fuelType: string | null } | null
@@ -51,7 +56,104 @@ function formatDateTime(iso: string | null): string {
     d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 }
 
-type EstimateTab = 'overview' | 'work'
+// Derive a chronological activity feed from the estimate's own lifecycle timestamps,
+// then render it with the shared jobsheet/VHC TimelineTab. No server call needed — the
+// estimate document carries every milestone (created → sent → opened → response →
+// converted). Newest-first, matching the VHC timeline endpoint's ordering.
+function buildEstimateTimeline(est: Estimate): TimelineEvent[] {
+  const events: TimelineEvent[] = []
+  const createdByUser = est.createdBy
+    ? { first_name: est.createdBy.firstName, last_name: est.createdBy.lastName }
+    : null
+
+  // Created
+  events.push({
+    id: 'created',
+    event_type: 'estimate_created',
+    timestamp: est.createdAt,
+    user: createdByUser,
+    description: `Estimate ${est.reference || ''} created`.trim(),
+    details: {}
+  })
+
+  // Sent to customer
+  if (est.sentAt) {
+    events.push({
+      id: 'sent',
+      event_type: 'estimate_sent',
+      timestamp: est.sentAt,
+      user: null,
+      description: 'Sent to customer',
+      details: {}
+    })
+  }
+
+  // First opened by customer
+  if (est.firstOpenedAt) {
+    events.push({
+      id: 'opened',
+      event_type: 'estimate_opened',
+      timestamp: est.firstOpenedAt,
+      user: null,
+      description: 'Opened by customer',
+      details: {}
+    })
+  }
+
+  // Customer response. When the customer authorised work we have an immutable snapshot
+  // (authorisedAt + authorisedTotal) that's independent of `status` — so this stays
+  // accurate and shows the locked-in figure even after the estimate is converted/edited.
+  if (est.authorisedTotal != null && est.authorisedTotal > 0) {
+    events.push({
+      id: 'authorised',
+      event_type: 'estimate_accepted',
+      timestamp: est.authorisedAt || est.responseFinalisedAt || est.createdAt,
+      user: null,
+      description: 'Customer authorised the estimate',
+      details: { authorised_total: est.authorisedTotal }
+    })
+  } else if (est.responseFinalisedAt) {
+    events.push({
+      id: 'responded',
+      event_type: 'estimate_declined',
+      timestamp: est.responseFinalisedAt,
+      user: null,
+      description: 'Customer declined the estimate',
+      details: {}
+    })
+  }
+
+  // Expired (no dedicated timestamp — anchor to the valid-until date)
+  if (est.status === 'expired' && est.validUntil) {
+    events.push({
+      id: 'expired',
+      event_type: 'estimate_expired',
+      timestamp: est.validUntil,
+      user: null,
+      description: 'Estimate expired',
+      details: {}
+    })
+  }
+
+  // Converted to a job card
+  if (est.convertedAt || est.convertedToJobsheetId) {
+    events.push({
+      id: 'converted',
+      event_type: 'estimate_converted',
+      timestamp: est.convertedAt || est.createdAt,
+      user: null,
+      description: 'Converted to a jobsheet',
+      details: {
+        jobsheet_id: est.convertedToJobsheetId || undefined,
+        jobsheet_reference: est.convertedToJobsheetReference || undefined
+      }
+    })
+  }
+
+  return events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+}
+
+type EstimateTab = 'overview' | 'work' | 'timeline'
 
 export default function EstimateDetail() {
   const { id } = useParams<{ id: string }>()
@@ -105,7 +207,8 @@ export default function EstimateDetail() {
       .then(d => setAdvisors((d.users || []).filter(u => u.role !== 'technician'))).catch(() => {})
   }, [token, editing, advisors.length])
 
-  const activeTab: EstimateTab = (searchParams.get('tab') === 'work' ? 'work' : 'overview')
+  const tabParam = searchParams.get('tab')
+  const activeTab: EstimateTab = tabParam === 'work' ? 'work' : tabParam === 'timeline' ? 'timeline' : 'overview'
   const setTab = (t: EstimateTab) => setSearchParams(prev => { prev.set('tab', t); return prev })
 
   const save = async () => {
@@ -265,10 +368,10 @@ export default function EstimateDetail() {
 
       {/* Tab nav */}
       <div className="flex gap-1 border-b border-gray-200 mb-5">
-        {(['overview', 'work'] as EstimateTab[]).map(t => (
+        {(['overview', 'work', 'timeline'] as EstimateTab[]).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 -mb-px ${activeTab === t ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
-            {t === 'overview' ? 'Overview' : 'Work Details'}
+            {t === 'overview' ? 'Overview' : t === 'work' ? 'Work Details' : 'Timeline'}
           </button>
         ))}
       </div>
@@ -358,6 +461,11 @@ export default function EstimateDetail() {
           organizationId={user?.organization?.id}
           onChange={load}
         />
+      )}
+
+      {/* Timeline tab — estimate lifecycle, rendered with the shared jobsheet/VHC timeline */}
+      {activeTab === 'timeline' && (
+        <TimelineTab timeline={buildEstimateTimeline(est)} />
       )}
 
       {showCustomerCard && est.customer?.id && (

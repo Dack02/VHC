@@ -30,7 +30,8 @@ const SELECT = `
   customer:customers(id, first_name, last_name, mobile, email, phone, contact_name),
   vehicle:vehicles(id, registration, make, model, year, fuel_type),
   advisor:users!estimates_advisor_id_fkey(id, first_name, last_name),
-  created_by_user:users!estimates_created_by_fkey(id, first_name, last_name)
+  created_by_user:users!estimates_created_by_fkey(id, first_name, last_name),
+  converted_jobsheet:jobsheets!estimates_converted_to_jobsheet_id_fkey(id, reference)
 `
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -50,7 +51,10 @@ function shapeEstimate(row: any) {
     firstOpenedAt: row.first_opened_at,
     respondedAt: row.responded_at,
     responseFinalisedAt: row.response_finalised_at,
+    authorisedAt: row.authorised_at,
+    authorisedTotal: row.authorised_total != null ? parseFloat(row.authorised_total) : null,
     convertedToJobsheetId: row.converted_to_jobsheet_id,
+    convertedToJobsheetReference: row.converted_jobsheet?.reference ?? null,
     convertedAt: row.converted_at,
     createdAt: row.created_at, // Document Date
     updatedAt: row.updated_at,

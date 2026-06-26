@@ -4,7 +4,7 @@ import { authorize } from '../../middleware/auth.js'
 
 const timeline = new Hono()
 
-interface TimelineEvent {
+export interface TimelineEvent {
   id: string
   event_type: string
   timestamp: string
@@ -14,7 +14,7 @@ interface TimelineEvent {
 }
 
 // Helper to extract user from Supabase join (handles both object and array)
-function extractUser(userObj: unknown): { first_name: string; last_name: string } | null {
+export function extractUser(userObj: unknown): { first_name: string; last_name: string } | null {
   if (!userObj) return null
   // Supabase can return arrays for joins
   const user = Array.isArray(userObj) ? userObj[0] : userObj
@@ -24,12 +24,13 @@ function extractUser(userObj: unknown): { first_name: string; last_name: string 
   return { first_name: u.first_name || '', last_name: u.last_name || '' }
 }
 
-// GET /:id/timeline - Get unified timeline for health check
-timeline.get('/:id/timeline', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
-  try {
-    const auth = c.get('auth')
-    const { id } = c.req.param()
-
+/**
+ * Build the unified activity timeline for a single health check, aggregating from
+ * status history, audit logs, repair-item completion timestamps, arrival/check-in
+ * milestones, and communications. Returns null if the health check is not found in
+ * the org. Exported so jobsheet timelines can merge in their linked VHC's events.
+ */
+export async function buildHealthCheckTimeline(orgId: string, id: string): Promise<TimelineEvent[] | null> {
     // Verify health check belongs to org
     const { data: healthCheck } = await supabaseAdmin
       .from('health_checks')
@@ -38,13 +39,14 @@ timeline.get('/:id/timeline', authorize(['super_admin', 'org_admin', 'site_admin
         checked_in_by_user:users!health_checks_checked_in_by_fkey(first_name, last_name)
       `)
       .eq('id', id)
-      .eq('organization_id', auth.orgId)
+      .eq('organization_id', orgId)
       .single()
 
     if (!healthCheck) {
-      return c.json({ error: 'Health check not found' }, 404)
+      return null
     }
 
+    const auth = { orgId }
     const events: TimelineEvent[] = []
 
     // 1. Get status history events
@@ -367,6 +369,16 @@ timeline.get('/:id/timeline', authorize(['super_admin', 'org_admin', 'site_admin
     // Sort all events by timestamp (most recent first)
     events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
 
+    return events
+}
+
+// GET /:id/timeline - Get unified timeline for health check
+timeline.get('/:id/timeline', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const events = await buildHealthCheckTimeline(auth.orgId, id)
+    if (events === null) return c.json({ error: 'Health check not found' }, 404)
     return c.json({ timeline: events })
   } catch (error) {
     console.error('Get timeline error:', error)

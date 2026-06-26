@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { TimelineEvent } from '../../../lib/api'
 
 interface TimelineTabProps {
@@ -39,6 +40,29 @@ function formatTimestamp(timestamp: string): string {
 // Get icon and color for event type
 function getEventStyle(eventType: string): { icon: React.ReactNode; bgColor: string; iconColor: string } {
   switch (eventType) {
+    // Jobsheet lifecycle (jobsheet timeline only)
+    case 'jobsheet_created':
+      return {
+        icon: (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        ),
+        bgColor: 'bg-indigo-500',
+        iconColor: 'text-white'
+      }
+    case 'created_from_estimate':
+      return {
+        icon: (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4a1 1 0 011-1h7.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1H8a1 1 0 01-1-1z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8v11a2 2 0 002 2h10" />
+          </svg>
+        ),
+        bgColor: 'bg-primary',
+        iconColor: 'text-white'
+      }
+
     // Status changes
     case 'status_change':
       return {
@@ -213,6 +237,99 @@ function getEventStyle(eventType: string): { icon: React.ReactNode; bgColor: str
         iconColor: 'text-white'
       }
 
+    // Estimate lifecycle (document created / sent / opened / customer response / converted)
+    case 'estimate_created':
+      return {
+        icon: (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        ),
+        bgColor: 'bg-indigo-500',
+        iconColor: 'text-white'
+      }
+    case 'estimate_sent':
+      return {
+        icon: (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+          </svg>
+        ),
+        bgColor: 'bg-indigo-400',
+        iconColor: 'text-white'
+      }
+    case 'estimate_opened':
+      return {
+        icon: (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+        ),
+        bgColor: 'bg-blue-400',
+        iconColor: 'text-white'
+      }
+    case 'estimate_accepted':
+      return {
+        icon: (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+        ),
+        bgColor: 'bg-green-600',
+        iconColor: 'text-white'
+      }
+    case 'estimate_partial':
+      return {
+        icon: (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ),
+        bgColor: 'bg-amber-500',
+        iconColor: 'text-white'
+      }
+    case 'estimate_declined':
+      return {
+        icon: (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        ),
+        bgColor: 'bg-red-600',
+        iconColor: 'text-white'
+      }
+    case 'estimate_responded':
+      return {
+        icon: (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+        ),
+        bgColor: 'bg-indigo-500',
+        iconColor: 'text-white'
+      }
+    case 'estimate_expired':
+      return {
+        icon: (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ),
+        bgColor: 'bg-orange-500',
+        iconColor: 'text-white'
+      }
+    case 'estimate_converted':
+      return {
+        icon: (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+          </svg>
+        ),
+        bgColor: 'bg-teal-600',
+        iconColor: 'text-white'
+      }
+
     // Default
     default:
       return {
@@ -235,6 +352,16 @@ function getEventCategory(eventType: string): string {
   if (eventType === 'status_change') return 'Status'
   if (eventType === 'arrived' || eventType === 'checked_in') return 'Arrival'
   if (eventType === 'message_received' || eventType === 'message_sent' || eventType === 'email_sent') return 'Message'
+  if (eventType === 'estimate_created') return 'Created'
+  if (eventType === 'estimate_sent') return 'Sent'
+  if (eventType === 'estimate_opened') return 'Opened'
+  if (eventType === 'estimate_accepted') return 'Authorised'
+  if (eventType === 'estimate_declined') return 'Declined'
+  if (eventType === 'estimate_partial' || eventType === 'estimate_responded') return 'Response'
+  if (eventType === 'estimate_expired') return 'Expired'
+  if (eventType === 'estimate_converted') return 'Converted'
+  if (eventType === 'jobsheet_created') return 'Jobsheet'
+  if (eventType === 'created_from_estimate') return 'Estimate'
   return 'Event'
 }
 
@@ -245,6 +372,14 @@ function getCategoryTextColor(eventType: string): string {
   if (eventType.startsWith('outcome_')) return 'text-green-600'
   if (eventType === 'arrived' || eventType === 'checked_in') return 'text-indigo-600'
   if (eventType === 'message_received' || eventType === 'message_sent' || eventType === 'email_sent') return 'text-indigo-600'
+  if (eventType === 'estimate_accepted') return 'text-green-600'
+  if (eventType === 'estimate_declined') return 'text-red-600'
+  if (eventType === 'estimate_partial') return 'text-amber-600'
+  if (eventType === 'estimate_converted') return 'text-teal-600'
+  if (eventType === 'estimate_expired') return 'text-orange-600'
+  if (eventType === 'estimate_sent' || eventType === 'estimate_opened' || eventType === 'estimate_responded') return 'text-indigo-600'
+  if (eventType === 'jobsheet_created') return 'text-indigo-600'
+  if (eventType === 'created_from_estimate') return 'text-primary'
   return 'text-gray-400'
 }
 
@@ -305,6 +440,31 @@ export function TimelineTab({ timeline }: TimelineTabProps) {
 // Render contextual details based on event type
 function renderEventDetails(event: TimelineEvent): React.ReactNode {
   const { event_type, details } = event
+
+  // Estimate authorised → the locked-in amount the customer agreed to (immutable audit
+  // figure — snapshotted at authorisation, never recomputed if the estimate is edited).
+  if (event_type === 'estimate_accepted' && details.authorised_total !== undefined) {
+    return (
+      <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-green-700 bg-green-100 rounded"
+        title="Locked in at authorisation — this figure does not change if the estimate is edited later">
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+        </svg>
+        £{(details.authorised_total as number).toFixed(2)} authorised
+      </div>
+    )
+  }
+
+  // Estimate converted → link through to the resulting job card
+  if (event_type === 'estimate_converted' && details.jobsheet_id) {
+    return (
+      <div className="mt-1">
+        <Link to={`/jobsheets/${details.jobsheet_id}`} className="inline-flex items-center text-xs font-medium text-teal-700 hover:underline">
+          {details.jobsheet_reference || 'View jobsheet'} →
+        </Link>
+      </div>
+    )
+  }
 
   // Status change notes
   if (event_type === 'status_change' && details.notes) {

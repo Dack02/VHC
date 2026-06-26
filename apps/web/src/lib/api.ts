@@ -786,6 +786,11 @@ export interface TimelineEvent {
     channel?: string
     body?: string
     recipient?: string
+    jobsheet_id?: string
+    jobsheet_reference?: string
+    estimate_id?: string
+    estimate_reference?: string
+    authorised_total?: number
   }
 }
 

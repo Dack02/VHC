@@ -84,7 +84,18 @@ async function recomputeStatus(estimateId: string, orgId: string, opts: { finali
 
   const update: Record<string, unknown> = { status }
   if (decided.length > 0) update.responded_at = new Date().toISOString()
-  if (opts.finalise) update.response_finalised_at = new Date().toISOString()
+  if (opts.finalise) {
+    const now = new Date().toISOString()
+    update.response_finalised_at = now
+    // Lock in WHAT the customer authorised, AT THIS MOMENT — an immutable audit
+    // snapshot (inc-VAT sum of the approved lines). Never recomputed afterwards, so
+    // later edits to the estimate can't change the agreed figure on record.
+    const authorisedTotal = approved.reduce((sum, l) => sum + (parseFloat(l.total_inc_vat) || 0), 0)
+    if (approved.length > 0) {
+      update.authorised_at = now
+      update.authorised_total = authorisedTotal
+    }
+  }
 
   await supabaseAdmin.from('estimates').update(update).eq('id', estimateId).eq('organization_id', orgId)
   return status

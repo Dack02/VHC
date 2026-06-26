@@ -57,6 +57,7 @@ export function Inspection() {
   const [results, setResults] = useState<Map<string, Partial<CheckResult>>>(new Map())
   const [expandedItem, setExpandedItem] = useState<string | null>(null)
   const [photoItemId, setPhotoItemId] = useState<string | null>(null)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [viewingPhoto, setViewingPhoto] = useState<{ url: string; caption?: string } | null>(null)
   const [creatingDuplicate, setCreatingDuplicate] = useState(false)
   const [reasonSelectorItem, setReasonSelectorItem] = useState<ReasonSelectorState | null>(null)
@@ -668,18 +669,21 @@ export function Inspection() {
   }
 
   const handlePhotoCapture = async (photoData: string) => {
-    if (!photoItemId || !session) return
+    // Snapshot the key up front: keep the modal open during upload (so a failed
+    // upload isn't silently lost) and only close it once the photo is saved.
+    const itemKey = photoItemId
+    if (!itemKey || !session) return
 
-    // photoItemId is now a composite key: templateItemId-instanceNumber
+    // itemKey is a composite key: templateItemId-instanceNumber (or templateItemId-loc-locationId)
     // Must handle UUIDs which contain hyphens - take last part as instance, rest as templateId
-    const parts = photoItemId.split('-')
+    const parts = itemKey.split('-')
     const instanceNumber = parts.length > 1 ? parseInt(parts[parts.length - 1], 10) || 1 : 1
-    const templateItemId = parts.length > 1 ? parts.slice(0, -1).join('-') : photoItemId
+    const templateItemId = parts.length > 1 ? parts.slice(0, -1).join('-') : itemKey
 
-    setPhotoItemId(null)
+    setUploadingPhoto(true)
 
     try {
-      const result = results.get(photoItemId)
+      const result = results.get(itemKey)
       let resultId = result?.id
 
       if (!resultId) {
@@ -719,9 +723,15 @@ export function Inspection() {
         throw new Error(`Failed to upload photo (status ${uploadResponse.status})`)
       }
 
-      fetchJob()
+      await fetchJob()
+      // Only dismiss the camera once the photo is safely saved. The tech can then
+      // immediately reopen it for the next location.
+      setPhotoItemId(null)
     } catch (err) {
+      // Keep the modal open so the tech can retry without losing the captured photo.
       setError(err instanceof Error ? err.message : 'Failed to upload photo')
+    } finally {
+      setUploadingPhoto(false)
     }
   }
 
@@ -1152,7 +1162,8 @@ export function Inspection() {
       {photoItemId && (
         <PhotoCapture
           onCapture={handlePhotoCapture}
-          onClose={() => setPhotoItemId(null)}
+          onClose={() => { if (!uploadingPhoto) setPhotoItemId(null) }}
+          uploading={uploadingPhoto}
         />
       )}
 

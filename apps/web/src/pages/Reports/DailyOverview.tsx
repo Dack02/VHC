@@ -31,6 +31,7 @@ interface DailyOverviewDay {
   totalSold: number
   mriIdentified: number
   mriSold: number
+  mriSoldPercent: number
   redSoldPercent: number
   amberSoldPercent: number
 }
@@ -48,6 +49,7 @@ interface DailyOverviewData {
     totalSold: number
     mriIdentified: number
     mriSold: number
+    mriSoldPercent: number
     redSoldPercent: number
     amberSoldPercent: number
   }
@@ -131,6 +133,7 @@ export default function DailyOverview() {
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">Sold</th>
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">MRI Id.</th>
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">MRI Sold</th>
+                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">% MRI Sold</th>
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">% Red Sold</th>
                   <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">% Amber Sold</th>
                 </tr>
@@ -157,6 +160,9 @@ export default function DailyOverview() {
                     <td className="px-3 py-2.5 text-right text-green-600 font-medium">{formatCurrency(day.totalSold)}</td>
                     <td className="px-3 py-2.5 text-right text-gray-700">{formatCurrency(day.mriIdentified)}</td>
                     <td className="px-3 py-2.5 text-right text-green-600 font-medium">{formatCurrency(day.mriSold)}</td>
+                    <td className={`px-3 py-2.5 text-right font-medium ${day.mriSoldPercent > 0 ? 'text-gray-700' : 'text-gray-400'}`}>
+                      {formatPercent(day.mriSoldPercent)}
+                    </td>
                     <td className={`px-3 py-2.5 text-right font-medium ${day.redSoldPercent > 0 ? 'text-red-600' : 'text-gray-400'}`}>
                       {formatPercent(day.redSoldPercent)}
                     </td>
@@ -167,7 +173,7 @@ export default function DailyOverview() {
                 ))}
                 {(!data?.days || data.days.length === 0) && (
                   <tr>
-                    <td colSpan={12} className="px-3 py-8 text-center text-gray-400">
+                    <td colSpan={13} className="px-3 py-8 text-center text-gray-400">
                       No data for the selected period
                     </td>
                   </tr>
@@ -190,6 +196,9 @@ export default function DailyOverview() {
                     <td className="px-3 py-3 text-right text-green-600">{formatCurrency(t.totalSold)}</td>
                     <td className="px-3 py-3 text-right text-gray-900">{formatCurrency(t.mriIdentified)}</td>
                     <td className="px-3 py-3 text-right text-green-600">{formatCurrency(t.mriSold)}</td>
+                    <td className={`px-3 py-3 text-right ${t.mriSoldPercent > 0 ? 'text-gray-900' : 'text-gray-400'}`}>
+                      {formatPercent(t.mriSoldPercent)}
+                    </td>
                     <td className={`px-3 py-3 text-right ${t.redSoldPercent > 0 ? 'text-red-600' : 'text-gray-900'}`}>
                       {formatPercent(t.redSoldPercent)}
                     </td>

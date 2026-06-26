@@ -55,6 +55,8 @@ interface Jobsheet {
   deferred?: { count: number; totalValue: number; caseId: string | null }
   recentMessages?: { id: string; direction: 'inbound' | 'outbound'; body: string; status: string; createdAt: string; senderName: string | null }[]
   work?: { itemCount: number; totalIncVat: number; vat: number; net: number }
+  // Originating estimate when this jobsheet was converted from one (reverse lookup).
+  sourceEstimate?: { id: string; reference: string | null; convertedAt: string | null } | null
 }
 
 const VEHICLE_STATUS_LABELS: Record<string, string> = {
@@ -198,14 +200,15 @@ export default function JobsheetDetail() {
       .then(d => setCheckinEnabled(!!d.checkinEnabled)).catch(() => setCheckinEnabled(false))
   }, [token, user?.organization?.id])
 
-  // Timeline reuses the unified VHC timeline endpoint — fetched lazily when the tab opens.
-  const hcId = js?.healthCheck?.id
+  // Jobsheet-level activity feed (created, created-from-estimate, booked work-line
+  // outcomes, comms) merged with the linked VHC's timeline — fetched lazily on open.
+  // Works whether or not a VHC exists, so estimate-sourced jobsheets get a timeline too.
   useEffect(() => {
-    if (searchParams.get('tab') !== 'timeline' || !token || !hcId || timelineLoaded) return
-    api<{ timeline: TimelineEvent[] }>(`/api/v1/health-checks/${hcId}/timeline`, { token })
+    if (searchParams.get('tab') !== 'timeline' || !token || !id || timelineLoaded) return
+    api<{ timeline: TimelineEvent[] }>(`/api/v1/jobsheets/${id}/timeline`, { token })
       .then(d => { setTimeline(d.timeline || []); setTimelineLoaded(true) })
       .catch(() => setTimelineLoaded(true))
-  }, [searchParams, token, hcId, timelineLoaded])
+  }, [searchParams, token, id, timelineLoaded])
 
   // lookups for edit mode
   useEffect(() => {
@@ -311,7 +314,7 @@ export default function JobsheetDetail() {
     ...(checkinEnabled ? [{ id: 'checkin' as JobsheetTab, label: 'Check-In' }] : []),
     ...(checkinEnabled ? [{ id: 'mri' as JobsheetTab, label: 'MRI Scan' }] : []),
     { id: 'work', label: 'Work' },
-    ...(hc ? [{ id: 'timeline' as JobsheetTab, label: 'Timeline' }] : [])
+    { id: 'timeline', label: 'Timeline' }
   ]
   const tabIds = tabs.map(t => t.id)
   const rawTab = (searchParams.get('tab') || 'overview') as JobsheetTab
@@ -337,6 +340,13 @@ export default function JobsheetDetail() {
               )}
               {!realVhc && (
                 <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">No VHC</span>
+              )}
+              {js.sourceEstimate && (
+                <Link to={`/estimates/${js.sourceEstimate.id}`}
+                  className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 inline-flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  From estimate{js.sourceEstimate.reference ? ` · ${js.sourceEstimate.reference}` : ''}
+                </Link>
               )}
             </div>
             <p className="text-xs text-gray-400 mt-1">Document date: {formatDate(js.createdAt)}{js.createdBy && ` · by ${js.createdBy.firstName} ${js.createdBy.lastName}`}</p>
@@ -668,11 +678,10 @@ export default function JobsheetDetail() {
         />
       )}
 
-      {/* Timeline tab — the linked VHC's unified activity feed (status, work, comms, arrival) */}
-      {activeTab === 'timeline' && (
-        hc ? <TimelineTab timeline={timeline} />
-          : <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-8 text-center text-gray-500">No activity yet.</div>
-      )}
+      {/* Timeline tab — jobsheet activity feed (created, from-estimate, booked work,
+          comms) merged with the linked VHC's timeline. TimelineTab renders its own
+          empty state, so it's safe to show even before the feed has loaded. */}
+      {activeTab === 'timeline' && <TimelineTab timeline={timeline} />}
 
       {showCompose && js.customer && (
         <ComposeMessageModal

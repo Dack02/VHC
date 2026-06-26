@@ -13,6 +13,7 @@ import {
   useWorkflowStatus,
   calculateAuthorisationInfo
 } from '../../../components/WorkflowBadges'
+import { useQuoteEditLock } from '../components/QuoteEditLockContext'
 
 interface SummaryTabProps {
   healthCheckId: string
@@ -23,6 +24,8 @@ interface SummaryTabProps {
 }
 
 export function SummaryTab({ healthCheckId, sentAt, bookedRepairs, bookingNotes, onUpdate }: SummaryTabProps) {
+  const { locked: quoteSent, override: quoteOverride } = useQuoteEditLock()
+  const quoteLocked = quoteSent && !quoteOverride
   const { session, user } = useAuth()
   const [repairItems, setRepairItems] = useState<NewRepairItem[]>([])
   const [checkResults, setCheckResults] = useState<CheckResult[]>([])
@@ -268,15 +271,17 @@ export function SummaryTab({ healthCheckId, sentAt, bookedRepairs, bookingNotes,
       <div className="bg-white border border-gray-200 rounded-lg">
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
           <h3 className="font-semibold text-gray-900">REPAIR GROUPS & ITEMS</h3>
-          <button
-            onClick={() => handleCreateRepair()}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-primary rounded hover:bg-primary-dark"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Create Repair
-          </button>
+          {!quoteLocked && (
+            <button
+              onClick={() => handleCreateRepair()}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-primary rounded hover:bg-primary-dark"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Create Repair
+            </button>
+          )}
         </div>
 
         <div className="divide-y divide-gray-200">
@@ -322,12 +327,14 @@ export function SummaryTab({ healthCheckId, sentAt, bookedRepairs, bookingNotes,
                     )}
                   </div>
                 </div>
-                <button
-                  onClick={() => handleCreateRepair(result.id)}
-                  className="px-3 py-1.5 text-sm font-medium text-primary border border-primary rounded hover:bg-primary hover:text-white"
-                >
-                  Create Repair
-                </button>
+                {!quoteLocked && (
+                  <button
+                    onClick={() => handleCreateRepair(result.id)}
+                    className="px-3 py-1.5 text-sm font-medium text-primary border border-primary rounded hover:bg-primary hover:text-white"
+                  >
+                    Create Repair
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -587,6 +594,7 @@ function CreateRepairModal({
   onCreated
 }: CreateRepairModalProps) {
   const { session } = useAuth()
+  const { override: editOverride } = useQuoteEditLock()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -636,7 +644,8 @@ function CreateRepairModal({
         name: name.trim(),
         description: description.trim() || null,
         is_group: isGroup,
-        check_result_ids: Array.from(selectedCheckResultIds)
+        check_result_ids: Array.from(selectedCheckResultIds),
+        ...(editOverride ? { override: true } : {})
       }
 
       await api<{ id: string }>(

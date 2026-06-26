@@ -77,6 +77,9 @@ reopen.post('/:id/reopen', authorize(['super_admin', 'org_admin', 'site_admin', 
 
     // Send the check back to a clean, unassigned `created` state. Keep the clocked time
     // entries — they record where the tech's time actually went and stay for audit.
+    // The trigger_update_rag_counts trigger only fires on INSERT/UPDATE of check_results,
+    // not DELETE — so zero the cached RAG counts and money totals here by hand, otherwise
+    // the reset check would keep showing the old red/amber/green tallies and quote total.
     const now = new Date().toISOString()
     const { data: updated, error: updateError } = await supabaseAdmin
       .from('health_checks')
@@ -85,6 +88,13 @@ reopen.post('/:id/reopen', authorize(['super_admin', 'org_admin', 'site_admin', 
         technician_id: null,
         tech_started_at: null,
         tech_completed_at: null,
+        red_count: 0,
+        amber_count: 0,
+        green_count: 0,
+        not_checked_count: 0,
+        total_parts: 0,
+        total_labour: 0,
+        total_amount: 0,
         updated_at: now
       })
       .eq('id', id)

@@ -209,11 +209,33 @@ bg-rag-red text-white        // Pending/Red status
 bg-rag-green-bg text-rag-green  // Light background variants
 ```
 
-### Square Edges
-Automotive aesthetic (no rounded corners):
+### Rounded corners
+The app uses rounded corners (an earlier "square edges" phase was reverted):
 ```tsx
-<div className="rounded-none">  // All buttons/cards have square edges
+// Cards/containers: rounded-xl   Buttons/inputs: rounded-lg   Badges: rounded-full
+<div className="bg-white border border-gray-200 rounded-xl shadow-sm">
 ```
+
+### Forms & Modals
+Data-entry **forms and modal dialogs** follow a dedicated, higher-fidelity spec.
+**Read `docs/form-design-guidelines.md` before building one**, and copy the
+canonical implementation rather than hand-rolling styles:
+`src/components/customers/CustomerFormModal.tsx` (the source of truth — reuse its
+`inputCls` / `labelCls` / button / section / footer class strings).
+
+Headline rules:
+- Inputs/buttons `rounded-[10px]`, modal card `rounded-[18px]`; 42px-tall inputs
+  with a dark focus ring (`focus:border-[#16191f]` + `0 0 0 3px rgba(22,25,31,0.08)`).
+- Primary action is neutral-dark `#16191f` (hover black) — **not** tenant
+  `bg-primary` (brand colour stays for nav/links/badges).
+- Multi-section forms use the **label-rail** layout (`sm:grid-cols-[190px_1fr]`,
+  left title+caption / right 2-up field grid); header = title+subtitle, footer =
+  "* Required fields" + Cancel/primary buttons.
+- Label markers: required `*` (`#d23f3f`), `· optional` (`#aeb4be`). Inline
+  validation = red border (`inputErrCls`) + `text-[12.5px] text-[#d23f3f]` helper.
+- Behaviour: Esc / scrim-click / Cancel close; trap Tab + restore focus on close;
+  disable submit + show "Saving…" in flight; external lookups degrade to a
+  disabled no-op when unconfigured.
 
 ### Workflow Status Pattern
 ```tsx

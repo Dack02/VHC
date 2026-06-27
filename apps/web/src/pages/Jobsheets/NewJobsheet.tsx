@@ -5,6 +5,7 @@ import { useModules } from '../../contexts/ModulesContext'
 import { api, Vehicle, Customer, User, Site } from '../../lib/api'
 import WorkDetailsPanel from './WorkDetailsPanel'
 import CustomerCardModal from './components/CustomerCardModal'
+import CustomerFormModal, { SavedCustomer } from '../../components/customers/CustomerFormModal'
 
 interface VehicleLookupResponse {
   found: boolean
@@ -56,7 +57,6 @@ export default function NewJobsheet() {
   const [showNewCustomer, setShowNewCustomer] = useState(false)
   const [changingCustomer, setChangingCustomer] = useState(false)
   const [showCustomerCard, setShowCustomerCard] = useState(false)
-  const [newCustomer, setNewCustomer] = useState({ firstName: '', lastName: '', mobile: '', phone: '', contactName: '', email: '' })
   const [linkingCustomer, setLinkingCustomer] = useState(false)
   const [customerError, setCustomerError] = useState<string | null>(null)
 
@@ -187,7 +187,7 @@ export default function NewJobsheet() {
 
   const resetCustomerUi = () => {
     setCustomerSearch(''); setCustomerResults([]); setShowNewCustomer(false); setChangingCustomer(false)
-    setCustomerError(null); setNewCustomer({ firstName: '', lastName: '', mobile: '', phone: '', contactName: '', email: '' })
+    setCustomerError(null)
   }
   const selectVehicle = (vehicle: Vehicle) => {
     setSelectedVehicle(vehicle); setSearchQuery(''); setSearchResults([]); resetCustomerUi()
@@ -256,23 +256,14 @@ export default function NewJobsheet() {
       setCustomerError(err instanceof Error ? err.message : 'Failed to link customer')
     } finally { setLinkingCustomer(false) }
   }
-  const handleCreateCustomer = async () => {
-    if (!token || !selectedVehicle) return
-    if (!newCustomer.firstName.trim() || !newCustomer.lastName.trim()) { setCustomerError('First and last name are required'); return }
+  const handleCustomerSaved = async (saved: SavedCustomer) => {
+    if (!selectedVehicle) { setShowNewCustomer(false); return }
     setLinkingCustomer(true); setCustomerError(null)
     try {
-      const created = await api<{ id: string; firstName: string; lastName: string; email: string | null; mobile: string | null }>('/api/v1/customers', {
-        method: 'POST', token,
-        body: {
-          firstName: newCustomer.firstName.trim(), lastName: newCustomer.lastName.trim(),
-          mobile: newCustomer.mobile.trim() || undefined, phone: newCustomer.phone.trim() || undefined,
-          contactName: newCustomer.contactName.trim() || undefined, email: newCustomer.email.trim() || undefined,
-          siteId: form.siteId || undefined
-        }
-      })
-      await linkCustomerToVehicle(created.id, { id: created.id, first_name: created.firstName, last_name: created.lastName, email: created.email, mobile: created.mobile, external_id: null })
+      await linkCustomerToVehicle(saved.id, { id: saved.id, first_name: saved.firstName, last_name: saved.lastName, email: saved.email, mobile: saved.mobile, external_id: saved.externalId ?? null })
+      setShowNewCustomer(false)
     } catch (err) {
-      setCustomerError(err instanceof Error ? err.message : 'Failed to create customer')
+      setCustomerError(err instanceof Error ? err.message : 'Failed to link customer')
     } finally { setLinkingCustomer(false) }
   }
 
@@ -450,45 +441,24 @@ export default function NewJobsheet() {
             ) : (
               <div className="border border-amber-200 bg-amber-50/40 rounded-xl p-4 space-y-3">
                 <p className="text-xs text-amber-700">Search for an existing customer or add a new one — a jobsheet needs one.</p>
-                {!showNewCustomer ? (
-                  <>
-                    <div className="relative">
-                      <input type="text" value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} placeholder="Search by name, email or mobile…" className={inputCls} />
-                      {customerSearching && <div className="absolute right-3 top-2.5"><div className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full" /></div>}
-                      {customerResults.length > 0 && (
-                        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-auto">
-                          {customerResults.map(rc => (
-                            <button key={rc.id} type="button" onClick={() => handleSelectCustomer(rc)} disabled={linkingCustomer} className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 last:border-0 disabled:opacity-50">
-                              <div className="font-medium">{rc.firstName} {rc.lastName}</div>
-                              <div className="text-sm text-gray-500">{rc.mobile || rc.email || '—'}</div>
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                <div className="relative">
+                  <input type="text" value={customerSearch} onChange={(e) => setCustomerSearch(e.target.value)} placeholder="Search by name, email or mobile…" className={inputCls} />
+                  {customerSearching && <div className="absolute right-3 top-2.5"><div className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full" /></div>}
+                  {customerResults.length > 0 && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-auto">
+                      {customerResults.map(rc => (
+                        <button key={rc.id} type="button" onClick={() => handleSelectCustomer(rc)} disabled={linkingCustomer} className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 last:border-0 disabled:opacity-50">
+                          <div className="font-medium">{rc.firstName} {rc.lastName}</div>
+                          <div className="text-sm text-gray-500">{rc.mobile || rc.email || '—'}</div>
+                        </button>
+                      ))}
                     </div>
-                    <div className="flex items-center gap-4">
-                      <button type="button" onClick={() => { setShowNewCustomer(true); setCustomerError(null) }} className="text-sm font-medium text-primary hover:underline">+ Add new customer</button>
-                      {selectedVehicle.customer && <button type="button" onClick={() => { setChangingCustomer(false); setCustomerError(null) }} className="text-sm text-gray-500 hover:underline">Cancel</button>}
-                    </div>
-                  </>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <input type="text" value={newCustomer.firstName} onChange={(e) => setNewCustomer(n => ({ ...n, firstName: e.target.value }))} placeholder="First name *" className={inputCls} />
-                      <input type="text" value={newCustomer.lastName} onChange={(e) => setNewCustomer(n => ({ ...n, lastName: e.target.value }))} placeholder="Last name *" className={inputCls} />
-                      <input type="text" value={newCustomer.contactName} onChange={(e) => setNewCustomer(n => ({ ...n, contactName: e.target.value }))} placeholder="Contact (optional)" className={inputCls} />
-                      <input type="text" value={newCustomer.mobile} onChange={(e) => setNewCustomer(n => ({ ...n, mobile: e.target.value }))} placeholder="Mobile" className={inputCls} />
-                      <input type="text" value={newCustomer.phone} onChange={(e) => setNewCustomer(n => ({ ...n, phone: e.target.value }))} placeholder="Phone (landline)" className={inputCls} />
-                      <input type="email" value={newCustomer.email} onChange={(e) => setNewCustomer(n => ({ ...n, email: e.target.value }))} placeholder="Email" className={inputCls} />
-                    </div>
-                    <div className="flex gap-2">
-                      <button type="button" onClick={handleCreateCustomer} disabled={linkingCustomer || !newCustomer.firstName.trim() || !newCustomer.lastName.trim()} className="px-4 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50">
-                        {linkingCustomer ? 'Saving…' : 'Save & link customer'}
-                      </button>
-                      <button type="button" onClick={() => { setShowNewCustomer(false); setCustomerError(null) }} className="px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50">Back to search</button>
-                    </div>
-                  </div>
-                )}
+                  )}
+                </div>
+                <div className="flex items-center gap-4">
+                  <button type="button" onClick={() => { setShowNewCustomer(true); setCustomerError(null) }} className="text-sm font-medium text-primary hover:underline">+ Add new customer</button>
+                  {selectedVehicle.customer && <button type="button" onClick={() => { setChangingCustomer(false); setCustomerError(null) }} className="text-sm text-gray-500 hover:underline">Cancel</button>}
+                </div>
                 {customerError && <p className="text-xs text-red-600">{customerError}</p>}
               </div>
             )}
@@ -633,6 +603,15 @@ export default function NewJobsheet() {
           onUpdated={(c) => setSelectedVehicle(v => (v && v.customer)
             ? { ...v, customer: { ...v.customer, first_name: c.firstName, last_name: c.lastName, mobile: c.mobile, email: c.email } }
             : v)}
+        />
+      )}
+
+      {showNewCustomer && (
+        <CustomerFormModal
+          initialName={customerSearch}
+          siteId={form.siteId || undefined}
+          onClose={() => setShowNewCustomer(false)}
+          onSaved={handleCustomerSaved}
         />
       )}
     </div>

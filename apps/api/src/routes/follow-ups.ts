@@ -238,7 +238,7 @@ followUps.get('/reports/outreach', async (c) => {
 followUps.get('/', async (c) => {
   try {
     const auth = c.get('auth')
-    const { status, site_id, assigned_to, due, limit = '50', offset = '0' } = c.req.query()
+    const { status, site_id, assigned_to, due, q, limit = '50', offset = '0' } = c.req.query()
 
     let query = supabaseAdmin
       .from('follow_up_cases')
@@ -252,6 +252,38 @@ followUps.get('/', async (c) => {
     }
     if (site_id) query = query.eq('site_id', site_id)
     if (assigned_to) query = query.eq('assigned_to', assigned_to)
+
+    // Free-text search across customer (name/mobile/email) and vehicle registration.
+    // The searchable fields live on joined tables, so resolve matching customer/vehicle
+    // ids first, then constrain the case list by them.
+    if (q && q.trim()) {
+      const like = `%${q.trim()}%`
+      const [{ data: custRows }, { data: vehRows }] = await Promise.all([
+        supabaseAdmin
+          .from('customers')
+          .select('id')
+          .eq('organization_id', auth.orgId)
+          .or(`first_name.ilike.${like},last_name.ilike.${like},mobile.ilike.${like},email.ilike.${like}`)
+          .limit(1000),
+        supabaseAdmin
+          .from('vehicles')
+          .select('id')
+          .eq('organization_id', auth.orgId)
+          .ilike('registration', like)
+          .limit(1000),
+      ])
+      const custIds = (custRows || []).map((r) => r.id)
+      const vehIds = (vehRows || []).map((r) => r.id)
+      if (custIds.length === 0 && vehIds.length === 0) {
+        const off0 = parseInt(offset, 10) || 0
+        const lim0 = Math.min(parseInt(limit, 10) || 50, 200)
+        return c.json({ cases: [], total: 0, limit: lim0, offset: off0 })
+      }
+      const ors: string[] = []
+      if (custIds.length) ors.push(`customer_id.in.(${custIds.join(',')})`)
+      if (vehIds.length) ors.push(`vehicle_id.in.(${vehIds.join(',')})`)
+      query = query.or(ors.join(','))
+    }
 
     if (due === 'overdue') {
       const startToday = new Date(); startToday.setHours(0, 0, 0, 0)

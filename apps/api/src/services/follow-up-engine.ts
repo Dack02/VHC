@@ -823,6 +823,49 @@ async function processCase(c: CaseRow, tlCache: Map<string, Timeline | null>, se
 
   const isSendStep = next.action === 'send_sms' || next.action === 'send_email' || next.action === 'send_both'
 
+  // Supersession guard — collapse a burst of back-dated reminders to the most
+  // recent one. When a case is opened close to (or after) the due date, every
+  // "weeks before due" send step is already overdue at once; without this they
+  // would fire on consecutive ticks and the customer would get several texts
+  // within a day or two. If a LATER send step is ALSO already due, this earlier
+  // send is stale — skip it (advance past it, no customer message) so only the
+  // most recent applicable reminder is actually sent. Runs before the staleness
+  // guard so an ancient early step can't park the whole case. manual_call /
+  // auto_close steps are never skipped here (they advance via the path below).
+  if (isSendStep) {
+    const isSend = (a: TimelineStep['action']) => a === 'send_sms' || a === 'send_email' || a === 'send_both'
+    const supersededByLaterDueSend = timeline.steps.some(
+      (s) =>
+        s.step_order > next.step_order &&
+        isSend(s.action) &&
+        computeStepDate(timeline.anchor, s, c.anchor_date ? new Date(c.anchor_date) : null, new Date(c.created_at), timeline.minOffset) <= todayStart()
+    )
+    if (supersededByLaterDueSend) {
+      const nowIso = new Date().toISOString()
+      const nextStep = timeline.steps.find((s) => s.step_order > next.step_order)
+      const nextActionAt = nextStep
+        ? computeStepDate(timeline.anchor, nextStep, c.anchor_date ? new Date(c.anchor_date) : null, new Date(c.created_at), timeline.minOffset).toISOString()
+        : null
+      await supabaseAdmin
+        .from('follow_up_cases')
+        .update({
+          current_step_order: next.step_order,
+          next_action_at: nextActionAt,
+          status: nextStep ? 'active' : 'manual',
+          updated_at: nowIso,
+        })
+        .eq('id', c.id)
+        .lt('current_step_order', next.step_order)
+      await logEvent(c.id, org, 'system', {
+        channel: 'system',
+        stepOrder: next.step_order,
+        body: `Skipped ${next.action} step ${next.step_order} — superseded by a later reminder already due (case opened close to the due date)`,
+        metadata: { skipped: true, reason: 'superseded', action: next.action },
+      })
+      return
+    }
+  }
+
   // Staleness guard — never fire a customer send that has run badly late (e.g.
   // the org had automation off for weeks). Park the case for a manual call
   // instead of blasting a stale reminder. Checked before the send-window gate

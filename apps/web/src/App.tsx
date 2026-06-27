@@ -36,7 +36,6 @@ const NewHealthCheck = lazy(() => import('./pages/HealthChecks/NewHealthCheck'))
 const JobsheetList = lazy(() => import('./pages/Jobsheets/JobsheetList'))
 const NewJobsheet = lazy(() => import('./pages/Jobsheets/NewJobsheet'))
 const JobsheetDetail = lazy(() => import('./pages/Jobsheets/JobsheetDetail'))
-const DocumentsHub = lazy(() => import('./pages/Documents/DocumentsHub'))
 const EstimatesList = lazy(() => import('./pages/Estimates/EstimatesList'))
 const NewEstimate = lazy(() => import('./pages/Estimates/NewEstimate'))
 const EstimateDetail = lazy(() => import('./pages/Estimates/EstimateDetail'))
@@ -233,8 +232,6 @@ function App() {
                         <Route path="/jobsheets" element={<RequireModule module="jobsheets"><JobsheetList /></RequireModule>} />
                         <Route path="/jobsheets/new" element={<RequireModule module="jobsheets"><NewJobsheet /></RequireModule>} />
                         <Route path="/jobsheets/:id" element={<RequireModule module="jobsheets"><JobsheetDetail /></RequireModule>} />
-                        {/* Documents hub — not route-gated; the hub itself shows only the enabled document modules. */}
-                        <Route path="/documents" element={<DocumentsHub />} />
                         <Route path="/estimates" element={<RequireModule module="estimates"><EstimatesList /></RequireModule>} />
                         <Route path="/estimates/new" element={<RequireModule module="estimates"><NewEstimate /></RequireModule>} />
                         <Route path="/estimates/:id" element={<RequireModule module="estimates"><EstimateDetail /></RequireModule>} />

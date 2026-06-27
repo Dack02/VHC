@@ -45,6 +45,7 @@ export type TemplateType =
   | 'reminder'
   | 'reminder_urgent'
   | 'authorization_confirmation'
+  | 'estimate_ready'
 
 export const DEFAULT_TEMPLATES: Record<TemplateType, DefaultTemplates> = {
   health_check_ready: {
@@ -93,6 +94,23 @@ export const DEFAULT_TEMPLATES: Record<TemplateType, DefaultTemplates> = {
       emailClosing: "Don't miss out - review your health check now before it expires.",
       emailSignature: '{{dealershipName}}',
       emailCtaText: 'View Health Check Now'
+    }
+  },
+
+  estimate_ready: {
+    sms: {
+      smsContent:
+        'Hi {{customerFirstName}}, your estimate {{estimateNumber}} for {{vehicleReg}} is ready ({{quoteTotalIncVat}} inc VAT). Review & approve: {{publicUrl}} - {{dealershipName}}'
+    },
+    email: {
+      emailSubject: 'Your Estimate {{estimateNumber}} is Ready - {{vehicleReg}}',
+      emailGreeting: 'Hi {{customerName}},',
+      emailBody:
+        'Please find your estimate {{estimateNumber}} for {{vehicleReg}} ({{vehicleMakeModel}}), totalling {{quoteTotalIncVat}} inc VAT.\n\nReview the work below and let us know if you would like to go ahead — you can approve or decline online. Once approved, we will be in touch to book the work in.',
+      emailClosing:
+        'If you have any questions about this estimate, please don\'t hesitate to contact us.',
+      emailSignature: '{{dealershipName}}',
+      emailCtaText: 'View Estimate'
     }
   },
 

@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useModules } from '../../contexts/ModulesContext'
 import { api } from '../../lib/api'
 import ComposeMessageModal from '../../components/ComposeMessageModal'
-import CustomerModal from './components/CustomerModal'
+import CustomerFormModal from '../../components/customers/CustomerFormModal'
 import VehicleLookupModal from './components/VehicleLookupModal'
 
 interface Vehicle {
@@ -313,9 +313,9 @@ export default function CustomerList() {
 
       {/* Add Customer Modal */}
       {showModal && (
-        <CustomerModal
+        <CustomerFormModal
           onClose={() => setShowModal(false)}
-          onSuccess={() => {
+          onSaved={() => {
             setShowModal(false)
             fetchCustomers()
           }}

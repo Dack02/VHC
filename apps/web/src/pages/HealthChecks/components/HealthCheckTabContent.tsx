@@ -823,6 +823,8 @@ export function HealthCheckTabContent({
                     notes={result.notes}
                     value={result.value}
                     checkResultId={result.id}
+                    healthCheckId={healthCheckId}
+                    onUpdate={onUpdate}
                     preloadedReasons={reasonsByCheckResult[result.id]}
                     specialDisplay={showDetails ? renderSpecialDisplay(result) : undefined}
                   />

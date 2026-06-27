@@ -32,6 +32,52 @@ export function isValidTransition(from: string, to: string): boolean {
   return validTransitions[from]?.includes(to) ?? false
 }
 
+// ---------------------------------------------------------------------------
+// Edit-lock: a quote can be built and corrected freely up until it is sent to
+// the customer. Once it has been sent (or reached a terminal state) the
+// quote-DEFINING content is locked — severity, pricing, which line items exist
+// — because the customer has seen it. An org/site admin can still pass an
+// explicit override to make a correction and re-send.
+//
+// NOTE: this lock is deliberately scoped to quote-defining mutations only.
+// Post-send operational edits (recording the customer's outcome, marking work
+// complete in the workshop) intentionally remain open — those happen AFTER a
+// quote is sent and authorised, so they must never be blocked by this lock.
+// ---------------------------------------------------------------------------
+export const SENT_LOCK_STATUSES = new Set([
+  'sent', 'delivered', 'opened', 'partial_response',
+  'authorized', 'declined', 'expired', 'completed', 'cancelled'
+])
+
+const EDIT_OVERRIDE_ROLES = new Set(['super_admin', 'org_admin', 'site_admin'])
+
+/**
+ * Decide whether a health check's quote content may be edited.
+ * @param status  current health_checks.status
+ * @param role    auth.user.role of the caller
+ * @param override true if the caller explicitly asked to override the post-send lock
+ */
+export function checkQuoteEditable(
+  status: string,
+  role: string,
+  override: boolean
+): { allowed: true } | { allowed: false; error: string; code: string } {
+  if (!SENT_LOCK_STATUSES.has(status)) return { allowed: true }
+  if (override && EDIT_OVERRIDE_ROLES.has(role)) return { allowed: true }
+  if (override && !EDIT_OVERRIDE_ROLES.has(role)) {
+    return {
+      allowed: false,
+      error: 'This health check has already been sent to the customer. Only an admin can override the lock to make a correction.',
+      code: 'EDIT_LOCKED_NEEDS_ADMIN'
+    }
+  }
+  return {
+    allowed: false,
+    error: `This health check has already been sent to the customer (status: ${status}) and is locked for editing.`,
+    code: 'EDIT_LOCKED'
+  }
+}
+
 // Valid deletion reasons
 export const DELETION_REASONS = [
   'no_show',           // Customer did not arrive

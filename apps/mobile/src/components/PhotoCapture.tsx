@@ -4,13 +4,18 @@ import { Button } from './Button'
 interface PhotoCaptureProps {
   onCapture: (photoData: string) => void
   onClose: () => void
+  /** True while the parent is uploading the captured photo. Keeps the modal up and blocks re-submits. */
+  uploading?: boolean
 }
 
-export function PhotoCapture({ onCapture, onClose }: PhotoCaptureProps) {
+export function PhotoCapture({ onCapture, onClose, uploading = false }: PhotoCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [stream, setStream] = useState<MediaStream | null>(null)
+  // Hold the active stream in a ref, not state: the unmount cleanup must always see the
+  // CURRENT stream. With state, the cleanup closed over the initial (null) value and never
+  // stopped the camera tracks, leaving the camera busy so the next capture couldn't open it.
+  const streamRef = useRef<MediaStream | null>(null)
   const [capturedImage, setCapturedImage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [cameraReady, setCameraReady] = useState(false)
@@ -37,7 +42,7 @@ export function PhotoCapture({ onCapture, onClose }: PhotoCaptureProps) {
         }
       })
 
-      setStream(mediaStream)
+      streamRef.current = mediaStream
 
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream
@@ -54,9 +59,12 @@ export function PhotoCapture({ onCapture, onClose }: PhotoCaptureProps) {
   }
 
   const stopCamera = () => {
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop())
-      setStream(null)
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
     }
   }
 
@@ -110,7 +118,7 @@ export function PhotoCapture({ onCapture, onClose }: PhotoCaptureProps) {
   }
 
   const confirmPhoto = () => {
-    if (capturedImage) {
+    if (capturedImage && !uploading) {
       onCapture(capturedImage)
     }
   }
@@ -169,7 +177,8 @@ export function PhotoCapture({ onCapture, onClose }: PhotoCaptureProps) {
         {/* Close button */}
         <button
           onClick={onClose}
-          className="absolute top-4 left-4 w-10 h-10 bg-black/50 text-white flex items-center justify-center rounded-full"
+          disabled={uploading}
+          className="absolute top-4 left-4 w-10 h-10 bg-black/50 text-white flex items-center justify-center rounded-full disabled:opacity-40"
         >
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -201,6 +210,7 @@ export function PhotoCapture({ onCapture, onClose }: PhotoCaptureProps) {
               onClick={retake}
               fullWidth
               size="lg"
+              disabled={uploading}
             >
               Retake
             </Button>
@@ -208,8 +218,9 @@ export function PhotoCapture({ onCapture, onClose }: PhotoCaptureProps) {
               onClick={confirmPhoto}
               fullWidth
               size="lg"
+              loading={uploading}
             >
-              Use Photo
+              {uploading ? 'Saving…' : 'Use Photo'}
             </Button>
           </div>
         ) : !error ? (

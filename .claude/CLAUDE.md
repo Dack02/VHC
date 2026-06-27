@@ -151,6 +151,24 @@ className="px-2 py-0.5 rounded-full text-xs font-medium"
 className="bg-white rounded-xl shadow-xl"
 ```
 
+### Forms & modals (data-entry)
+Data-entry **forms and modal dialogs** follow a dedicated, higher-fidelity spec —
+**see `docs/form-design-guidelines.md`**. Don't hand-roll input/button styling for
+new forms; copy the canonical implementation in
+`apps/web/src/components/customers/CustomerFormModal.tsx` (the source of truth).
+
+Headline rules:
+- Inputs/buttons `rounded-[10px]`, modal card `rounded-[18px]`; inputs are 42px
+  tall with a dark focus ring.
+- Primary action is neutral-dark `#16191f` (hover black) — **not** tenant
+  `bg-primary`, which stays for nav/links/badges.
+- Multi-section forms use the **label-rail** layout (left title+caption, right
+  2-up field grid); header has title+subtitle, footer has "* Required fields" +
+  Cancel/primary.
+- Required `*` (`#d23f3f`) and `· optional` (`#aeb4be`) label markers; inline
+  validation = red border + helper text.
+- Esc / scrim-click / Cancel all close; trap & restore focus.
+
 ## Error Handling
 API uses structured errors:
 ```typescript

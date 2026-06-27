@@ -62,7 +62,12 @@ function MriBadge({ status, progress }: { status: string; progress: MriProgress 
   )
 }
 
-export default function Upcoming() {
+/**
+ * Upcoming bookings panel — the next 2 working days of bookings with their MRI prep
+ * status. Rendered as the "Upcoming" tab inside the Arrivals hub (ArrivalsHub), so it
+ * deliberately owns no page chrome (title/width) — the hub provides that.
+ */
+export function UpcomingPanel() {
   const { session } = useAuth()
   const { on, off, isConnected } = useSocket()
   const [data, setData] = useState<UpcomingData | null>(null)
@@ -139,10 +144,8 @@ export default function Upcoming() {
 
   if (error && !data) {
     return (
-      <div className="max-w-4xl mx-auto p-6">
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700">
-          {error}
-        </div>
+      <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700">
+        {error}
       </div>
     )
   }
@@ -151,14 +154,10 @@ export default function Upcoming() {
   const totalBookings = dates.reduce((sum, d) => sum + d.healthChecks.length, 0)
 
   return (
-    <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Upcoming Bookings</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          {totalBookings} booking{totalBookings !== 1 ? 's' : ''} in the next 2 working days
-        </p>
-      </div>
+    <div className="space-y-6">
+      <p className="text-sm text-gray-500">
+        {totalBookings} booking{totalBookings !== 1 ? 's' : ''} in the next 2 working days
+      </p>
 
       {dates.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-8 text-center">

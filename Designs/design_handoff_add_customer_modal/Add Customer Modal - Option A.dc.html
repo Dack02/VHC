@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>body{margin:0;}</style>
+</helmet>
+
+<div style="min-height:100vh;width:100%;background:rgba(16,20,28,0.45);display:flex;align-items:center;justify-content:center;padding:40px 20px;box-sizing:border-box;font-family:'Hanken Grotesk',sans-serif;">
+
+  <div style="width:924px;max-width:100%;background:#fff;border-radius:18px;border:1px solid rgba(16,20,28,0.05);box-shadow:0 28px 70px -24px rgba(16,20,28,0.34),0 8px 24px -14px rgba(16,20,28,0.18);overflow:hidden;">
+
+    <!-- header -->
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;padding:22px 30px 20px;border-bottom:1px solid #eef0f3;">
+      <div>
+        <div style="font-size:19px;font-weight:700;color:#16191f;letter-spacing:-0.015em;">Add new customer</div>
+        <div style="font-size:13px;color:#8a909c;margin-top:3px;">Create a record for jobs, invoices and reminders.</div>
+      </div>
+      <button style="display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;border:1px solid transparent;background:transparent;cursor:pointer;" style-hover="background:#f3f5f7;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9aa0ab" stroke-width="2" stroke-linecap="round"><path d="M6 6 L18 18 M18 6 L6 18"></path></svg>
+      </button>
+    </div>
+
+    <!-- section: customer -->
+    <div style="display:grid;grid-template-columns:190px 1fr;gap:36px;padding:22px 30px;border-bottom:1px solid #f3f5f7;">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:#16191f;letter-spacing:-0.01em;">Customer</div>
+        <div style="font-size:12.5px;color:#9aa0ab;margin-top:3px;line-height:1.45;">Their name and business.</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 18px;">
+        <label style="display:flex;flex-direction:column;gap:6px;">
+          <span style="font-size:13px;font-weight:600;color:#3a3f4a;">First name <span style="color:#d23f3f;">*</span></span>
+          <input placeholder="Jordan" style="width:100%;height:42px;border:1px solid #e4e7ec;border-radius:10px;padding:0 14px;font-size:15px;color:#16191f;background:#fff;font-family:inherit;outline:none;box-sizing:border-box;" style-focus="border-color:#16191f;box-shadow:0 0 0 3px rgba(22,25,31,0.08);"/>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:6px;">
+          <span style="font-size:13px;font-weight:600;color:#3a3f4a;">Last name <span style="color:#d23f3f;">*</span></span>
+          <input placeholder="Whitfield" style="width:100%;height:42px;border:1px solid #e4e7ec;border-radius:10px;padding:0 14px;font-size:15px;color:#16191f;background:#fff;font-family:inherit;outline:none;box-sizing:border-box;" style-focus="border-color:#16191f;box-shadow:0 0 0 3px rgba(22,25,31,0.08);"/>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:6px;grid-column:1 / -1;">
+          <span style="font-size:13px;font-weight:600;color:#3a3f4a;">Company name <span style="color:#aeb4be;font-weight:500;">· optional</span></span>
+          <input placeholder="e.g. Whitfield Logistics Ltd" style="width:100%;height:42px;border:1px solid #e4e7ec;border-radius:10px;padding:0 14px;font-size:15px;color:#16191f;background:#fff;font-family:inherit;outline:none;box-sizing:border-box;" style-focus="border-color:#16191f;box-shadow:0 0 0 3px rgba(22,25,31,0.08);"/>
+        </label>
+      </div>
+    </div>
+
+    <!-- section: contact -->
+    <div style="display:grid;grid-template-columns:190px 1fr;gap:36px;padding:22px 30px;border-bottom:1px solid #f3f5f7;">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:#16191f;letter-spacing:-0.01em;">Contact</div>
+        <div style="font-size:12.5px;color:#9aa0ab;margin-top:3px;line-height:1.45;">How you'll reach them.</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 18px;">
+        <label style="display:flex;flex-direction:column;gap:6px;">
+          <span style="font-size:13px;font-weight:600;color:#3a3f4a;">Email</span>
+          <input placeholder="name@company.co.uk" style="width:100%;height:42px;border:1px solid #e4e7ec;border-radius:10px;padding:0 14px;font-size:15px;color:#16191f;background:#fff;font-family:inherit;outline:none;box-sizing:border-box;" style-focus="border-color:#16191f;box-shadow:0 0 0 3px rgba(22,25,31,0.08);"/>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:6px;">
+          <span style="font-size:13px;font-weight:600;color:#3a3f4a;">Mobile</span>
+          <input placeholder="07700 900000" style="width:100%;height:42px;border:1px solid #e4e7ec;border-radius:10px;padding:0 14px;font-size:15px;color:#16191f;background:#fff;font-family:inherit;outline:none;box-sizing:border-box;" style-focus="border-color:#16191f;box-shadow:0 0 0 3px rgba(22,25,31,0.08);"/>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:6px;">
+          <span style="font-size:13px;font-weight:600;color:#3a3f4a;">Phone <span style="color:#aeb4be;font-weight:500;">· landline</span></span>
+          <input placeholder="0161 000 0000" style="width:100%;height:42px;border:1px solid #e4e7ec;border-radius:10px;padding:0 14px;font-size:15px;color:#16191f;background:#fff;font-family:inherit;outline:none;box-sizing:border-box;" style-focus="border-color:#16191f;box-shadow:0 0 0 3px rgba(22,25,31,0.08);"/>
+        </label>
+        <div style="display:flex;align-items:flex-end;padding-bottom:2px;">
+          <button style="display:inline-flex;align-items:center;gap:6px;background:transparent;border:none;padding:0;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;color:#16191f;" style-hover="color:#3a3f4a;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14 M5 12h14"></path></svg>
+            Add another email or number
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- section: address -->
+    <div style="display:grid;grid-template-columns:190px 1fr;gap:36px;padding:22px 30px;">
+      <div>
+        <div style="font-size:15px;font-weight:700;color:#16191f;letter-spacing:-0.01em;">Address</div>
+        <div style="font-size:12.5px;color:#9aa0ab;margin-top:3px;line-height:1.45;">For invoices and collection.</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 18px;">
+        <label style="display:flex;flex-direction:column;gap:6px;">
+          <span style="font-size:13px;font-weight:600;color:#3a3f4a;">Postcode</span>
+          <div style="display:flex;gap:8px;">
+            <input placeholder="SW1A 1AA" style="flex:1;min-width:0;height:42px;border:1px solid #e4e7ec;border-radius:10px;padding:0 14px;font-size:15px;color:#16191f;background:#fff;font-family:inherit;outline:none;box-sizing:border-box;text-transform:uppercase;" style-focus="border-color:#16191f;box-shadow:0 0 0 3px rgba(22,25,31,0.08);"/>
+            <button style="height:42px;padding:0 16px;border:1px solid #d7dbe0;border-radius:10px;background:#f6f7f9;font-size:13px;font-weight:700;color:#16191f;cursor:pointer;white-space:nowrap;font-family:inherit;" style-hover="background:#eef0f3;">Find</button>
+          </div>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:6px;">
+          <span style="font-size:13px;font-weight:600;color:#3a3f4a;">Town / City</span>
+          <input style="width:100%;height:42px;border:1px solid #e4e7ec;border-radius:10px;padding:0 14px;font-size:15px;color:#16191f;background:#fff;font-family:inherit;outline:none;box-sizing:border-box;" style-focus="border-color:#16191f;box-shadow:0 0 0 3px rgba(22,25,31,0.08);"/>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:6px;grid-column:1 / -1;">
+          <span style="font-size:13px;font-weight:600;color:#3a3f4a;">Address line 1</span>
+          <input style="width:100%;height:42px;border:1px solid #e4e7ec;border-radius:10px;padding:0 14px;font-size:15px;color:#16191f;background:#fff;font-family:inherit;outline:none;box-sizing:border-box;" style-focus="border-color:#16191f;box-shadow:0 0 0 3px rgba(22,25,31,0.08);"/>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:6px;">
+          <span style="font-size:13px;font-weight:600;color:#3a3f4a;">Address line 2 <span style="color:#aeb4be;font-weight:500;">· optional</span></span>
+          <input style="width:100%;height:42px;border:1px solid #e4e7ec;border-radius:10px;padding:0 14px;font-size:15px;color:#16191f;background:#fff;font-family:inherit;outline:none;box-sizing:border-box;" style-focus="border-color:#16191f;box-shadow:0 0 0 3px rgba(22,25,31,0.08);"/>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:6px;">
+          <span style="font-size:13px;font-weight:600;color:#3a3f4a;">County</span>
+          <input style="width:100%;height:42px;border:1px solid #e4e7ec;border-radius:10px;padding:0 14px;font-size:15px;color:#16191f;background:#fff;font-family:inherit;outline:none;box-sizing:border-box;" style-focus="border-color:#16191f;box-shadow:0 0 0 3px rgba(22,25,31,0.08);"/>
+        </label>
+      </div>
+    </div>
+
+    <!-- footer -->
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 30px;background:#fafbfc;border-top:1px solid #eef0f3;">
+      <div style="font-size:12.5px;color:#9aa0ab;"><span style="color:#d23f3f;">*</span> Required fields</div>
+      <div style="display:flex;gap:10px;">
+        <button style="height:42px;padding:0 20px;border:1px solid #d7dbe0;border-radius:10px;background:#fff;font-size:14px;font-weight:600;color:#3a3f4a;cursor:pointer;font-family:inherit;" style-hover="background:#f6f7f9;">Cancel</button>
+        <button style="height:42px;padding:0 22px;border:none;border-radius:10px;background:#16191f;color:#fff;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;" style-hover="background:#000;">Add customer</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

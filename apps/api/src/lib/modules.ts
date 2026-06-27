@@ -23,6 +23,7 @@ export type ModuleKey =
   | 'ai_generation'
   | 'vehicle_lookup'
   | 'jobsheets'
+  | 'estimates'
   | 'booking_diary'
 
 export interface ModuleDefinition {
@@ -46,6 +47,7 @@ export const MODULES: ModuleDefinition[] = [
   { key: 'ai_generation',      label: 'AI Generation',      description: 'AI-assisted reason & note generation', defaultOn: true },
   { key: 'vehicle_lookup',     label: 'Vehicle Data Lookup', description: 'DVSA MOT history & vehicle lookup by registration', defaultOn: true },
   { key: 'jobsheets',          label: 'Jobsheets (GMS)',    description: 'Top-level booking document with attached health checks', defaultOn: false },
+  { key: 'estimates',          label: 'Estimates (GMS)',    description: 'Standalone pre-booking priced quotes that convert into jobsheets', defaultOn: true },
   { key: 'booking_diary',      label: 'Booking Diary',      description: 'Daily/weekly booking diary with workshop capacity and job-type counts', defaultOn: true }
 ]
 

@@ -4,6 +4,7 @@ import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
 import { applyServicePackageToRepairItem } from '../services/apply-service-package.js'
 import { formatRepairItem } from './repair-items/helpers.js'
+import { buildHealthCheckTimeline, extractUser, type TimelineEvent } from './health-checks/timeline.js'
 
 /**
  * Jobsheets (GMS) — the top-level booking document. A jobsheet is the parent; a
@@ -21,11 +22,11 @@ jobsheets.use('*', requireModule('jobsheets'))
 const SELECT = `
   *,
   customer:customers(id, first_name, last_name, mobile, email, phone, contact_name),
-  vehicle:vehicles(id, registration, make, model, year, fuel_type),
+  vehicle:vehicles(id, registration, make, model, year, fuel_type, mot_expiry_date, mot_status, mot_last_synced_at),
   service_type:service_types(id, code, label, colour),
   advisor:users!jobsheets_advisor_id_fkey(id, first_name, last_name),
   created_by_user:users!jobsheets_created_by_fkey(id, first_name, last_name),
-  linked_checks:health_checks!health_checks_jobsheet_id_fkey(id, status, job_state, inspection_required, vhc_reference, deleted_at, arrived_at, checked_in_at, mileage_in, key_location, time_required, customer_waiting, checkin_notes, checked_in_by_user:users!health_checks_checked_in_by_fkey(id, first_name, last_name)),
+  linked_checks:health_checks!health_checks_jobsheet_id_fkey(id, status, job_state, inspection_required, vhc_reference, deleted_at, arrived_at, checked_in_at, mileage_in, key_location, time_required, customer_waiting, checkin_notes, red_count, amber_count, green_count, completed_at, checked_in_by_user:users!health_checks_checked_in_by_fkey(id, first_name, last_name)),
   codes:jobsheet_booking_codes(booking_code:booking_codes(id, code, label, colour))
 `
 
@@ -72,7 +73,10 @@ function shapeJobsheet(row: any) {
           make: row.vehicle.make,
           model: row.vehicle.model,
           year: row.vehicle.year,
-          fuelType: row.vehicle.fuel_type
+          fuelType: row.vehicle.fuel_type,
+          motExpiryDate: row.vehicle.mot_expiry_date ?? null,
+          motStatus: row.vehicle.mot_status ?? null,
+          motLastSyncedAt: row.vehicle.mot_last_synced_at ?? null
         }
       : null,
     serviceType: row.service_type
@@ -82,7 +86,7 @@ function shapeJobsheet(row: any) {
     createdBy: row.created_by_user ? { id: row.created_by_user.id, firstName: row.created_by_user.first_name, lastName: row.created_by_user.last_name } : null,
     // Vehicle Status ("Work Status Code") is read through from the linked VHC
     // inspectionRequired distinguishes a real VHC (true) from a check-in-only visit shell (false).
-    healthCheck: hc ? { id: hc.id, status: hc.status, vehicleStatus: hc.job_state, vhcReference: hc.vhc_reference, inspectionRequired: hc.inspection_required ?? true } : null,
+    healthCheck: hc ? { id: hc.id, status: hc.status, vehicleStatus: hc.job_state, vhcReference: hc.vhc_reference, inspectionRequired: hc.inspection_required ?? true, redCount: hc.red_count ?? 0, amberCount: hc.amber_count ?? 0, greenCount: hc.green_count ?? 0, completedAt: hc.completed_at ?? null } : null,
     // Check-in details read through from the linked VHC (arrival → check-in happens on the VHC;
     // the check-in form writes these fields). null when no VHC or not yet arrived/checked in.
     checkIn: hc
@@ -106,6 +110,146 @@ function shapeJobsheet(row: any) {
           .filter(Boolean)
           .map((b: any) => ({ id: b.id, code: b.code, label: b.label ?? b.code, colour: b.colour }))
       : []
+  }
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/**
+ * Detail-only enrichment for the jobsheet card: vehicle service history, outstanding
+ * deferred work, and the recent customer message thread. Kept out of shapeJobsheet
+ * (and the list query) because each is a separate per-record query — fine for one
+ * detail page, too costly for a list.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+async function loadJobsheetExtras(orgId: string, shaped: any) {
+  const jobsheetId: string = shaped.id
+  const customerId: string | null = shaped.customer?.id ?? null
+  const vehicleId: string | null = shaped.vehicle?.id ?? null
+  const currentHcId: string | null = shaped.healthCheck?.id ?? null
+
+  // Quoted-work pricing — booked lines (jobsheet) ∪ the linked VHC's findings, top-level
+  // non-deleted only (mirrors GET /:id/work-lines). VAT is DB-trigger maintained, so we
+  // just sum the stored figures (price_override wins for the inc-VAT headline).
+  const pricingQuery = supabaseAdmin
+    .from('repair_items')
+    .select('subtotal, vat_amount, total_inc_vat, price_override, outcome_status')
+    .eq('organization_id', orgId)
+    .is('parent_repair_item_id', null)
+    .is('deleted_at', null)
+  const pricingPromise = currentHcId
+    ? pricingQuery.or(`jobsheet_id.eq.${jobsheetId},health_check_id.eq.${currentHcId}`)
+    : pricingQuery.eq('jobsheet_id', jobsheetId)
+
+  // Run the independent queries concurrently.
+  const [visitsRes, deferredRes, messagesRes, pricingRes, followUpRes, sourceEstimateRes] = await Promise.all([
+    // Vehicle service history (real VHCs for this vehicle, most recent first).
+    vehicleId
+      ? supabaseAdmin
+          .from('health_checks')
+          .select('id, created_at, completed_at, status')
+          .eq('organization_id', orgId)
+          .eq('vehicle_id', vehicleId)
+          .eq('inspection_required', true)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false })
+          .limit(50)
+      : Promise.resolve({ data: [] as any[] }),
+    // Outstanding deferred work for this vehicle (top-level items only — avoids
+    // double-counting grouped children, mirrors follow_up_pipeline).
+    vehicleId
+      ? supabaseAdmin
+          .from('repair_items')
+          .select('id, price_override, total_inc_vat, health_check:health_checks!inner(vehicle_id, organization_id)')
+          .eq('outcome_status', 'deferred')
+          .is('deleted_at', null)
+          .is('parent_repair_item_id', null)
+          .eq('health_check.organization_id', orgId)
+          .eq('health_check.vehicle_id', vehicleId)
+      : Promise.resolve({ data: [] as any[] }),
+    // Recent customer message thread (SMS), newest first.
+    customerId
+      ? supabaseAdmin
+          .from('sms_messages')
+          .select('id, direction, body, twilio_status, created_at, sender:users!sms_messages_sent_by_fkey(id, first_name, last_name)')
+          .eq('organization_id', orgId)
+          .eq('customer_id', customerId)
+          .order('created_at', { ascending: false })
+          .limit(6)
+      : Promise.resolve({ data: [] as any[] }),
+    pricingPromise,
+    // Follow-up case for this vehicle (if the sweep has created one) — lets the
+    // deferred-work banner open the case modal directly instead of the full list.
+    vehicleId
+      ? supabaseAdmin
+          .from('follow_up_cases')
+          .select('id, status, created_at')
+          .eq('organization_id', orgId)
+          .eq('vehicle_id', vehicleId)
+          .order('created_at', { ascending: false })
+          .limit(20)
+      : Promise.resolve({ data: [] as any[] }),
+    // Originating estimate (reverse of estimates.converted_to_jobsheet_id) — so an
+    // estimate-sourced jobsheet can show a "Created from estimate EST000XX" link.
+    supabaseAdmin
+      .from('estimates')
+      .select('id, reference, converted_at')
+      .eq('organization_id', orgId)
+      .eq('converted_to_jobsheet_id', jobsheetId)
+      .is('deleted_at', null)
+      .maybeSingle()
+  ])
+
+  const visits = (visitsRes.data || []) as any[]
+  const previous = visits.find(v => v.id !== currentHcId) || null
+
+  const deferredItems = (deferredRes.data || []) as any[]
+  const deferredValue = deferredItems.reduce(
+    (sum, ri) => sum + Number(ri.price_override ?? ri.total_inc_vat ?? 0),
+    0
+  )
+
+  // Pick the follow-up case to deep-link the banner at: prefer an open one
+  // (most recent), else fall back to the most recent case of any status.
+  const followUpCases = (followUpRes.data || []) as any[]
+  const OPEN_FOLLOW_UP = ['active', 'booking_found', 'engaged', 'manual']
+  const followUpCaseId =
+    (followUpCases.find(c => OPEN_FOLLOW_UP.includes(c.status))?.id ?? followUpCases[0]?.id) || null
+
+  const recentMessages = ((messagesRes.data || []) as any[]).map(m => ({
+    id: m.id,
+    direction: m.direction,
+    body: m.body,
+    status: m.twilio_status,
+    createdAt: m.created_at,
+    senderName: m.sender ? `${m.sender.first_name} ${m.sender.last_name}`.trim() : null
+  }))
+
+  const priceItems = ((pricingRes.data || []) as any[]).filter(ri => ri.outcome_status !== 'deleted')
+  const totalIncVat = priceItems.reduce((sum, ri) => sum + Number(ri.price_override ?? ri.total_inc_vat ?? 0), 0)
+  const vatAmount = priceItems.reduce((sum, ri) => sum + Number(ri.vat_amount ?? 0), 0)
+
+  const est = (sourceEstimateRes as any).data as { id: string; reference: string | null; converted_at: string | null } | null
+
+  return {
+    sourceEstimate: est ? { id: est.id, reference: est.reference, convertedAt: est.converted_at } : null,
+    history: {
+      totalVisits: visits.length,
+      lastVisitAt: previous ? (previous.completed_at || previous.created_at) : null
+    },
+    deferred: {
+      count: deferredItems.length,
+      totalValue: deferredValue,
+      caseId: followUpCaseId
+    },
+    recentMessages,
+    // Quoted total for the Overview card. net = inc − VAT keeps the subline consistent
+    // even when a price_override diverges from the stored subtotal/VAT.
+    work: {
+      itemCount: priceItems.length,
+      totalIncVat,
+      vat: vatAmount,
+      net: totalIncVat - vatAmount
+    }
   }
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -161,7 +305,9 @@ jobsheets.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'serv
       .single()
 
     if (error || !data) return c.json({ error: 'Jobsheet not found' }, 404)
-    return c.json(shapeJobsheet(data))
+    const shaped = shapeJobsheet(data)
+    const extras = await loadJobsheetExtras(auth.orgId, shaped)
+    return c.json({ ...shaped, ...extras })
   } catch (error) {
     console.error('Get jobsheet error:', error)
     return c.json({ error: 'Failed to get jobsheet' }, 500)
@@ -982,6 +1128,118 @@ jobsheets.post('/:id/work-lines/from-package', authorize(['super_admin', 'org_ad
   } catch (error) {
     console.error('Create work line from package error:', error)
     return c.json({ error: 'Failed to add package' }, 500)
+  }
+})
+
+// GET /:id/timeline - unified activity timeline for a jobsheet.
+// Jobsheet-level events (created, created-from-estimate, booked work-line completions
+// and outcomes) merged with the linked VHC's timeline when one exists. For a no-VHC
+// jobsheet (e.g. converted from an estimate) there is no health-check-keyed comms
+// source, so customer SMS from this booking's creation onward is surfaced directly.
+jobsheets.get('/:id/timeline', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    const { data: js } = await supabaseAdmin
+      .from('jobsheets')
+      .select(`
+        id, reference, created_at, customer_id,
+        created_by_user:users!jobsheets_created_by_fkey(first_name, last_name),
+        linked_checks:health_checks!health_checks_jobsheet_id_fkey(id, deleted_at)
+      `)
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .maybeSingle()
+    if (!js) return c.json({ error: 'Jobsheet not found' }, 404)
+
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const row = js as any
+    const events: TimelineEvent[] = []
+    const createdByUser = extractUser(row.created_by_user)
+
+    // Originating estimate (reverse of estimates.converted_to_jobsheet_id).
+    const { data: est } = await supabaseAdmin
+      .from('estimates')
+      .select('id, reference, converted_at')
+      .eq('organization_id', auth.orgId)
+      .eq('converted_to_jobsheet_id', id)
+      .is('deleted_at', null)
+      .maybeSingle()
+    if (est) {
+      events.push({
+        id: `estimate_${est.id}`,
+        event_type: 'created_from_estimate',
+        timestamp: (est.converted_at as string) || row.created_at,
+        user: createdByUser,
+        description: `Created from estimate ${est.reference || ''}`.trim(),
+        details: { estimate_id: est.id, estimate_reference: est.reference || undefined }
+      })
+    }
+
+    // Jobsheet created.
+    events.push({
+      id: `jobsheet_created_${row.id}`,
+      event_type: 'jobsheet_created',
+      timestamp: row.created_at,
+      user: createdByUser,
+      description: `Jobsheet ${row.reference || ''} created`.trim(),
+      details: { jobsheet_id: row.id, jobsheet_reference: row.reference || undefined }
+    })
+
+    // Booked work-line events (jobsheet-keyed repair items) — completion + outcome.
+    // VHC-keyed items are covered by the merged VHC timeline below, so no double-count.
+    const { data: items } = await supabaseAdmin
+      .from('repair_items')
+      .select(`
+        id, name,
+        labour_completed_at, labour_completed_by_user:users!repair_items_labour_completed_by_fkey(first_name, last_name),
+        parts_completed_at, parts_completed_by_user:users!repair_items_parts_completed_by_fkey(first_name, last_name),
+        outcome_status, outcome_set_at, outcome_set_by_user:users!repair_items_outcome_set_by_fkey(first_name, last_name)
+      `)
+      .eq('jobsheet_id', id)
+      .is('deleted_at', null)
+
+    for (const item of (items || []) as any[]) {
+      if (item.labour_completed_at) {
+        events.push({ id: `labour_complete_${item.id}`, event_type: 'labour_completed', timestamp: item.labour_completed_at, user: extractUser(item.labour_completed_by_user), description: `Labour completed for ${item.name}`, details: { repair_item_id: item.id, item_name: item.name } })
+      }
+      if (item.parts_completed_at) {
+        events.push({ id: `parts_complete_${item.id}`, event_type: 'parts_completed', timestamp: item.parts_completed_at, user: extractUser(item.parts_completed_by_user), description: `Parts completed for ${item.name}`, details: { repair_item_id: item.id, item_name: item.name } })
+      }
+      if (item.outcome_set_at && item.outcome_status && !['incomplete', 'ready'].includes(item.outcome_status)) {
+        const label = String(item.outcome_status).charAt(0).toUpperCase() + String(item.outcome_status).slice(1)
+        events.push({ id: `outcome_${item.id}`, event_type: `outcome_${item.outcome_status}`, timestamp: item.outcome_set_at, user: extractUser(item.outcome_set_by_user), description: `${item.name} ${label.toLowerCase()}`, details: { repair_item_id: item.id, item_name: item.name, outcome_status: item.outcome_status } })
+      }
+    }
+
+    // Merge the linked VHC's timeline (status, audit, arrival/check-in, VHC work lines,
+    // comms) when a health check exists; otherwise surface customer SMS directly.
+    const hcId = (Array.isArray(row.linked_checks) ? row.linked_checks.filter((h: any) => !h.deleted_at) : [])[0]?.id || null
+    if (hcId) {
+      const hcEvents = await buildHealthCheckTimeline(auth.orgId, hcId)
+      if (hcEvents) events.push(...hcEvents)
+    } else if (row.customer_id) {
+      const { data: smsData } = await supabaseAdmin
+        .from('sms_messages')
+        .select('id, direction, body, created_at, sender:users!sms_messages_sent_by_fkey(first_name, last_name)')
+        .eq('organization_id', auth.orgId)
+        .eq('customer_id', row.customer_id)
+        .gte('created_at', row.created_at)
+        .order('created_at', { ascending: true })
+      for (const m of (smsData || []) as any[]) {
+        const inbound = m.direction === 'inbound'
+        events.push({ id: `sms_${m.id}`, event_type: inbound ? 'message_received' : 'message_sent', timestamp: m.created_at, user: inbound ? null : extractUser(m.sender), description: inbound ? 'Customer replied by SMS' : 'SMS sent to customer', details: { channel: 'sms', body: m.body } })
+      }
+    }
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+
+    events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    return c.json({ timeline: events })
+  } catch (error) {
+    console.error('Get jobsheet timeline error:', error)
+    return c.json({ error: 'Failed to get timeline' }, 500)
   }
 })
 

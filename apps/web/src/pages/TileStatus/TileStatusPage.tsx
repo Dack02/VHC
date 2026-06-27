@@ -11,6 +11,7 @@ import {
   VEHICLE_STATUS_ORDER,
   vehicleStatusLabels,
   daysLabel,
+  dueCountdownLabel,
   labelForVhc,
   labelForVehicle
 } from './types'
@@ -116,6 +117,10 @@ function JobList({ tile, jobs, loading, error, onOpenJob }: {
     return <div className="bg-white border border-gray-200 rounded-xl px-4 py-12 text-center text-sm text-gray-400">No active jobs in {tile.name}.</div>
   }
 
+  // Future Bookings haven't arrived, so "days in status" (age since import) is
+  // meaningless — show a countdown to the booking date instead.
+  const isFuture = tile.statusId === 'future'
+
   return (
     <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
@@ -130,7 +135,7 @@ function JobList({ tile, jobs, loading, error, onOpenJob }: {
               <th className="px-4 py-2.5 font-medium">Vehicle status</th>
               <th className="px-4 py-2.5 font-medium">VHC state</th>
               <th className="px-4 py-2.5 font-medium">Due in</th>
-              <th className="px-4 py-2.5 font-medium text-right">In status</th>
+              <th className="px-4 py-2.5 font-medium text-right">{isFuture ? 'Countdown' : 'In status'}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -156,7 +161,7 @@ function JobList({ tile, jobs, loading, error, onOpenJob }: {
                 <td className="px-4 py-2.5 text-right">
                   <span className="inline-flex items-center gap-1 text-gray-600">
                     <ClockIcon />
-                    {daysLabel(job.daysInStatus)}
+                    {isFuture ? (dueCountdownLabel(job.dueDate) ?? '—') : daysLabel(job.daysInStatus)}
                   </span>
                 </td>
               </tr>

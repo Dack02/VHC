@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
-import { aggregateRepairItemsByHc, computeHcConversion, isHcPresented } from '../lib/metrics.js'
+import { aggregateRepairItemsByHc, computeHcConversion, isHcPresented, soldPct } from '../lib/metrics.js'
 import { buildItemList, buildItemDetail } from '../services/item-report-service.js'
 import { chunkIds, type GroupBy } from '../services/hc-period-service.js'
 import { logAudit, getRequestContext } from '../services/audit.js'
@@ -11,6 +11,12 @@ const reports = new Hono()
 
 const parseGroupBy = (g: string | undefined): GroupBy =>
   g === 'week' || g === 'month' ? g : 'day'
+
+// Inspection-only, count-based "sold %" — items the customer approved ÷ items
+// flagged at that RAG level. Mirrors the dashboard (lib/metrics.ts soldPct);
+// returns 0 (not null) when nothing was identified so the report renders a number.
+const countSoldPct = (authCount: number, idCount: number): number =>
+  soldPct({ identifiedCount: idCount, authorisedCount: authCount, identifiedValue: 0, authorisedValue: 0 }) ?? 0
 
 reports.use('*', authMiddleware)
 reports.use('*', requireModule('reports'))
@@ -3323,29 +3329,14 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
 
     const healthChecks = Array.from(healthCheckMap.values())
 
-    // Helper to derive effective rag_status for a repair item
-    function deriveRagStatus(item: any): 'red' | 'amber' | null {
-      // MRI items have rag_status directly
-      if (item.source === 'mri_scan' && item.rag_status) {
-        return item.rag_status as 'red' | 'amber'
-      }
-      // Direct rag_status if set
-      if (item.rag_status) {
-        return item.rag_status as 'red' | 'amber'
-      }
-      // Derive from linked check results (highest severity wins)
-      let derived: 'red' | 'amber' | null = null
-      for (const link of item.check_results || []) {
-        const cr = link?.check_result as { rag_status?: string } | null
-        if (cr?.rag_status === 'red') return 'red'
-        if (cr?.rag_status === 'amber') derived = 'amber'
-      }
-      return derived
-    }
-
-    // Helper to check if item is authorised (matches Today page logic)
-    const isItemAuthorised = (item: any) =>
-      item.customer_approved === true || item.outcome_status === 'authorised'
+    // Repair-item metrics come from the shared aggregator (single source of truth,
+    // shared with the dashboard): inspection-vs-MRI split, group authorisation
+    // roll-up and RAG derivation all live in lib/metrics.ts so the two can't drift.
+    const aggByHc = aggregateRepairItemsByHc(
+      healthChecks.flatMap((hc: any) =>
+        ((hc.repair_items as any[]) || []).map(it => ({ ...it, health_check_id: hc.id }))
+      )
+    )
 
     // Group by day
     const dayMap: Record<string, {
@@ -3357,10 +3348,14 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       totalSold: number
       mriIdentified: number
       mriSold: number
-      redIdentified: number
-      redSold: number
-      amberIdentified: number
-      amberSold: number
+      // Red/amber/MRI sold % are count-based (items approved ÷ items flagged),
+      // matching the dashboard. Red/amber are inspection-only; MRI is its own stream.
+      redIdCount: number
+      redSoldCount: number
+      amberIdCount: number
+      amberSoldCount: number
+      mriIdCount: number
+      mriSoldCount: number
     }> = {}
 
     for (const hc of healthChecks) {
@@ -3382,10 +3377,12 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
           totalSold: 0,
           mriIdentified: 0,
           mriSold: 0,
-          redIdentified: 0,
-          redSold: 0,
-          amberIdentified: 0,
-          amberSold: 0,
+          redIdCount: 0,
+          redSoldCount: 0,
+          amberIdCount: 0,
+          amberSoldCount: 0,
+          mriIdCount: 0,
+          mriSoldCount: 0,
         }
       }
 
@@ -3401,61 +3398,23 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
         }
       }
 
-      // Aggregate repair items with group handling
-      const items = hc.repair_items as any[] | null
-
-      // Build children-by-parent map for group authorization
-      const childrenByParent = new Map<string, any[]>()
-      for (const item of items || []) {
-        if (item.parent_repair_item_id) {
-          const children = childrenByParent.get(item.parent_repair_item_id) || []
-          children.push(item)
-          childrenByParent.set(item.parent_repair_item_id, children)
-        }
-      }
-
-      for (const item of items || []) {
-        if (item.deleted_at) continue
-        // Skip child items — their values roll up to the parent group
-        if (item.parent_repair_item_id) continue
-
-        const value = Number(item.total_inc_vat) || 0
-
-        day.totalIdentified += value
-
-        // Check authorization: direct check on item, or check children for groups
-        let authorised = isItemAuthorised(item)
-        let authorisedValue = value
-
-        if (item.is_group && !authorised) {
-          const children = childrenByParent.get(item.id) || []
-          const authorisedChildren = children.filter((c: any) => !c.deleted_at && isItemAuthorised(c))
-          if (authorisedChildren.length > 0) {
-            authorised = true
-            authorisedValue = authorisedChildren.reduce((sum: number, child: any) => sum + (Number(child.total_inc_vat) || 0), 0)
-          }
-        }
-
-        if (authorised) {
-          day.totalSold += authorisedValue
-        }
-
-        if (item.source === 'mri_scan') {
-          day.mriIdentified += value
-          if (authorised) {
-            day.mriSold += authorisedValue
-          }
-        }
-
-        // RAG status tracking
-        const rag = deriveRagStatus(item)
-        if (rag === 'red') {
-          day.redIdentified += value
-          if (authorised) day.redSold += authorisedValue
-        } else if (rag === 'amber') {
-          day.amberIdentified += value
-          if (authorised) day.amberSold += authorisedValue
-        }
+      const agg = aggByHc.get(hc.id)
+      if (agg) {
+        // Identified/Sold £ are INSPECTION-only; MRI is reported in its own columns.
+        // So every column on the report excludes MRI except MRI Id. / MRI Sold,
+        // keeping the £ figures on the same population as the red/amber %.
+        day.totalIdentified += agg.identifiedTotal - agg.mriIdentifiedTotal
+        day.totalSold += agg.authorisedTotal - agg.mriAuthorisedTotal
+        day.mriIdentified += agg.mriIdentifiedTotal
+        day.mriSold += agg.mriAuthorisedTotal
+        // Red/amber sold %: inspection-only item counts (MRI excluded)
+        day.redIdCount += agg.inspection.red.identifiedCount
+        day.redSoldCount += agg.inspection.red.authorisedCount
+        day.amberIdCount += agg.inspection.amber.identifiedCount
+        day.amberSoldCount += agg.inspection.amber.authorisedCount
+        // MRI sold %: MRI item counts across all RAG levels (matches dashboard)
+        day.mriIdCount += agg.mri.red.identifiedCount + agg.mri.amber.identifiedCount + agg.mri.green.identifiedCount
+        day.mriSoldCount += agg.mri.red.authorisedCount + agg.mri.amber.authorisedCount + agg.mri.green.authorisedCount
       }
     }
 
@@ -3481,12 +3440,9 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
           totalSold: Math.round(d.totalSold * 100) / 100,
           mriIdentified: Math.round(d.mriIdentified * 100) / 100,
           mriSold: Math.round(d.mriSold * 100) / 100,
-          redSoldPercent: d.redIdentified > 0
-            ? Math.round((d.redSold / d.redIdentified) * 100 * 10) / 10
-            : 0,
-          amberSoldPercent: d.amberIdentified > 0
-            ? Math.round((d.amberSold / d.amberIdentified) * 100 * 10) / 10
-            : 0,
+          redSoldPercent: countSoldPct(d.redSoldCount, d.redIdCount),
+          amberSoldPercent: countSoldPct(d.amberSoldCount, d.amberIdCount),
+          mriSoldPercent: countSoldPct(d.mriSoldCount, d.mriIdCount),
         }
       })
 
@@ -3504,16 +3460,18 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       { jobsQty: 0, noShows: 0, hcQty: 0, totalIdentified: 0, totalSold: 0, mriIdentified: 0, mriSold: 0 }
     )
 
-    // Calculate RAG totals and sentQty from raw dayMap (need un-rounded values for accurate %)
+    // RAG totals (inspection-only item counts) and sentQty, summed across all periods
     const ragTotals = Object.values(dayMap).reduce(
       (acc, d) => ({
-        redIdentified: acc.redIdentified + d.redIdentified,
-        redSold: acc.redSold + d.redSold,
-        amberIdentified: acc.amberIdentified + d.amberIdentified,
-        amberSold: acc.amberSold + d.amberSold,
+        redIdCount: acc.redIdCount + d.redIdCount,
+        redSoldCount: acc.redSoldCount + d.redSoldCount,
+        amberIdCount: acc.amberIdCount + d.amberIdCount,
+        amberSoldCount: acc.amberSoldCount + d.amberSoldCount,
+        mriIdCount: acc.mriIdCount + d.mriIdCount,
+        mriSoldCount: acc.mriSoldCount + d.mriSoldCount,
         sentQty: acc.sentQty + d.sentQty,
       }),
-      { redIdentified: 0, redSold: 0, amberIdentified: 0, amberSold: 0, sentQty: 0 }
+      { redIdCount: 0, redSoldCount: 0, amberIdCount: 0, amberSoldCount: 0, mriIdCount: 0, mriSoldCount: 0, sentQty: 0 }
     )
 
     const totalEligible = totalsRaw.jobsQty - totalsRaw.noShows
@@ -3529,12 +3487,9 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
       totalSold: Math.round(totalsRaw.totalSold * 100) / 100,
       mriIdentified: Math.round(totalsRaw.mriIdentified * 100) / 100,
       mriSold: Math.round(totalsRaw.mriSold * 100) / 100,
-      redSoldPercent: ragTotals.redIdentified > 0
-        ? Math.round((ragTotals.redSold / ragTotals.redIdentified) * 100 * 10) / 10
-        : 0,
-      amberSoldPercent: ragTotals.amberIdentified > 0
-        ? Math.round((ragTotals.amberSold / ragTotals.amberIdentified) * 100 * 10) / 10
-        : 0,
+      redSoldPercent: countSoldPct(ragTotals.redSoldCount, ragTotals.redIdCount),
+      amberSoldPercent: countSoldPct(ragTotals.amberSoldCount, ragTotals.amberIdCount),
+      mriSoldPercent: countSoldPct(ragTotals.mriSoldCount, ragTotals.mriIdCount),
     }
 
     return c.json({
@@ -3608,28 +3563,20 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
     }
     const healthChecks = Array.from(hcMapExport.values())
 
-    // Helper to derive effective rag_status for a repair item
-    function deriveRagStatusExport(item: any): 'red' | 'amber' | null {
-      if (item.source === 'mri_scan' && item.rag_status) return item.rag_status as 'red' | 'amber'
-      if (item.rag_status) return item.rag_status as 'red' | 'amber'
-      let derived: 'red' | 'amber' | null = null
-      for (const link of item.check_results || []) {
-        const cr = link?.check_result as { rag_status?: string } | null
-        if (cr?.rag_status === 'red') return 'red'
-        if (cr?.rag_status === 'amber') derived = 'amber'
-      }
-      return derived
-    }
-
-    // Helper to check if item is authorised (matches Today page logic)
-    const isItemAuthorisedExport = (item: any) =>
-      item.customer_approved === true || item.outcome_status === 'authorised'
+    // Shared aggregator — keeps the CSV identical to the on-screen report and the dashboard.
+    const aggByHc = aggregateRepairItemsByHc(
+      healthChecks.flatMap((hc: any) =>
+        ((hc.repair_items as any[]) || []).map(it => ({ ...it, health_check_id: hc.id }))
+      )
+    )
 
     // Group by day (same logic as main endpoint)
     const dayMap: Record<string, {
       jobsQty: number; noShows: number; hcQty: number; sentQty: number
       totalIdentified: number; totalSold: number; mriIdentified: number; mriSold: number
-      redIdentified: number; redSold: number; amberIdentified: number; amberSold: number
+      // Red/amber/MRI sold % are count-based; red/amber inspection-only, MRI its own stream.
+      redIdCount: number; redSoldCount: number; amberIdCount: number; amberSoldCount: number
+      mriIdCount: number; mriSoldCount: number
     }> = {}
 
     for (const hc of healthChecks) {
@@ -3638,7 +3585,7 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
         : new Date(hc.created_at).toISOString().split('T')[0]
       const dateKey = periodKeyForDay(dayKey, groupBy)
       if (!dayMap[dateKey]) {
-        dayMap[dateKey] = { jobsQty: 0, noShows: 0, hcQty: 0, sentQty: 0, totalIdentified: 0, totalSold: 0, mriIdentified: 0, mriSold: 0, redIdentified: 0, redSold: 0, amberIdentified: 0, amberSold: 0 }
+        dayMap[dateKey] = { jobsQty: 0, noShows: 0, hcQty: 0, sentQty: 0, totalIdentified: 0, totalSold: 0, mriIdentified: 0, mriSold: 0, redIdCount: 0, redSoldCount: 0, amberIdCount: 0, amberSoldCount: 0, mriIdCount: 0, mriSoldCount: 0 }
       }
       const day = dayMap[dateKey]
       day.jobsQty++
@@ -3650,64 +3597,35 @@ reports.get('/daily-overview/export', authorize(['super_admin', 'org_admin', 'si
           day.sentQty++
         }
       }
-      const items = hc.repair_items as any[] | null
 
-      // Build children-by-parent map for group authorization
-      const childrenByParentExport = new Map<string, any[]>()
-      for (const item of items || []) {
-        if (item.parent_repair_item_id) {
-          const children = childrenByParentExport.get(item.parent_repair_item_id) || []
-          children.push(item)
-          childrenByParentExport.set(item.parent_repair_item_id, children)
-        }
-      }
-
-      for (const item of items || []) {
-        if (item.deleted_at) continue
-        if (item.parent_repair_item_id) continue
-
-        const value = Number(item.total_inc_vat) || 0
-        day.totalIdentified += value
-
-        let authorised = isItemAuthorisedExport(item)
-        let authorisedValue = value
-
-        if (item.is_group && !authorised) {
-          const children = childrenByParentExport.get(item.id) || []
-          const authorisedChildren = children.filter((c: any) => !c.deleted_at && isItemAuthorisedExport(c))
-          if (authorisedChildren.length > 0) {
-            authorised = true
-            authorisedValue = authorisedChildren.reduce((sum: number, child: any) => sum + (Number(child.total_inc_vat) || 0), 0)
-          }
-        }
-
-        if (authorised) day.totalSold += authorisedValue
-        if (item.source === 'mri_scan') {
-          day.mriIdentified += value
-          if (authorised) day.mriSold += authorisedValue
-        }
-        const rag = deriveRagStatusExport(item)
-        if (rag === 'red') {
-          day.redIdentified += value
-          if (authorised) day.redSold += authorisedValue
-        } else if (rag === 'amber') {
-          day.amberIdentified += value
-          if (authorised) day.amberSold += authorisedValue
-        }
+      const agg = aggByHc.get(hc.id)
+      if (agg) {
+        // Identified/Sold £ are INSPECTION-only; MRI is reported in its own columns.
+        day.totalIdentified += agg.identifiedTotal - agg.mriIdentifiedTotal
+        day.totalSold += agg.authorisedTotal - agg.mriAuthorisedTotal
+        day.mriIdentified += agg.mriIdentifiedTotal
+        day.mriSold += agg.mriAuthorisedTotal
+        day.redIdCount += agg.inspection.red.identifiedCount
+        day.redSoldCount += agg.inspection.red.authorisedCount
+        day.amberIdCount += agg.inspection.amber.identifiedCount
+        day.amberSoldCount += agg.inspection.amber.authorisedCount
+        day.mriIdCount += agg.mri.red.identifiedCount + agg.mri.amber.identifiedCount + agg.mri.green.identifiedCount
+        day.mriSoldCount += agg.mri.red.authorisedCount + agg.mri.amber.authorisedCount + agg.mri.green.authorisedCount
       }
     }
 
     const periodHeader = groupBy === 'week' ? 'Week Starting' : groupBy === 'month' ? 'Month' : 'Date'
-    const csvHeaders = [periodHeader, 'Jobs', 'No Shows', 'HCs', 'Conversion %', 'Send %', 'Identified', 'Sold', 'MRI Identified', 'MRI Sold', '% Red Sold', '% Amber Sold']
+    const csvHeaders = [periodHeader, 'Jobs', 'No Shows', 'HCs', 'Conversion %', 'Send %', 'Identified', 'Sold', 'MRI Identified', 'MRI Sold', '% MRI Sold', '% Red Sold', '% Amber Sold']
     const csvRows = Object.entries(dayMap)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, d]) => {
         const eligible = d.jobsQty - d.noShows
         const conv = eligible > 0 ? ((d.hcQty / eligible) * 100).toFixed(1) : '0.0'
         const sendPct = d.hcQty > 0 ? ((d.sentQty / d.hcQty) * 100).toFixed(1) : '0.0'
-        const redPct = d.redIdentified > 0 ? ((d.redSold / d.redIdentified) * 100).toFixed(1) : '0.0'
-        const amberPct = d.amberIdentified > 0 ? ((d.amberSold / d.amberIdentified) * 100).toFixed(1) : '0.0'
-        return [date, d.jobsQty, d.noShows, d.hcQty, `${conv}%`, `${sendPct}%`, d.totalIdentified.toFixed(2), d.totalSold.toFixed(2), d.mriIdentified.toFixed(2), d.mriSold.toFixed(2), `${redPct}%`, `${amberPct}%`]
+        const mriPct = countSoldPct(d.mriSoldCount, d.mriIdCount).toFixed(1)
+        const redPct = countSoldPct(d.redSoldCount, d.redIdCount).toFixed(1)
+        const amberPct = countSoldPct(d.amberSoldCount, d.amberIdCount).toFixed(1)
+        return [date, d.jobsQty, d.noShows, d.hcQty, `${conv}%`, `${sendPct}%`, d.totalIdentified.toFixed(2), d.totalSold.toFixed(2), d.mriIdentified.toFixed(2), d.mriSold.toFixed(2), `${mriPct}%`, `${redPct}%`, `${amberPct}%`]
       })
 
     const csvContent = [

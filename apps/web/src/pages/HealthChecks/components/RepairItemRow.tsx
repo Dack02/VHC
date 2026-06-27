@@ -10,6 +10,7 @@ import { api, RepairItem, CheckResult } from '../../../lib/api'
 import { ItemReasonsDisplay, GreenReasonsDisplay } from './ItemReasonsDisplay'
 import { OutcomeButton, calculateOutcomeStatus, OutcomeStatus } from './OutcomeButton'
 import { RepairItemActionsMenu } from './RepairItemActionsMenu'
+import { useQuoteEditLock } from './QuoteEditLockContext'
 
 interface RepairItemRowProps {
   healthCheckId: string
@@ -50,6 +51,9 @@ export const RepairItemRow = React.memo(function RepairItemRow({
 }: RepairItemRowProps) {
   const { session, user } = useAuth()
   const toast = useToast()
+  // Once the quote is sent, editing is locked unless an admin has toggled override.
+  const { override: editOverride } = useQuoteEditLock()
+  const quoteLocked = useQuoteEditLock().locked && !editOverride
   const [expanded, setExpanded] = useState(false)
   const [editingField, setEditingField] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -57,6 +61,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
   const [error, setError] = useState<string | null>(null)
 
   const [outcomeLoading, setOutcomeLoading] = useState(false)
+  const [ragSaving, setRagSaving] = useState(false)
 
   // AI description generation state
   const [aiGenerating, setAiGenerating] = useState(false)
@@ -64,6 +69,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
   const [aiSaving, setAiSaving] = useState(false)
 
   const canUseAI = ['super_admin', 'org_admin', 'site_admin', 'service_advisor'].includes(user?.role || '')
+  const canEditRag = ['super_admin', 'org_admin', 'site_admin', 'service_advisor'].includes(user?.role || '')
   const hasTechNotes = !!result?.notes
 
   // Local copy of item for optimistic updates
@@ -118,7 +124,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
       await api(`/api/v1/health-checks/${healthCheckId}/repair-items/${item.id}`, {
         method: 'PATCH',
         token: session.accessToken,
-        body: { [field]: value }
+        body: { [field]: value, ...(editOverride ? { override: true } : {}) }
       })
       // Don't call onUpdate() - use optimistic update instead
     } catch (err) {
@@ -129,6 +135,29 @@ export const RepairItemRow = React.memo(function RepairItemRow({
       setSaving(false)
       setSavingField(null)
       setEditingField(null)
+    }
+  }
+
+  // Correct the inspection severity (e.g. amber that should be red). Bound to the
+  // linked check result; a full refetch follows since the item moves between the
+  // Urgent/Advisory sections and the RAG counts change.
+  const handleRagChange = async (newRag: 'red' | 'amber') => {
+    if (!session?.accessToken || !result?.id) return
+    if (result.rag_status === newRag) return
+    setRagSaving(true)
+    setError(null)
+    try {
+      await api(`/api/v1/health-checks/${healthCheckId}/results/${result.id}/rag-status`, {
+        method: 'PATCH',
+        token: session.accessToken,
+        body: { ragStatus: newRag, ...(editOverride ? { override: true } : {}) }
+      })
+      toast.success(newRag === 'red' ? 'Changed to Urgent (red)' : 'Changed to Advisory (amber)')
+      onUpdate()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to change severity')
+    } finally {
+      setRagSaving(false)
     }
   }
 
@@ -306,7 +335,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
       await api(`/api/v1/health-checks/${healthCheckId}/repair-items/${item.id}`, {
         method: 'PATCH',
         token: session.accessToken,
-        body: { description: aiDraft }
+        body: { description: aiDraft, ...(editOverride ? { override: true } : {}) }
       })
       setItem(prev => ({ ...prev, description: aiDraft }))
       setAiDraft(null)
@@ -550,7 +579,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
                   />
                 ) : (
                   <button
-                    onClick={() => setEditingField('parts_cost')}
+                    onClick={() => { if (!quoteLocked) setEditingField('parts_cost') }}
                     className="text-sm text-gray-700 hover:text-primary hover:underline"
                     title="Click to edit parts price"
                   >
@@ -582,7 +611,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
                   />
                 ) : (
                   <button
-                    onClick={() => setEditingField('labor_cost')}
+                    onClick={() => { if (!quoteLocked) setEditingField('labor_cost') }}
                     className="text-sm text-gray-700 hover:text-primary hover:underline"
                     title="Click to edit labour price"
                   >
@@ -609,7 +638,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
                   />
                 ) : (
                   <button
-                    onClick={() => setEditingField('total_price')}
+                    onClick={() => { if (!quoteLocked) setEditingField('total_price') }}
                     className="text-sm font-semibold text-gray-900 hover:text-primary hover:underline"
                     title="Click to edit total price"
                   >
@@ -805,7 +834,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
                       />
                     ) : (
                       <button
-                        onClick={() => setEditingField('parts_cost')}
+                        onClick={() => { if (!quoteLocked) setEditingField('parts_cost') }}
                         className="text-sm text-gray-700 hover:text-primary"
                       >
                         {formatCurrency(item.parts_cost || 0)}
@@ -836,7 +865,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
                       />
                     ) : (
                       <button
-                        onClick={() => setEditingField('labor_cost')}
+                        onClick={() => { if (!quoteLocked) setEditingField('labor_cost') }}
                         className="text-sm text-gray-700 hover:text-primary"
                       >
                         {formatCurrency(item.labor_cost || 0)}
@@ -862,7 +891,7 @@ export const RepairItemRow = React.memo(function RepairItemRow({
                       />
                     ) : (
                       <button
-                        onClick={() => setEditingField('total_price')}
+                        onClick={() => { if (!quoteLocked) setEditingField('total_price') }}
                         className="text-sm font-semibold text-gray-900 hover:text-primary"
                       >
                         {formatCurrency(item.total_price || calculatedTotal)}
@@ -928,6 +957,33 @@ export const RepairItemRow = React.memo(function RepairItemRow({
       {/* Expanded section */}
       {expanded && (
         <div className="px-4 py-3 bg-gray-50 border-t border-gray-200">
+          {/* Severity correction — fix an item the tech mis-rated before the quote is sent.
+              Only for non-group inspection items with a single linked check result. */}
+          {canEditRag && result?.id && !item.is_group && !quoteLocked && (
+            <div className="mb-3">
+              <div className="text-xs font-medium text-gray-500 uppercase mb-1">Severity</div>
+              <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5">
+                {(['red', 'amber'] as const).map((rag) => {
+                  const active = result.rag_status === rag
+                  const activeColor = rag === 'red' ? 'bg-rag-red text-white' : 'bg-rag-amber text-white'
+                  return (
+                    <button
+                      key={rag}
+                      onClick={() => handleRagChange(rag)}
+                      disabled={ragSaving || active}
+                      className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors disabled:cursor-default ${
+                        active ? activeColor : 'text-gray-600 hover:bg-gray-100'
+                      }`}
+                    >
+                      {rag === 'red' ? 'Urgent' : 'Advisory'}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="text-xs text-gray-400 mt-1">Corrects the inspection severity. To remove the item entirely, use the actions menu.</p>
+            </div>
+          )}
+
           {/* Grouped items (for groups) */}
           {item.is_group && item.children && item.children.length > 0 && (
             <div className="mb-3">
@@ -1152,6 +1208,8 @@ interface GreenItemRowProps {
   notes?: string | null
   value?: unknown
   checkResultId?: string
+  healthCheckId?: string
+  onUpdate?: () => void
   preloadedReasons?: Array<{
     id: string
     itemReasonId: string
@@ -1162,12 +1220,41 @@ interface GreenItemRowProps {
   specialDisplay?: React.ReactNode  // Tyre/brake display shown when expanded
 }
 
-export function GreenItemRow({ title, notes, value: _value, checkResultId, preloadedReasons, specialDisplay }: GreenItemRowProps) {
+export function GreenItemRow({ title, notes, value: _value, checkResultId, healthCheckId, onUpdate, preloadedReasons, specialDisplay }: GreenItemRowProps) {
   // value reserved for displaying measurement data in future
   void _value
 
+  const { session, user } = useAuth()
+  const toast = useToast()
+  const { locked, override: editOverride } = useQuoteEditLock()
+  const quoteLocked = locked && !editOverride
+  const canEditRag = ['super_admin', 'org_admin', 'site_admin', 'service_advisor'].includes(user?.role || '')
+
   const [expanded, setExpanded] = useState(false)
+  const [flagging, setFlagging] = useState(false)
+  const [ragSaving, setRagSaving] = useState(false)
   const hasExpandableContent = !!specialDisplay
+
+  // Flag a passed item as a fault (e.g. the tech mis-rated it green). Promotes the
+  // check result to red/amber, which also creates a quote line on the server.
+  const flagAs = async (rag: 'red' | 'amber') => {
+    if (!session?.accessToken || !checkResultId || !healthCheckId) return
+    setRagSaving(true)
+    try {
+      await api(`/api/v1/health-checks/${healthCheckId}/results/${checkResultId}/rag-status`, {
+        method: 'PATCH',
+        token: session.accessToken,
+        body: { ragStatus: rag, ...(editOverride ? { override: true } : {}) }
+      })
+      toast.success(rag === 'red' ? 'Flagged as Urgent (red)' : 'Flagged as Advisory (amber)')
+      onUpdate?.()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to flag item')
+    } finally {
+      setRagSaving(false)
+      setFlagging(false)
+    }
+  }
 
   return (
     <div className="px-4 py-2 border-b border-gray-100 last:border-b-0">
@@ -1209,6 +1296,47 @@ export function GreenItemRow({ title, notes, value: _value, checkResultId, prelo
           <span className="text-xs text-gray-400" title={notes}>
             (note)
           </span>
+        )}
+
+        {/* Flag-as-fault: promote a passed item to Urgent/Advisory before the quote is sent */}
+        {canEditRag && checkResultId && healthCheckId && !quoteLocked && (
+          flagging ? (
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                onClick={() => flagAs('red')}
+                disabled={ragSaving}
+                className="px-2 py-0.5 text-xs font-semibold rounded bg-rag-red text-white hover:opacity-90 disabled:opacity-50"
+              >
+                Urgent
+              </button>
+              <button
+                onClick={() => flagAs('amber')}
+                disabled={ragSaving}
+                className="px-2 py-0.5 text-xs font-semibold rounded bg-rag-amber text-white hover:opacity-90 disabled:opacity-50"
+              >
+                Advisory
+              </button>
+              <button
+                onClick={() => setFlagging(false)}
+                disabled={ragSaving}
+                className="px-1.5 py-0.5 text-xs text-gray-400 hover:text-gray-700"
+                title="Cancel"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setFlagging(true)}
+              title="Flag this passed item as a fault"
+              className="flex-shrink-0 flex items-center gap-1 text-xs text-gray-400 hover:text-primary px-1.5 py-0.5"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 2H21l-3 6 3 6h-8.5l-1-2H5a2 2 0 00-2 2z" />
+              </svg>
+              Flag
+            </button>
+          )
         )}
       </div>
 

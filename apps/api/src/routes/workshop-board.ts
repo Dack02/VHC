@@ -415,6 +415,7 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
         dayEndTime: (configRes.data?.day_end_time as string)?.slice(0, 5) || '17:30',
         lunchStartTime: (configRes.data?.lunch_start_time as string)?.slice(0, 5) || null,
         lunchEndTime: (configRes.data?.lunch_end_time as string)?.slice(0, 5) || null,
+        operatingDays: (configRes.data?.operating_days as number[]) ?? [1, 2, 3, 4, 5, 6, 7],
         staleClockMinutes: (orgTimeSettings?.open_segment_stale_minutes as number) ?? 600,
         indirectTimeEnabled: orgTimeSettings?.indirect_time_enabled === true
       },
@@ -592,6 +593,7 @@ workshopBoard.get('/week', authorize([...ALL_ROLES]), async (c) => {
         lunchStartTime: (configRes.data?.lunch_start_time as string)?.slice(0, 5) || null,
         lunchEndTime: (configRes.data?.lunch_end_time as string)?.slice(0, 5) || null,
         defaultTechHours: configRes.data ? Number(configRes.data.default_tech_hours) : 8.0,
+        operatingDays: (configRes.data?.operating_days as number[]) ?? [1, 2, 3, 4, 5, 6, 7],
       },
       shiftsByTech,
       absencesByTech,
@@ -2111,6 +2113,14 @@ workshopBoard.patch('/config', authorize([...ADMIN_ROLES]), async (c) => {
       }
       upsertFields.lunch_end_time = body.lunchEndTime
     }
+    if ('operatingDays' in body) {
+      const od = body.operatingDays
+      if (!Array.isArray(od) || od.some((d: unknown) => !Number.isInteger(d) || (d as number) < 1 || (d as number) > 7)) {
+        return c.json({ error: 'operatingDays must be ints 1-7 (Mon=1..Sun=7)' }, 400)
+      }
+      if (od.length === 0) return c.json({ error: 'At least one operating day is required' }, 400)
+      upsertFields.operating_days = Array.from(new Set(od as number[])).sort((a, b) => a - b)
+    }
 
     const dayStart = (upsertFields.day_start_time as string) ?? undefined
     const dayEnd = (upsertFields.day_end_time as string) ?? undefined
@@ -2133,7 +2143,8 @@ workshopBoard.patch('/config', authorize([...ADMIN_ROLES]), async (c) => {
         dayStartTime: (config.day_start_time as string)?.slice(0, 5) || '08:00',
         dayEndTime: (config.day_end_time as string)?.slice(0, 5) || '17:30',
         lunchStartTime: (config.lunch_start_time as string)?.slice(0, 5) || null,
-        lunchEndTime: (config.lunch_end_time as string)?.slice(0, 5) || null
+        lunchEndTime: (config.lunch_end_time as string)?.slice(0, 5) || null,
+        operatingDays: (config.operating_days as number[]) ?? [1, 2, 3, 4, 5, 6, 7]
       }
     })
   } catch (error) {

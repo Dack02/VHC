@@ -36,6 +36,10 @@ const NewHealthCheck = lazy(() => import('./pages/HealthChecks/NewHealthCheck'))
 const JobsheetList = lazy(() => import('./pages/Jobsheets/JobsheetList'))
 const NewJobsheet = lazy(() => import('./pages/Jobsheets/NewJobsheet'))
 const JobsheetDetail = lazy(() => import('./pages/Jobsheets/JobsheetDetail'))
+const EstimatesList = lazy(() => import('./pages/Estimates/EstimatesList'))
+const NewEstimate = lazy(() => import('./pages/Estimates/NewEstimate'))
+const EstimateDetail = lazy(() => import('./pages/Estimates/EstimateDetail'))
+const EstimatePortal = lazy(() => import('./pages/EstimatePortal/EstimatePortal'))
 const ArrivalsHub = lazy(() => import('./pages/Arrivals/ArrivalsHub'))
 const BookingCodes = lazy(() => import('./pages/Settings/BookingCodes'))
 const ServiceTypes = lazy(() => import('./pages/Settings/ServiceTypes'))
@@ -101,7 +105,6 @@ const MriPerformance = lazy(() => import('./pages/Reports/MriPerformance'))
 const DailyOverview = lazy(() => import('./pages/Reports/DailyOverview'))
 const DeletedHealthChecks = lazy(() => import('./pages/Reports/DeletedHealthChecks'))
 const Today = lazy(() => import('./pages/Today'))
-const Upcoming = lazy(() => import('./pages/Upcoming'))
 const PartsCatalog = lazy(() => import('./pages/Parts/PartsCatalog'))
 const Messages = lazy(() => import('./pages/Messages/Messages'))
 const NotesPage = lazy(() => import('./pages/Notes/NotesPage'))
@@ -120,6 +123,7 @@ const FollowUpOutcomes = lazy(() => import('./pages/Settings/FollowUpOutcomes'))
 const FollowUpDispositions = lazy(() => import('./pages/Settings/FollowUpDispositions'))
 const FollowUpTimelines = lazy(() => import('./pages/Settings/FollowUpTimelines'))
 const FollowUpSettings = lazy(() => import('./pages/Settings/FollowUpSettings'))
+const EstimateSettings = lazy(() => import('./pages/Settings/EstimateSettings'))
 
 // Page loading fallback
 function PageLoader() {
@@ -160,6 +164,7 @@ function App() {
                   <Routes>
                     {/* Public routes */}
                     <Route path="/view/:token" element={<CustomerPortal />} />
+                    <Route path="/estimate/:token" element={<EstimatePortal />} />
                     <Route path="/login" element={<Login />} />
                     <Route path="/forgot-password" element={<ForgotPassword />} />
                     <Route path="/reset-password" element={<ResetPassword />} />
@@ -203,7 +208,8 @@ function App() {
                         <Route path="/diary" element={<RequireModule module="booking_diary"><BookingDiary /></RequireModule>} />
                         <Route path="/dashboard/technicians" element={<TechnicianWorkload />} />
                         <Route path="/today" element={<Today />} />
-                        <Route path="/upcoming" element={<Upcoming />} />
+                        {/* Upcoming is now a tab inside the Arrivals hub; keep the old URL working. */}
+                        <Route path="/upcoming" element={<Navigate to="/arrivals?tab=upcoming" replace />} />
                         <Route path="/reports" element={<RequireModule module="reports"><ReportsHub /></RequireModule>} />
                         <Route path="/reports/financial" element={<FinancialReports />} />
                         <Route path="/reports/items" element={<ItemPerformance />} />
@@ -226,7 +232,12 @@ function App() {
                         <Route path="/jobsheets" element={<RequireModule module="jobsheets"><JobsheetList /></RequireModule>} />
                         <Route path="/jobsheets/new" element={<RequireModule module="jobsheets"><NewJobsheet /></RequireModule>} />
                         <Route path="/jobsheets/:id" element={<RequireModule module="jobsheets"><JobsheetDetail /></RequireModule>} />
-                        <Route path="/arrivals" element={<RequireModule module="jobsheets"><ArrivalsHub /></RequireModule>} />
+                        <Route path="/estimates" element={<RequireModule module="estimates"><EstimatesList /></RequireModule>} />
+                        <Route path="/estimates/new" element={<RequireModule module="estimates"><NewEstimate /></RequireModule>} />
+                        <Route path="/estimates/:id" element={<RequireModule module="estimates"><EstimateDetail /></RequireModule>} />
+                        {/* Not module-gated at the route: the hub hosts the always-on Upcoming tab
+                            and only mounts the jobsheets-only Arrivals queue when enabled. */}
+                        <Route path="/arrivals" element={<ArrivalsHub />} />
                         <Route path="/customers" element={<CustomerList />} />
                         <Route path="/customers/:id" element={<CustomerDetail />} />
                         <Route path="/messages" element={<RequireModule module="customer_comms"><Messages /></RequireModule>} />
@@ -274,6 +285,7 @@ function App() {
                         <Route path="/settings/workshop-statuses" element={<WorkshopStatuses />} />
                         <Route path="/settings/booking-codes" element={<BookingCodes />} />
                         <Route path="/settings/service-types" element={<ServiceTypes />} />
+                        <Route path="/settings/estimate-settings" element={<EstimateSettings />} />
                         <Route path="/settings/workshop-board" element={<WorkshopBoardSettings />} />
                         <Route path="/settings/time-tracking" element={<TimeTrackingSettings />} />
                       </Route>

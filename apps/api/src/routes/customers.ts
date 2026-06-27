@@ -1,10 +1,91 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import { getCustomerInsights } from '../services/customer-insights.js'
 
 const customers = new Hono()
 
 customers.use('*', authMiddleware)
+
+// ---------------------------------------------------------------------------
+// Additional contacts (extra emails / phone numbers)
+// ---------------------------------------------------------------------------
+
+interface AdditionalContactInput {
+  contactType?: 'email' | 'phone'
+  value?: string
+  label?: string | null
+}
+
+/** Normalise + validate an additionalContacts payload into insertable rows. */
+function normaliseContacts(
+  raw: unknown,
+  orgId: string,
+  customerId: string
+): Array<Record<string, unknown>> {
+  if (!Array.isArray(raw)) return []
+  const rows: Array<Record<string, unknown>> = []
+  for (const c of raw as AdditionalContactInput[]) {
+    const type = c?.contactType === 'phone' ? 'phone' : c?.contactType === 'email' ? 'email' : null
+    const value = typeof c?.value === 'string' ? c.value.trim() : ''
+    if (!type || !value) continue
+    const label = typeof c?.label === 'string' && c.label.trim() ? c.label.trim() : null
+    rows.push({
+      organization_id: orgId,
+      customer_id: customerId,
+      contact_type: type,
+      value,
+      label,
+      is_primary: false
+    })
+  }
+  return rows
+}
+
+/**
+ * Replace a customer's additional contacts with the supplied set. Pass
+ * `undefined` to leave existing contacts untouched (e.g. a PATCH that doesn't
+ * include the field); pass `[]` to clear them.
+ */
+async function syncAdditionalContacts(
+  orgId: string,
+  customerId: string,
+  raw: unknown
+): Promise<void> {
+  if (raw === undefined) return
+  await supabaseAdmin
+    .from('customer_contacts')
+    .delete()
+    .eq('customer_id', customerId)
+    .eq('organization_id', orgId)
+
+  const rows = normaliseContacts(raw, orgId, customerId)
+  if (rows.length > 0) {
+    await supabaseAdmin.from('customer_contacts').insert(rows)
+  }
+}
+
+/** Fetch a customer's additional contacts as camelCase DTOs. */
+async function getAdditionalContacts(orgId: string, customerId: string) {
+  const { data } = await supabaseAdmin
+    .from('customer_contacts')
+    .select('id, customer_id, organization_id, contact_type, value, label, is_primary, created_at, updated_at')
+    .eq('customer_id', customerId)
+    .eq('organization_id', orgId)
+    .order('created_at', { ascending: true })
+
+  return (data || []).map((row: Record<string, unknown>) => ({
+    id: row.id,
+    customerId: row.customer_id,
+    organizationId: row.organization_id,
+    contactType: row.contact_type,
+    value: row.value,
+    label: row.label,
+    isPrimary: row.is_primary,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }))
+}
 
 // GET /api/v1/customers - List customers with search/pagination
 customers.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
@@ -93,9 +174,12 @@ customers.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
         id: customer.id,
         firstName: customer.first_name,
         lastName: customer.last_name,
+        companyName: customer.company_name,
         email: customer.email,
         mobile: customer.mobile,
+        phone: customer.phone,
         address: customer.address,
+        postcode: customer.postcode,
         externalId: customer.external_id,
         vehicles: customer.vehicles,
         createdAt: customer.created_at
@@ -151,7 +235,11 @@ customers.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
   try {
     const auth = c.get('auth')
     const body = await c.req.json()
-    const { firstName, lastName, email, mobile, phone, contactName, address, externalId, siteId } = body
+    const {
+      title, firstName, lastName, companyName, email, mobile, phone, contactName,
+      address, addressLine1, addressLine2, town, county, postcode,
+      externalId, siteId, additionalContacts
+    } = body
 
     if (!firstName || !lastName) {
       return c.json({ error: 'First name and last name are required' }, 400)
@@ -162,13 +250,20 @@ customers.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
       .insert({
         organization_id: auth.orgId,
         site_id: siteId || auth.user.siteId,
+        title,
         first_name: firstName,
         last_name: lastName,
+        company_name: companyName,
         email,
         mobile,
         phone,
         contact_name: contactName,
         address,
+        address_line1: addressLine1,
+        address_line2: addressLine2,
+        town,
+        county,
+        postcode,
         external_id: externalId
       })
       .select()
@@ -178,16 +273,27 @@ customers.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
       return c.json({ error: error.message }, 500)
     }
 
+    await syncAdditionalContacts(auth.orgId, customer.id, additionalContacts)
+    const contacts = await getAdditionalContacts(auth.orgId, customer.id)
+
     return c.json({
       id: customer.id,
+      title: customer.title,
       firstName: customer.first_name,
       lastName: customer.last_name,
+      companyName: customer.company_name,
       email: customer.email,
       mobile: customer.mobile,
       phone: customer.phone,
       contactName: customer.contact_name,
       address: customer.address,
+      addressLine1: customer.address_line1,
+      addressLine2: customer.address_line2,
+      town: customer.town,
+      county: customer.county,
+      postcode: customer.postcode,
       externalId: customer.external_id,
+      contacts,
       createdAt: customer.created_at
     }, 201)
   } catch (error) {
@@ -305,6 +411,24 @@ customers.get('/:id/stats', authorize(['super_admin', 'org_admin', 'site_admin',
   }
 })
 
+// GET /api/v1/customers/:id/insights - Smart-banner data (new/lapsed/at-risk, deferred
+// work, MOT). Powers the shared <CustomerInsightsBanner> on Estimate/Jobsheet/VHC pages.
+customers.get('/:id/insights', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const { vehicle_id, exclude_hc } = c.req.query()
+    const insights = await getCustomerInsights(auth.orgId, id, {
+      vehicleId: vehicle_id || null,
+      excludeHealthCheckId: exclude_hc || null
+    })
+    return c.json(insights)
+  } catch (error) {
+    console.error('Get customer insights error:', error)
+    return c.json({ error: 'Failed to get customer insights' }, 500)
+  }
+})
+
 // GET /api/v1/customers/:id/communications - Communication history across all health checks
 customers.get('/:id/communications', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
   try {
@@ -407,14 +531,26 @@ customers.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'serv
       }
     }
 
+    const contacts = await getAdditionalContacts(auth.orgId, customer.id)
+
     return c.json({
       id: customer.id,
+      title: customer.title,
       firstName: customer.first_name,
       lastName: customer.last_name,
+      companyName: customer.company_name,
       email: customer.email,
       mobile: customer.mobile,
+      phone: customer.phone,
+      contactName: customer.contact_name,
       address: customer.address,
+      addressLine1: customer.address_line1,
+      addressLine2: customer.address_line2,
+      town: customer.town,
+      county: customer.county,
+      postcode: customer.postcode,
       externalId: customer.external_id,
+      contacts,
       notes: customer.notes,
       notesUpdatedAt: customer.notes_updated_at,
       notesUpdatedBy: customer.notes_updated_by,
@@ -445,16 +581,27 @@ customers.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     const auth = c.get('auth')
     const { id } = c.req.param()
     const body = await c.req.json()
-    const { firstName, lastName, email, mobile, phone, contactName, address, externalId, notes } = body
+    const {
+      title, firstName, lastName, companyName, email, mobile, phone, contactName,
+      address, addressLine1, addressLine2, town, county, postcode,
+      externalId, notes, additionalContacts
+    } = body
 
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    if (title !== undefined) updateData.title = title
     if (firstName !== undefined) updateData.first_name = firstName
     if (lastName !== undefined) updateData.last_name = lastName
+    if (companyName !== undefined) updateData.company_name = companyName
     if (email !== undefined) updateData.email = email
     if (mobile !== undefined) updateData.mobile = mobile
     if (phone !== undefined) updateData.phone = phone
     if (contactName !== undefined) updateData.contact_name = contactName
     if (address !== undefined) updateData.address = address
+    if (addressLine1 !== undefined) updateData.address_line1 = addressLine1
+    if (addressLine2 !== undefined) updateData.address_line2 = addressLine2
+    if (town !== undefined) updateData.town = town
+    if (county !== undefined) updateData.county = county
+    if (postcode !== undefined) updateData.postcode = postcode
     if (externalId !== undefined) updateData.external_id = externalId
     if (notes !== undefined) {
       updateData.notes = notes
@@ -474,14 +621,27 @@ customers.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       return c.json({ error: error.message }, 500)
     }
 
+    await syncAdditionalContacts(auth.orgId, id, additionalContacts)
+    const contacts = await getAdditionalContacts(auth.orgId, id)
+
     return c.json({
       id: customer.id,
+      title: customer.title,
       firstName: customer.first_name,
       lastName: customer.last_name,
+      companyName: customer.company_name,
       email: customer.email,
       mobile: customer.mobile,
+      phone: customer.phone,
+      contactName: customer.contact_name,
       address: customer.address,
+      addressLine1: customer.address_line1,
+      addressLine2: customer.address_line2,
+      town: customer.town,
+      county: customer.county,
+      postcode: customer.postcode,
       externalId: customer.external_id,
+      contacts,
       updatedAt: customer.updated_at
     })
   } catch (error) {

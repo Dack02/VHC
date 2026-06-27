@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { authorize } from '../../middleware/auth.js'
 import { verifyHealthCheckAccess, verifyRepairItemAccess, formatRepairItem } from './helpers.js'
+import { checkQuoteEditable } from '../health-checks/helpers.js'
 
 const repairItemsRouter = new Hono()
 console.log('=== REPAIR ITEMS MODULE LOADED (v2 with option parts) ===')
@@ -277,6 +278,12 @@ repairItemsRouter.post('/health-checks/:id/repair-items', authorize(['super_admi
     const healthCheck = await verifyHealthCheckAccess(id, auth.orgId)
     if (!healthCheck) {
       return c.json({ error: 'Health check not found' }, 404)
+    }
+
+    // Block adding new lines to a quote once it has been sent (admin can override)
+    const gate = checkQuoteEditable(healthCheck.status, auth.user.role, body?.override === true)
+    if (!gate.allowed) {
+      return c.json({ error: gate.error, code: gate.code }, 403)
     }
 
     // Validate up front that every provided check_result_id belongs to THIS health check.

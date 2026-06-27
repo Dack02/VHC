@@ -23,12 +23,15 @@ import { AdvisorSelectionModal } from './components/AdvisorSelectionModal'
 import { WorkAuthoritySheetModal } from './components/WorkAuthoritySheetModal'
 import { CustomerEditModal } from './components/CustomerEditModal'
 import { HcDeletionModal } from './components/HcDeletionModal'
+import { ReopenHealthCheckModal } from './components/ReopenHealthCheckModal'
+import { QuoteEditLockProvider } from './components/QuoteEditLockContext'
 import { AdvisorAuthorizationModal } from './components/AdvisorAuthorizationModal'
 import { InspectionTimer } from '../../components/InspectionTimer'
 import { JobTimeSummary, type JobTimeData } from '../../components/JobTimeSummary'
 import WorkshopNotesPanel from '../../components/WorkshopNotesPanel'
 import { MotHistoryPanel } from './components/MotHistoryPanel'
 import BookedWorkPanel from './components/BookedWorkPanel'
+import CustomerInsightsBanner from '../../components/CustomerInsightsBanner'
 import { useModules } from '../../contexts/ModulesContext'
 
 // Hook for online/offline detection
@@ -146,6 +149,11 @@ export default function HealthCheckDetail() {
   const [searchParams] = useSearchParams()
   const isOnline = useOnlineStatus()
   const { isEnabled } = useModules()
+
+  // Origin-aware back link: callers (e.g. the Booking Diary) pass ?from=&fromLabel=
+  // so we return there; otherwise fall back to the health-checks list.
+  const backTo = searchParams.get('from') || '/health-checks'
+  const backLabel = searchParams.get('fromLabel') || 'Back'
   const vehicleLookupEnabled = isEnabled('vehicle_lookup')
 
   // Get initial tab from URL query parameter
@@ -178,6 +186,8 @@ export default function HealthCheckDetail() {
   const [showWorkAuthorityModal, setShowWorkAuthorityModal] = useState(false)
   const [showCustomerEditModal, setShowCustomerEditModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [showReopenModal, setShowReopenModal] = useState(false)
+  const [editOverride, setEditOverride] = useState(false)
   const [showAdvisorAuthModal, setShowAdvisorAuthModal] = useState(false)
   const [generatingPDF, setGeneratingPDF] = useState(false)
   const [unreadSmsCount, setUnreadSmsCount] = useState(0)
@@ -454,6 +464,18 @@ export default function HealthCheckDetail() {
     navigate('/health-checks')
   }
 
+  const handleReopen = async (reason: string) => {
+    if (!session?.accessToken || !id) return
+    await api(`/api/v1/health-checks/${id}/reopen`, {
+      method: 'POST',
+      token: session.accessToken,
+      body: { reason: reason || undefined }
+    })
+    setShowReopenModal(false)
+    toast.success('Health check reset — sent back to Created')
+    await fetchData()
+  }
+
   const handleMarkArrived = async () => {
     if (!session?.accessToken || !id) return
     try {
@@ -555,10 +577,10 @@ export default function HealthCheckDetail() {
           )}
           <div className="flex gap-3 justify-center">
             <Link
-              to="/health-checks"
+              to={backTo}
               className="px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded hover:bg-gray-50"
             >
-              Back to list
+              Back to {backLabel === 'Back' ? 'list' : backLabel.toLowerCase()}
             </Link>
             <button
               onClick={() => {
@@ -620,6 +642,15 @@ export default function HealthCheckDetail() {
   const canMarkArrived = healthCheck.status === 'awaiting_arrival'
   const canClose = ['authorized', 'declined', 'expired'].includes(healthCheck.status) && !healthCheck.closed_at
   const isClosed = !!healthCheck.closed_at
+  // Reopen/reset (wrongly-started VHC): advisors + admins, only before a quote is sent.
+  const canEditQuote = !!user && ['super_admin', 'org_admin', 'site_admin', 'service_advisor'].includes(user.role)
+  const canReopen = canEditQuote
+    && ['assigned', 'in_progress', 'paused', 'tech_completed', 'awaiting_review', 'awaiting_pricing', 'awaiting_parts', 'ready_to_send'].includes(healthCheck.status)
+    && !healthCheck.closed_at && !healthCheck.deleted_at
+  // Quote edit-lock: once the quote has been sent, editing is locked (mirrors the server's
+  // SENT_LOCK_STATUSES). An org/site admin can toggle an override to make a correction.
+  const isSentLocked = ['sent', 'delivered', 'opened', 'partial_response', 'authorized', 'declined', 'expired', 'completed', 'cancelled'].includes(healthCheck.status)
+  const canOverrideLock = !!user && ['super_admin', 'org_admin', 'site_admin'].includes(user.role)
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -628,13 +659,13 @@ export default function HealthCheckDetail() {
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-4">
             <Link
-              to="/health-checks"
+              to={backTo}
               className="flex items-center gap-1 md:gap-2 text-gray-600 hover:text-gray-900"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
-              <span className="font-medium hidden sm:inline">Back</span>
+              <span className="font-medium hidden sm:inline">{backLabel}</span>
             </Link>
           </div>
 
@@ -777,6 +808,19 @@ export default function HealthCheckDetail() {
                 Closed
               </span>
             )}
+            {canReopen && (
+              <button
+                onClick={() => setShowReopenModal(true)}
+                title="Reset a wrongly-started check back to the start"
+                className="px-3 md:px-4 py-2 border border-amber-300 text-amber-700 text-sm font-medium hover:bg-amber-50 rounded flex items-center gap-2 whitespace-nowrap"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span className="hidden md:inline">Reopen / Reset</span>
+                <span className="md:hidden">Reset</span>
+              </button>
+            )}
             {canDelete && (
               <button
                 onClick={() => setShowDeleteModal(true)}
@@ -852,8 +896,44 @@ export default function HealthCheckDetail() {
         </div>
       </div>
 
+      {/* Smart banner — staff-facing customer/vehicle cues */}
+      <div className="px-6 pt-4">
+        <CustomerInsightsBanner customerId={healthCheck.vehicle?.customer?.id} vehicleId={healthCheck.vehicle_id} excludeHealthCheckId={id} />
+      </div>
+
       {/* Tab Content */}
       <div className="p-6">
+       <QuoteEditLockProvider value={{ locked: isSentLocked, canOverride: canOverrideLock, override: editOverride }}>
+        {isSentLocked && (
+          <div className={`mb-4 rounded-xl border p-3 flex items-center justify-between gap-3 ${
+            editOverride ? 'bg-amber-50 border-amber-300' : 'bg-gray-50 border-gray-200'
+          }`}>
+            <div className="flex items-center gap-2 text-sm">
+              <svg className={`w-5 h-5 flex-shrink-0 ${editOverride ? 'text-amber-500' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {editOverride
+                  ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                  : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />}
+              </svg>
+              <span className={editOverride ? 'text-amber-800' : 'text-gray-600'}>
+                {editOverride
+                  ? 'Editing unlocked — changes will update a quote the customer has already been sent. Re-send afterwards.'
+                  : 'This quote has been sent to the customer and is locked for editing.'}
+              </span>
+            </div>
+            {canOverrideLock && (
+              <button
+                onClick={() => setEditOverride(v => !v)}
+                className={`px-3 py-1.5 text-sm font-medium rounded-lg whitespace-nowrap ${
+                  editOverride
+                    ? 'bg-amber-600 text-white hover:bg-amber-700'
+                    : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                {editOverride ? 'Lock again' : 'Unlock to edit'}
+              </button>
+            )}
+          </div>
+        )}
         {activeTab === 'summary' && (
           <>
             <BookedWorkPanel healthCheckId={id!} />
@@ -946,6 +1026,7 @@ export default function HealthCheckDetail() {
             onUnreadCountChange={(count) => setUnreadSmsCount(count)}
           />
         )}
+       </QuoteEditLockProvider>
       </div>
 
       {/* Modals */}
@@ -1048,6 +1129,13 @@ export default function HealthCheckDetail() {
         vehicleRegistration={healthCheck.vehicle?.registration}
         onClose={() => setShowDeleteModal(false)}
         onConfirm={handleDelete}
+      />
+      <ReopenHealthCheckModal
+        isOpen={showReopenModal}
+        vhcReference={healthCheck.vhc_reference ?? undefined}
+        vehicleRegistration={healthCheck.vehicle?.registration}
+        onClose={() => setShowReopenModal(false)}
+        onConfirm={handleReopen}
       />
     </div>
   )

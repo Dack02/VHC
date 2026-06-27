@@ -94,11 +94,42 @@ export interface Customer {
   organizationId: string
   siteId?: string
   externalId?: string
+  title?: string
   firstName: string
   lastName: string
+  companyName?: string
+  /** Named contact person (e.g. for a business customer) */
+  contactName?: string
   email?: string
+  /** Primary mobile number */
   mobile?: string
+  /** Primary landline number */
+  phone?: string
+  /** Legacy free-text address (still used for display fallbacks) */
   address?: string
+  addressLine1?: string
+  addressLine2?: string
+  town?: string
+  county?: string
+  postcode?: string
+  /** Additional emails / phone numbers beyond the primary ones above */
+  contacts?: CustomerContact[]
+  createdAt: Date
+  updatedAt: Date
+}
+
+// An additional email or phone number attached to a customer. The PRIMARY
+// email/mobile/phone live on Customer itself; these are the extras the user
+// adds in the customer modal.
+export interface CustomerContact {
+  id: string
+  customerId: string
+  organizationId: string
+  contactType: 'email' | 'phone'
+  value: string
+  /** Optional label, e.g. 'work', 'home', 'mobile', 'accounts' */
+  label?: string
+  isPrimary: boolean
   createdAt: Date
   updatedAt: Date
 }

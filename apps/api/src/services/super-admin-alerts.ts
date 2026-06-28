@@ -127,3 +127,34 @@ export async function notifyNewOrganizationSignup(alert: NewOrganizationAlert): 
     console.error('[super-admin-alerts] Failed to notify of new organization signup:', err)
   }
 }
+
+/**
+ * Text super admins that the Vehicle Data Global credit balance has dropped below
+ * the configured threshold. VDGL lookups hard-fail once credit is exhausted, so
+ * this is an operational warning to top up. Best-effort; never throws.
+ */
+export async function notifyVehicleCreditLow(balance: number, threshold: number, currency = 'GBP'): Promise<void> {
+  try {
+    const recipients = await resolveSuperAdminAlertRecipients()
+    if (recipients.length === 0) {
+      console.log(
+        `[super-admin-alerts] Vehicle Data credit low (${currency} ${balance.toFixed(2)}) ` +
+          'but no super-admin mobile numbers are configured — no SMS sent.'
+      )
+      return
+    }
+    const message = [
+      '⚠️ Vehicle Data credit low',
+      `Balance: ${currency} ${balance.toFixed(2)} (threshold ${currency} ${threshold.toFixed(2)})`,
+      'Top up Vehicle Data Global to avoid lookup failures.'
+    ].join('\n')
+    for (const to of recipients) {
+      const result = await sendPlatformSms(to, message)
+      if (!result.success) {
+        console.error(`[super-admin-alerts] Vehicle-credit-low SMS to ${to} failed: ${result.error}`)
+      }
+    }
+  } catch (err) {
+    console.error('[super-admin-alerts] Failed to send vehicle-credit-low alert:', err)
+  }
+}

@@ -4,7 +4,7 @@ import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
 import { getEffectiveModulesCached } from '../services/modules.js'
 import { lookupVehicleByRegistration, persistMotHistory } from '../services/mot-history.js'
-import { lookupVehicleDetailsByRegistration, persistVehicleDetails } from '../services/vehicle-details.js'
+import { lookupVehicleDetailsByRegistration, persistVehicleDetails, logVehicleDetailsUsage } from '../services/vehicle-details.js'
 
 const vehicles = new Hono()
 
@@ -221,6 +221,7 @@ vehicles.post('/:id/vehicle-details-refresh', requireModule('vehicle_details'), 
     }
 
     const result = await lookupVehicleDetailsByRegistration(vehicle.registration)
+    if (result.success) await logVehicleDetailsUsage(auth.orgId, auth.user.id, vehicle.registration, 'refresh', result)
     if (!result.success) {
       const status =
         result.errorCode === 'RATE_LIMITED' ? 429 :
@@ -330,6 +331,8 @@ vehicles.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
           let detailsResult = passedDetails && passedDetails.found ? passedDetails : null
           if (!detailsResult) {
             const fetched = await lookupVehicleDetailsByRegistration(vehicle.registration)
+            // Only this fetch path bills — the passedDetails reuse path must not log.
+            if (fetched.success) await logVehicleDetailsUsage(auth.orgId, auth.user.id, vehicle.registration, 'create', fetched)
             if (fetched.success && fetched.found) detailsResult = fetched
           }
           if (detailsResult) {

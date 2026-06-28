@@ -45,10 +45,14 @@ interface PlatformSettings {
     managedByEnv?: boolean
     baseUrl: string
     apiKey: string
+    lowCreditThreshold: number
+    accountBalance: number | null
+    balanceUpdatedAt: string | null
   }
   billing: {
     smsUnitCost: number
     emailUnitCost: number
+    vehicleLookupSellPrice: number
     aiMarginPercent: number
     currency: string
   }
@@ -843,6 +847,18 @@ export default function AdminSettings() {
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
                 <p className="text-xs text-gray-500 mt-1">Marks up the raw AI cost (USD) for the chargeout figure shown on the Usage dashboard.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Vehicle Data Lookup Sell Price (£ per lookup)</label>
+                <input
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={settings.billing.vehicleLookupSellPrice}
+                  onChange={(e) => updateSettings('billing', 'vehicleLookupSellPrice', parseFloat(e.target.value) || 0)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">Flat price billed to a tenant per paid DVLA (Vehicle Data Global) lookup. Billable = billed lookups × this rate; margin vs our actual cost shows on the Usage dashboard.</p>
               </div>
             </div>
           )}

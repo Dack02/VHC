@@ -89,11 +89,15 @@ platformRoutes.get('/settings', async (c) => {
         enabled: vehicleDetailsManagedByEnv,
         managedByEnv: vehicleDetailsManagedByEnv,
         baseUrl: '',
-        apiKey: ''
+        apiKey: '',
+        lowCreditThreshold: 10,
+        accountBalance: null as number | null,   // read-only — last seen VDGL credit
+        balanceUpdatedAt: null as string | null
       },
       billing: {
         smsUnitCost: 0.04,
         emailUnitCost: 0,
+        vehicleLookupSellPrice: 0.08,
         aiMarginPercent: aiMarginRow?.value ? parseFloat(aiMarginRow.value) : 0,
         currency: 'GBP'
       }
@@ -139,6 +143,7 @@ platformRoutes.get('/settings', async (c) => {
         const b = combined.billing as Record<string, unknown>
         if (settings.sms_unit_cost != null) b.smsUnitCost = Number(settings.sms_unit_cost)
         if (settings.email_unit_cost != null) b.emailUnitCost = Number(settings.email_unit_cost)
+        if (settings.vehicle_lookup_sell_price != null) b.vehicleLookupSellPrice = Number(settings.vehicle_lookup_sell_price)
         if (settings.currency) b.currency = settings.currency
       } else if (row.id === 'vehicle_lookup') {
         // When env vars supply the creds they win — don't surface the DB row.
@@ -164,9 +169,9 @@ platformRoutes.get('/settings', async (c) => {
           }
         }
       } else if (row.id === 'vehicle_details') {
-        // When the env var supplies the key it wins — don't surface the DB row.
+        const vdg = combined.vehicleDetails as Record<string, unknown>
+        // Credentials: env vars win — only surface the DB row when not env-managed.
         if (!vehicleDetailsManagedByEnv) {
-          const vdg = combined.vehicleDetails as Record<string, unknown>
           vdg.enabled = settings.enabled === true
           if (settings.base_url) vdg.baseUrl = settings.base_url
           if (settings.api_key_encrypted) {
@@ -177,6 +182,10 @@ platformRoutes.get('/settings', async (c) => {
             }
           }
         }
+        // Operational fields surface regardless of how creds are managed.
+        if (settings.low_credit_threshold != null) vdg.lowCreditThreshold = Number(settings.low_credit_threshold)
+        if (settings.last_account_balance != null) vdg.accountBalance = Number(settings.last_account_balance)
+        if (settings.last_balance_at) vdg.balanceUpdatedAt = settings.last_balance_at
       }
     }
 
@@ -242,6 +251,7 @@ platformRoutes.patch('/settings', async (c) => {
           settings: {
             sms_unit_cost: Number(body.billing.smsUnitCost ?? 0.04),
             email_unit_cost: Number(body.billing.emailUnitCost ?? 0),
+            vehicle_lookup_sell_price: Number(body.billing.vehicleLookupSellPrice ?? 0.08),
             currency: body.billing.currency || 'GBP'
           },
           updated_at: new Date().toISOString(),
@@ -370,6 +380,7 @@ platformRoutes.patch('/settings', async (c) => {
       const vdg = body.vehicleDetails
       if (vdg.enabled !== undefined) vdgSettings.enabled = !!vdg.enabled
       if (vdg.baseUrl !== undefined) vdgSettings.base_url = vdg.baseUrl
+      if (vdg.lowCreditThreshold !== undefined) vdgSettings.low_credit_threshold = Number(vdg.lowCreditThreshold)
       // Only update the key when a new (non-masked) value is provided
       if (vdg.apiKey && !String(vdg.apiKey).includes('•') && isEncryptionConfigured()) {
         vdgSettings.api_key_encrypted = encrypt(vdg.apiKey)

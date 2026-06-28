@@ -21,7 +21,7 @@ import { authMiddleware, authorizeMinRole } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
 import { getEffectiveModulesCached } from '../services/modules.js'
 import { lookupVehicleByRegistration } from '../services/mot-history.js'
-import { lookupVehicleDetailsByRegistration } from '../services/vehicle-details.js'
+import { lookupVehicleDetailsByRegistration, logVehicleDetailsUsage } from '../services/vehicle-details.js'
 
 const vehicleLookup = new Hono()
 
@@ -56,6 +56,8 @@ vehicleLookup.get('/:registration', authorizeMinRole('service_advisor'), async (
     const mods = await getEffectiveModulesCached(c, auth.orgId)
     if (mods.vehicle_details) {
       const d = await lookupVehicleDetailsByRegistration(registration)
+      // Meter the call (this is the billed hit; create reuses it without re-billing).
+      if (d.success) await logVehicleDetailsUsage(auth.orgId, auth.user.id, registration, 'lookup', d)
       if (d.success && d.found) details = d
     }
   } catch {

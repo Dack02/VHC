@@ -11,6 +11,11 @@ interface UsageTotals {
   aiGenerations: number
   aiCostUsd: number
   aiChargeoutGbp: number
+  vehicleLookups: number
+  vehicleLookupsBilled: number
+  vehicleLookupCost: number
+  vehicleLookupSell: number
+  vehicleLookupMargin: number
   activeOrgs: number
 }
 
@@ -27,9 +32,14 @@ interface OrgUsage {
   aiCostUsd: number
   aiChargeoutGbp: number
   estimatedSmsCost: number
+  vehicleLookups: number
+  vehicleLookupsBilled: number
+  vehicleLookupCost: number
+  vehicleLookupSell: number
+  vehicleLookupMargin: number
 }
 
-type SortKey = 'sms_desc' | 'emails_desc' | 'health_checks_desc' | 'ai_cost_desc' | 'storage_desc' | 'name_asc'
+type SortKey = 'sms_desc' | 'emails_desc' | 'health_checks_desc' | 'ai_cost_desc' | 'storage_desc' | 'vehicle_cost_desc' | 'name_asc'
 
 type FeatureState = 'active' | 'idle' | 'off'
 interface FeatureDef { key: string; label: string; gated: boolean }
@@ -143,13 +153,16 @@ export default function AdminUsageDashboard() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         <SummaryCard title="SMS Sent" value={num(totals?.smsSent || 0)} />
         <SummaryCard title="Emails Sent" value={num(totals?.emailsSent || 0)} />
         <SummaryCard title="Health Checks" value={num(totals?.healthChecksCreated || 0)} />
         <SummaryCard title="AI Cost (USD)" value={`$${(totals?.aiCostUsd || 0).toFixed(2)}`} />
         <SummaryCard title="AI Chargeout (GBP)" value={gbp(totals?.aiChargeoutGbp || 0)} />
         <SummaryCard title="Est. SMS Spend" value={gbp(orgs.reduce((s, o) => s + (o.estimatedSmsCost || 0), 0))} />
+        <SummaryCard title="Vehicle Lookups" value={num(totals?.vehicleLookups || 0)} />
+        <SummaryCard title="Vehicle Billable (GBP)" value={gbp(totals?.vehicleLookupSell || 0)} />
+        <SummaryCard title="Vehicle Margin (GBP)" value={gbp(totals?.vehicleLookupMargin || 0)} />
         <SummaryCard title="Active Orgs" value={num(totals?.activeOrgs || 0)} />
       </div>
 
@@ -172,12 +185,16 @@ export default function AdminUsageDashboard() {
                 <th className="px-6 py-3 text-right">{sortable('ai_cost_desc', 'AI Cost')}</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">AI Chargeout £</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Est. SMS £</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Veh Lookups</th>
+                <th className="px-6 py-3 text-right">{sortable('vehicle_cost_desc', 'Veh Cost £')}</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Veh Billable £</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Veh Margin £</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
               {orgs.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-6 py-8 text-center text-gray-500">No usage data for this period</td>
+                  <td colSpan={14} className="px-6 py-8 text-center text-gray-500">No usage data for this period</td>
                 </tr>
               ) : (
                 orgs.map((o) => (
@@ -199,6 +216,10 @@ export default function AdminUsageDashboard() {
                     <td className="px-6 py-4 text-right text-gray-500">${(o.aiCostUsd || 0).toFixed(2)}</td>
                     <td className="px-6 py-4 text-right text-gray-900">{gbp(o.aiChargeoutGbp || 0)}</td>
                     <td className="px-6 py-4 text-right text-gray-700">{gbp(o.estimatedSmsCost)}</td>
+                    <td className="px-6 py-4 text-right text-gray-500">{num(o.vehicleLookups)}{o.vehicleLookups !== o.vehicleLookupsBilled ? ` (${o.vehicleLookupsBilled} billed)` : ''}</td>
+                    <td className="px-6 py-4 text-right text-gray-500">{gbp(o.vehicleLookupCost)}</td>
+                    <td className="px-6 py-4 text-right text-gray-900">{gbp(o.vehicleLookupSell)}</td>
+                    <td className="px-6 py-4 text-right text-gray-700">{gbp(o.vehicleLookupMargin)}</td>
                   </tr>
                 ))
               )}
@@ -208,6 +229,7 @@ export default function AdminUsageDashboard() {
         <p className="px-6 py-3 text-xs text-gray-400 border-t border-gray-100">
           SMS spend is estimated from a configurable per-message rate (Platform Settings → Billing). AI cost is in USD;
           chargeout is billed in GBP = cost × margin{marginPercent ? ` (+${marginPercent}%)` : ''} × USD→GBP rate{usdToGbpRate ? ` (${usdToGbpRate})` : ''}, set in AI Configuration.
+          Vehicle lookups: <span className="font-medium">Cost</span> is our actual spend with Vehicle Data Global; <span className="font-medium">Billable</span> = billed lookups × the per-lookup sell price (Platform Settings → Billing).
         </p>
       </div>
 

@@ -74,6 +74,25 @@ async function getAiMarginPercent(): Promise<number> {
   }
 }
 
+const DEFAULT_VEHICLE_LOOKUP_SELL_PRICE = 0.08 // GBP per billed lookup
+
+/** Flat platform-wide sell price (GBP) charged to tenants per billed vehicle lookup. */
+async function getVehicleLookupSellPrice(): Promise<number> {
+  try {
+    const { data } = await supabaseAdmin
+      .from('platform_settings')
+      .select('settings')
+      .eq('id', 'billing')
+      .maybeSingle()
+    const settings = (data?.settings as Record<string, unknown> | null) || null
+    const raw = settings?.vehicle_lookup_sell_price
+    const rate = typeof raw === 'number' ? raw : parseFloat(String(raw ?? ''))
+    return Number.isFinite(rate) && rate >= 0 ? rate : DEFAULT_VEHICLE_LOOKUP_SELL_PRICE
+  } catch {
+    return DEFAULT_VEHICLE_LOOKUP_SELL_PRICE
+  }
+}
+
 /** USD→GBP rate used to convert AI chargeout to the billing currency (GBP). */
 async function getUsdToGbpRate(): Promise<number> {
   try {
@@ -109,16 +128,20 @@ adminUsage.get('/usage/summary', async (c) => {
     const p_from = toDateStr(start)
     const p_to = toDateStr(end)
 
-    const [{ data, error }, marginPercent, usdToGbpRate] = await Promise.all([
+    const [{ data, error }, marginPercent, usdToGbpRate, vehicleSellPrice] = await Promise.all([
       supabaseAdmin.rpc('admin_usage_totals', { p_from, p_to }),
       getAiMarginPercent(),
-      getUsdToGbpRate()
+      getUsdToGbpRate(),
+      getVehicleLookupSellPrice()
     ])
     if (error) throw new Error(`Failed to fetch usage totals: ${error.message}`)
 
     const t = (data?.[0] as Record<string, unknown>) || {}
     const aiCostUsd = Number(t.ai_cost_usd || 0)
     const aiChargeoutGbp = aiCostUsd * (1 + marginPercent / 100) * usdToGbpRate
+    const vehicleLookupsBilled = Number(t.vehicle_lookups_billed || 0)
+    const vehicleLookupCost = Number(t.vehicle_lookup_cost || 0)
+    const vehicleLookupSell = vehicleLookupsBilled * vehicleSellPrice
     const [ip, ua] = ipUa(c)
     await logSuperAdminActivity(superAdmin.id, 'view_usage_summary', 'organization_usage', undefined, { period }, ip, ua)
 
@@ -126,6 +149,7 @@ adminUsage.get('/usage/summary', async (c) => {
       period: { start: p_from, end: p_to },
       marginPercent,
       usdToGbpRate,
+      vehicleLookupSellPrice: vehicleSellPrice,
       totals: {
         smsSent: Number(t.sms_sent || 0),
         emailsSent: Number(t.emails_sent || 0),
@@ -134,6 +158,11 @@ adminUsage.get('/usage/summary', async (c) => {
         aiGenerations: Number(t.ai_generations || 0),
         aiCostUsd: Math.round(aiCostUsd * 100) / 100,
         aiChargeoutGbp: Math.round(aiChargeoutGbp * 100) / 100,
+        vehicleLookups: Number(t.vehicle_lookups || 0),
+        vehicleLookupsBilled,
+        vehicleLookupCost: Math.round(vehicleLookupCost * 100) / 100,
+        vehicleLookupSell: Math.round(vehicleLookupSell * 100) / 100,
+        vehicleLookupMargin: Math.round((vehicleLookupSell - vehicleLookupCost) * 100) / 100,
         activeOrgs: Number(t.active_orgs || 0)
       }
     })
@@ -155,17 +184,21 @@ interface UsageByOrgRow {
   storage_used_bytes: number | string
   ai_generations: number | string
   ai_cost_usd: number | string
+  vehicle_lookups: number | string
+  vehicle_lookups_billed: number | string
+  vehicle_lookup_cost: number | string
 }
 
 async function fetchUsageByOrg(period: string) {
   const { start, end } = getPeriodDates(period)
   const p_from = toDateStr(start)
   const p_to = toDateStr(end)
-  const [{ data, error }, smsRate, marginPercent, usdToGbpRate] = await Promise.all([
+  const [{ data, error }, smsRate, marginPercent, usdToGbpRate, vehicleSellPrice] = await Promise.all([
     supabaseAdmin.rpc('admin_usage_by_org', { p_from, p_to }),
     getSmsUnitRate(),
     getAiMarginPercent(),
-    getUsdToGbpRate()
+    getUsdToGbpRate(),
+    getVehicleLookupSellPrice()
   ])
   if (error) throw new Error(`Failed to fetch usage by org: ${error.message}`)
 
@@ -175,6 +208,9 @@ async function fetchUsageByOrg(period: string) {
   const organizations = rows.map((r) => {
     const smsSent = Number(r.sms_sent || 0)
     const aiCostUsd = Number(r.ai_cost_usd || 0)
+    const vehicleLookupsBilled = Number(r.vehicle_lookups_billed || 0)
+    const vehicleLookupCost = Number(r.vehicle_lookup_cost || 0)
+    const vehicleLookupSell = vehicleLookupsBilled * vehicleSellPrice
     return {
       id: r.organization_id,
       name: r.organization_name,
@@ -187,19 +223,25 @@ async function fetchUsageByOrg(period: string) {
       aiGenerations: Number(r.ai_generations || 0),
       aiCostUsd: Math.round(aiCostUsd * 100) / 100,
       aiChargeoutGbp: Math.round(aiCostUsd * chargeoutFactor * 100) / 100,
-      estimatedSmsCost: Math.round(smsSent * smsRate * 100) / 100
+      estimatedSmsCost: Math.round(smsSent * smsRate * 100) / 100,
+      vehicleLookups: Number(r.vehicle_lookups || 0),
+      vehicleLookupsBilled,
+      vehicleLookupCost: Math.round(vehicleLookupCost * 100) / 100,
+      vehicleLookupSell: Math.round(vehicleLookupSell * 100) / 100,
+      vehicleLookupMargin: Math.round((vehicleLookupSell - vehicleLookupCost) * 100) / 100
     }
   })
-  return { period: { start: p_from, end: p_to }, organizations, smsRate, marginPercent, usdToGbpRate }
+  return { period: { start: p_from, end: p_to }, organizations, smsRate, marginPercent, usdToGbpRate, vehicleSellPrice }
 }
 
-function sortOrgs<T extends { name: string; smsSent: number; emailsSent: number; healthChecksCreated: number; aiCostUsd: number; storageUsedBytes: number }>(orgs: T[], sort: string): T[] {
+function sortOrgs<T extends { name: string; smsSent: number; emailsSent: number; healthChecksCreated: number; aiCostUsd: number; storageUsedBytes: number; vehicleLookupCost: number }>(orgs: T[], sort: string): T[] {
   const sorted = [...orgs]
   switch (sort) {
     case 'emails_desc': sorted.sort((a, b) => b.emailsSent - a.emailsSent); break
     case 'health_checks_desc': sorted.sort((a, b) => b.healthChecksCreated - a.healthChecksCreated); break
     case 'ai_cost_desc': sorted.sort((a, b) => b.aiCostUsd - a.aiCostUsd); break
     case 'storage_desc': sorted.sort((a, b) => b.storageUsedBytes - a.storageUsedBytes); break
+    case 'vehicle_cost_desc': sorted.sort((a, b) => b.vehicleLookupCost - a.vehicleLookupCost); break
     case 'name_asc': sorted.sort((a, b) => a.name.localeCompare(b.name)); break
     case 'sms_desc':
     default: sorted.sort((a, b) => b.smsSent - a.smsSent); break
@@ -217,13 +259,13 @@ adminUsage.get('/usage/by-organization', async (c) => {
   const sort = c.req.query('sort') || 'sms_desc'
 
   try {
-    const { period: range, organizations, marginPercent, usdToGbpRate } = await fetchUsageByOrg(period)
+    const { period: range, organizations, marginPercent, usdToGbpRate, vehicleSellPrice } = await fetchUsageByOrg(period)
     const sorted = sortOrgs(organizations, sort)
 
     const [ip, ua] = ipUa(c)
     await logSuperAdminActivity(superAdmin.id, 'view_usage_by_org', 'organization_usage', undefined, { period, sort }, ip, ua)
 
-    return c.json({ period: range, marginPercent, usdToGbpRate, organizations: sorted })
+    return c.json({ period: range, marginPercent, usdToGbpRate, vehicleLookupSellPrice: vehicleSellPrice, organizations: sorted })
   } catch (error) {
     logger.error('Error fetching usage by organization', { error })
     const message = error instanceof Error ? error.message : 'Failed to fetch usage by organization'
@@ -242,7 +284,7 @@ adminUsage.get('/usage/export', async (c) => {
 
   try {
     const { organizations } = await fetchUsageByOrg(period)
-    const headers = ['organization', 'status', 'sms_sent', 'emails_sent', 'health_checks_created', 'health_checks_completed', 'storage_gb', 'ai_generations', 'ai_cost_usd', 'ai_chargeout_gbp', 'est_sms_cost_gbp']
+    const headers = ['organization', 'status', 'sms_sent', 'emails_sent', 'health_checks_created', 'health_checks_completed', 'storage_gb', 'ai_generations', 'ai_cost_usd', 'ai_chargeout_gbp', 'est_sms_cost_gbp', 'vehicle_lookups', 'vehicle_lookups_billed', 'vehicle_lookup_cost_gbp', 'vehicle_lookup_billable_gbp', 'vehicle_lookup_margin_gbp']
     const rows = organizations.map((o) => [
       `"${o.name.replace(/"/g, '""')}"`,
       o.status,
@@ -254,7 +296,12 @@ adminUsage.get('/usage/export', async (c) => {
       o.aiGenerations,
       o.aiCostUsd.toFixed(2),
       o.aiChargeoutGbp.toFixed(2),
-      o.estimatedSmsCost.toFixed(2)
+      o.estimatedSmsCost.toFixed(2),
+      o.vehicleLookups,
+      o.vehicleLookupsBilled,
+      o.vehicleLookupCost.toFixed(2),
+      o.vehicleLookupSell.toFixed(2),
+      o.vehicleLookupMargin.toFixed(2)
     ].join(','))
     const csv = [headers.join(','), ...rows].join('\n')
 

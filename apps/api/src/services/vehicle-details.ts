@@ -20,6 +20,7 @@
 import { decrypt, isEncryptionConfigured } from '../lib/encryption.js'
 import { logger } from '../lib/logger.js'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { notifyVehicleCreditLow } from './super-admin-alerts.js'
 
 // ============================================
 // Configuration
@@ -28,6 +29,7 @@ import { supabaseAdmin } from '../lib/supabase.js'
 const DEFAULT_TIMEOUT = 12000 // 12s
 const DEFAULT_BASE_URL = 'https://uk.api.vehicledataglobal.com/r2/lookup'
 const PACKAGE_NAME = 'VehicleDetails'
+const DEFAULT_LOW_CREDIT_THRESHOLD = 10 // GBP — warn super admins below this VDGL balance
 
 // ============================================
 // Types
@@ -78,6 +80,13 @@ export interface VehicleDetailsResult {
   /** Full results payload — everything not promoted to a column. */
   raw: unknown
 
+  // Billing (from VDGL billingInformation) — our actual cost for this call.
+  cost: number | null              // transactionCost (GBP); null when not billed
+  billed: boolean                  // a real charge occurred (billingTransactionId present)
+  billingTransactionId: string | null
+  accountBalance: number | null    // remaining VDGL platform credit
+  responseId: string | null        // responseInformation.responseId (support queries)
+
   error?: string
   errorCode?:
     | 'NOT_CONFIGURED'
@@ -101,7 +110,8 @@ interface VehicleDetailsConfig {
 
 // Raw VDGL response shapes (only the fields we consume)
 interface RawVehicleDetailsResponse {
-  responseInformation?: { isSuccessStatusCode?: boolean; statusCode?: number; statusMessage?: string }
+  responseInformation?: { isSuccessStatusCode?: boolean; statusCode?: number; statusMessage?: string; responseId?: string }
+  billingInformation?: { billingTransactionId?: string | null; transactionCost?: number | null; accountBalance?: number | null; billingResult?: number }
   results?: {
     vehicleCodes?: { uvc?: string }
     vehicleDetails?: {
@@ -299,7 +309,9 @@ function mapVehicleDetails(reg: string, raw: RawVehicleDetailsResponse): Vehicle
     previousKeeperDisposalDate: dateOnly(latestKeeper.previousKeeperDisposalDate),
     latestV5cIssueDate: latestV5c,
 
-    raw: results
+    raw: results,
+    // Billing defaults — overlaid with real values by performLookup via extractBilling.
+    cost: null, billed: false, billingTransactionId: null, accountBalance: null, responseId: null
   }
 }
 
@@ -316,7 +328,20 @@ function emptyResult(reg: string): VehicleDetailsResult {
     vehicleClass: null, dateFirstRegistered: null, isScrapped: null, isExported: null,
     isImported: null, certificateOfDestructionIssued: null, keeperStartDate: null,
     numberOfPreviousKeepers: null, previousKeeperDisposalDate: null, latestV5cIssueDate: null,
-    raw: null
+    raw: null,
+    cost: null, billed: false, billingTransactionId: null, accountBalance: null, responseId: null
+  }
+}
+
+/** Extract the billing/response metadata VDGL returns on (almost) every call. */
+function extractBilling(raw: RawVehicleDetailsResponse) {
+  const b = raw.billingInformation || {}
+  return {
+    cost: num(b.transactionCost),
+    billed: !!b.billingTransactionId,
+    billingTransactionId: str(b.billingTransactionId),
+    accountBalance: num(b.accountBalance),
+    responseId: str(raw.responseInformation?.responseId)
   }
 }
 
@@ -359,20 +384,23 @@ async function performLookup(cfg: VehicleDetailsConfig, reg: string): Promise<Ve
     return { ...empty, error: 'Vehicle details returned an invalid response', errorCode: 'API_ERROR' }
   }
 
+  // Billing/response metadata is present even on not-found/refund responses.
+  const billing = extractBilling(raw)
+
   // VDGL returns 200 with an unsuccessful response body for not-found / no-data.
   if (raw.responseInformation?.isSuccessStatusCode === false) {
     const code = raw.responseInformation.statusCode
     if (code === 404) {
-      return { ...empty, success: true, found: false, error: 'No vehicle found for that registration', errorCode: 'NOT_FOUND' }
+      return { ...empty, ...billing, success: true, found: false, error: 'No vehicle found for that registration', errorCode: 'NOT_FOUND' }
     }
-    return { ...empty, error: raw.responseInformation.statusMessage || 'Vehicle details lookup was unsuccessful', errorCode: 'API_ERROR' }
+    return { ...empty, ...billing, error: raw.responseInformation.statusMessage || 'Vehicle details lookup was unsuccessful', errorCode: 'API_ERROR' }
   }
 
   if (!raw.results?.vehicleDetails) {
-    return { ...empty, success: true, found: false, error: 'No vehicle details held for that registration', errorCode: 'NOT_FOUND' }
+    return { ...empty, ...billing, success: true, found: false, error: 'No vehicle details held for that registration', errorCode: 'NOT_FOUND' }
   }
 
-  return mapVehicleDetails(reg, raw)
+  return { ...mapVehicleDetails(reg, raw), ...billing }
 }
 
 /**
@@ -416,6 +444,8 @@ export async function testVehicleDetailsConnection(sampleReg?: string): Promise<
   }
 
   const result = await performLookup(cfg, reg)
+  // Meter the test call too (platform-level, no org) so credit/cost stays accurate.
+  if (result.success) await logVehicleDetailsUsage(null, null, reg, 'admin_test', result)
   if (result.errorCode === 'AUTH_FAILED') {
     return { success: false, message: result.error || 'API key rejected' }
   }
@@ -542,4 +572,77 @@ export async function persistVehicleDetails(
   }
 
   return { persisted: true, lifecycleStatus }
+}
+
+// ============================================
+// Usage metering + credit tracking
+// ============================================
+
+export type VehicleLookupContext = 'lookup' | 'create' | 'refresh' | 'admin_test'
+
+/**
+ * Record the remaining VDGL credit on the platform_settings 'vehicle_details' row
+ * and, on the transition below the configured threshold, alert super admins once.
+ * Best-effort.
+ */
+async function recordAccountBalance(balance: number): Promise<void> {
+  try {
+    const { data: row } = await supabaseAdmin
+      .from('platform_settings')
+      .select('settings')
+      .eq('id', 'vehicle_details')
+      .maybeSingle()
+
+    const s = (row?.settings as Record<string, unknown>) || {}
+    const rawThr = s.low_credit_threshold
+    const thr = Number.isFinite(Number(rawThr)) ? Number(rawThr) : DEFAULT_LOW_CREDIT_THRESHOLD
+    const wasLow = s.credit_low_alerted === true
+    const isLow = balance < thr
+
+    await supabaseAdmin.from('platform_settings').upsert({
+      id: 'vehicle_details',
+      settings: { ...s, last_account_balance: balance, last_balance_at: new Date().toISOString(), credit_low_alerted: isLow },
+      updated_at: new Date().toISOString()
+    })
+
+    // Fire once on the way down; the flag resets when a top-up lifts the balance.
+    if (isLow && !wasLow) {
+      await notifyVehicleCreditLow(balance, thr)
+    }
+  } catch (err) {
+    logger.error('Failed to record vehicle-details account balance', {}, err as Error)
+  }
+}
+
+/**
+ * Log one VehicleDetails API call to vehicle_data_lookups for per-tenant usage +
+ * billing. Call this ONLY where the API was actually hit (never on the create
+ * reuse path, which doesn't re-bill). Best-effort — never throws.
+ */
+export async function logVehicleDetailsUsage(
+  organizationId: string | null,
+  userId: string | null,
+  registration: string,
+  context: VehicleLookupContext,
+  result: VehicleDetailsResult
+): Promise<void> {
+  try {
+    await supabaseAdmin.from('vehicle_data_lookups').insert({
+      organization_id: organizationId,
+      user_id: userId,
+      registration: (registration || '').toUpperCase().replace(/\s/g, '') || null,
+      context,
+      success: result.success,
+      found: result.found,
+      billed: result.billed,
+      cost: result.cost,
+      billing_transaction_id: result.billingTransactionId,
+      response_id: result.responseId
+    })
+    if (result.accountBalance != null) {
+      await recordAccountBalance(result.accountBalance)
+    }
+  } catch (err) {
+    logger.error('Failed to log vehicle details usage', { organizationId }, err as Error)
+  }
 }

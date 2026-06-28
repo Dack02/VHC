@@ -21,11 +21,18 @@ export function isoDow(ymd: string): number {
 
 export const ALL_DOWS = [1, 2, 3, 4, 5, 6, 7]
 
+// RAG-ish capacity band for a day, computed server-side against the site's
+// configurable target_loading_pct (Resource Manager). Supersedes the hard-coded
+// 85% loadTone for colouring when present.
+export type CapacityBand = 'closed' | 'low' | 'healthy' | 'high' | 'over'
+
 export interface DiaryDay {
   date: string
   totalJobs: number
   bookedHours: number
   availableHours: number
+  ceilingHours?: number        // available × target_loading_pct (the line we book to)
+  band?: CapacityBand          // server-computed RAG band (config-driven)
   bookedPct: number | null   // null when the site has no capacity that day
   freeHours: number
   totalMots: number
@@ -87,6 +94,8 @@ export interface DiaryDayDetail {
   capacity: {
     bookedHours: number
     availableHours: number
+    ceilingHours?: number
+    band?: CapacityBand
     bookedPct: number | null
     freeHours: number
     totalJobs: number
@@ -172,6 +181,34 @@ export function toneBarClass(tone: LoadTone): string {
     case 'green': return 'bg-rag-green'
     default: return 'bg-gray-300'
   }
+}
+
+// Config-driven band → load-bar fill colour. 'low' (well under target) gets a
+// distinct blue to flag "room to fill"; otherwise mirrors the RAG convention.
+export function bandBarClass(band: CapacityBand | undefined): string {
+  switch (band) {
+    case 'over': return 'bg-rag-red'
+    case 'high': return 'bg-rag-amber'
+    case 'healthy': return 'bg-rag-green'
+    case 'low': return 'bg-blue-400'
+    default: return 'bg-gray-300'   // closed / unknown
+  }
+}
+
+// Band → emphasis text colour for the capacity figures.
+export function bandTextClass(band: CapacityBand | undefined): string {
+  switch (band) {
+    case 'over': return 'text-rag-red'
+    case 'high': return 'text-rag-amber'
+    case 'low': return 'text-blue-600'
+    default: return ''
+  }
+}
+
+// A booked % resolved from either the server band (preferred) or the legacy
+// 85% loadTone — lets LoadBar/CapacityFigures colour correctly during rollout.
+export function barClassFor(band: CapacityBand | undefined, pct: number | null): string {
+  return band ? bandBarClass(band) : toneBarClass(loadTone(pct))
 }
 
 // 'HH:MM:SS' (or 'HH:MM') → 'HH:MM'; null or midnight (date-only imports with no

@@ -12,7 +12,7 @@ import { useDiarySummary } from './useDiaryData'
 import {
   Spinner, ErrorNote, LoadBar, DayDetail, RefreshButton, ToolbarButton, type Density
 } from './shared'
-import { addDays, weekStart, addMonths, monthFirst, loadTone, isoDow, ALL_DOWS, type DiaryDay } from './types'
+import { addDays, weekStart, addMonths, monthFirst, bandTextClass, isoDow, ALL_DOWS, type DiaryDay } from './types'
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -32,9 +32,8 @@ function MonthCell({ date, day, inMonth, isToday, isSelected, roomy, onClick }: 
   const dayNum = new Date(`${date}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric' })
   const jobs = day?.totalJobs ?? 0
   const pct = day?.bookedPct ?? null
-  const tone = loadTone(pct)
   const pctLabel = pct == null ? '' : `${Math.round(pct * 100)}%`
-  const pctTextClass = tone === 'red' ? 'text-rag-red' : 'text-gray-400'
+  const pctTextClass = bandTextClass(day?.band) || 'text-gray-400'
 
   return (
     <button
@@ -56,7 +55,7 @@ function MonthCell({ date, day, inMonth, isToday, isSelected, roomy, onClick }: 
 
       {jobs > 0 ? (
         <>
-          <LoadBar pct={pct} />
+          <LoadBar pct={pct} band={day?.band} />
           <div className={`${roomy ? 'text-xs' : 'text-[11px]'} text-gray-500`}>{jobs} {jobs === 1 ? 'job' : 'jobs'}</div>
           {(day!.totalMots > 0 || day!.totalWaiting > 0 || day!.totalLoans > 0) && (
             <div className="flex flex-wrap gap-1 mt-auto">

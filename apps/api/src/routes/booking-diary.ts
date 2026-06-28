@@ -16,6 +16,7 @@ import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
 import { DMS_BOOKING_DETAIL_SELECT, mapDmsBookingDetailRow } from '../services/dms-booking-detail.js'
+import { loadSiteConfig, computeBand } from '../services/resource-config.js'
 
 const bookingDiary = new Hono()
 
@@ -68,15 +69,19 @@ async function resolveOperatingDays(orgId: string, siteId: string): Promise<numb
   return od && od.length ? od : [1, 2, 3, 4, 5, 6, 7]
 }
 
-// Shape a diary_day_summary row into the API's per-day DiaryDay.
-function mapSummaryDay(r: any) {
+// Shape a diary_day_summary row into the API's per-day DiaryDay. `targetLoadingPct`
+// (from the site's resource_site_config) drives the RAG band + bookable ceiling.
+function mapSummaryDay(r: any, targetLoadingPct: number) {
   const booked = Number(r.booked_hours) || 0
   const available = Number(r.available_hours) || 0
+  const { ceilingHours, band } = computeBand(booked, available, targetLoadingPct)
   return {
     date: r.day,
     totalJobs: r.total_jobs,
     bookedHours: round2(booked),
     availableHours: round2(available),
+    ceilingHours,
+    band,
     bookedPct: available > 0 ? round2(booked / available) : null,
     freeHours: round2(available - booked),
     totalMots: r.total_mots,
@@ -131,21 +136,24 @@ bookingDiary.get('/summary', authorize([...ADVISOR_ROLES]), async (c) => {
   const siteId = await resolveSiteId(c)
   if (!siteId) return c.json({ error: 'No site selected' }, 400)
 
-  const { data, error } = await supabaseAdmin.rpc('diary_day_summary', {
-    p_org_id: auth.orgId,
-    p_site_id: siteId,
-    p_from: from,
-    p_to: to
-  })
+  const [{ data, error }, config] = await Promise.all([
+    supabaseAdmin.rpc('diary_day_summary', {
+      p_org_id: auth.orgId,
+      p_site_id: siteId,
+      p_from: from,
+      p_to: to
+    }),
+    loadSiteConfig(auth.orgId, siteId)
+  ])
   if (error) {
     console.error('diary_day_summary error:', error)
     return c.json({ error: 'Failed to load diary summary' }, 500)
   }
 
-  const days = (data || []).map(mapSummaryDay)
+  const days = (data || []).map((r: any) => mapSummaryDay(r, config.targetLoadingPct))
   const operatingDays = await resolveOperatingDays(auth.orgId, siteId)
 
-  return c.json({ siteId, from, to, days, operatingDays })
+  return c.json({ siteId, from, to, days, operatingDays, targetLoadingPct: config.targetLoadingPct })
 })
 
 // GET /range?from=YYYY-MM-DD&to=YYYY-MM-DD&siteId=...
@@ -167,7 +175,7 @@ bookingDiary.get('/range', authorize([...ADVISOR_ROLES]), async (c) => {
   const siteId = await resolveSiteId(c)
   if (!siteId) return c.json({ error: 'No site selected' }, 400)
 
-  const [summaryRes, bookingsRes, operatingDays] = await Promise.all([
+  const [summaryRes, bookingsRes, operatingDays, config] = await Promise.all([
     supabaseAdmin.rpc('diary_day_summary', {
       p_org_id: auth.orgId,
       p_site_id: siteId,
@@ -180,7 +188,8 @@ bookingDiary.get('/range', authorize([...ADVISOR_ROLES]), async (c) => {
       p_from: from,
       p_to: to
     }),
-    resolveOperatingDays(auth.orgId, siteId)
+    resolveOperatingDays(auth.orgId, siteId),
+    loadSiteConfig(auth.orgId, siteId)
   ])
 
   if (summaryRes.error || bookingsRes.error) {
@@ -188,10 +197,10 @@ bookingDiary.get('/range', authorize([...ADVISOR_ROLES]), async (c) => {
     return c.json({ error: 'Failed to load diary range' }, 500)
   }
 
-  const days = (summaryRes.data || []).map(mapSummaryDay)
+  const days = (summaryRes.data || []).map((r: any) => mapSummaryDay(r, config.targetLoadingPct))
   const bookings = (bookingsRes.data || []).map((r: any) => mapBookingRow(r))
 
-  return c.json({ siteId, from, to, days, bookings, operatingDays })
+  return c.json({ siteId, from, to, days, bookings, operatingDays, targetLoadingPct: config.targetLoadingPct })
 })
 
 // GET /day?date=YYYY-MM-DD&siteId=...  → capacity header + every booking
@@ -206,7 +215,7 @@ bookingDiary.get('/day', authorize([...ADVISOR_ROLES]), async (c) => {
   const siteId = await resolveSiteId(c)
   if (!siteId) return c.json({ error: 'No site selected' }, 400)
 
-  const [summaryRes, bookingsRes] = await Promise.all([
+  const [summaryRes, bookingsRes, config] = await Promise.all([
     supabaseAdmin.rpc('diary_day_summary', {
       p_org_id: auth.orgId,
       p_site_id: siteId,
@@ -217,7 +226,8 @@ bookingDiary.get('/day', authorize([...ADVISOR_ROLES]), async (c) => {
       p_org_id: auth.orgId,
       p_site_id: siteId,
       p_date: date
-    })
+    }),
+    loadSiteConfig(auth.orgId, siteId)
   ])
 
   if (summaryRes.error || bookingsRes.error) {
@@ -228,9 +238,12 @@ bookingDiary.get('/day', authorize([...ADVISOR_ROLES]), async (c) => {
   const s = (summaryRes.data || [])[0] || {}
   const booked = Number(s.booked_hours) || 0
   const available = Number(s.available_hours) || 0
+  const { ceilingHours, band } = computeBand(booked, available, config.targetLoadingPct)
   const capacity = {
     bookedHours: round2(booked),
     availableHours: round2(available),
+    ceilingHours,
+    band,
     bookedPct: available > 0 ? round2(booked / available) : null,
     freeHours: round2(available - booked),
     totalJobs: s.total_jobs ?? 0,

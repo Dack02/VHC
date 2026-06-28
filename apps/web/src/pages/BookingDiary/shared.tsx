@@ -7,8 +7,8 @@ import { jobPath } from '../../lib/jobLink'
 import DmsBookingModal from './DmsBookingModal'
 import { useDiaryDay } from './useDiaryData'
 import {
-  formatTime, loadTone, toneBarClass, statusStripeClass,
-  type DiaryBooking
+  formatTime, loadTone, barClassFor, bandTextClass, statusStripeClass,
+  type DiaryBooking, type CapacityBand
 } from './types'
 
 export type Density = 'normal' | 'compact'
@@ -27,28 +27,31 @@ export function ErrorNote({ message }: { message: string }) {
   )
 }
 
-// Horizontal "booked %" bar (RAG coloured, overbooked fill capped at 100% width).
-export function LoadBar({ pct, className = '' }: { pct: number | null; className?: string }) {
-  const tone = loadTone(pct)
+// Horizontal "booked %" bar. Colour from the server `band` (config-driven target)
+// when present, else the legacy 85% loadTone. Overbooked fill capped at 100% width.
+export function LoadBar({ pct, band, className = '' }: { pct: number | null; band?: CapacityBand; className?: string }) {
   const width = pct == null ? 0 : Math.min(pct, 1) * 100
   return (
     <div className={`h-1.5 bg-gray-100 rounded-full overflow-hidden ${className}`}>
-      <div className={`h-full ${toneBarClass(tone)}`} style={{ width: `${width}%` }} />
+      <div className={`h-full ${barClassFor(band, pct)}`} style={{ width: `${width}%` }} />
     </div>
   )
 }
 
-// "12.5 / 16h · 78%" + "3.5h free" — the per-day capacity figures, RAG-aware.
-export function CapacityFigures({ bookedHours, availableHours, bookedPct, freeHours }: {
-  bookedHours: number; availableHours: number; bookedPct: number | null; freeHours: number
+// "12.5 / 16h · 78%" + "3.5h free" — the per-day capacity figures, band-aware
+// (over = red, low = blue "room to fill"). Falls back to loadTone when no band.
+export function CapacityFigures({ bookedHours, availableHours, bookedPct, freeHours, band }: {
+  bookedHours: number; availableHours: number; bookedPct: number | null; freeHours: number; band?: CapacityBand
 }) {
   const tone = loadTone(bookedPct)
+  const effBand: CapacityBand = band ?? (tone === 'red' ? 'over' : tone === 'amber' ? 'high' : tone === 'green' ? 'healthy' : 'closed')
   const pctLabel = bookedPct == null ? '—' : `${Math.round(bookedPct * 100)}%`
+  const over = effBand === 'over'
   return (
     <span className="text-[13px] text-gray-500 whitespace-nowrap">
       {bookedHours} / {availableHours}h ·{' '}
-      <span className={tone === 'red' ? 'text-rag-red font-medium' : ''}>{pctLabel}{tone === 'red' ? ' over' : ''}</span>
-      {bookedPct != null && tone !== 'red' && freeHours > 0 && (
+      <span className={`${bandTextClass(effBand)} ${over ? 'font-medium' : ''}`}>{pctLabel}{over ? ' over' : ''}</span>
+      {!over && freeHours > 0 && (
         <span className="text-rag-green"> · {freeHours}h free</span>
       )}
     </span>
@@ -228,6 +231,7 @@ export function DayDetail({ date, density }: { date: string; density: Density })
             availableHours={detail.capacity.availableHours}
             bookedPct={detail.capacity.bookedPct}
             freeHours={detail.capacity.freeHours}
+            band={detail.capacity.band}
           />
         )}
       </div>

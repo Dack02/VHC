@@ -166,6 +166,18 @@ export default function SettingsHub() {
       roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
+      to: '/settings/resource-manager',
+      title: 'Capacity & Resource Manager',
+      description: 'Workshop loading target, lead times, and drop-off window',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.488 9A9.004 9.004 0 0015 3.512V9h5.488z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
       to: '/settings/time-tracking',
       title: 'Time Tracking',
       description: 'Clocking categories, indirect time, and stale-clock auto-close',
@@ -573,6 +585,7 @@ export default function SettingsHub() {
       routes: [
         '/settings/workflow',
         '/settings/workshop-board',
+        '/settings/resource-manager',
         '/settings/time-tracking',
         '/settings/workshop-statuses'
       ]

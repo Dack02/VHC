@@ -65,12 +65,13 @@ function AgendaDay({ day, bookings, isToday, collapsed, onToggle, density, onOpe
           </div>
           {!empty && (
             <div className="flex items-center gap-3 mt-2">
-              <LoadBar pct={day.bookedPct} className="w-44 shrink-0" />
+              <LoadBar pct={day.bookedPct} band={day.band} className="w-44 shrink-0" />
               <CapacityFigures
                 bookedHours={day.bookedHours}
                 availableHours={day.availableHours}
                 bookedPct={day.bookedPct}
                 freeHours={day.freeHours}
+                band={day.band}
               />
             </div>
           )}

@@ -77,12 +77,13 @@ export default function GroupedListView({ today, selectedDate, onChangeDate, gro
           <h2 className="text-base font-semibold text-gray-900">{heading}</h2>
           {detail && (
             <div className="flex items-center gap-3 flex-wrap">
-              <LoadBar pct={detail.capacity.bookedPct} className="w-40 shrink-0" />
+              <LoadBar pct={detail.capacity.bookedPct} band={detail.capacity.band} className="w-40 shrink-0" />
               <CapacityFigures
                 bookedHours={detail.capacity.bookedHours}
                 availableHours={detail.capacity.availableHours}
                 bookedPct={detail.capacity.bookedPct}
                 freeHours={detail.capacity.freeHours}
+                band={detail.capacity.band}
               />
               <CountPills
                 mots={detail.capacity.totalMots}

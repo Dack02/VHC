@@ -123,6 +123,7 @@ const TileStatus = lazy(() => import('./pages/TileStatus/TileStatusPage'))
 const BookingDiary = lazy(() => import('./pages/BookingDiary/BookingDiaryPage'))
 const WorkshopStatuses = lazy(() => import('./pages/Settings/WorkshopStatuses'))
 const WorkshopBoardSettings = lazy(() => import('./pages/Settings/WorkshopBoardSettings'))
+const ResourceManager = lazy(() => import('./pages/Settings/ResourceManager'))
 const TimeTrackingSettings = lazy(() => import('./pages/Settings/TimeTrackingSettings'))
 const FollowUpList = lazy(() => import('./pages/FollowUps/FollowUpList'))
 const FollowUpOutcomes = lazy(() => import('./pages/Settings/FollowUpOutcomes'))
@@ -299,6 +300,7 @@ function App() {
                         <Route path="/settings/reminder-campaigns" element={<RequireModule module="vehicle_reminders"><VehicleReminderCampaigns /></RequireModule>} />
                         <Route path="/settings/estimate-settings" element={<EstimateSettings />} />
                         <Route path="/settings/workshop-board" element={<WorkshopBoardSettings />} />
+                        <Route path="/settings/resource-manager" element={<ResourceManager />} />
                         <Route path="/settings/time-tracking" element={<TimeTrackingSettings />} />
                       </Route>
                     </Route>

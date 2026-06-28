@@ -4,7 +4,7 @@ import { useDiarySummary } from './useDiaryData'
 import {
   Spinner, ErrorNote, LoadBar, CountPills, RefreshButton, DayDetail, type Density
 } from './shared'
-import { addDays, weekStart, addMonths, monthFirst, loadTone, isoDow, ALL_DOWS, type DiaryDay, type GroupBy } from './types'
+import { addDays, weekStart, addMonths, monthFirst, bandTextClass, isoDow, ALL_DOWS, type DiaryDay, type GroupBy } from './types'
 import AgendaListView from './AgendaListView'
 import GroupedListView from './GroupedListView'
 import TableListView from './TableListView'
@@ -48,9 +48,8 @@ function DayCard({ day, isSelected, isToday, onClick }: {
   const weekday = d.toLocaleDateString('en-GB', { weekday: 'short' })
   const dayNum = d.toLocaleDateString('en-GB', { day: 'numeric' })
   const pct = day.bookedPct
-  const tone = loadTone(pct)
   const pctLabel = pct == null ? '—' : `${Math.round(pct * 100)}%`
-  const pctTextClass = tone === 'red' ? 'text-rag-red' : 'text-gray-500'
+  const pctTextClass = bandTextClass(day.band) || 'text-gray-500'
 
   return (
     <button
@@ -65,7 +64,7 @@ function DayCard({ day, isSelected, isToday, onClick }: {
       <div className="text-lg font-bold text-gray-900 leading-tight">{dayNum}</div>
       <div className="text-xs text-gray-500 mb-2">{day.totalJobs} {day.totalJobs === 1 ? 'job' : 'jobs'}</div>
 
-      <LoadBar pct={pct} />
+      <LoadBar pct={pct} band={day.band} />
       <div className={`text-[11px] mt-1 mb-2 ${pctTextClass}`}>
         {day.bookedHours} / {day.availableHours}h · {pctLabel}
       </div>

@@ -3,6 +3,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
 import SettingsBackLink from '../../components/SettingsBackLink'
+import { Tooltip } from '../../components/ui/Tooltip'
 
 interface Tech { id: string; name: string }
 interface RepairType { id: string; code: string; label: string; colour: string; sortOrder: number; requiredCert: string | null }
@@ -32,6 +33,112 @@ const CERT_LABELS: Record<string, string> = {
 }
 const certLabel = (t: string) => CERT_LABELS[t] || t
 
+const InfoIcon = ({ className = 'w-3.5 h-3.5 text-gray-400' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9 9a1 1 0 011-1h.01a1 1 0 01.99 1v4a1 1 0 11-2 0V9zm1-4a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd" />
+  </svg>
+)
+
+// Compact column header with an optional info-icon tooltip, for the skills grid.
+const QHead = ({ label, tip }: { label: string; tip?: string }) => (
+  <span className="inline-flex items-center gap-1">
+    {label}
+    {tip && (
+      <Tooltip content={tip} className="cursor-help inline-flex" tabIndex={0}>
+        <InfoIcon className="w-3 h-3 text-gray-400" />
+      </Tooltip>
+    )}
+  </span>
+)
+
+// Plain-English explainer for the whole Technician skills page. The grid headers
+// only have room for one-line tooltips; this is the "what is this and why" pop-out.
+function SkillsHelpModal({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const Term = ({ name, children }: { name: string; children: React.ReactNode }) => (
+    <div>
+      <dt className="font-semibold text-gray-900">{name}</dt>
+      <dd className="text-gray-600 mt-0.5">{children}</dd>
+    </div>
+  )
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div role="dialog" aria-modal="true" aria-label="How technician skills work"
+        className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[88vh] flex flex-col">
+        <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-3 border-b border-gray-100">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">How technician skills work</h3>
+            <p className="text-sm text-gray-500 mt-0.5">Who can do what — and who to suggest for each job.</p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 p-1 -mr-1 shrink-0">
+            <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="px-6 py-4 overflow-y-auto text-sm leading-relaxed space-y-4">
+          <p className="text-gray-600">
+            This is each technician's capability matrix — what they can work on, how good they are at it,
+            and how much of it they'll take in a day. It's <strong className="text-gray-900">advisory only</strong>:
+            it powers the “who should take this job?” suggestion and helps size the protection in Category
+            quotas. It never blocks a booking.
+          </p>
+
+          <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-gray-600">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1">How to use it</p>
+            Tick a lane to say this technician can do it, then set the details on that row. A lane that needs
+            a qualification (e.g. MOT, air-con) shows a small amber <span className="text-amber-600 font-medium">“needs…”</span> badge
+            — record the qualification in the <strong className="text-gray-900">Certifications</strong> panel below.
+          </div>
+
+          <dl className="space-y-3">
+            <Term name="Tick (the lane)">
+              Whether this technician can do this type of work at all. Untick to remove the lane.
+            </Term>
+            <Term name="Primary (★)">
+              Their main lane. Category quotas protect a primary tech's hours first, and the job suggestion
+              ranks primaries highest. A technician can hold more than one.
+            </Term>
+            <Term name="Proficiency">
+              Skill level from 1 (apprentice) to 5 (expert). Higher proficiency is suggested ahead of lower
+              for the same job.
+            </Term>
+            <Term name="Cap/day">
+              The most jobs of this type the tech will take in a single day. Leave blank for no cap (∞). Caps
+              across every able tech add up to the lane's daily ceiling shown in Category quotas.
+            </Term>
+            <Term name="Target">
+              A soft “keep them at about this many a day” aim for load-balancing — never a hard limit. Leave
+              blank for none.
+            </Term>
+          </dl>
+
+          <p className="text-xs text-gray-500 bg-amber-50 border border-amber-100 rounded-lg p-3">
+            Nothing here blocks a booking — it shapes the technician suggestion and feeds the capacity
+            figures used by Category quotas.
+          </p>
+        </div>
+
+        <div className="px-6 py-3 border-t border-gray-100 flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 bg-primary text-white text-sm font-semibold rounded-lg">
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function TechnicianSkills() {
   const { session, user } = useAuth()
   const toast = useToast()
@@ -42,6 +149,7 @@ export default function TechnicianSkills() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [cells, setCells] = useState<Record<string, EditCell>>({})
   const [saving, setSaving] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
 
   // New-cert form
   const [newCertType, setNewCertType] = useState('mot_tester')
@@ -159,6 +267,14 @@ export default function TechnicianSkills() {
           What each technician can do, their primary lane, and how many of a job type they take per day.
           Used to suggest the right technician — it doesn't block bookings.
         </p>
+        <button
+          type="button"
+          onClick={() => setShowHelp(true)}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline mt-2"
+        >
+          <InfoIcon className="w-4 h-4 text-primary" />
+          How technician skills work
+        </button>
       </div>
 
       {techs.length === 0 ? (
@@ -197,7 +313,11 @@ export default function TechnicianSkills() {
               </div>
 
               <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 gap-y-2 items-center text-[11px] uppercase tracking-wide text-gray-400 pb-1 border-b border-gray-100">
-                <span>Repair type</span><span>Primary</span><span>Proficiency</span><span>Cap/day</span><span>Target</span>
+                <QHead label="Repair type" tip="Tick a lane to say this technician can do it. The badge flags a lane that needs a certification they don't hold yet." />
+                <QHead label="Primary" tip="Their main lane — protected first by Category quotas and ranked highest when suggesting who takes a job. A tech can hold more than one." />
+                <QHead label="Proficiency" tip="Skill level, 1 (apprentice) to 5 (expert). Higher is suggested ahead of lower for the same job." />
+                <QHead label="Cap/day" tip="Most jobs of this type the tech takes in a day. Blank = no cap (∞). These add up to the lane's daily ceiling." />
+                <QHead label="Target" tip="A soft 'keep at about N a day' aim for load-balancing — not a limit. Blank = none." />
               </div>
 
               {repairTypes.map(rt => {
@@ -296,6 +416,8 @@ export default function TechnicianSkills() {
           </div>
         </div>
       )}
+
+      {showHelp && <SkillsHelpModal onClose={() => setShowHelp(false)} />}
     </div>
   )
 }

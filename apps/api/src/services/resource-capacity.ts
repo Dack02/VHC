@@ -161,6 +161,14 @@ export interface DayCategory {
   hold: number                // protected hours for this pool right now
 }
 
+export interface DayAsset {
+  assetType: string
+  name: string | null
+  quantity: number
+  booked: number
+  available: number
+}
+
 export interface DayCapacity {
   date: string
   siteAvailableHours: number
@@ -170,6 +178,31 @@ export interface DayCapacity {
   band: CapacityBand
   quotasEnabled: boolean
   categories: DayCategory[]
+  assets: DayAsset[]
+}
+
+// Per-site physical resources (loan cars, waiter seats, MOT bay). Booked counts
+// come from diary_day_summary totals so no extra per-booking query is needed.
+export async function loadAssets(orgId: string, siteId: string): Promise<Map<string, { quantity: number; name: string | null }>> {
+  const { data } = await supabaseAdmin
+    .from('resource_assets')
+    .select('asset_type, name, quantity')
+    .eq('organization_id', orgId).eq('site_id', siteId).eq('is_active', true)
+  const m = new Map<string, { quantity: number; name: string | null }>()
+  for (const r of data || []) m.set(r.asset_type, { quantity: Number(r.quantity) || 0, name: r.name ?? null })
+  return m
+}
+
+// Is a courtesy/loan car free on a date? Untracked (no asset row) → always yes.
+export async function loanCarAvailableOn(orgId: string, siteId: string, date: string): Promise<boolean> {
+  const [assets, summaryRes] = await Promise.all([
+    loadAssets(orgId, siteId),
+    supabaseAdmin.rpc('diary_day_summary', { p_org_id: orgId, p_site_id: siteId, p_from: date, p_to: date })
+  ])
+  const cap = assets.get('loan_car')
+  if (!cap) return true
+  const s = (summaryRes.data || [])[0] || {}
+  return (Number(s.total_loans) || 0) < cap.quantity
 }
 
 function daysUntil(from: string, to: string): number {
@@ -180,12 +213,13 @@ function daysUntil(from: string, to: string): number {
 
 export async function getDayCapacity(orgId: string, siteId: string, date: string, today?: string): Promise<DayCapacity> {
   const now = today || new Date().toISOString().slice(0, 10)
-  const [config, summaryRes, skillCap, quotas, booked] = await Promise.all([
+  const [config, summaryRes, skillCap, quotas, booked, assetMap] = await Promise.all([
     loadSiteConfig(orgId, siteId),
     supabaseAdmin.rpc('diary_day_summary', { p_org_id: orgId, p_site_id: siteId, p_from: date, p_to: date }),
     getSkillCapacity(orgId, siteId, date),
     loadCategoryQuotas(orgId, siteId),
-    getCategoryBooked(orgId, siteId, date)
+    getCategoryBooked(orgId, siteId, date),
+    loadAssets(orgId, siteId)
   ])
 
   const s = (summaryRes.data || [])[0] || {}
@@ -229,6 +263,17 @@ export async function getDayCapacity(orgId: string, siteId: string, date: string
     })
   }
 
+  // Physical resources: booked counts come straight from the summary totals.
+  const assetCounts: Record<string, number> = {
+    loan_car: Number(s.total_loans) || 0,
+    waiter_seat: Number(s.total_waiting) || 0,
+    mot_bay: Number(s.total_mots) || 0
+  }
+  const assets: DayAsset[] = [...assetMap.entries()].map(([assetType, a]) => {
+    const bk = assetCounts[assetType] ?? 0
+    return { assetType, name: a.name, quantity: a.quantity, booked: bk, available: Math.max(0, a.quantity - bk) }
+  })
+
   return {
     date,
     siteAvailableHours: round2(available),
@@ -237,7 +282,8 @@ export async function getDayCapacity(orgId: string, siteId: string, date: string
     freePool,
     band,
     quotasEnabled: config.enableCategoryQuotas,
-    categories
+    categories,
+    assets
   }
 }
 

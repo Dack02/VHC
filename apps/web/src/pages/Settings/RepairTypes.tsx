@@ -10,6 +10,7 @@ interface RepairTypeRow {
   label: string
   colour: string
   defaultLabourCodeId: string | null
+  defaultDiscountPercent: number
   sortOrder: number
   isActive: boolean
 }
@@ -82,7 +83,8 @@ export default function RepairTypes() {
       const payload = {
         code: editing.code.trim(),
         colour: editing.colour || '#6366F1',
-        defaultLabourCodeId: editing.defaultLabourCodeId || null
+        defaultLabourCodeId: editing.defaultLabourCodeId || null,
+        defaultDiscountPercent: Math.min(100, Math.max(0, Number(editing.defaultDiscountPercent) || 0))
       }
       if (editing.id) {
         await api(`/api/v1/repair-types/${editing.id}`, { method: 'PATCH', token, body: payload })
@@ -174,6 +176,9 @@ export default function RepairTypes() {
                   <div className="text-sm font-medium text-gray-900">{row.code}</div>
                   <div className="text-xs text-gray-500">
                     {rate ? <>Labour: {rate}</> : <span className="text-amber-600">No labour code set</span>}
+                    {row.defaultDiscountPercent > 0 && (
+                      <span className="ml-1 text-emerald-600">· {row.defaultDiscountPercent}% off</span>
+                    )}
                   </div>
                 </div>
                 <button onClick={() => setEditing({ ...row })} className="text-sm text-primary hover:underline">Edit</button>
@@ -217,6 +222,22 @@ export default function RepairTypes() {
                   ))}
                 </select>
                 <p className="text-xs text-gray-400 mt-1">Labour on this type's work groups bills at this code's rate. Manage codes under Settings → Labour Codes.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Default discount %</label>
+                <div className="relative w-32">
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={editing.defaultDiscountPercent ?? 0}
+                    onChange={e => setEditing({ ...editing, defaultDiscountPercent: e.target.value === '' ? 0 : Number(e.target.value) })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-7 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-400 pointer-events-none">%</span>
+                </div>
+                <p className="text-xs text-gray-400 mt-1">Discounts this type's labour off the code's rate so you can stay competitively priced (e.g. Clutch at 10% off). Applied to new labour lines by default — advisors can still adjust it per line.</p>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Colour</label>

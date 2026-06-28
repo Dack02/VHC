@@ -37,8 +37,9 @@ interface ChecklistItem {
   childIndex?: number          // Index among siblings
 }
 
-// Repair Type lookup option (drives the locked labour rate via its default labour code)
-interface RepairTypeOpt { id: string; code: string; colour: string; defaultLabourCodeId: string | null }
+// Repair Type lookup option (drives the locked labour rate via its default labour code,
+// plus the standing default discount % pre-filled onto new labour lines)
+interface RepairTypeOpt { id: string; code: string; colour: string; defaultLabourCodeId: string | null; defaultDiscountPercent?: number }
 
 // Row edit state for inline editing
 interface RowEditState {
@@ -967,13 +968,15 @@ function GroupLabourRow({
   const repairType = repairTypes.find(rt => rt.id === repairTypeId) || null
   const lockedCode = repairType?.defaultLabourCodeId ? (labourCodes.find(c => c.id === repairType.defaultLabourCodeId) || null) : null
   const localCode = lockedCode?.id || ''
+  // The Repair Type's standing discount pre-fills new labour lines (still overridable per line).
+  const typeDefaultDiscountStr = String(repairType?.defaultDiscountPercent || 0)
   const [localHours, setLocalHours] = useState(existingLabour?.hours?.toString() || editState.hours)
-  const [localDiscount, setLocalDiscount] = useState(existingLabour?.discountPercent?.toString() || '0')
+  const [localDiscount, setLocalDiscount] = useState(existingLabour?.discountPercent?.toString() ?? typeDefaultDiscountStr)
   const saveTriggeredRef = useRef(false)
 
   const isDirty = hasLabour
     ? localHours !== existingLabour.hours.toString() || localDiscount !== (existingLabour.discountPercent?.toString() || '0')
-    : localHours !== '' || localDiscount !== '0'
+    : localHours !== ''
 
   const rate = lockedCode?.hourlyRate || existingLabour?.rate || 0
   const hoursNum = parseFloat(localHours) || 0
@@ -988,8 +991,11 @@ function GroupLabourRow({
     if (existingLabour && !editState.isDirty) {
       setLocalHours(existingLabour.hours.toString())
       setLocalDiscount(existingLabour.discountPercent?.toString() || '0')
+    } else if (!existingLabour && !editState.isDirty) {
+      // New line: keep the discount synced to the Repair Type's default until the user edits it.
+      setLocalDiscount(typeDefaultDiscountStr)
     }
-  }, [existingLabour, editState.isDirty])
+  }, [existingLabour, editState.isDirty, typeDefaultDiscountStr])
 
   const handleHoursChange = (value: string) => {
     setLocalHours(value)
@@ -1025,7 +1031,7 @@ function GroupLabourRow({
       setLocalDiscount(existingLabour.discountPercent?.toString() || '0')
     } else {
       setLocalHours('')
-      setLocalDiscount('0')
+      setLocalDiscount(typeDefaultDiscountStr)
     }
     onClear()
   }
@@ -1295,13 +1301,15 @@ function ChildLabourRow({
   const repairType = repairTypes.find(rt => rt.id === repairTypeId) || null
   const lockedCode = repairType?.defaultLabourCodeId ? (labourCodes.find(c => c.id === repairType.defaultLabourCodeId) || null) : null
   const localCode = lockedCode?.id || ''
+  // The Repair Type's standing discount pre-fills new labour lines (still overridable per line).
+  const typeDefaultDiscountStr = String(repairType?.defaultDiscountPercent || 0)
   const [localHours, setLocalHours] = useState(existingLabour?.hours?.toString() || editState.hours)
-  const [localDiscount, setLocalDiscount] = useState(existingLabour?.discountPercent?.toString() || '0')
+  const [localDiscount, setLocalDiscount] = useState(existingLabour?.discountPercent?.toString() ?? typeDefaultDiscountStr)
   const saveTriggeredRef = useRef(false)
 
   const isDirty = hasLabour
     ? localHours !== existingLabour.hours.toString() || localDiscount !== (existingLabour.discountPercent?.toString() || '0')
-    : localHours !== '' || localDiscount !== '0'
+    : localHours !== ''
 
   const rate = lockedCode?.hourlyRate || existingLabour?.rate || 0
   const hoursNum = parseFloat(localHours) || 0
@@ -1316,8 +1324,11 @@ function ChildLabourRow({
     if (existingLabour && !editState.isDirty) {
       setLocalHours(existingLabour.hours.toString())
       setLocalDiscount(existingLabour.discountPercent?.toString() || '0')
+    } else if (!existingLabour && !editState.isDirty) {
+      // New line: keep the discount synced to the Repair Type's default until the user edits it.
+      setLocalDiscount(typeDefaultDiscountStr)
     }
-  }, [existingLabour, editState.isDirty])
+  }, [existingLabour, editState.isDirty, typeDefaultDiscountStr])
 
   const handleHoursChange = (value: string) => {
     setLocalHours(value)
@@ -1353,7 +1364,7 @@ function ChildLabourRow({
       setLocalDiscount(existingLabour.discountPercent?.toString() || '0')
     } else {
       setLocalHours('')
-      setLocalDiscount('0')
+      setLocalDiscount(typeDefaultDiscountStr)
     }
     onClear()
   }
@@ -1633,8 +1644,10 @@ function InlineLabourRow({
   const repairType = repairTypes.find(rt => rt.id === repairTypeId) || null
   const lockedCode = repairType?.defaultLabourCodeId ? (labourCodes.find(c => c.id === repairType.defaultLabourCodeId) || null) : null
   const localCode = lockedCode?.id || ''
+  // The Repair Type's standing discount pre-fills new labour lines (still overridable per line).
+  const typeDefaultDiscountStr = String(repairType?.defaultDiscountPercent || 0)
   const [localHours, setLocalHours] = useState(existingLabour?.hours?.toString() || editState.hours)
-  const [localDiscount, setLocalDiscount] = useState(existingLabour?.discountPercent?.toString() || '0')
+  const [localDiscount, setLocalDiscount] = useState(existingLabour?.discountPercent?.toString() ?? typeDefaultDiscountStr)
 
   // Track if save was triggered by keyboard (to prevent double-save from blur)
   const saveTriggeredRef = useRef(false)
@@ -1642,7 +1655,7 @@ function InlineLabourRow({
   // Track if we have unsaved changes
   const isDirty = hasLabour
     ? localHours !== existingLabour.hours.toString() || localDiscount !== (existingLabour.discountPercent?.toString() || '0')
-    : localHours !== '' || localDiscount !== '0'
+    : localHours !== ''
 
   // Get selected labour code for rate calculation
   const rate = lockedCode?.hourlyRate || existingLabour?.rate || 0
@@ -1660,8 +1673,11 @@ function InlineLabourRow({
     if (existingLabour && !editState.isDirty) {
       setLocalHours(existingLabour.hours.toString())
       setLocalDiscount(existingLabour.discountPercent?.toString() || '0')
+    } else if (!existingLabour && !editState.isDirty) {
+      // New line: keep the discount synced to the Repair Type's default until the user edits it.
+      setLocalDiscount(typeDefaultDiscountStr)
     }
-  }, [existingLabour, editState.isDirty])
+  }, [existingLabour, editState.isDirty, typeDefaultDiscountStr])
 
   const handleHoursChange = (value: string) => {
     setLocalHours(value)
@@ -1702,7 +1718,7 @@ function InlineLabourRow({
     } else {
       // Clear inputs
       setLocalHours('')
-      setLocalDiscount('0')
+      setLocalDiscount(typeDefaultDiscountStr)
     }
     onClear()
   }
@@ -2008,7 +2024,9 @@ function AddOtherLabourModal({
     ? (labourCodes.find(c => c.id === selectedRepairType.defaultLabourCodeId) || null)
     : null
   const rate = lockedCode?.hourlyRate || 0
-  const total = parseFloat(hours) * rate
+  // The line inherits the Repair Type's default discount server-side; mirror it in the preview.
+  const typeDiscountPct = selectedRepairType?.defaultDiscountPercent || 0
+  const total = parseFloat(hours) * rate * (1 - typeDiscountPct / 100)
 
   // Default to the first repair type
   useEffect(() => {

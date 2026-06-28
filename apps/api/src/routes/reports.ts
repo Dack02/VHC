@@ -7,6 +7,7 @@ import { buildItemList, buildItemDetail } from '../services/item-report-service.
 import { buildRepairTypeReport } from '../services/repair-type-report-service.js'
 import { chunkIds, type GroupBy } from '../services/hc-period-service.js'
 import { logAudit, getRequestContext } from '../services/audit.js'
+import { loadSiteConfig, computeBand } from '../services/resource-config.js'
 
 const reports = new Hono()
 
@@ -4102,6 +4103,73 @@ reports.get('/repair-types', authorize(['super_admin', 'org_admin', 'site_admin'
   } catch (error) {
     console.error('Repair type report error:', error)
     return c.json({ error: 'Failed to build repair type report' }, 500)
+  }
+})
+
+// GET /api/v1/reports/capacity-utilisation — booked vs available hours per day vs
+// the loading target (Resource Manager). Plan-side utilisation; pairs with the
+// diary banding. Aggregated in SQL (diary_day_summary) so it's row-cap safe.
+reports.get('/capacity-utilisation', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id } = c.req.query()
+    const siteId = site_id || auth.user.siteId
+    if (!siteId) return c.json({ error: 'No site selected' }, 400)
+
+    const from = (date_from ? new Date(date_from) : new Date(Date.now() - 30 * 86400000)).toISOString().slice(0, 10)
+    let to = (date_to ? new Date(date_to) : new Date()).toISOString().slice(0, 10)
+    // Cap the window so the per-day RPC stays cheap.
+    if ((new Date(`${to}T12:00:00`).getTime() - new Date(`${from}T12:00:00`).getTime()) / 86400000 > 92) {
+      to = new Date(new Date(`${from}T12:00:00`).getTime() + 92 * 86400000).toISOString().slice(0, 10)
+    }
+
+    const [{ data: rows, error }, config] = await Promise.all([
+      supabaseAdmin.rpc('diary_day_summary', { p_org_id: auth.orgId, p_site_id: siteId, p_from: from, p_to: to }),
+      loadSiteConfig(auth.orgId, siteId)
+    ])
+    if (error) {
+      console.error('capacity-utilisation rpc error:', error)
+      return c.json({ error: 'Failed to load utilisation' }, 500)
+    }
+
+    const round1 = (n: number) => Math.round(n * 10) / 10
+    let sumAvail = 0, sumBooked = 0, sumCeiling = 0, daysOpen = 0, daysOver = 0, daysUnder = 0
+    const days = (rows || []).map((r: any) => {
+      const available = Number(r.available_hours) || 0
+      const booked = Number(r.booked_hours) || 0
+      const { ceilingHours, utilisationPct, band } = computeBand(booked, available, config.targetLoadingPct)
+      if (available > 0) {
+        sumAvail += available; sumBooked += booked; sumCeiling += ceilingHours; daysOpen++
+        if (band === 'over') daysOver++
+        if (band === 'low') daysUnder++
+      }
+      return {
+        date: r.day,
+        availableHours: round1(available),
+        bookedHours: round1(booked),
+        ceilingHours: round1(ceilingHours),
+        utilisationPct: utilisationPct == null ? null : Math.round(utilisationPct * 100),
+        band,
+        totalJobs: r.total_jobs ?? 0
+      }
+    })
+
+    return c.json({
+      period: { from, to },
+      targetLoadingPct: Math.round(config.targetLoadingPct * 100),
+      days,
+      totals: {
+        availableHours: round1(sumAvail),
+        bookedHours: round1(sumBooked),
+        ceilingHours: round1(sumCeiling),
+        utilisationPct: sumAvail > 0 ? Math.round((sumBooked / sumAvail) * 100) : null,
+        vsTargetPct: sumCeiling > 0 ? Math.round((sumBooked / sumCeiling) * 100) : null,
+        daysOpen, daysOver, daysUnder
+      }
+    })
+  } catch (error) {
+    console.error('Capacity utilisation report error:', error)
+    return c.json({ error: 'Failed to build utilisation report' }, 500)
   }
 })
 

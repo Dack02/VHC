@@ -34,6 +34,7 @@ type Row = {
   label: string | null
   colour: string
   default_labour_code_id: string | null
+  default_discount_percent: number | string | null
   sort_order: number
   is_active: boolean
 }
@@ -44,9 +45,17 @@ const shape = (r: Row) => ({
   label: r.label ?? r.code,
   colour: r.colour,
   defaultLabourCodeId: r.default_labour_code_id,
+  defaultDiscountPercent: Number(r.default_discount_percent) || 0,
   sortOrder: r.sort_order,
   isActive: r.is_active
 })
+
+// Clamp a user-supplied percentage to 0–100 (mirrors the DB CHECK constraint).
+const clampPercent = (v: unknown): number => {
+  const n = parseFloat(v as string)
+  if (!Number.isFinite(n)) return 0
+  return Math.min(100, Math.max(0, n))
+}
 
 // GET / - list repair types for org (lazy-seeds defaults if empty)
 repairTypes.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
@@ -122,6 +131,7 @@ repairTypes.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'serv
         label: body.label?.trim() || code,
         colour: body.colour || '#6366F1',
         default_labour_code_id: body.defaultLabourCodeId || null,
+        default_discount_percent: clampPercent(body.defaultDiscountPercent),
         sort_order: (maxOrder?.sort_order || 0) + 10,
         is_active: true
       })
@@ -151,6 +161,7 @@ repairTypes.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin']),
     if (body.label !== undefined) updateData.label = body.label?.trim() || null
     if (body.colour !== undefined) updateData.colour = body.colour
     if (body.defaultLabourCodeId !== undefined) updateData.default_labour_code_id = body.defaultLabourCodeId || null
+    if (body.defaultDiscountPercent !== undefined) updateData.default_discount_percent = clampPercent(body.defaultDiscountPercent)
     if (body.sortOrder !== undefined) updateData.sort_order = body.sortOrder
     if (body.isActive !== undefined) updateData.is_active = body.isActive
 

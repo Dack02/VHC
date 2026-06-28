@@ -10,7 +10,7 @@ import { supabaseAdmin } from '../lib/supabase.js'
 import { getOrganizationBranding } from '../services/email.js'
 import { getEstimateSettings } from '../services/estimate-settings.js'
 import { loadSiteConfig } from '../services/resource-config.js'
-import { canBook } from '../services/resource-capacity.js'
+import { canBook, loanCarAvailableOn } from '../services/resource-capacity.js'
 
 const publicEstimate = new Hono()
 
@@ -497,6 +497,11 @@ publicEstimate.post('/estimate/:token/book', async (c) => {
   if (!validTimes.includes(time)) return c.json({ error: 'That time is not available' }, 400)
   const verdict = await canBook(est.organization_id, job.siteId, date, job.repairTypeId, job.hours)
   if (verdict.status !== 'OK') return c.json({ error: 'That slot has just been taken — please pick another.' }, 409)
+
+  // Loan car is a separate physical resource (P4): only enforce when requested.
+  if (body.courtesyCar && !(await loanCarAvailableOn(est.organization_id, job.siteId, date))) {
+    return c.json({ error: 'No courtesy car is available on that day — pick another day or uncheck the courtesy car.' }, 409)
+  }
 
   const { error } = await supabaseAdmin
     .from('estimates')

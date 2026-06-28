@@ -137,6 +137,17 @@ const navCards: NavCard[] = [
     ),
   },
   {
+    to: '/reports/capacity-utilisation',
+    title: 'Capacity Utilisation',
+    description: 'Booked vs available hours vs target',
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 13a9 9 0 1018 0 9 9 0 00-18 0z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 13l4-3" />
+      </svg>
+    ),
+  },
+  {
     to: '/reports/compliance',
     title: 'Quality & Compliance',
     description: 'Brake disc, MRI, audit trail',

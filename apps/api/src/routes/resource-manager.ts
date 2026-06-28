@@ -550,4 +550,63 @@ resourceManager.post('/availability', authorize([...ADVISOR_ROLES]), async (c) =
   return c.json({ siteId, ...result })
 })
 
+// ---------------------------------------------------------------------------
+// P4 — physical resources (loan cars, waiter seats, MOT bay)
+// ---------------------------------------------------------------------------
+
+const KNOWN_ASSETS: Array<{ assetType: string; label: string }> = [
+  { assetType: 'loan_car', label: 'Courtesy cars' },
+  { assetType: 'waiter_seat', label: 'Waiter seats' },
+  { assetType: 'mot_bay', label: 'MOT bays' }
+]
+
+// GET /assets?siteId=...  → the known resource types + saved quantity (null = untracked)
+resourceManager.get('/assets', authorize([...ADVISOR_ROLES]), async (c) => {
+  const auth = c.get('auth')
+  const siteId = await resolveSiteId(c)
+  if (!siteId) return c.json({ error: 'No site selected' }, 400)
+
+  const { data } = await supabaseAdmin
+    .from('resource_assets')
+    .select('asset_type, name, quantity')
+    .eq('organization_id', auth.orgId).eq('site_id', siteId).eq('is_active', true)
+  const saved = new Map((data || []).map((r: any) => [r.asset_type, r]))
+
+  const assets = KNOWN_ASSETS.map(k => {
+    const row = saved.get(k.assetType)
+    return { assetType: k.assetType, label: k.label, quantity: row ? Number(row.quantity) : null }
+  })
+  return c.json({ siteId, assets })
+})
+
+// PUT /assets?siteId=...  body {assets:[{assetType, quantity}]} → upsert (null quantity = untrack/delete)
+resourceManager.put('/assets', authorize([...ADMIN_ROLES]), async (c) => {
+  const auth = c.get('auth')
+  const siteId = await resolveSiteId(c)
+  if (!siteId) return c.json({ error: 'No site selected' }, 400)
+  let body: any
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
+  const incoming = Array.isArray(body?.assets) ? body.assets : []
+  const known = new Set(KNOWN_ASSETS.map(k => k.assetType))
+
+  for (const a of incoming) {
+    if (!a || !known.has(a.assetType)) continue
+    if (a.quantity == null || a.quantity === '') {
+      // Untracked → remove the cap row so the resource is treated as unlimited.
+      await supabaseAdmin.from('resource_assets').delete()
+        .eq('organization_id', auth.orgId).eq('site_id', siteId).eq('asset_type', a.assetType)
+    } else {
+      await supabaseAdmin.from('resource_assets').upsert({
+        organization_id: auth.orgId,
+        site_id: siteId,
+        asset_type: a.assetType,
+        quantity: clamp(Math.round(Number(a.quantity)), 0, 200),
+        is_active: true,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'organization_id,site_id,asset_type' })
+    }
+  }
+  return c.json({ ok: true })
+})
+
 export default resourceManager

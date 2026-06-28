@@ -42,6 +42,12 @@ interface QuotaRow {
   staffed: { primaryHours: number; eligibleHours: number; jobCeiling: number | null }
 }
 
+interface AssetItem {
+  assetType: string
+  label: string
+  quantity: number | null   // null = no limit (untracked)
+}
+
 const FieldLabel = ({ children, hint, tip }: { children: React.ReactNode; hint?: string; tip?: string }) => (
   <label className="block text-sm font-medium text-gray-700 mb-1">
     <span className="inline-flex items-center gap-1">
@@ -190,6 +196,8 @@ export default function ResourceManager() {
   const [saving, setSaving] = useState(false)
   const [quotas, setQuotas] = useState<QuotaRow[] | null>(null)
   const [savingQuotas, setSavingQuotas] = useState(false)
+  const [assets, setAssets] = useState<AssetItem[] | null>(null)
+  const [savingAssets, setSavingAssets] = useState(false)
   const [showQuotaHelp, setShowQuotaHelp] = useState(false)
 
   const token = session?.accessToken
@@ -223,7 +231,40 @@ export default function ResourceManager() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, user?.site?.id])
 
-  useEffect(() => { fetchConfig(); fetchQuotas() }, [fetchConfig, fetchQuotas])
+  const fetchAssets = useCallback(async () => {
+    if (!token) return
+    try {
+      const params = new URLSearchParams()
+      if (user?.site?.id) params.set('siteId', user.site.id)
+      const data = await api<{ assets: AssetItem[] }>(`/api/v1/resource-manager/assets?${params}`, { token })
+      setAssets(data.assets)
+    } catch {
+      setAssets([])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, user?.site?.id])
+
+  useEffect(() => { fetchConfig(); fetchQuotas(); fetchAssets() }, [fetchConfig, fetchQuotas, fetchAssets])
+
+  const editAsset = (assetType: string, quantity: number | null) =>
+    setAssets(prev => prev ? prev.map(a => a.assetType === assetType ? { ...a, quantity } : a) : prev)
+
+  const handleSaveAssets = async () => {
+    if (!token || !siteId || !assets) return
+    setSavingAssets(true)
+    try {
+      await api(`/api/v1/resource-manager/assets?siteId=${siteId}`, {
+        method: 'PUT', token,
+        body: { assets: assets.map(a => ({ assetType: a.assetType, quantity: a.quantity })) }
+      })
+      toast.success('Resources saved')
+      fetchAssets()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save resources')
+    } finally {
+      setSavingAssets(false)
+    }
+  }
 
   const set = <K extends keyof ResourceConfig>(key: K, value: ResourceConfig[K]) =>
     setConfig(prev => (prev ? { ...prev, [key]: value } : prev))
@@ -465,6 +506,34 @@ export default function ResourceManager() {
                 <button onClick={handleSaveQuotas} disabled={savingQuotas}
                   className="px-4 py-2 bg-primary text-white text-sm font-semibold rounded-lg disabled:opacity-50">
                   {savingQuotas ? 'Saving…' : 'Save quotas'}
+                </button>
+              </div>
+            </>
+          )}
+        </Card>
+
+        <Card title="Physical resources" subtitle="Caps for things that aren't hours — courtesy cars and waiter seats per day, MOT bays. Leave blank for no limit. Booked counts come from the diary; online courtesy-car requests are checked against this.">
+          {!assets ? (
+            <p className="text-sm text-gray-400">Loading…</p>
+          ) : (
+            <>
+              <div className="space-y-3">
+                {assets.map(a => (
+                  <div key={a.assetType} className="flex items-center justify-between">
+                    <span className="text-sm text-gray-700">{a.label}</span>
+                    <input
+                      type="number" min={0} max={200}
+                      className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-28"
+                      value={a.quantity ?? ''} placeholder="No limit"
+                      onChange={e => editAsset(a.assetType, e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))))}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end mt-4">
+                <button onClick={handleSaveAssets} disabled={savingAssets}
+                  className="px-4 py-2 bg-primary text-white text-sm font-semibold rounded-lg disabled:opacity-50">
+                  {savingAssets ? 'Saving…' : 'Save resources'}
                 </button>
               </div>
             </>

@@ -600,8 +600,12 @@ Migration `20260629140000_resource_manager_p2.sql`: `resource_category_quotas`; 
 **P3 — Online booking go-live + lead time — ✅ BACKEND BUILT 2026-06-28 (type-clean).**
 Migration `20260629150000_resource_manager_p3.sql`: `repair_types.booking_mode` + `slot_minutes`; `estimates.requested_date`/`requested_time`/`requested_slot_minutes`/`courtesy_car_requested`/`online_booked_at`; `organization_settings.estimate_online_booking_enabled`. Public route `public-estimate.ts`: `GET /estimate/:token/availability` (resolves the estimate's category+hours+mode from its first priced line, builds the day strip — drop-off morning window or timed slots — every day gated by `canBook`, lead-time floor via `online_lead_time_hours`, horizon via `booking_max_days`) and `POST /estimate/:token/book` (re-validates via `canBook`, persists the slot). `GET /estimate/:token` now returns `booking.enabled`. The inert `BookingFlow.tsx` needed no change (it already fetched these; preview is a debug URL param only). Admin toggle added to Estimate Settings (API + web). *Limitation:* timed-slot availability is day-level (no per-time-slot booking ledger yet) — two customers could pick the same time on a day with capacity; staff resolve exact times.
 
-**P4 — Physical resources + overbooking + reporting.**
-`resource_assets` (MOT bay, loan cars, waiter seats as separate per-day caps); `overbook_factor` tuned from DMS show-rate; utilisation/efficiency/override reports; what-if simulation.
+**P4 — Physical resources — ✅ CORE BUILT 2026-06-28 (type-clean).**
+Migration `20260629160000_resource_manager_p4.sql`: `resource_assets` (per-site loan_car / waiter_seat / mot_bay caps). Engine `resource-capacity.ts`: `loadAssets` + `getDayCapacity` now returns an `assets[]` (quantity / booked / available, booked counts free from `diary_day_summary` totals) + `loanCarAvailableOn`. API: GET/PUT `/assets`. Online booking (`public-estimate.ts` `/book`) now rejects a courtesy-car request when no loan car is free that day. Web: "Physical resources" card in the config screen (blank = no limit).
+
+**P4 analytics — ✅ Capacity Utilisation report BUILT 2026-06-28 (type-clean):** `GET /api/v1/reports/capacity-utilisation` (per-day booked vs available vs target + totals, via `diary_day_summary` + `computeBand`); new `Reports/CapacityUtilisation.tsx` (stat cards + booked/available/target chart + daily table), wired into router + ReportsHub.
+
+*Still deferred (need real usage data / larger effort):* `overbook_factor` auto-tuned from DMS show-rate; efficiency (sold-vs-actual via clocking) + override reporting; what-if capacity simulation; per-time-slot booking ledger; internal-form WARN/override capture.
 
 Each phase is independently deployable and reversible (additive migrations, feature-flagged via `resource_site_config` toggles and `organization_settings.features_enabled`).
 

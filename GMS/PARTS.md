@@ -1,10 +1,11 @@
 # GMS — Parts & Stock (Accounting-Grade Plan)
 
-> Branch: work on `dev` · Status: **PLAN — awaiting Leo's review before P0 build (2026-06-28)** · Author: Leo + Claude
+> Branch: work on `dev` · Status: **PLAN — DECISION-COMPLETE, ready to build P-Simple (2026-06-28)** · Author: Leo + Claude
 > Locked (Leo, 2026-06-28): **two modes — Simple (no stock, parts→P&L cost) + Full (stock); VHC-only plans = Simple only**
 > (decision 0) · **the jobsheet invoice = the customer VAT invoice = the single COGS/sale trigger** (VHC close is *not*
-> involved) · **no GRNI — the inventory asset is recognised at the supplier invoice** · **Xero = first accounts
-> package**. All §13 decisions now answered (2026-06-28).
+> involved) · **no GRNI — the inventory asset is recognised at the supplier invoice** · Simple cost = **at purchase**
+> (explicit "Mark purchased"), sale at jobsheet invoice · **WAVCO** costing · **flat markup v1, banded matrix P3** ·
+> negative stock allow+warn · **Xero = first accounts package**. All §1 + §13 decisions CONFIRMED.
 > Companion to [`REPAIR_TYPES.md`](./REPAIR_TYPES.md) (this module closes its deferred **Parts-module
 > margin** piece — §4.4/§8), [`JOBSHEET.md`](./JOBSHEET.md), [`ESTIMATES.md`](./ESTIMATES.md),
 > [`WORK_DETAILS.md`](./WORK_DETAILS.md), [`RESOURCE_MANAGER.md`](./RESOURCE_MANAGER.md).
@@ -68,9 +69,10 @@ accounting-grade Parts & Stock module** designed from the **double-entry ledger 
 > jobsheet IS the invoice; it stamps `invoice_number` + `tax_point_date` and fires the COGS *and* sale journals
 > together. **VHC close is *not* an accounting trigger** (decision 3/4, §13 Q3). (b) **Xero is the first/target
 > accounts package** — the mapping layer, default code seed, and the P4 push target all orient to Xero's UK chart
-> + tax types (§13 Q7/Q8). (c) All §13 decisions are now answered (2026-06-28).
+> + tax types (§13 Q7/Q8). (c) **All decisions below and all §13 questions are now CONFIRMED (2026-06-28)** —
+> the doc is decision-complete and ready to build.
 
-Bias: accounting-correctness + UK-independent reality.
+Every decision below is **CONFIRMED** (Bias: accounting-correctness + UK-independent reality).
 
 0. **CONFIRMED (Leo, 2026-06-28) — Two parts modes, plan-gated: `simple` (default) and `full`.**
    - **Simple — no stock tracking.** Parts are priced `repair_parts` lines. The **purchase/cost leg** is expensed
@@ -105,7 +107,7 @@ Bias: accounting-correctness + UK-independent reality.
    FRS 102 — not offered.** Field design stays generic so a `cost_layers` table (FIFO) can be added later; ship
    WAVCO as the only method initially.
 
-2. **RECOMMEND — "Order-in / non-stock" is the DEFAULT; held stock is opt-in.** Every item carries
+2. **CONFIRMED (Leo, 2026-06-28 — his own premise) — "Order-in / non-stock" is the DEFAULT; held stock is opt-in.** Every item carries
    `is_stocked BOOLEAN` (default `false`). `false` = ordered per job, never holds SOH, never touches the
    Inventory asset — **but its cost is still deferred to a balance-sheet WIP-clearing account at supplier
    invoice and only expensed at the sale (Event 4A)**, so non-stock matches stocked behaviour on the matching
@@ -134,27 +136,28 @@ Bias: accounting-correctness + UK-independent reality.
    separate trigger; VHC is not involved. This lets `cogs_recognised_at`, `cogs_snapshot`, and the sale journal
    share one trigger.
 
-5. **RECOMMEND — Build journal-ready movement + ledger rows now; NO internal general ledger.** We persist
+5. **CONFIRMED (Leo, 2026-06-28 — "no accounts integration yet, but we will do") — Build journal-ready movement + ledger rows now; NO internal general ledger.** We persist
    immutable balanced Dr/Cr rows (`inventory_journal` + `inventory_journal_lines`) with `internal_account_key`,
    `tax_code`, `source_event`, source-doc refs, and a `posting_status`. We do **not** compute trial balances,
    run a chart of accounts, or post to AP/AR sub-ledgers internally. A thin **mapping layer**
    (`account_code_map`, `tax_code_map`) resolves internal keys → provider codes when a GL is connected.
    Corrections = reversing rows, never edits (immutability = clean audit + clean future export).
 
-6. **RECOMMEND — VAT depth for v1: a single per-line `tax_code` enum + isolated VAT lines; no MTD, no
+6. **CONFIRMED (Leo, 2026-06-28) — VAT depth for v1: a single per-line `tax_code` enum + isolated VAT lines; no MTD, no
    reverse-charge UI.** Parts are standard-rated 20% (reuse `organization_settings.vat_rate`). Store a
    `tax_code` (`STD_20` / `ZERO` / `EXEMPT` / `NO_VAT`) on every journal line so VAT sits on its own control
    line (never baked into inventory/COGS). The sale-side Output VAT line **reads the already-computed
    `repair_items.vat_amount`** rather than re-deriving it (so the journal ties to the customer's document,
    §6 Event 3b); we add **input VAT** capture on purchases. Full MTD/return filing is the future GL's job.
 
-7. **RECOMMEND — Matrix (banded markup) pricing is the default sell-price engine.** Ordered cost-bands →
-   markup% / multiplier, higher markup on cheap parts. One default matrix per org, optional per-category,
-   override precedence: **job-line override → item `sell_price_override` → matrix → flat fallback**. This is
-   the single highest-leverage margin feature (research: +8–10% blended margin vs flat markup). `pricing_matrix`
-   + `pricing_matrix_bands` are **P0 tables fully specified in §5.12** (they were under-specified previously).
+7. **CONFIRMED (Leo, 2026-06-28) — FLAT markup for v1; the banded matrix is DEFERRED to a later phase (P3).**
+   v1 sell price = `cost_price` × the org flat markup (`organization_settings.default_margin_percent`, already
+   exists — no new table), override precedence **job-line override → item `sell_price_override` → flat markup**.
+   The banded **matrix** (cost-bands → markup%, higher markup on cheap parts; research +8–10% blended margin vs
+   flat) is the single highest-leverage margin feature **but ships later** — `pricing_matrix` +
+   `pricing_matrix_bands` are fully specified in §5.12 and tagged **P3**, not v1/P0.
 
-8. **RECOMMEND — Negative stock: allow-with-warning by default, per-org toggle to block.** Techs routinely
+8. **CONFIRMED (Leo, 2026-06-28) — Negative stock: allow-with-warning by default, per-org toggle to block.** Techs routinely
    book a part before the GRN is keyed; hard-blocking kills adoption. Allow the issue, drive SOH negative, flag
    it, surface a **Negative-Stock Exceptions** report to reconcile at receipt. The **valuation** correction
    path for issuing into / receiving out of negative SOH is defined in §5.4 (not just the quantity).
@@ -277,7 +280,7 @@ the sale** and recognise COGS in the same event as the revenue. Both forks live 
 | `repair_parts` (`20260118300001` + `20260121000001`) | Priced line on a concern/option: `cost_price`, `sell_price`, `line_total`, `margin_percent`, `markup_percent`, `quantity DECIMAL(10,2) NOT NULL DEFAULT 1` (verified `20260118300001:229`), `allocation_type` (DEFAULT `'direct'`, `20260121000001:6`), `supplier_id`. XOR parent `repair_item_id`/`repair_option_id`. Reaches a document only via `repair_items.health_check_id` (NOT NULL) — **no direct estimate/jobsheet FK**. | **EXTEND** (add stock/PO links, qty split, line status §5.3). The single consumption point across VHC/Jobsheet/Estimate — do **not** fork it. |
 | `suppliers` + `supplier_types` (`20260118300001`, `20260124000001`) | Supplier master + Dealer/Factor/Tyres/Other types. `seed_default_supplier_types()` is **backfill-loop only** (param `target_org_id`), **NOT** wired into `seedDefaultLibraries()`. | **REUSE** as-is (the PO supplier + the "Tyres" type for tyre parts). |
 | DB pricing triggers (`calculate_repair_item_totals` / `_option_totals`) | Roll `Σ repair_parts.line_total` (sell) into `repair_items.parts_total` → subtotal → `vat_amount` → `total_inc_vat`. `calculate_repair_item_totals` sums by `repair_item_id` (`20260118300001:320`); `calculate_repair_option_totals` sums by `repair_option_id` (`:343`). **Neither reads `allocation_type`.** | **REUSE UNCHANGED.** New stock logic hangs *beside* these triggers, never inside them. |
-| Pricing settings | `organization_settings.default_margin_percent` (40), `vat_rate` (20). | **REUSE** (matrix pricing + VAT). |
+| Pricing settings | `organization_settings.default_margin_percent` (40), `vat_rate` (20). | **REUSE** (flat markup for v1 + VAT; matrix is a P3 upgrade). |
 
 **CONFIRMED ABSENT (grep clean across `apps/ packages/ supabase/ docs/`):** stock-on-hand / qty tracking,
 stock locations/bins, goods-in/receiving, purchase orders, stock-movement ledger, COGS/valuation, **any
@@ -336,7 +339,7 @@ distinctive columns are listed.)
 ### 5.1 `part_categories` — the grouping lookup (P0)
 
 **Purpose:** single-level (optionally 2-level via nullable `parent_id`) category tree for items, reporting,
-and the matrix. Seeded with garage-sensible defaults.
+and the later pricing matrix. Seeded with garage-sensible defaults.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -361,7 +364,7 @@ working untouched.
 | `is_stocked` | BOOLEAN DEFAULT false | **The fork.** false = order-in/non-stock (default). |
 | `unit_of_measure` | VARCHAR(20) DEFAULT 'each' | each/litre/metre/set/pair enum. |
 | `sell_price` | DECIMAL(10,2) NULL | Matrix-derived or fixed. |
-| `sell_price_override` | DECIMAL(10,2) NULL | Manual fixed price wins over matrix. |
+| `sell_price_override` | DECIMAL(10,2) NULL | Manual fixed price; wins over the flat markup (and the matrix when added in P3). |
 | `qty_on_hand` | DECIMAL(12,3) DEFAULT 0 | **Derived cache** — only `stock_movements` may change it (§5.4 invariant). |
 | `average_cost` | DECIMAL(12,4) DEFAULT 0 | WAVCO rolling average (provisional at receipt). Valuation = stored movement `total_cost`, not `qty_on_hand × average_cost` (§5.4). |
 | `min_qty` / `max_qty` | DECIMAL(12,3) NULL | Reorder point / reorder-up-to. |
@@ -384,7 +387,7 @@ triggers. Additive columns only:
 |---|---|---|
 | `stock_item_id` | UUID NULL FK→parts_catalog | Anchors a line to a master SKU (NULL = ad-hoc sundry). |
 | `purchase_order_line_id` | UUID NULL FK→purchase_order_lines | The order-in link. |
-| `qty_fitted` | DECIMAL(10,2) NULL | Quantity actually fitted/billed (defaults to `quantity` on close if unset). **Extended COGS = `qty_fitted × cogs_snapshot`.** |
+| `qty_fitted` | DECIMAL(10,2) NULL | Quantity actually fitted/billed (defaults to `quantity` at the jobsheet invoice if unset). **Extended COGS = `qty_fitted × cogs_snapshot`.** |
 | `qty_to_return` | DECIMAL(10,2) NULL | Ordered-but-unused quantity routed to a supplier return (the "ordered 2, fitted 1 → return 1" split lives here, not in a second row). |
 | `line_status` | VARCHAR(24) DEFAULT 'requested' | The state machine §5.6. |
 | `stock_ownership` | VARCHAR(16) DEFAULT 'owned' | `owned` / `consignment` (consignment = no purchase booked until **used**; an *unused* consignment return needs no credit note — but a consignment part that is *issued and sold* DOES trigger a purchase at point-of-use, §6 Event 5). |
@@ -483,7 +486,8 @@ a supplier with an open `draft` PO appends to it (GA4 pattern).
 
 ### 5.8 `goods_receipts` + `goods_receipt_lines` — receiving / GRN (P1)
 
-**Purpose:** record what physically arrived against a PO; emit the inbound movement + GRNI journal.
+**Purpose:** record what physically arrived against a PO; write the inbound quantity movement (no GL journal at
+receipt — the inventory asset is recognised at the supplier invoice, Event 2).
 `goods_receipts`: `purchase_order_id`, `received_by`, `received_at`, `grn_number`, `notes`.
 `goods_receipt_lines`: `goods_receipt_id`, `purchase_order_line_id`, `stock_item_id` NULL, `qty_received`,
 `unit_cost` (editable on receipt if different from ordered), `condition` (`ok`/`damaged`). Receiving a
@@ -558,11 +562,13 @@ isolated on its own line), `tax_code`, `tax_amount`, `tracking_site_id`, `tracki
 > Building these now (even inert) is the difference between "map codes + push" and a schema rewrite when the
 > GL lands. Every journal already carries internal keys; the GL adds only a mapping rowset, not a column.
 
-### 5.12 `pricing_matrix` + `pricing_matrix_bands` — the banded markup engine (P0)
+### 5.12 `pricing_matrix` + `pricing_matrix_bands` — the banded markup engine (DEFERRED to P3)
 
-**Purpose:** the default sell-price engine (decision 7). Load-bearing P0 value, so fully specified here (not
-just referenced in §9). Override precedence: **job-line override → item `sell_price_override` → matrix → flat
-fallback**.
+**Purpose:** a *later* sell-price upgrade (decision 7). **v1/P0 uses a FLAT markup** —
+`cost_price × organization_settings.default_margin_percent`, override precedence **job-line override → item
+`sell_price_override` → flat markup**. The banded matrix below ships in **P3**; it's fully specified here so the
+later build is drop-in. When added, the precedence becomes **job-line override → item `sell_price_override` →
+matrix → flat fallback**.
 
 **`pricing_matrix`** (one default per org; optional per-category):
 
@@ -824,8 +830,9 @@ schema** to add a provider — only mapping rows.
 
 ### 7.1 Goods-in / GRN
 Open a PO → "Receive" → per line edit `qty_received` + `unit_cost`, flag discrepancies/damage → post. Stocked
-lines write a `receipt` movement (SOH ↑, **provisional** WAVCO re-roll) + Event 1; non-stock lines just advance
-to `received`. Receiving optionally unblocks job start (TechMan pattern). GRN number generated.
+lines write a `receipt` movement (SOH ↑, **provisional** WAVCO re-roll) — **quantity only, no GL journal at
+receipt** (Event 1; the inventory asset is recognised at the supplier invoice, Event 2); non-stock lines just
+advance to `received`. Receiving optionally unblocks job start (TechMan pattern). GRN number generated.
 
 ### 7.2 Booking parts onto a job card (reuse `PartsTab.tsx` + `repair_parts`)
 Unchanged entry point: `apps/web/src/pages/HealthChecks/tabs/PartsTab.tsx` → `POST /repair-items/:id/parts`.
@@ -969,13 +976,15 @@ Catalogue (ungated, existing) · Stock · Goods In · Purchase Orders · Returns
 
 **Seeding** (`services/provisioning.ts:seedDefaultLibraries()`, best-effort; each new seeder uses the
 `p_organization_id` param name to match the existing `rpc(fn, { p_organization_id: orgId })` call shape, §4.5):
-`seed_default_part_categories_for_org` (§5.1), a default "Main" `stock_locations` row, a default
-`pricing_matrix` + bands (§5.12), and **placeholder `account_code_map` / `tax_code_map` rows** (UK Sage ranges,
-marked "remap on connect") so journals are readable before any GL connects. Each via the canonical
-`ON CONFLICT … DO NOTHING` seeder + migration backfill loop.
+`seed_default_part_categories_for_org` (§5.1), a default "Main" `stock_locations` row, and **placeholder
+`account_code_map` / `tax_code_map` rows** (Xero UK chart, marked "remap on connect") so journals are readable
+before any GL connects. Each via the canonical `ON CONFLICT … DO NOTHING` seeder + migration backfill loop.
+*(The `pricing_matrix` default seed is added in P3 with the matrix itself.)*
 
-**Matrix config** — `pricing_matrix` + `pricing_matrix_bands` (§5.12). Edited under Settings → Pricing & Parts.
-Override precedence: **job-line override → item `sell_price_override` → matrix → flat fallback**.
+**Sell-price config (v1)** — flat markup via `organization_settings.default_margin_percent`, edited under
+Settings → Pricing & Parts. Override precedence: **job-line override → item `sell_price_override` → flat
+markup**. The banded `pricing_matrix` + `pricing_matrix_bands` (§5.12) are a **P3** upgrade that inserts
+**matrix** ahead of the flat fallback in that precedence.
 
 ---
 
@@ -987,8 +996,8 @@ Override precedence: **job-line override → item `sell_price_override` → matr
 
 **P-Simple — Simple-mode accounting (ship first; the majority no-stock tenant).**
 `organization_settings.parts_mode` + plan gating (§9) · `repair_parts.purchased_at` + `purchase_recognised_at`
-(§5.3) · the §6 **Simple-mode journals** — the cost **bill at purchase** (a lightweight "mark purchased" action /
-auto on cost+supplier set, dated to `purchased_at`; **all tenants incl. VHC-only**) **and** the **sale at the
+(§5.3) · the §6 **Simple-mode journals** — the cost **bill at purchase** (explicit "Mark purchased" action,
+dated to `purchased_at`; **all tenants incl. VHC-only**) **and** the **sale at the
 jobsheet invoice** (§7.3; **GMS tenants only — VHC-only tenants get no sale leg**) · the journal-ready tables
 it *shares* with Full mode — `inventory_journal`/`_lines` + the mapping layer (`accounting_connections`,
 `account_code_map`, `tax_code_map`, `contact_links`, `journal_push_log`), seeded inert · the **£0-cost gate** ·
@@ -1002,8 +1011,8 @@ The Full-mode phases then layer stock on top for GMS-tier tenants who opt in:
 **P0 — Stock foundation + valuation (real value, no GL).**
 `part_categories` + seeder · `stock_locations` (default) · `parts_catalog` extension (is_stocked, qty_on_hand,
 average_cost, min/max, bin, category, sell/override, vat_code) · `stock_movements` + `apply_stock_movement()`
-trigger (the SOH invariant + provisional-WAVCO + negative-SOH valuation rules, §5.4) · `pricing_matrix` +
-`pricing_matrix_bands` (§5.12) + matrix engine + seeded bands · manual stock adjustment UI · **Stock Valuation
+trigger (the SOH invariant + provisional-WAVCO + negative-SOH valuation rules, §5.4) · **flat-markup sell-price**
+(org `default_margin_percent` + `sell_price_override`) · manual stock adjustment UI · **Stock Valuation
 + Low-Stock + Movement-history reports** · Stock list with colour status. Goods-in can be manual
 (adjustment-style) before POs exist. **Ships a working held-stock register + valuation with zero accounting.**
 *Defers:* POs, journals, returns.
@@ -1028,10 +1037,12 @@ stocked/order-in line has null/0 `cost_price`/`cogs_snapshot` — a £0-cost lin
 corrupts the ledger this module exists to produce. **Ships the accounting-grade promise + closes the deferred
 Repair Types margin loop.** *Defers:* cores, the live GL push.
 
-**P3 — Cores, stocktake sessions, SLOB/RNI.**
+**P3 — Cores, stocktake sessions, SLOB/RNI, banded pricing matrix.**
 Core/surcharge sub-state + deposit journals (**core-forfeit VAT confirmed with accountant first**, §13 Q6) ·
 structured stocktake sessions (freeze + reason-coded variance) · **SLOB + Received-Not-Invoiced (RNI) reports** ·
-supplier price-list child table · single-hop supersession + alias search · barcode scanning UI.
+`pricing_matrix` + `pricing_matrix_bands` (§5.12) + matrix engine + seeded bands + config UI (the deferred
+banded-markup upgrade, decision 7) · supplier price-list child table · single-hop supersession + alias search ·
+barcode scanning UI.
 
 **P4 — GL integration + multi-location + period-lock UI.**
 Live Xero/QBO/Sage push (documents + per-push `external_idempotency_key` + draft/posted handling) ·
@@ -1050,7 +1061,7 @@ two-leg customer-credit modelling (§13 Q10).
 | `2026XXXX_parts_stock_locations.sql` | P0 | `stock_locations` + default seed. |
 | `2026XXXX_parts_catalog_stock_extension.sql` | P0 | `ALTER parts_catalog ADD COLUMN IF NOT EXISTS …` (item-master cols). |
 | `2026XXXX_stock_movements.sql` | P0 | `stock_movements` (incl. `total_cost`, `document_date`) + `apply_stock_movement()` trigger (SOH invariant + provisional-WAVCO + negative-SOH valuation rules). |
-| `2026XXXX_pricing_matrix.sql` | P0 | `pricing_matrix` + `pricing_matrix_bands` (§5.12) + default seed. |
+| `2026XXXX_pricing_matrix.sql` | P3 | `pricing_matrix` + `pricing_matrix_bands` (§5.12) + default seed (deferred; v1 uses flat markup). |
 | `2026XXXX_purchase_orders.sql` | P1 | `purchase_orders` + `purchase_order_lines` (incl. `reconciled`). |
 | `2026XXXX_goods_receipts.sql` | P1 | `goods_receipts` + `goods_receipt_lines`. |
 | `2026XXXX_repair_parts_stock_extension.sql` | P1 | `ALTER repair_parts ADD COLUMN IF NOT EXISTS …` (stock_item_id, po_line_id, qty_fitted, qty_to_return, line_status, ownership, core, cogs_snapshot, cogs_recognised_at). |
@@ -1106,10 +1117,13 @@ migration — new file only.
   (via **both** `repair_item_id` and `repair_option_id`) and must not walk a parent and its children twice. No
   distribution routine to replicate.
 - **Parts on the selected `repair_option` count.** `repair_parts` XOR-attach to a concern OR an option; the
-  close sweep must read both FKs or option-priced parts silently miss COGS (§7.3).
-- **Empty/partial close emits no journal.** `declined`/`expired` closes (`closableStatuses` at `status.ts:1438`)
-  may have empty/partial authorised baskets; recognise only authorised items.
-- **Reopen reverses COGS.** A reopened → reclosed document must post reversing journals + clear
+  jobsheet-invoice sweep must read both FKs or option-priced parts silently miss COGS (§7.3).
+- **A jobsheet invoiced with no billable parts emits no journal.** The basket (gathered across the jobsheet's
+  child VHC(s) + jobsheet-direct items) may be empty or partial; recognise only authorised/billed items.
+- **VHC close is NOT a trigger.** Only the jobsheet invoice (`jobsheets.closed_at`) drives COGS/sale. A VHC is an
+  inspection whose parts transfer up to the parent jobsheet (`health_checks.jobsheet_id`); standalone VHC-only
+  tenants don't invoice parts in-app, so VHC never touches parts accounting.
+- **Jobsheet reopen reverses COGS.** A reopened → re-invoiced jobsheet must post reversing journals + clear
   `cogs_recognised_at`/`cogs_snapshot`/`qty_fitted` (§7.7), or COGS desyncs from the final invoice after a reset
   (memory: `vhc-admin-edit-reset-initiative`).
 - **Idempotency is two keys, not one.** Internal `idempotency_key` (our dedup) ≠ provider
@@ -1148,46 +1162,57 @@ migration — new file only.
 
 ## 13. Open questions for Leo
 
-1. **Costing method** — confirm **WAVCO** as the only v1 method (vs offering FIFO)? (RECOMMEND: WAVCO; defer FIFO.)
-2. **COGS recognition timing + matching** — confirm **cost is deferred to the sale for non-stock parts via a
-   WIP-clearing account** (Event 4A two legs), so cost and revenue match — vs the simpler-but-wrong
-   "expense on supplier invoice"? (RECOMMEND: WIP-clearing, matches stocked behaviour.) And confirm **close** is
-   the trigger (vs at authorisation)? (RECOMMEND: close.)
-3. **Close = invoice issuance?** — ✅ **ANSWERED (Leo, 2026-06-28): close = the invoice.** A closed billing
-   document IS the customer VAT invoice; it stamps `invoice_number` + `tax_point_date`, and the COGS + sale/
-   Output-VAT journals fire together at close. No separate external invoicing seam for v1.
-4. **Jobsheet close** — confirmed we add **`jobsheets.closed_at` as a first-class P2 COGS trigger** (not a
-   deferred parenthetical), because parts billed off a jobsheet/estimate that never spawns a VHC would
-   otherwise never recognise COGS. Any reason the VHC close should be the *only* money event? (RECOMMEND: add
-   jobsheet close in P2.)
-5. **GRNI / expected-cost posting** — confirm Event 1 (Dr Inventory / Cr GRNI on *receipt*, provisional cost)
-   for **stocked** items, with the supplier invoice truing up variance to Inventory/PPV (Event 2)? (RECOMMEND:
-   GRNI for stocked; non-stock uses WIP-clearing via Event 4A.)
-6. **Cores/surcharge + forfeit VAT** — confirm **P3 deferral** (fields stubbed now)? **And confirm the VAT
-   treatment on a forfeited core deposit with your accountant before build** — if the original core charge
-   carried VAT, the forfeit is VATable consideration. Which factors actually charge you cores
-   (calipers/turbos/DPFs/batteries)?
+1. **Costing method** — ✅ **ANSWERED (Leo, 2026-06-28): WAVCO now, FIFO optional later.** Ship WAVCO as the
+   only v1 method, but keep the field design generic so a FIFO `cost_layers` table can be added later as a
+   per-org option. (LIFO prohibited under FRS 102.)
+2. **COGS recognition timing + matching** — ✅ **ANSWERED (Leo, 2026-06-28): defer cost to the sale via the
+   WIP-clearing account** (Event 4A two legs), so cost and revenue match — *not* the simpler-but-wrong "expense
+   on supplier invoice". The supplier bill is still **dated to the purchase month** so the supplier statement
+   reconciles. **The trigger is the jobsheet invoice** (`jobsheets.closed_at`), not VHC close and not
+   authorisation.
+3. **The jobsheet invoice = the invoice issuance?** — ✅ **ANSWERED (Leo, 2026-06-28): yes — the jobsheet IS the
+   invoice.** A closed/invoiced jobsheet IS the customer VAT invoice (no separate invoice entity); it stamps
+   `invoice_number` + `tax_point_date`, and the COGS + sale/Output-VAT journals fire together at the jobsheet
+   invoice. **VHC close is not involved.** No separate external invoicing seam for v1.
+4. **The jobsheet invoice is THE money event — VHC is not.** — ✅ **ANSWERED (Leo, 2026-06-28): only the
+   jobsheet invoice triggers COGS + sale.** `jobsheets.closed_at` is **THE** trigger (P2). VHC items/parts
+   transfer up to the parent jobsheet (`health_checks.jobsheet_id`); the jobsheet is the billing document.
+   **VHC close does nothing in the parts-accounting path** — standalone VHC-only tenants don't process parts
+   invoices in the app, so VHC never recognises parts COGS or sales.
+5. **GRNI?** — ✅ **ANSWERED (Leo, 2026-06-28): no GRNI — the inventory asset is recognised at the supplier
+   invoice.** Goods receipt for a **stocked** line is **quantity-only (no GL journal)**; Event 2 (the supplier
+   invoice) books `Dr Inventory / Dr VAT Input / Cr AP` at actual cost and trues up variance to Inventory
+   (on-hand) / PPV (already issued). Non-stock uses WIP-clearing via Event 4A. (The GRNI account is removed
+   entirely.)
+6. **Cores/surcharge + forfeit VAT** — ✅ **ANSWERED (Leo, 2026-06-28): defer to P3, stub the fields now**
+   (`has_core` / `core_charge_amount` / `core_status`). **Confirm the core-forfeit VAT treatment with the
+   accountant before the P3 build** — if the original core charge carried VAT, the forfeit is VATable
+   consideration. (Still useful to know which factors actually charge you cores — calipers/turbos/DPFs/batteries.)
 7. **Default GL codes** — ✅ **ANSWERED via Q8 (Xero):** seed defaults will mirror **Xero's UK chart** (630
-   Inventory, 310 COGS, 200 Sales, 610 AR, 800 AP, 820 VAT; GRNI/WIP/PPV as added codes), marked "remap on
+   Inventory, 310 COGS, 200 Sales, 610 AR, 800 AP, 820 VAT; WIP/PPV as added codes — no GRNI), marked "remap on
    connect" (§5.11). *Still useful if you have a specific Xero chart-of-accounts you want mirrored one-to-one
    for the pilot garage — otherwise we use the demo-chart defaults.*
 8. **First GL provider** — ✅ **ANSWERED (Leo, 2026-06-28): Xero.** P4 push target = Xero (Accounting API:
    `ACCREC`/`ACCPAY` invoices + `ACCPAYCREDIT` credit notes + manual journals; tracking categories for
    site/department). `provider` enum keeps `qbo`/`sage` for later, but build + test against Xero first.
-9. **Bring lite catalog under `parts_stock`?** — keep the existing Catalogue page ungated/always-on (RECOMMEND),
-   or fold it under the new module so the whole Parts area toggles together?
-10. **Already-sold supplier returns** — when a part whose COGS+sale already posted is returned to the factor, do
-    you want the **two-leg customer-credit + supplier-return** modelling (P4), or is "supplier returns are for
-    unused/unsold parts only" sufficient for v1? (RECOMMEND: unused-only for P2; two-leg in P4.)
-11. **Issue timing** — keep the `issue` movement **at booking** (live SOH during the job) reconciled via a
-    `stock_issued_pending_sale` control account, or defer the issue to close (movement + journal atomic, but
-    SOH lags until close)? (RECOMMEND: at booking + control account — techs want accurate live SOH.) *Full mode only.*
+9. **Catalogue / module access** — ✅ **ANSWERED (Leo, 2026-06-28): VHC-only tenants get the Simple Parts
+   module.** The lite **Catalogue + Suppliers + parts purchase-cost capture** are part of Simple and stay
+   **available to VHC-only tenants** (ungated). **Full mode (`parts_stock`) is GMS-only**; **GMS tenants can use
+   either mode.** Only the Full stock surfaces (Stock / Goods-In / PO / Returns / journal) gate behind
+   `parts_stock`.
+10. **Already-sold supplier returns** — ✅ **ANSWERED (Leo, 2026-06-28): unused/unsold only for v1.** Supplier
+    returns are for parts that never reached `invoiced`; the **already-sold two-leg customer-credit +
+    supplier-return** modelling is **deferred to P4**. (The P2 return path asserts `line_status != 'invoiced'`.)
+11. **Issue timing** — ✅ **ANSWERED (Leo, 2026-06-28): at booking + `stock_issued_pending_sale` control
+    account.** Write the `issue` movement **at booking** for live SOH during the job, reconciled to COGS-at-the-
+    jobsheet-invoice through the `stock_issued_pending_sale` control account (§7.2). *Full mode only.*
 12. **Simple-mode cost timing** — ✅ **ANSWERED (Leo, 2026-06-28): expense AT PURCHASE.** The cost must land in
     the month the part was purchased so it **reconciles to the supplier's monthly statement** (and the input-VAT
     period is correct). Simple mode therefore posts **two events on two dates** — cost at purchase
-    (`Dr Parts COGS / Dr VAT Input / Cr AP`, dated `purchased_at`), sale at close — and cost/revenue are
-    **intentionally not period-matched** (§6 Simple-mode journals). The cost pushes to Xero as a **supplier bill
-    (`ACCPAY`)** dated to the purchase, so the bookkeeper reconciles it against the factor statement without
-    re-keying. *(Only remaining sub-detail for build: what UI event stamps the purchase — a "mark purchased"
-    action vs auto-recognise once cost + supplier are set. RECOMMEND: explicit "mark purchased", defaulting
-    `purchased_at` to today and editable to the factor-invoice date.)*
+    (`Dr Parts COGS / Dr VAT Input / Cr AP`, dated `purchased_at`; **all tenants incl. VHC-only**), sale **at the
+    jobsheet invoice** (**GMS tenants only**) — and cost/revenue are **intentionally not period-matched** (§6
+    Simple-mode journals). The cost pushes to Xero as a **supplier bill (`ACCPAY`)** dated to the purchase, so the
+    bookkeeper reconciles it against the factor statement without re-keying. **The purchase is stamped by an
+    explicit "Mark purchased" action (CONFIRMED Leo, 2026-06-28)** — it sets `purchased_at` (defaults to today,
+    editable to the factor-invoice date) and fires the cost journal then, so quoted-but-never-bought parts are
+    not expensed.

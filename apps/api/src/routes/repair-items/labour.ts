@@ -82,7 +82,9 @@ labourRouter.post('/repair-items/:id/labour', authorize(['super_admin', 'org_adm
     }
 
     const rate = resolved.rate
-    const discountPct = parseFloat(discount_percent) || 0
+    // Default the discount to the Repair Type's standing discount when the client omits it
+    // (a competitively-priced type discounts every line by default); an explicit value wins.
+    const discountPct = discount_percent !== undefined ? (parseFloat(discount_percent) || 0) : resolved.discountPercent
     const subtotal = rate * parseFloat(hours)
     const total = subtotal * (1 - discountPct / 100)
 
@@ -234,7 +236,8 @@ labourRouter.post('/repair-options/:id/labour', authorize(['super_admin', 'org_a
     }
 
     const rate = resolved.rate
-    const discountPct = parseFloat(discount_percent) || 0
+    // Default the discount to the Repair Type's standing discount when the client omits it.
+    const discountPct = discount_percent !== undefined ? (parseFloat(discount_percent) || 0) : resolved.discountPercent
     const subtotal = rate * parseFloat(hours)
     const total = subtotal * (1 - discountPct / 100)
 

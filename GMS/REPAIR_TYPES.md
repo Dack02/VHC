@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS repair_types (
   label TEXT,
   colour VARCHAR(7) DEFAULT '#6366F1',
   default_labour_code_id UUID REFERENCES labour_codes(id) ON DELETE SET NULL,  -- LABOUR FEED
+  default_discount_percent NUMERIC(5,2) NOT NULL DEFAULT 0,  -- STANDING DISCOUNT (0–100); migration 20260629170000
   sort_order INTEGER DEFAULT 0,
   is_active BOOLEAN DEFAULT true,        -- SOFT delete (preserve report history)
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -177,6 +178,13 @@ Assignable per item in `TemplateBuilder.tsx`; **must also be copied in the templ
   (§5.1-A) that climbs to the **top-level** `repair_items.repair_type_id` (child → `parent_repair_item_id`;
   option → `repair_options.repair_item_id`), reads `default_labour_code` → `rate` + `is_vat_exempt`, then
   the caller applies `discount_percent` into `repair_labour.total`.
+- **Standing discount (`default_discount_percent`):** a type can carry a fixed % discount off its labour
+  code's rate (e.g. Clutch on the standard £105/hr code but 10% off to stay competitive). `resolveLockedRate`
+  returns it; the labour POST handlers use it as the **default** `discount_percent` when the client omits one
+  (an explicit value — including `0` — wins). The web pricing rows (LabourTab) pre-fill the Disc % field from
+  it on new lines and keep it synced to the type until the advisor edits it. It is a default, not a lock:
+  per-line overrides persist, `reRateLabourForRepairItem` preserves each line's snapshotted discount, and
+  service packages keep their own per-line discounts (not overridden by the type default).
 - **Service Packages:** see §5.2 — the package carries `default_repair_type_id`; the group is stamped with
   it **before** apply runs, and the package rate resolves from the type.
 

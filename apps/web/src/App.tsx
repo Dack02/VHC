@@ -103,6 +103,7 @@ const TechnicianPerformance = lazy(() => import('./pages/Reports/TechnicianPerfo
 const AdvisorPerformance = lazy(() => import('./pages/Reports/AdvisorPerformance'))
 const CustomerInsights = lazy(() => import('./pages/Reports/CustomerInsights'))
 const OperationalEfficiency = lazy(() => import('./pages/Reports/OperationalEfficiency'))
+const CapacityUtilisation = lazy(() => import('./pages/Reports/CapacityUtilisation'))
 const QualityCompliance = lazy(() => import('./pages/Reports/QualityCompliance'))
 const DeferredWork = lazy(() => import('./pages/Reports/DeferredWork'))
 const FollowUpRecovery = lazy(() => import('./pages/Reports/FollowUpRecovery'))
@@ -226,6 +227,7 @@ function App() {
                         <Route path="/reports/advisors" element={<AdvisorPerformance />} />
                         <Route path="/reports/customers" element={<CustomerInsights />} />
                         <Route path="/reports/operations" element={<OperationalEfficiency />} />
+                        <Route path="/reports/capacity-utilisation" element={<CapacityUtilisation />} />
                         <Route path="/reports/compliance" element={<QualityCompliance />} />
                         <Route path="/reports/deferred" element={<DeferredWork />} />
                         <Route path="/reports/follow-up-recovery" element={<FollowUpRecovery />} />

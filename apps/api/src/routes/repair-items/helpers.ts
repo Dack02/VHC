@@ -107,7 +107,7 @@ export async function verifyRepairOptionAccess(optionId: string, orgId: string) 
 export async function resolveLockedRate(
   input: { itemId?: string; optionId?: string },
   orgId: string
-): Promise<{ rate: number; isVatExempt: boolean; labourCodeId: string } | null> {
+): Promise<{ rate: number; isVatExempt: boolean; labourCodeId: string; discountPercent: number } | null> {
   // 1. Find the repair_item id the rate is read from (an option resolves via its parent item).
   let itemId = input.itemId || null
   if (!itemId && input.optionId) {
@@ -141,10 +141,10 @@ export async function resolveLockedRate(
   }
   if (!repairTypeId) return null
 
-  // 3. Type → default labour code → rate + VAT-exemption.
+  // 3. Type → default labour code → rate + VAT-exemption (+ the type's default discount %).
   const { data: rt } = await supabaseAdmin
     .from('repair_types')
-    .select('default_labour_code_id')
+    .select('default_labour_code_id, default_discount_percent')
     .eq('id', repairTypeId)
     .eq('organization_id', orgId)
     .single()
@@ -161,7 +161,8 @@ export async function resolveLockedRate(
   return {
     rate: parseFloat(lc.hourly_rate as string),
     isVatExempt: !!lc.is_vat_exempt,
-    labourCodeId: lc.id as string
+    labourCodeId: lc.id as string,
+    discountPercent: Number(rt.default_discount_percent) || 0
   }
 }
 

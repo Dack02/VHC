@@ -425,3 +425,194 @@ export async function recommendDay(
     softHints: warn.slice(0, 3)
   }
 }
+
+// ---------------------------------------------------------------------------
+// Booking-job resolution + availability strip (consumed by the booking flows —
+// advisor BookingDatePicker via /resource-manager/availability, and the public
+// estimate picker). A "job" is the category + hours + booking mode a booking
+// consumes; the strip is the contiguous run of upcoming days with a per-day
+// verdict + load band, plus the recommended day and alternatives — everything
+// the picker needs in one call.
+// ---------------------------------------------------------------------------
+
+export type BookingMode = 'drop_off' | 'timed_slot'
+
+export interface BookingJob {
+  siteId: string
+  repairTypeId: string
+  hours: number
+  bookingMode: BookingMode
+  slotMinutes: number
+  label: string | null
+  colour: string | null
+}
+
+export type ParentRef =
+  | { kind: 'jobsheet'; id: string }
+  | { kind: 'estimate'; id: string }
+  | { kind: 'health_check'; id: string }
+
+const PARENT_TABLE: Record<ParentRef['kind'], string> = {
+  jobsheet: 'jobsheets', estimate: 'estimates', health_check: 'health_checks'
+}
+const PARENT_FK: Record<ParentRef['kind'], string> = {
+  jobsheet: 'jobsheet_id', estimate: 'estimate_id', health_check: 'health_check_id'
+}
+
+async function defaultSiteId(orgId: string): Promise<string | null> {
+  const { data } = await supabaseAdmin
+    .from('sites').select('id').eq('organization_id', orgId)
+    .order('created_at', { ascending: true }).limit(1).maybeSingle()
+  return data?.id ?? null
+}
+
+// Derive mode + slot length for a repair type given the job's hours.
+function modeAndSlot(rt: any, hours: number): { bookingMode: BookingMode; slotMinutes: number } {
+  const bookingMode: BookingMode = rt?.booking_mode === 'timed_slot' ? 'timed_slot' : 'drop_off'
+  const slotMinutes = bookingMode === 'timed_slot'
+    ? (Number(rt?.slot_minutes) || Math.max(15, Math.round(hours * 60)))
+    : Math.max(15, Math.round(hours * 60))
+  return { bookingMode, slotMinutes }
+}
+
+// Build a BookingJob straight from a repair type id + caller-supplied hours
+// (the surfaces with no draft parent yet, e.g. an explicit repair-type pick).
+export async function resolveBookingJobByType(orgId: string, siteId: string, repairTypeId: string, hours?: number): Promise<BookingJob | null> {
+  const { data: rt } = await supabaseAdmin
+    .from('repair_types')
+    .select('id, code, label, colour, booking_mode, slot_minutes, default_estimated_hours')
+    .eq('id', repairTypeId).eq('organization_id', orgId).maybeSingle()
+  if (!rt) return null
+  let h = Number(hours) || 0
+  if (h <= 0) h = Number(rt.default_estimated_hours) || 1
+  const { bookingMode, slotMinutes } = modeAndSlot(rt, h)
+  return { siteId, repairTypeId, hours: h, bookingMode, slotMinutes, label: rt.label ?? rt.code ?? null, colour: rt.colour ?? null }
+}
+
+// Resolve the category + hours + mode a booking consumes from its parent doc.
+// Category ladder: parent.primary_repair_type_id → first priced top-level
+// repair item → any item with a type. Hours = Σ repair_labour.hours, falling
+// back to the type's default. `siteHint` (an org-validated ?siteId) wins over
+// the parent's stored site. Returns null when no category can be resolved yet.
+export async function resolveBookingJobForParent(orgId: string, parent: ParentRef, siteHint?: string | null): Promise<BookingJob | null> {
+  const table = PARENT_TABLE[parent.kind]
+  const fk = PARENT_FK[parent.kind]
+  const cols = parent.kind === 'estimate' ? 'id, site_id' : 'id, site_id, primary_repair_type_id'
+  const { data: row } = await supabaseAdmin
+    .from(table).select(cols).eq('id', parent.id).eq('organization_id', orgId).maybeSingle()
+  if (!row) return null
+
+  const siteId = siteHint || (row as any).site_id || await defaultSiteId(orgId)
+  if (!siteId) return null
+
+  const { data: items } = await supabaseAdmin
+    .from('repair_items')
+    .select('id, parent_repair_item_id, repair_type_id, created_at')
+    .eq(fk, parent.id)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: true })
+  const all = items || []
+  const topTyped = all.find((i: any) => !i.parent_repair_item_id && i.repair_type_id)
+  const repairTypeId: string | null =
+    (row as any).primary_repair_type_id ||
+    topTyped?.repair_type_id ||
+    all.find((i: any) => i.repair_type_id)?.repair_type_id ||
+    null
+  if (!repairTypeId) return null
+
+  const itemIds = all.map((i: any) => i.id)
+  let hours = 0
+  if (itemIds.length) {
+    const { data: lab } = await supabaseAdmin.from('repair_labour').select('hours').in('repair_item_id', itemIds)
+    hours = (lab || []).reduce((s: number, l: any) => s + (Number(l.hours) || 0), 0)
+  }
+  const job = await resolveBookingJobByType(orgId, siteId, repairTypeId, hours)
+  return job
+}
+
+export interface StripDay {
+  date: string
+  status: BookVerdict
+  reason: string
+  availableHours: number
+  bookedHours: number
+  bookedPct: number | null
+  freeHours: number
+  ceilingHours: number
+  band: CapacityBand
+}
+
+export interface AvailabilityStrip {
+  days: StripDay[]
+  recommended: StripDay | null
+  alternatives: StripDay[]
+  softHints: StripDay[]
+}
+
+// Contiguous run of upcoming operating days with a per-day verdict + load band
+// for one job, plus the recommended day / alternatives / soft hints. Loads the
+// day-invariant inputs once; when quotas are off it computes the verdict from
+// the range summary alone (no heavy per-day calls).
+export async function getAvailabilityStrip(
+  orgId: string, siteId: string, repairTypeId: string, hours: number,
+  opts?: { fromDate?: string; leadFloorDays?: number; stripDays?: number }
+): Promise<AvailabilityStrip> {
+  const config = await loadSiteConfig(orgId, siteId)
+  const quotas = await loadCategoryQuotas(orgId, siteId)
+  const quota = quotas.get(repairTypeId) || defaultQuota(repairTypeId)
+  const assetMap = config.enableCategoryQuotas ? await loadAssets(orgId, siteId) : new Map<string, { quantity: number; name: string | null }>()
+  const today = new Date().toISOString().slice(0, 10)
+  const floor = opts?.leadFloorDays ?? config.bookingLeadTimeDays
+  const stripLen = opts?.stripDays ?? 14
+  const opDays = await operatingDays(orgId, siteId)
+  const start = addDays(opts?.fromDate || today, Math.max(0, floor))
+
+  // One range summary instead of a per-day diary_day_summary.
+  const end = addDays(start, config.bookingMaxDays)
+  const { data: sumRows } = await supabaseAdmin.rpc('diary_day_summary', { p_org_id: orgId, p_site_id: siteId, p_from: start, p_to: end })
+  const summary = new Map<string, any>()
+  for (const r of sumRows || []) summary.set(r.day, r)
+
+  const days: StripDay[] = []
+  const ok: StripDay[] = []
+  const warn: StripDay[] = []
+
+  for (let i = 0; i <= config.bookingMaxDays; i++) {
+    const d = addDays(start, i)
+    if (!opDays.includes(isoDow(d))) continue
+
+    const s = summary.get(d) || {}
+    const available = Number(s.available_hours) || 0
+    const bookedH = Number(s.booked_hours) || 0
+    const { ceilingHours, band } = computeBand(bookedH, available, config.targetLoadingPct)
+
+    let status: BookVerdict, reason: string, freeHours: number
+    if (config.enableCategoryQuotas) {
+      const day = await getDayCapacity(orgId, siteId, d, today, { config, quotas, assetMap })
+      const r = canBookOnDay(day, config, quota, repairTypeId, hours)
+      status = r.status; reason = r.reason; freeHours = day.freePool
+    } else {
+      const freePool = Math.max(0, ceilingHours - bookedH)
+      const physicalFree = available * config.overbookFactor - bookedH
+      freeHours = round2(freePool)
+      if (available <= 0) { status = 'DENY_HARD'; reason = 'Closed' }
+      else if (hours > physicalFree) { status = 'DENY_HARD'; reason = 'Day is physically full' }
+      else if (hours > freePool) { status = 'WARN'; reason = 'Over the loading target for this day' }
+      else { status = 'OK'; reason = 'Within capacity' }
+    }
+
+    const sd: StripDay = {
+      date: d, status, reason,
+      availableHours: round2(available), bookedHours: round2(bookedH),
+      bookedPct: available > 0 ? round2(bookedH / available) : null,
+      freeHours, ceilingHours, band
+    }
+    if (days.length < stripLen) days.push(sd)
+    if (status === 'OK') ok.push(sd)
+    else if (status === 'WARN') warn.push(sd)
+
+    if (days.length >= stripLen && ok.length >= 4) break
+  }
+
+  return { days, recommended: ok[0] || warn[0] || null, alternatives: ok.slice(1, 4), softHints: warn.slice(0, 3) }
+}

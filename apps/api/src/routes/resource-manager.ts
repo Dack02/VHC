@@ -16,7 +16,9 @@ import { authMiddleware, authorize } from '../middleware/auth.js'
 import { loadSiteConfig, type ResourceSiteConfig } from '../services/resource-config.js'
 import {
   loadCategoryQuotas, defaultQuota, getSkillCapacity,
-  getDayCapacity, canBook, recommendDay
+  getDayCapacity, canBook,
+  resolveBookingJobForParent, resolveBookingJobByType, getAvailabilityStrip,
+  type BookingJob, type ParentRef
 } from '../services/resource-capacity.js'
 
 const resourceManager = new Hono()
@@ -536,18 +538,45 @@ resourceManager.post('/can-book', authorize([...ADVISOR_ROLES]), async (c) => {
   return c.json(result)
 })
 
-// POST /availability?siteId=...  body {repairTypeId, hours, fromDate?} → recommended day + alternatives
+// POST /availability?siteId=...  → the booking date picker's one-shot payload:
+// resolved job (category/hours/mode) + a contiguous day strip with per-day
+// verdict + load band + recommended/alternatives/softHints + the drop-off window.
+// Job is resolved from a draft parent (jobsheetId/estimateId/healthCheckId) or an
+// explicit repairTypeId (+ optional hours).
 resourceManager.post('/availability', authorize([...ADVISOR_ROLES]), async (c) => {
   const auth = c.get('auth')
-  const siteId = await resolveSiteId(c)
-  if (!siteId) return c.json({ error: 'No site selected' }, 400)
   let body: any
   try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
-  if (!body?.repairTypeId) return c.json({ error: 'repairTypeId is required' }, 400)
-  const hours = Number(body.hours) || 0
   const fromDate = (typeof body.fromDate === 'string' && DATE_RE.test(body.fromDate)) ? body.fromDate : undefined
-  const result = await recommendDay(auth.orgId, siteId, body.repairTypeId, hours, fromDate)
-  return c.json({ siteId, ...result })
+  const siteHint = await resolveSiteId(c)
+
+  let job: BookingJob | null
+  if (body.jobsheetId || body.estimateId || body.healthCheckId) {
+    const parent: ParentRef = body.jobsheetId ? { kind: 'jobsheet', id: String(body.jobsheetId) }
+      : body.estimateId ? { kind: 'estimate', id: String(body.estimateId) }
+      : { kind: 'health_check', id: String(body.healthCheckId) }
+    job = await resolveBookingJobForParent(auth.orgId, parent, siteHint)
+    if (!job) return c.json({ resolved: false, reason: 'Add priced work with a repair type to see availability' })
+  } else {
+    if (!body.repairTypeId) return c.json({ error: 'repairTypeId or a parent id (jobsheetId/estimateId/healthCheckId) is required' }, 400)
+    if (!siteHint) return c.json({ error: 'No site selected' }, 400)
+    job = await resolveBookingJobByType(auth.orgId, siteHint, String(body.repairTypeId), Number(body.hours) || undefined)
+    if (!job) return c.json({ error: 'Repair type not found' }, 404)
+  }
+
+  const config = await loadSiteConfig(auth.orgId, job.siteId)
+  const strip = await getAvailabilityStrip(auth.orgId, job.siteId, job.repairTypeId, job.hours, { fromDate })
+  return c.json({
+    resolved: true,
+    siteId: job.siteId,
+    job: {
+      repairTypeId: job.repairTypeId, label: job.label, colour: job.colour,
+      hours: Math.round(job.hours * 100) / 100, bookingMode: job.bookingMode, slotMinutes: job.slotMinutes
+    },
+    dropoffWindow: { start: config.dropoffWindowStart, end: config.dropoffWindowEnd, intervalMinutes: config.dropoffSlotIntervalMinutes },
+    leadTimeDays: config.bookingLeadTimeDays,
+    ...strip
+  })
 })
 
 // ---------------------------------------------------------------------------

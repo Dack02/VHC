@@ -205,7 +205,36 @@ guard rail; P4+ are differentiators.
 Still defaulted (not yet owner-confirmed, sensible defaults assumed): enforcement = soft except
 physical caps; advisor-only why-line; deferred-work recapture + waitlist deferred to P5.
 
-## 8. P1 build notes (in progress)
+## 8. P1 build notes — ✅ BUILT 2026-06-29 (uncommitted; tsc + web build green)
+
+**Backend** (`apps/api`):
+- `services/resource-capacity.ts` — `getDayCapacity` now takes an optional `deps` (preloaded
+  config/quotas/assets) so range callers don't re-read them per day. New: `BookingJob`/`ParentRef`
+  types, `resolveBookingJobByType`, `resolveBookingJobForParent` (category ladder
+  `primary_repair_type_id` → first priced top-level item → any typed item; hours = Σ
+  `repair_labour.hours` → type default), and `getAvailabilityStrip` (one `diary_day_summary` range
+  call; quotas-off path computes the verdict without heavy per-day calls; returns
+  `days[] + recommended + alternatives + softHints`).
+- `routes/resource-manager.ts` — `POST /availability` extended: accepts a parent id
+  (`jobsheetId`/`estimateId`/`healthCheckId`) **or** an explicit `repairTypeId` (+ `hours`); returns
+  `{ resolved, job, dropoffWindow, leadTimeDays, days, recommended, alternatives, softHints }`. No
+  existing caller of this endpoint, so the extension is back-compat-safe. `public-estimate.ts`'s own
+  `resolveBookingJob` left untouched (live path) — shared resolver is additive; consolidation later.
+
+**Frontend** (`apps/web`):
+- `components/booking/BookingDatePicker.tsx` (new, reusable) — fuel-gauge week strip (band-tinted load
+  bars), recommended-day hero + why-line + neutral-dark "Use this date", alternative-day chips, manual
+  date + "Jump to first available", mode-adaptive time control (drop-off window select vs appointment
+  `time` input), inline verdict banner (amber WARN / red DENY). Read-only: sets the form date/time
+  only. Always allows a manual date so it never blocks the required due-in.
+- `pages/Jobsheets/NewJobsheet.tsx` — replaced the plain Due-In date/time inputs with
+  `<BookingDatePicker>` (driven by the draft `jobsheetId`); `WorkDetailsPanel onChange` bumps a
+  `workVersion` so availability re-checks as priced work is added.
+
+**Not yet done (next):** wire into `NewHealthCheck.tsx` + the Make-Jobsheet convert modal; P2 commit
+guard + override capture; P3 customer-flow polish. **Live browser verify** needs the dev stack +
+`jobsheets` module enabled for the org + a draft with a priced repair-type line (standard GMS
+dev-deploy path; resource-manager P0–P3 tables already on cloud dev).
 
 - Backend: generic `resolveBookingJobForParent(orgId, {jobsheetId|estimateId|healthCheckId})` in
   `resource-capacity.ts` (lift from `public-estimate.ts`); `getAvailabilityStrip(...)` returns the

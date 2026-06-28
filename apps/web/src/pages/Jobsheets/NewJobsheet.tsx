@@ -6,6 +6,7 @@ import { api, Vehicle, Customer, User, Site } from '../../lib/api'
 import WorkDetailsPanel from './WorkDetailsPanel'
 import CustomerCardModal from './components/CustomerCardModal'
 import CustomerFormModal, { SavedCustomer } from '../../components/customers/CustomerFormModal'
+import BookingDatePicker from '../../components/booking/BookingDatePicker'
 
 interface VehicleLookupResponse {
   found: boolean
@@ -73,6 +74,10 @@ export default function NewJobsheet() {
 
   // work required
   const [requiresVhc, setRequiresVhc] = useState(true)
+
+  // Bumped whenever the Work Details panel mutates lines, so the BookingDatePicker
+  // re-checks availability against the draft's current category + hours.
+  const [workVersion, setWorkVersion] = useState(0)
 
   // Draft jobsheet — created once a vehicle + customer exist so the Work Details
   // panel can attach priced work lines on this same screen. Committed on submit,
@@ -471,17 +476,19 @@ export default function NewJobsheet() {
           </div>
         )}
 
+        {/* Booking date — capacity-aware picker (Resource Manager) */}
+        <BookingDatePicker
+          token={token!}
+          siteId={form.siteId || undefined}
+          jobsheetId={draftId || undefined}
+          refreshKey={workVersion}
+          value={{ date: form.dueInDate, time: form.dueInTime }}
+          onChange={({ date, time }) => setForm(f => ({ ...f, dueInDate: date, dueInTime: time }))}
+          required
+        />
+
         {/* Booking details */}
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className={labelCls}>Due In Date *</label>
-            <input type="date" value={form.dueInDate} onChange={(e) => setForm({ ...form, dueInDate: e.target.value })} className={inputCls} required />
-          </div>
-          <div>
-            <label className={labelCls}>Due In Time <span className="text-gray-400 font-normal">(optional — blank = flexible)</span></label>
-            <input type="time" value={form.dueInTime} onChange={(e) => setForm({ ...form, dueInTime: e.target.value })} className={inputCls} />
-          </div>
-
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-sm font-medium text-gray-700">Main Booking Requirement</label>
@@ -592,6 +599,7 @@ export default function NewJobsheet() {
             parent={{ type: 'jobsheet', id: draftId }}
             token={token}
             organizationId={user?.organization?.id}
+            onChange={() => setWorkVersion(v => v + 1)}
             notes={{ label: 'Booking Notes', value: null, onSave: (v) => api(`/api/v1/jobsheets/${draftId}`, { method: 'PATCH', token, body: { bookingNotes: v } }).then(() => {}) }}
           />
         ) : (

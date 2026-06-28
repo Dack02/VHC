@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
+import { recordSupplierInvoice } from '../services/parts-accounting-service.js'
 
 /**
  * Purchase Orders + Goods-in / GRN — the Full-mode order-in flow (GMS/PARTS.md §5.7/§5.8/§7.1, P1).
@@ -437,6 +438,35 @@ purchaseOrders.post('/:id/receive', authorize([...WRITE_ROLES]), async (c) => {
   } catch (error) {
     console.error('Receive purchase order error:', error)
     return c.json({ error: 'Failed to receive goods' }, 500)
+  }
+})
+
+// ===========================================================================
+// Enter a supplier invoice against the PO (Event 2 / 4A-invoice). Books the inventory
+// asset (stocked) or parks the cost in WIP (non-stock) + VAT + AP.
+// Body: { invoiceRef?, taxPointDate?, lines: [{ poLineId, qty, unitCost }] }
+// ===========================================================================
+purchaseOrders.post('/:id/supplier-invoice', authorize([...WRITE_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const b = await c.req.json()
+    const lines = (Array.isArray(b.lines) ? b.lines : []).map((l: Record<string, unknown>) => ({
+      poLineId: l.poLineId as string,
+      qty: num(l.qty, 0),
+      unitCost: num(l.unitCost, 0),
+    })).filter((l: { poLineId: string; qty: number }) => l.poLineId && l.qty > 0)
+    if (!lines.length) return c.json({ error: 'No invoice lines' }, 400)
+    const res = await recordSupplierInvoice(id, auth.orgId, auth.user.id, {
+      invoiceRef: b.invoiceRef ?? null,
+      taxPointDate: b.taxPointDate ?? null,
+      lines,
+    })
+    if (!res.ok) return c.json({ error: res.error ?? 'Failed to record supplier invoice' }, 400)
+    return c.json(res)
+  } catch (error) {
+    console.error('Supplier invoice error:', error)
+    return c.json({ error: 'Failed to record supplier invoice' }, 500)
   }
 })
 

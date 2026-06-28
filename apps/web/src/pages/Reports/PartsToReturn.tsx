@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
 import StatCard from './components/StatCard'
 import ChartCard from './components/ChartCard'
@@ -10,6 +11,7 @@ interface ReturnRow {
   id: string
   partNumber: string
   description: string
+  supplierId: string | null
   supplierName: string
   quantity: number
   qtyToReturn: number
@@ -20,10 +22,12 @@ interface ReturnRow {
 
 export default function PartsToReturn() {
   const { session } = useAuth()
+  const toast = useToast()
   const [rows, setRows] = useState<ReturnRow[]>([])
   const [totals, setTotals] = useState<{ lineCount: number; returnValue: number }>({ lineCount: 0, returnValue: 0 })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [creating, setCreating] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
     try {
@@ -48,6 +52,32 @@ export default function PartsToReturn() {
     (acc[r.supplierName] ||= []).push(r)
     return acc
   }, {})
+
+  const createReturn = async (supplier: string, list: ReturnRow[]) => {
+    setCreating(supplier)
+    try {
+      const res = await api<{ rmaRef: string }>('/api/v1/supplier-returns', {
+        method: 'POST', token: session?.accessToken,
+        body: {
+          supplierId: list.find(r => r.supplierId)?.supplierId ?? null,
+          lines: list.map(r => ({
+            repairPartId: r.id,
+            partNumber: r.partNumber,
+            description: r.description,
+            qty: r.qtyToReturn,
+            unitCost: r.unitCost,
+            reason: r.lineStatus === 'declined' ? 'declined' : 'unused',
+          })),
+        },
+      })
+      toast.success(`Created return ${res.rmaRef}`)
+      await fetchData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create return')
+    } finally {
+      setCreating(null)
+    }
+  }
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -77,6 +107,15 @@ export default function PartsToReturn() {
           ) : (
             Object.entries(bySupplier).map(([supplier, list]) => (
               <ChartCard key={supplier} title={`${supplier} · ${list.length} line${list.length > 1 ? 's' : ''}`}>
+                <div className="flex justify-end mb-2">
+                  <button
+                    onClick={() => createReturn(supplier, list)}
+                    disabled={creating === supplier}
+                    className="px-3 py-1.5 bg-[#16191f] text-white rounded-lg text-sm font-semibold hover:bg-black disabled:opacity-50"
+                  >
+                    {creating === supplier ? 'Creating…' : 'Create return'}
+                  </button>
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>

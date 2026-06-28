@@ -55,6 +55,9 @@ export default function PurchaseOrderDetail() {
   const [showReceive, setShowReceive] = useState(false)
   const [receiveDraft, setReceiveDraft] = useState<Record<string, ReceiveDraft>>({})
   const [newLine, setNewLine] = useState<{ description: string; partNumber: string; qty: string; cost: string } | null>(null)
+  const [showInvoice, setShowInvoice] = useState(false)
+  const [invoiceRef, setInvoiceRef] = useState('')
+  const [invoiceDraft, setInvoiceDraft] = useState<Record<string, { qty: string; cost: string }>>({})
 
   const fetchPo = useCallback(async () => {
     if (!id) return
@@ -138,6 +141,38 @@ export default function PurchaseOrderDetail() {
     } finally { setBusy(false) }
   }
 
+  const openInvoice = () => {
+    if (!po) return
+    const draft: Record<string, { qty: string; cost: string }> = {}
+    po.lines.forEach(l => {
+      const qty = l.qtyReceived > 0 ? l.qtyReceived : l.qtyOrdered
+      draft[l.id] = { qty: String(qty), cost: String(l.unitCost) }
+    })
+    setInvoiceDraft(draft)
+    setInvoiceRef('')
+    setShowInvoice(true)
+  }
+
+  const submitInvoice = async () => {
+    if (!id || !po) return
+    const lines = Object.entries(invoiceDraft)
+      .map(([poLineId, d]) => ({ poLineId, qty: parseFloat(d.qty) || 0, unitCost: parseFloat(d.cost) || 0 }))
+      .filter(l => l.qty > 0)
+    if (!lines.length) { toast.error('Enter at least one line'); return }
+    setBusy(true)
+    try {
+      await api(`/api/v1/purchase-orders/${id}/supplier-invoice`, {
+        method: 'POST', token: session?.accessToken,
+        body: { invoiceRef: invoiceRef.trim() || null, lines },
+      })
+      toast.success('Supplier invoice recorded — inventory/AP journal posted')
+      setShowInvoice(false)
+      await fetchPo()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to record supplier invoice')
+    } finally { setBusy(false) }
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" /></div>
   }
@@ -145,6 +180,7 @@ export default function PurchaseOrderDetail() {
 
   const isDraft = po.status === 'draft'
   const canReceive = ['ordered', 'part_received'].includes(po.status)
+  const canInvoice = ['ordered', 'part_received', 'received'].includes(po.status)
   const linesTotal = po.lines.reduce((s, l) => s + l.qtyOrdered * l.unitCost, 0)
 
   return (
@@ -159,6 +195,7 @@ export default function PurchaseOrderDetail() {
           <div className="flex items-center gap-2">
             {isDraft && <button disabled={busy || !po.lines.length} onClick={() => setStatus('ordered')} className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-semibold disabled:opacity-50">Mark as Ordered</button>}
             {canReceive && <button disabled={busy} onClick={openReceive} className="px-4 py-2 bg-[#16191f] text-white rounded-lg text-sm font-semibold hover:bg-black disabled:opacity-50">Receive goods</button>}
+            {canInvoice && <button disabled={busy} onClick={openInvoice} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-semibold hover:bg-gray-50 disabled:opacity-50">Supplier invoice</button>}
             {(isDraft || po.status === 'ordered') && <button disabled={busy} onClick={() => { if (confirm('Cancel this PO?')) setStatus('cancelled') }} className="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50">Cancel</button>}
           </div>
         </div>
@@ -268,6 +305,50 @@ export default function PurchaseOrderDetail() {
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
               <button onClick={() => setShowReceive(false)} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-[10px] text-sm">Cancel</button>
               <button onClick={submitReceive} disabled={busy} className="px-4 py-2 bg-[#16191f] text-white rounded-[10px] text-sm font-semibold hover:bg-black disabled:opacity-50">Post receipt</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Supplier invoice modal */}
+      {showInvoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setShowInvoice(false)}>
+          <div className="bg-white rounded-[18px] shadow-xl w-full max-w-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900">Supplier invoice</h3>
+              <p className="text-sm text-gray-500">Books the inventory asset (stocked) or parks the cost in WIP (non-stock), plus VAT and the supplier payable.</p>
+            </div>
+            <div className="px-6 py-4 space-y-3">
+              <div>
+                <label className="block text-xs text-gray-400 uppercase mb-1">Invoice reference</label>
+                <input value={invoiceRef} onChange={e => setInvoiceRef(e.target.value)} placeholder="Factor invoice no." className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+              </div>
+              <div className="max-h-[45vh] overflow-y-auto space-y-2">
+                {po.lines.map(l => {
+                  const d = invoiceDraft[l.id]
+                  if (!d) return null
+                  return (
+                    <div key={l.id} className="grid grid-cols-12 gap-2 items-center">
+                      <div className="col-span-6">
+                        <div className="text-sm font-medium text-gray-900">{l.partNumber || l.description}</div>
+                        <div className="text-xs text-gray-400">{l.isStocked ? 'stocked → inventory' : 'non-stock → WIP'}</div>
+                      </div>
+                      <div className="col-span-3">
+                        <label className="block text-[10px] text-gray-400 uppercase">Qty</label>
+                        <input type="number" min="0" value={d.qty} onChange={e => setInvoiceDraft({ ...invoiceDraft, [l.id]: { ...d, qty: e.target.value } })} className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right" />
+                      </div>
+                      <div className="col-span-3">
+                        <label className="block text-[10px] text-gray-400 uppercase">Unit cost</label>
+                        <input type="number" min="0" step="0.01" value={d.cost} onChange={e => setInvoiceDraft({ ...invoiceDraft, [l.id]: { ...d, cost: e.target.value } })} className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right" />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
+              <button onClick={() => setShowInvoice(false)} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-[10px] text-sm">Cancel</button>
+              <button onClick={submitInvoice} disabled={busy} className="px-4 py-2 bg-[#16191f] text-white rounded-[10px] text-sm font-semibold hover:bg-black disabled:opacity-50">Post invoice</button>
             </div>
           </div>
         </div>

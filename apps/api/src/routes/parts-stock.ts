@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
+import { postStockAdjustmentJournal } from '../services/parts-accounting-service.js'
 
 /**
  * Parts & Stock — Full-mode stock management (GMS/PARTS.md §5.2/§5.4, P0).
@@ -149,7 +150,7 @@ partsStock.post('/stock-items/:id/adjust', authorize(['super_admin', 'org_admin'
     const unitCost = b.unit_cost != null ? Number(b.unit_cost) : Number(item.average_cost) || 0
     const totalCost = round2(qtyDelta * unitCost)
 
-    const { error } = await supabaseAdmin.from('stock_movements').insert({
+    const { data: movement, error } = await supabaseAdmin.from('stock_movements').insert({
       organization_id: auth.orgId,
       stock_item_id: id,
       location_id: b.location_id ?? null,
@@ -161,8 +162,17 @@ partsStock.post('/stock-items/:id/adjust', authorize(['super_admin', 'org_admin'
       reason_code: b.reason_code,
       document_date: b.document_date ?? new Date().toISOString().slice(0, 10),
       created_by: auth.user.id,
-    })
+    }).select('id').single()
     if (error) return c.json({ error: error.message }, 500)
+
+    // Event 6 — post the adjustment journal (Dr Stock Adjustment / Cr Inventory, or reverse).
+    await postStockAdjustmentJournal(auth.orgId, auth.user.id, {
+      stockItemId: id,
+      qtyDelta,
+      unitCost,
+      reasonCode: b.reason_code,
+      movementId: movement?.id ?? null,
+    })
 
     const { data: updated } = await supabaseAdmin
       .from('parts_catalog')

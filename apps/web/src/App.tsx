@@ -126,6 +126,7 @@ const PartsCatalog = lazy(() => import('./pages/Parts/PartsCatalog'))
 const StockList = lazy(() => import('./pages/Parts/StockList'))
 const PurchaseOrders = lazy(() => import('./pages/Parts/PurchaseOrders'))
 const PurchaseOrderDetail = lazy(() => import('./pages/Parts/PurchaseOrderDetail'))
+const SupplierReturns = lazy(() => import('./pages/Parts/SupplierReturns'))
 const Messages = lazy(() => import('./pages/Messages/Messages'))
 const NotesPage = lazy(() => import('./pages/Notes/NotesPage'))
 const ServicePackages = lazy(() => import('./pages/ServicePackages/ServicePackages'))
@@ -281,6 +282,7 @@ function App() {
                         <Route path="/parts/stock" element={<RequireModule module="parts_stock"><StockList /></RequireModule>} />
                         <Route path="/parts/purchase-orders" element={<RequireModule module="parts_stock"><PurchaseOrders /></RequireModule>} />
                         <Route path="/parts/purchase-orders/:id" element={<RequireModule module="parts_stock"><PurchaseOrderDetail /></RequireModule>} />
+                        <Route path="/parts/returns" element={<RequireModule module="parts_stock"><SupplierReturns /></RequireModule>} />
                         <Route path="/templates" element={<TemplateList />} />
                         <Route path="/templates/:id" element={<TemplateBuilder />} />
                         <Route path="/service-packages" element={<ServicePackages />} />

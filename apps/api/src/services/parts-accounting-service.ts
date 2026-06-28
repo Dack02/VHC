@@ -496,3 +496,152 @@ export async function reverseJobsheetInvoice(
 
   return { ok: true }
 }
+
+// ===========================================================================
+// Event 2 / 4A-invoice — Supplier invoice against a PO (GMS/PARTS.md §6).
+// Recognises the inventory asset (stocked) or parks the cost in WIP (non-stock):
+// Dr Inventory/WIP + Dr VAT Input / Cr AP. No stock movement here (the receipt
+// already adjusted SOH at Event 1). PPV for already-issued qty is a noted follow-up.
+// ===========================================================================
+export async function recordSupplierInvoice(
+  poId: string,
+  orgId: string,
+  userId: string | null,
+  opts: { invoiceRef?: string | null; taxPointDate?: string | null; lines: Array<{ poLineId: string; qty: number; unitCost: number }> }
+): Promise<{ ok: boolean; journalId?: string | null; error?: string }> {
+  const { data: po } = await supabaseAdmin
+    .from('purchase_orders').select('id, organization_id').eq('id', poId).maybeSingle()
+  if (!po || po.organization_id !== orgId) return { ok: false, error: 'Purchase order not found' }
+  if (!opts.lines?.length) return { ok: false, error: 'No invoice lines' }
+
+  const ids = opts.lines.map((l) => l.poLineId)
+  const { data: poLines } = await supabaseAdmin
+    .from('purchase_order_lines').select('id, is_stocked_at_receipt').in('id', ids)
+  const stockedById = new Map((poLines ?? []).map((l) => [l.id as string, Boolean(l.is_stocked_at_receipt)]))
+
+  let inventoryNet = 0
+  let wipNet = 0
+  for (const l of opts.lines) {
+    const net = round2((Number(l.qty) || 0) * (Number(l.unitCost) || 0))
+    if (stockedById.get(l.poLineId)) inventoryNet += net
+    else wipNet += net
+  }
+  inventoryNet = round2(inventoryNet)
+  wipNet = round2(wipNet)
+  const net = round2(inventoryNet + wipNet)
+  if (net <= 0) return { ok: false, error: 'Invoice total must be positive' }
+  const vatRate = await getVatRate(orgId)
+  const vat = round2(net * (vatRate / 100))
+  const gross = round2(net + vat)
+  const documentDate = opts.taxPointDate || today()
+
+  const { journalId, error } = await postJournal({
+    organizationId: orgId,
+    sourceEvent: 'purchase_invoice',
+    sourceType: 'purchase_order',
+    sourceId: poId,
+    documentDate,
+    taxPointDate: documentDate,
+    idempotencyKey: `purchase_invoice:${poId}:${opts.invoiceRef ?? ''}`,
+    createdBy: userId,
+    lines: [
+      { account: 'parts_stock', debit: inventoryNet, description: 'Inventory at supplier invoice' },
+      { account: 'parts_wip', debit: wipNet, description: 'Uninvoiced parts cost (non-stock)' },
+      { account: 'vat_input', debit: vat, taxCode: 'STD_20', taxAmount: vat, description: 'Input VAT on purchase' },
+      { account: 'accounts_payable', credit: gross, description: `Payable — supplier invoice ${opts.invoiceRef ?? ''}`.trim() },
+    ],
+  })
+  if (error) return { ok: false, error }
+
+  await supabaseAdmin.from('purchase_orders')
+    .update({ status: 'invoiced', supplier_invoice_ref: opts.invoiceRef ?? null, updated_at: new Date().toISOString() })
+    .eq('id', poId)
+
+  return { ok: true, journalId }
+}
+
+// ===========================================================================
+// Event 6 — Stock adjustment / write-off journal (no VAT). Dr Stock Adjustment /
+// Cr Inventory for a write-down (qty↓), the reverse for found stock (qty↑).
+// Called after an `adjustment` stock_movement is written (parts-stock adjust).
+// ===========================================================================
+export async function postStockAdjustmentJournal(
+  orgId: string,
+  userId: string | null,
+  opts: { stockItemId: string; qtyDelta: number; unitCost: number; reasonCode: string; movementId?: string | null }
+): Promise<{ ok: boolean; journalId?: string | null }> {
+  const value = round2(Math.abs(Number(opts.qtyDelta) || 0) * (Number(opts.unitCost) || 0))
+  if (value <= 0) return { ok: true, journalId: null }
+  const writeDown = Number(opts.qtyDelta) < 0
+  const documentDate = today()
+  const { journalId } = await postJournal({
+    organizationId: orgId,
+    sourceEvent: 'stock_adjustment',
+    sourceType: 'stock_movement',
+    sourceId: opts.movementId ?? opts.stockItemId,
+    documentDate,
+    idempotencyKey: `stock_adjustment:${opts.movementId ?? `${opts.stockItemId}:${documentDate}:${opts.qtyDelta}`}`,
+    createdBy: userId,
+    lines: writeDown
+      ? [
+          { account: 'stock_adjustment', debit: value, description: `Stock write-down (${opts.reasonCode})`, entityType: 'stock_item', entityId: opts.stockItemId },
+          { account: 'parts_stock', credit: value, description: 'Relieve inventory' },
+        ]
+      : [
+          { account: 'parts_stock', debit: value, description: 'Inventory found/over-count' },
+          { account: 'stock_adjustment', credit: value, description: `Stock found (${opts.reasonCode})`, entityType: 'stock_item', entityId: opts.stockItemId },
+        ],
+  })
+  return { ok: true, journalId }
+}
+
+// ===========================================================================
+// Event 5 — Supplier credit on a return. Reverses the booked cost for UNUSED parts:
+// Dr AP / Cr Inventory (stocked) + Cr WIP (non-stock) / Cr VAT Input. Fires when the
+// credit note is recorded. Stocked SOH was already relieved by the return_out movement
+// at ship time. (GMS/PARTS.md §6 Event 5 / §7.5.)
+// ===========================================================================
+export async function postSupplierCreditJournal(
+  returnId: string,
+  orgId: string,
+  userId: string | null,
+  opts: { creditNoteRef?: string | null } = {}
+): Promise<{ ok: boolean; journalId?: string | null; error?: string }> {
+  const { data: ret } = await supabaseAdmin
+    .from('supplier_returns').select('id, organization_id').eq('id', returnId).maybeSingle()
+  if (!ret || ret.organization_id !== orgId) return { ok: false, error: 'Return not found' }
+  const { data: lines } = await supabaseAdmin
+    .from('supplier_return_lines').select('qty, unit_cost, is_stocked').eq('supplier_return_id', returnId)
+  let stockedNet = 0
+  let nonStockNet = 0
+  for (const l of lines ?? []) {
+    const net = round2((Number(l.qty) || 0) * (Number(l.unit_cost) || 0))
+    if (l.is_stocked) stockedNet += net
+    else nonStockNet += net
+  }
+  stockedNet = round2(stockedNet)
+  nonStockNet = round2(nonStockNet)
+  const net = round2(stockedNet + nonStockNet)
+  if (net <= 0) return { ok: true, journalId: null }
+  const vatRate = await getVatRate(orgId)
+  const vat = round2(net * (vatRate / 100))
+  const gross = round2(net + vat)
+  const documentDate = today()
+  const { journalId, error } = await postJournal({
+    organizationId: orgId,
+    sourceEvent: 'supplier_credit',
+    sourceType: 'supplier_return',
+    sourceId: returnId,
+    documentDate,
+    idempotencyKey: `supplier_credit:${returnId}`,
+    createdBy: userId,
+    lines: [
+      { account: 'accounts_payable', debit: gross, description: `Supplier credit ${opts.creditNoteRef ?? ''}`.trim() },
+      { account: 'parts_stock', credit: stockedNet, description: 'Reverse inventory (returned stock)' },
+      { account: 'parts_wip', credit: nonStockNet, description: 'Reverse WIP (returned non-stock)' },
+      { account: 'vat_input', credit: vat, taxCode: 'STD_20', taxAmount: -vat, description: 'Reverse input VAT' },
+    ],
+  })
+  if (error) return { ok: false, error }
+  return { ok: true, journalId }
+}

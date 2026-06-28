@@ -25,6 +25,8 @@ export interface ResourceSiteConfig {
   dropoffSlotCapacity: number | null
   enableSkillRouting: boolean
   enableCategoryQuotas: boolean
+  motDailyCap: number | null        // max MOTs/day (bay slots); null = no cap
+  motCapacityHours: number | null   // workshop-time an MOT loads onto the diary; null = use the booking's own hours
 }
 
 // Defaults mirror the column defaults in 20260629120000_resource_manager_p0.sql.
@@ -41,7 +43,9 @@ export const DEFAULT_RESOURCE_CONFIG: ResourceSiteConfig = {
   dropoffSlotIntervalMinutes: 15,
   dropoffSlotCapacity: null,
   enableSkillRouting: false,
-  enableCategoryQuotas: false
+  enableCategoryQuotas: false,
+  motDailyCap: null,
+  motCapacityHours: null
 }
 
 // 'HH:MM:SS' / 'HH:MM' → 'HH:MM' (drop seconds for the UI).
@@ -63,7 +67,9 @@ export function mapConfigRow(row: any): ResourceSiteConfig {
     dropoffSlotIntervalMinutes: Number(row.dropoff_slot_interval_minutes ?? DEFAULT_RESOURCE_CONFIG.dropoffSlotIntervalMinutes),
     dropoffSlotCapacity: row.dropoff_slot_capacity == null ? null : Number(row.dropoff_slot_capacity),
     enableSkillRouting: Boolean(row.enable_skill_routing),
-    enableCategoryQuotas: Boolean(row.enable_category_quotas)
+    enableCategoryQuotas: Boolean(row.enable_category_quotas),
+    motDailyCap: row.mot_daily_cap == null ? null : Number(row.mot_daily_cap),
+    motCapacityHours: row.mot_capacity_hours == null ? null : Number(row.mot_capacity_hours)
   }
 }
 

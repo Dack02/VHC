@@ -13,6 +13,7 @@ interface RepairTypeRow {
   defaultDiscountPercent: number
   sortOrder: number
   isActive: boolean
+  isMot: boolean
 }
 
 interface LabourCodeLite {
@@ -84,7 +85,8 @@ export default function RepairTypes() {
         code: editing.code.trim(),
         colour: editing.colour || '#6366F1',
         defaultLabourCodeId: editing.defaultLabourCodeId || null,
-        defaultDiscountPercent: Math.min(100, Math.max(0, Number(editing.defaultDiscountPercent) || 0))
+        defaultDiscountPercent: Math.min(100, Math.max(0, Number(editing.defaultDiscountPercent) || 0)),
+        isMot: Boolean(editing.isMot)
       }
       if (editing.id) {
         await api(`/api/v1/repair-types/${editing.id}`, { method: 'PATCH', token, body: payload })
@@ -173,7 +175,10 @@ export default function RepairTypes() {
                 </div>
                 <span className="w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: row.colour }} />
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-gray-900">{row.code}</div>
+                  <div className="text-sm font-medium text-gray-900 flex items-center gap-1.5">
+                    {row.code}
+                    {row.isMot && <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 text-red-700">MOT</span>}
+                  </div>
                   <div className="text-xs text-gray-500">
                     {rate ? <>Labour: {rate}</> : <span className="text-amber-600">No labour code set</span>}
                     {row.defaultDiscountPercent > 0 && (
@@ -249,6 +254,18 @@ export default function RepairTypes() {
                   ))}
                 </div>
               </div>
+              <label className="flex items-start gap-2.5 pt-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(editing.isMot)}
+                  onChange={e => setEditing({ ...editing, isMot: e.target.checked })}
+                  className="mt-0.5 rounded border-gray-300 text-primary focus:ring-primary"
+                />
+                <span>
+                  <span className="block text-sm font-medium text-gray-700">This is an MOT</span>
+                  <span className="block text-xs text-gray-400">Counts against the MOT bay cap and loads at the MOT capacity-hours set on the Resource Manager — Settings → Capacity.</span>
+                </span>
+              </label>
             </div>
             <div className="flex justify-end gap-2 mt-5">
               <button onClick={() => setEditing(null)} className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>

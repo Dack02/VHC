@@ -21,6 +21,8 @@ interface ResourceConfig {
   dropoffSlotCapacity: number | null
   enableSkillRouting: boolean
   enableCategoryQuotas: boolean
+  motDailyCap: number | null
+  motCapacityHours: number | null
 }
 
 interface ConfigResponse {
@@ -33,6 +35,7 @@ interface QuotaRow {
   code: string
   label: string
   colour: string
+  isMot: boolean
   protectPrimary: boolean
   releaseWindowDays: number
   minHours: number | null
@@ -199,6 +202,7 @@ export default function ResourceManager() {
   const [assets, setAssets] = useState<AssetItem[] | null>(null)
   const [savingAssets, setSavingAssets] = useState(false)
   const [savingEnforce, setSavingEnforce] = useState(false)
+  const [savingMot, setSavingMot] = useState(false)
   const [showQuotaHelp, setShowQuotaHelp] = useState(false)
   // Tracks which site's config we've already loaded. Guards against `fetchConfig`
   // re-running (when the auth token/user object re-hydrates a few seconds after mount)
@@ -279,6 +283,24 @@ export default function ResourceManager() {
 
   const set = <K extends keyof ResourceConfig>(key: K, value: ResourceConfig[K]) =>
     setConfig(prev => (prev ? { ...prev, [key]: value } : prev))
+
+  // The MOT card is a partial PUT (server merges) so it saves independently of the
+  // main config block's "Save changes" button.
+  const handleSaveMot = async () => {
+    if (!token || !siteId || !config) return
+    setSavingMot(true)
+    try {
+      await api(`/api/v1/resource-manager/config?siteId=${siteId}`, {
+        method: 'PUT', token,
+        body: { motDailyCap: config.motDailyCap, motCapacityHours: config.motCapacityHours }
+      })
+      toast.success('MOT capacity saved')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save MOT capacity')
+    } finally {
+      setSavingMot(false)
+    }
+  }
 
   // Enforce-quotas is a live switch, not a draft field: persist it the moment it's toggled
   // (partial PUT — the server merges, other unsaved fields are untouched), so it no longer
@@ -478,6 +500,41 @@ export default function ResourceManager() {
           </button>
         </div>
 
+        <Card title="MOT capacity" subtitle="MOTs are capped by count, not hours — a bay only fits so many tests a day. Mark the MOT repair type as 'Is MOT' (Settings → Repair Types) so bookings are counted here.">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <div>
+              <FieldLabel
+                hint="Max MOTs booked per day. Blank = no limit."
+                tip={"The number of MOTs you'll accept in a day — your bay slots. Counts any booking that includes MOT work.\n\nEnforced as a hard block only while 'Enforce category quotas' (below) is on; otherwise it's a guide."}
+              >MOT daily cap</FieldLabel>
+              <input
+                type="number" min={0} max={200}
+                className={inputCls + ' w-32'}
+                value={config.motDailyCap ?? ''} placeholder="No limit"
+                onChange={e => set('motDailyCap', e.target.value === '' ? null : Math.max(0, Math.round(Number(e.target.value))))}
+              />
+            </div>
+            <div>
+              <FieldLabel
+                hint="Workshop time each MOT adds to the diary. Blank = use the booking's own hours."
+                tip={"An MOT is often priced at a fraction of an hour of labour, which understates the time it actually ties up a bay/tester. Set the real workshop time here and the Booking Diary's load bar counts each MOT at this figure instead of its small labour line.\n\nApplies to the diary loading % whether or not quotas are enforced."}
+              >MOT capacity hours</FieldLabel>
+              <input
+                type="number" min={0} max={24} step={0.05}
+                className={inputCls + ' w-32'}
+                value={config.motCapacityHours ?? ''} placeholder="Use booking hours"
+                onChange={e => set('motCapacityHours', e.target.value === '' ? null : Math.max(0, Number(e.target.value)))}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end mt-4">
+            <button onClick={handleSaveMot} disabled={savingMot}
+              className="px-4 py-2 bg-primary text-white text-sm font-semibold rounded-lg disabled:opacity-50">
+              {savingMot ? 'Saving…' : 'Save MOT capacity'}
+            </button>
+          </div>
+        </Card>
+
         <Card title="Category quotas" subtitle="Protect your service mix without turning away work. Protection is sized from how you've staffed each lane (the staffed column); these are overrides + caps.">
           <button
             type="button"
@@ -525,8 +582,15 @@ export default function ResourceManager() {
                     onChange={e => editQuota(q.repairTypeId, { releaseWindowDays: Math.max(0, Math.round(Number(e.target.value) || 0)) })} />
                   <input type="number" min={0} className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-14" value={q.minHours ?? ''} placeholder="—"
                     onChange={e => editQuota(q.repairTypeId, { minHours: e.target.value === '' ? null : Number(e.target.value) })} />
-                  <input type="number" min={0} className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-14" value={q.hardCapJobs ?? ''} placeholder="—"
-                    onChange={e => editQuota(q.repairTypeId, { hardCapJobs: e.target.value === '' ? null : Math.round(Number(e.target.value)) })} />
+                  {q.isMot ? (
+                    <Tooltip content="MOT bays are capped on the MOT capacity card above." className="inline-flex">
+                      <input type="number" disabled className="border border-gray-200 bg-gray-50 text-gray-400 rounded-lg px-2 py-1 text-sm w-14 cursor-not-allowed"
+                        value={config.motDailyCap ?? ''} placeholder="MOT card" />
+                    </Tooltip>
+                  ) : (
+                    <input type="number" min={0} className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-14" value={q.hardCapJobs ?? ''} placeholder="—"
+                      onChange={e => editQuota(q.repairTypeId, { hardCapJobs: e.target.value === '' ? null : Math.round(Number(e.target.value)) })} />
+                  )}
                   <select className="border border-gray-300 rounded-lg px-2 py-1 text-sm" value={q.enforcement}
                     onChange={e => editQuota(q.repairTypeId, { enforcement: e.target.value as 'soft' | 'hard' })}>
                     <option value="soft">soft</option>
@@ -544,7 +608,7 @@ export default function ResourceManager() {
           )}
         </Card>
 
-        <Card title="Physical resources" subtitle="Caps for things that aren't hours — courtesy cars and waiter seats per day, MOT bays. Leave blank for no limit. Booked counts come from the diary; online courtesy-car requests are checked against this.">
+        <Card title="Physical resources" subtitle="Caps for things that aren't hours — courtesy cars and waiter seats per day. Leave blank for no limit. Booked counts come from the diary; online courtesy-car requests are checked against this. (MOT bays are set on the MOT capacity card above.)">
           {!assets ? (
             <p className="text-sm text-gray-400">Loading…</p>
           ) : (

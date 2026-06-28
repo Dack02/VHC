@@ -95,7 +95,8 @@ function whyLine(d: StripDay): string {
 export default function BookingDatePicker({
   token, siteId, jobsheetId, estimateId, healthCheckId, repairTypeId, hours,
   refreshKey = 0, value, onChange, required = false, bare = false,
-  overrideReason, onOverrideReasonChange, onVerdictChange
+  overrideReason, onOverrideReasonChange, onVerdictChange,
+  enableDropOff = false, dropOffDate, onDropOffDateChange
 }: {
   token: string
   siteId?: string
@@ -115,6 +116,11 @@ export default function BookingDatePicker({
   onOverrideReasonChange?: (reason: string) => void
   /** Fires with the selected date's verdict so the parent can gate submit / stamp the override. */
   onVerdictChange?: (status: Verdict | null) => void
+  /** Advisor-only: show the "drop-off date ≠ workshop date" toggle + earlier-date picker. */
+  enableDropOff?: boolean
+  /** Drop-off date (YYYY-MM-DD); '' = same as the workshop schedule date. */
+  dropOffDate?: string
+  onDropOffDateChange?: (date: string) => void
 }) {
   const hasSource = !!(jobsheetId || estimateId || healthCheckId || repairTypeId)
   const [data, setData] = useState<AvailResponse | null>(null)
@@ -187,7 +193,7 @@ export default function BookingDatePicker({
   return (
     <div className={bare ? '' : cardCls}>
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold text-gray-900">Booking date {required && <span className="text-rag-red">*</span>}</h2>
+        <h2 className="text-sm font-semibold text-gray-900">{enableDropOff ? 'Workshop schedule date' : 'Booking date'} {required && <span className="text-rag-red">*</span>}</h2>
         {job && (
           <span className="inline-flex items-center gap-2 text-xs text-gray-500">
             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium text-white" style={{ backgroundColor: job.colour || '#6366f1' }}>
@@ -318,6 +324,41 @@ export default function BookingDatePicker({
             </div>
           </div>
         </>
+      )}
+
+      {/* Advisor-only: drop-off date when the car comes in EARLIER than the workshop date */}
+      {enableDropOff && value.date && (
+        <div className="mt-3 pt-3 border-t border-gray-100">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium text-gray-700">Drop-off date same as workshop date?</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!dropOffDate}
+              onClick={() => onDropOffDateChange?.(dropOffDate ? '' : value.date)}
+              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${!dropOffDate ? 'bg-rag-green' : 'bg-gray-300'}`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${!dropOffDate ? 'translate-x-4' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
+          {dropOffDate ? (
+            <div className="mt-2">
+              <label className="block text-xs font-medium text-gray-500 mb-1">Drop-off date <span className="text-gray-400 font-normal">(when the car comes in)</span></label>
+              <input
+                type="date"
+                value={dropOffDate}
+                max={value.date}
+                onChange={e => onDropOffDateChange?.(e.target.value)}
+                className={inputCls}
+              />
+              <p className="mt-1 text-xs text-gray-400">
+                Customer drops the car in on this day; work is scheduled for {longDate(value.date)}. Shows in Today and the diary as an arrival.
+              </p>
+            </div>
+          ) : (
+            <p className="mt-1 text-xs text-gray-400">On — the car arrives on the workshop date.</p>
+          )}
+        </div>
       )}
 
       {/* Inline verdict for the selected date */}

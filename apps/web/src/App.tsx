@@ -125,6 +125,7 @@ const MriPerformance = lazy(() => import('./pages/Reports/MriPerformance'))
 const DailyOverview = lazy(() => import('./pages/Reports/DailyOverview'))
 const DeletedHealthChecks = lazy(() => import('./pages/Reports/DeletedHealthChecks'))
 const Today = lazy(() => import('./pages/Today'))
+const PartsLayout = lazy(() => import('./pages/Parts/PartsLayout'))
 const PartsCatalog = lazy(() => import('./pages/Parts/PartsCatalog'))
 const StockList = lazy(() => import('./pages/Parts/StockList'))
 const PurchaseOrders = lazy(() => import('./pages/Parts/PurchaseOrders'))
@@ -285,13 +286,15 @@ function App() {
                         <Route path="/messages" element={<RequireModule module="customer_comms"><Messages /></RequireModule>} />
                         <Route path="/follow-ups" element={<RequireModule module="follow_up"><FollowUpList /></RequireModule>} />
                         <Route path="/notes" element={<NotesPage />} />
-                        <Route path="/parts" element={<PartsCatalog />} />
-                        <Route path="/parts/stock" element={<RequireModule module="parts_stock"><StockList /></RequireModule>} />
-                        <Route path="/parts/purchase-orders" element={<RequireModule module="parts_stock"><PurchaseOrders /></RequireModule>} />
-                        <Route path="/parts/purchase-orders/:id" element={<RequireModule module="parts_stock"><PurchaseOrderDetail /></RequireModule>} />
-                        <Route path="/parts/returns" element={<RequireModule module="parts_stock"><SupplierReturns /></RequireModule>} />
-                        <Route path="/parts/stocktake" element={<RequireModule module="parts_stock"><Stocktake /></RequireModule>} />
-                        <Route path="/parts/stocktake/:id" element={<RequireModule module="parts_stock"><StocktakeDetail /></RequireModule>} />
+                        <Route path="/parts" element={<PartsLayout />}>
+                          <Route index element={<PartsCatalog />} />
+                          <Route path="stock" element={<RequireModule module="parts_stock"><StockList /></RequireModule>} />
+                          <Route path="purchase-orders" element={<RequireModule module="parts_stock"><PurchaseOrders /></RequireModule>} />
+                          <Route path="purchase-orders/:id" element={<RequireModule module="parts_stock"><PurchaseOrderDetail /></RequireModule>} />
+                          <Route path="returns" element={<RequireModule module="parts_stock"><SupplierReturns /></RequireModule>} />
+                          <Route path="stocktake" element={<RequireModule module="parts_stock"><Stocktake /></RequireModule>} />
+                          <Route path="stocktake/:id" element={<RequireModule module="parts_stock"><StocktakeDetail /></RequireModule>} />
+                        </Route>
                         <Route path="/templates" element={<TemplateList />} />
                         <Route path="/templates/:id" element={<TemplateBuilder />} />
                         <Route path="/service-packages" element={<ServicePackages />} />

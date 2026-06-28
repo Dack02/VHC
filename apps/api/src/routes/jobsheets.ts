@@ -371,12 +371,25 @@ function todayDate(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
+// A drop-off date is only stored when it's a valid date STRICTLY BEFORE the workshop
+// schedule date (due_in_date) — i.e. the car is dropped in early. Same-day / blank /
+// after the schedule → null (means "same as the schedule date").
+function normalizeDropOff(dropOffDate: unknown, dueInDate: string): string | null {
+  if (typeof dropOffDate !== 'string') return null
+  const d = dropOffDate.trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null
+  return d < dueInDate ? d : null
+}
+
 // Create the linked VHC for a jobsheet (status awaiting_arrival → job_state due_in) plus
 // its initial status-history row. Shared by direct create (POST /) and draft commit.
 async function kickOffJobsheetVhc(params: {
   orgId: string; siteId: string | null; vehicleId: string; customerId: string
   templateId: string | null; advisorId: string; mileage: number | null
   dueInDate: string; dueInTime: string | null | undefined; userId: string
+  // Arrival date for the inspection's due_date — the drop-off day when it's earlier than
+  // the schedule date, else the schedule date itself. NULL/undefined → schedule date.
+  dropOffDate?: string | null
   jobsheetId: string; jobsheetReference: string
   // false = a check-in-only "visit" shell (no inspection, no template). Default true.
   inspectionRequired?: boolean
@@ -393,7 +406,9 @@ async function kickOffJobsheetVhc(params: {
       advisor_id: params.advisorId,
       mileage_in: params.mileage,
       status: 'awaiting_arrival',
-      due_date: combineDueIn(params.dueInDate, params.dueInTime),
+      // due_date = arrival = drop-off day (when set) else the schedule day, so the
+      // inspection surfaces in Today → Arrivals on the day the car physically comes in.
+      due_date: combineDueIn(params.dropOffDate || params.dueInDate, params.dueInTime),
       jobsheet_id: params.jobsheetId,
       inspection_required: inspectionRequired
     })
@@ -423,6 +438,7 @@ jobsheets.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
       vehicleId,
       dueInDate,
       dueInTime,
+      dropOffDate,
       serviceTypeId,
       advisorId,
       mileage,
@@ -483,6 +499,7 @@ jobsheets.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
         advisor_id: resolvedAdvisor,
         due_in_date: dueInDate,
         due_in_time: (typeof dueInTime === 'string' && dueInTime.trim()) ? dueInTime.trim() : null,
+        drop_off_date: normalizeDropOff(dropOffDate, dueInDate),
         mileage: mileage ?? null,
         requested_delivery_at: requestedDeliveryAt || null,
         courtesy_vehicle_required: !!courtesyVehicleRequired,
@@ -515,7 +532,8 @@ jobsheets.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servic
       const { hc: hcRow, error: hcError } = await kickOffJobsheetVhc({
         orgId: auth.orgId, siteId: resolvedSite, vehicleId, customerId: vehicle.customer_id,
         templateId: templateIdResolved, advisorId: resolvedAdvisor, mileage: mileage ?? null,
-        dueInDate, dueInTime, userId: auth.user.id, jobsheetId: js.id, jobsheetReference: js.reference
+        dueInDate, dueInTime, dropOffDate: normalizeDropOff(dropOffDate, dueInDate),
+        userId: auth.user.id, jobsheetId: js.id, jobsheetReference: js.reference
       })
       if (hcError) {
         console.error('Jobsheet VHC creation failed:', hcError)
@@ -607,12 +625,13 @@ jobsheets.post('/:id/commit', authorize(['super_admin', 'org_admin', 'site_admin
     const { id } = c.req.param()
     const body = await c.req.json()
     const {
-      dueInDate, dueInTime, serviceTypeId, advisorId, mileage, requestedDeliveryAt,
+      dueInDate, dueInTime, dropOffDate, serviceTypeId, advisorId, mileage, requestedDeliveryAt,
       courtesyVehicleRequired, collectionAndDelivery, vehicleOnSite, customerContactNotes,
       bookingCodeIds, templateId, siteId, vhcRequired, bookingNotes
     } = body
 
     if (!dueInDate) return c.json({ error: 'Due-in date is required' }, 400)
+    const normDropOff = normalizeDropOff(dropOffDate, dueInDate)
 
     const { data: draft } = await supabaseAdmin
       .from('jobsheets')
@@ -674,6 +693,7 @@ jobsheets.post('/:id/commit', authorize(['super_admin', 'org_admin', 'site_admin
       advisor_id: resolvedAdvisor,
       due_in_date: dueInDate,
       due_in_time: (typeof dueInTime === 'string' && dueInTime.trim()) ? dueInTime.trim() : null,
+      drop_off_date: normDropOff,
       mileage: mileage ?? null,
       requested_delivery_at: requestedDeliveryAt || null,
       courtesy_vehicle_required: !!courtesyVehicleRequired,
@@ -710,7 +730,8 @@ jobsheets.post('/:id/commit', authorize(['super_admin', 'org_admin', 'site_admin
       const { hc: hcRow, error: hcError } = await kickOffJobsheetVhc({
         orgId: auth.orgId, siteId: resolvedSite, vehicleId: draft.vehicle_id, customerId: draft.customer_id,
         templateId: templateIdResolved, advisorId: resolvedAdvisor, mileage: mileage ?? null,
-        dueInDate, dueInTime, userId: auth.user.id, jobsheetId: id, jobsheetReference: js.reference
+        dueInDate, dueInTime, dropOffDate: normDropOff,
+        userId: auth.user.id, jobsheetId: id, jobsheetReference: js.reference
       })
       if (hcError) {
         console.error('Jobsheet VHC creation failed:', hcError)
@@ -835,7 +856,7 @@ jobsheets.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     // Ensure the jobsheet belongs to the org (and load current due-in for re-sync)
     const { data: existing } = await supabaseAdmin
       .from('jobsheets')
-      .select('id, due_in_date, due_in_time')
+      .select('id, due_in_date, due_in_time, drop_off_date')
       .eq('id', id)
       .eq('organization_id', auth.orgId)
       .is('deleted_at', null)
@@ -850,6 +871,9 @@ jobsheets.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     const updateData: Record<string, unknown> = {}
     if (body.dueInDate !== undefined && body.dueInDate) updateData.due_in_date = body.dueInDate
     if (body.dueInTime !== undefined) updateData.due_in_time = (typeof body.dueInTime === 'string' && body.dueInTime.trim()) ? body.dueInTime.trim() : null
+    // Drop-off date is re-normalised against the effective schedule date (kept ≤ it).
+    const effScheduleForDrop = (body.dueInDate !== undefined && body.dueInDate) ? body.dueInDate : String(existing.due_in_date)
+    if (body.dropOffDate !== undefined) updateData.drop_off_date = normalizeDropOff(body.dropOffDate, effScheduleForDrop)
     if (body.serviceTypeId !== undefined) updateData.service_type_id = body.serviceTypeId || null
     if (body.advisorId !== undefined) updateData.advisor_id = body.advisorId || null
     if (body.mileage !== undefined) updateData.mileage = body.mileage ?? null
@@ -890,10 +914,13 @@ jobsheets.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     // Keep the linked VHC's workshop status in step with the jobsheet's Vehicle Status
     // (the workshop board still reads health_checks.job_state until Phase 3).
     if (body.jobState !== undefined && typeof body.jobState === 'string' && body.jobState) hcUpdate.job_state = body.jobState
-    if (body.dueInDate !== undefined || body.dueInTime !== undefined) {
+    if (body.dueInDate !== undefined || body.dueInTime !== undefined || body.dropOffDate !== undefined) {
       const effDate = (body.dueInDate !== undefined && body.dueInDate) ? body.dueInDate : existing.due_in_date
       const effTime = body.dueInTime !== undefined ? body.dueInTime : existing.due_in_time
-      hcUpdate.due_date = combineDueIn(typeof effDate === 'string' ? effDate : String(effDate), effTime)
+      // Arrival = drop-off day when set, else the schedule day.
+      const effDrop = (updateData.drop_off_date !== undefined ? updateData.drop_off_date : existing.drop_off_date) as string | null
+      const arrivalDate = effDrop || (typeof effDate === 'string' ? effDate : String(effDate))
+      hcUpdate.due_date = combineDueIn(arrivalDate, effTime)
     }
     if (Object.keys(hcUpdate).length) {
       await supabaseAdmin

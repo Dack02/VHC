@@ -73,7 +73,7 @@ export default function NewJobsheet() {
 
   // jobsheet fields
   const [form, setForm] = useState({
-    siteId: '', serviceTypeId: '', advisorId: '', mileage: '', dueInDate: initialDueInDate, dueInTime: '', requestedDeliveryAt: '',
+    siteId: '', serviceTypeId: '', advisorId: '', mileage: '', dueInDate: initialDueInDate, dueInTime: '', dropOffDate: '', requestedDeliveryAt: '',
     courtesyVehicleRequired: false, collectionAndDelivery: false, vehicleOnSite: false, customerContactNotes: ''
   })
   const [bookingCodeIds, setBookingCodeIds] = useState<string[]>([])
@@ -334,6 +334,7 @@ export default function NewJobsheet() {
         body: {
           dueInDate: form.dueInDate,
           dueInTime: form.dueInTime || undefined,
+          dropOffDate: form.dropOffDate || undefined,
           siteId: form.siteId || undefined,
           serviceTypeId: form.serviceTypeId || undefined,
           advisorId: form.advisorId || undefined,
@@ -590,10 +591,10 @@ export default function NewJobsheet() {
         </div>
 
         {capacityBlocked && (
-          <p className="text-xs text-rag-red">This day is full — pick another day in Booking date before creating the jobsheet.</p>
+          <p className="text-xs text-rag-red">This day is full — pick another day in Workshop schedule date before creating the jobsheet.</p>
         )}
         {overrideMissing && (
-          <p className="text-xs text-rag-amber">This day is over your loading target — add a reason in Booking date to book it.</p>
+          <p className="text-xs text-rag-amber">This day is over your loading target — add a reason in Workshop schedule date to book it.</p>
         )}
         <div className="flex gap-3">
           <button type="submit" disabled={submitting || !selectedVehicle?.customer_id || !form.dueInDate || capacityBlocked || overrideMissing} className="px-6 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50">
@@ -613,10 +614,17 @@ export default function NewJobsheet() {
             jobsheetId={draftId || undefined}
             refreshKey={workVersion}
             value={{ date: form.dueInDate, time: form.dueInTime }}
-            onChange={({ date, time }) => setForm(f => ({ ...f, dueInDate: date, dueInTime: time }))}
+            onChange={({ date, time }) => setForm(f => ({
+              ...f, dueInDate: date, dueInTime: time,
+              // Keep drop-off strictly before the schedule date; clear it if the new date invalidates it.
+              dropOffDate: f.dropOffDate && date && f.dropOffDate >= date ? '' : f.dropOffDate
+            }))}
             overrideReason={capacityReason}
             onOverrideReasonChange={setCapacityReason}
             onVerdictChange={setCapacityVerdict}
+            enableDropOff
+            dropOffDate={form.dropOffDate}
+            onDropOffDateChange={(d) => setForm(f => ({ ...f, dropOffDate: d }))}
             required
           />
 

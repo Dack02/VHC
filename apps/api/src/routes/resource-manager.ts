@@ -97,6 +97,8 @@ resourceManager.put('/config', authorize([...ADMIN_ROLES]), async (c) => {
   }
   if (body.enableSkillRouting != null) merged.enableSkillRouting = Boolean(body.enableSkillRouting)
   if (body.enableCategoryQuotas != null) merged.enableCategoryQuotas = Boolean(body.enableCategoryQuotas)
+  if (body.motDailyCap !== undefined) merged.motDailyCap = body.motDailyCap == null ? null : clamp(Math.round(Number(body.motDailyCap)), 0, 200)
+  if (body.motCapacityHours !== undefined) merged.motCapacityHours = body.motCapacityHours == null ? null : clamp(Number(body.motCapacityHours), 0, 24)
 
   if (merged.dropoffWindowEnd <= merged.dropoffWindowStart) {
     return c.json({ error: 'Drop-off window end must be after start' }, 400)
@@ -119,6 +121,8 @@ resourceManager.put('/config', authorize([...ADMIN_ROLES]), async (c) => {
       dropoff_slot_capacity: merged.dropoffSlotCapacity,
       enable_skill_routing: merged.enableSkillRouting,
       enable_category_quotas: merged.enableCategoryQuotas,
+      mot_daily_cap: merged.motDailyCap,
+      mot_capacity_hours: merged.motCapacityHours,
       updated_at: new Date().toISOString()
     }, { onConflict: 'organization_id,site_id' })
 
@@ -436,7 +440,7 @@ resourceManager.get('/quotas', authorize([...ADVISOR_ROLES]), async (c) => {
 
   const [{ data: rts, error: rtErr }, quotas, staffed] = await Promise.all([
     supabaseAdmin.from('repair_types')
-      .select('id, code, label, colour, sort_order')
+      .select('id, code, label, colour, sort_order, is_mot')
       .eq('organization_id', auth.orgId).eq('is_active', true)
       .order('sort_order', { ascending: true }).order('code', { ascending: true }),
     loadCategoryQuotas(auth.orgId, siteId),
@@ -451,7 +455,7 @@ resourceManager.get('/quotas', authorize([...ADVISOR_ROLES]), async (c) => {
     const q = quotas.get(r.id) || defaultQuota(r.id)
     const cap = staffed.get(r.id)
     return {
-      repairTypeId: r.id, code: r.code, label: r.label ?? r.code, colour: r.colour, sortOrder: r.sort_order,
+      repairTypeId: r.id, code: r.code, label: r.label ?? r.code, colour: r.colour, sortOrder: r.sort_order, isMot: r.is_mot ?? false,
       valueRank: q.valueRank, protectPrimary: q.protectPrimary, releaseWindowDays: q.releaseWindowDays,
       minHours: q.minHours, hardCapJobs: q.hardCapJobs, hardCapHours: q.hardCapHours,
       enforcement: q.enforcement, allowOverride: q.allowOverride,
@@ -607,10 +611,11 @@ resourceManager.post('/availability', authorize([...ADVISOR_ROLES]), async (c) =
 // P4 — physical resources (loan cars, waiter seats, MOT bay)
 // ---------------------------------------------------------------------------
 
+// MOT bays are no longer a generic asset — MOT capacity lives on the MOT card
+// (mot_daily_cap, keyed on the is_mot repair type). Loan cars / waiter seats stay.
 const KNOWN_ASSETS: Array<{ assetType: string; label: string }> = [
   { assetType: 'loan_car', label: 'Courtesy cars' },
-  { assetType: 'waiter_seat', label: 'Waiter seats' },
-  { assetType: 'mot_bay', label: 'MOT bays' }
+  { assetType: 'waiter_seat', label: 'Waiter seats' }
 ]
 
 // GET /assets?siteId=...  → the known resource types + saved quantity (null = untracked)

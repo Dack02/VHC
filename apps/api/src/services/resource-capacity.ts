@@ -95,13 +95,25 @@ export async function getSkillCapacity(orgId: string, siteId: string, date: stri
   return map
 }
 
-interface CategoryBooked { byType: Map<string, { hours: number; jobs: number }>; uncategorizedHours: number; uncategorizedJobs: number }
+interface CategoryBooked { byType: Map<string, { hours: number; jobs: number }>; uncategorizedHours: number; uncategorizedJobs: number; motBookedJobs: number }
+
+// The repair type(s) flagged `is_mot` for an org — the explicit, tenant-set
+// identity of "this is an MOT" (replaces fragile `code ILIKE 'mot'` matching).
+export async function loadMotTypeIds(orgId: string): Promise<Set<string>> {
+  const { data } = await supabaseAdmin
+    .from('repair_types').select('id')
+    .eq('organization_id', orgId).eq('is_active', true).eq('is_mot', true)
+  return new Set((data || []).map((r: any) => r.id))
+}
 
 // Resolve each of a day's bookings to a repair type and total hours/jobs by type.
 // Ladder: health_checks/jobsheets.primary_repair_type_id → first priced repair
-// item → MOT inference → uncategorised (site pool only).
-export async function getCategoryBooked(orgId: string, siteId: string, date: string): Promise<CategoryBooked> {
-  const empty: CategoryBooked = { byType: new Map(), uncategorizedHours: 0, uncategorizedJobs: 0 }
+// item → MOT inference → uncategorised (site pool only). Separately counts MOT
+// bookings for the bay cap via the union signal: a booking counts as an MOT when
+// its resolved type is_mot OR the booking-level is_mot flag is set (Main Booking
+// Requirement = MOT / DMS is_mot_booking) — so Service+MOT bundles still count.
+export async function getCategoryBooked(orgId: string, siteId: string, date: string, motTypeIds: Set<string>): Promise<CategoryBooked> {
+  const empty: CategoryBooked = { byType: new Map(), uncategorizedHours: 0, uncategorizedJobs: 0, motBookedJobs: 0 }
   const { data: bookings, error } = await supabaseAdmin.rpc('diary_day_bookings', {
     p_org_id: orgId, p_site_id: siteId, p_date: date
   })
@@ -111,31 +123,43 @@ export async function getCategoryBooked(orgId: string, siteId: string, date: str
   const hcIds = [...new Set(bookings.filter((b: any) => b.health_check_id).map((b: any) => b.health_check_id))]
   const jsIds = [...new Set(bookings.filter((b: any) => b.jobsheet_id).map((b: any) => b.jobsheet_id))]
 
-  const [hcPrim, jsPrim, riHc, riJs, motType] = await Promise.all([
+  const [hcPrim, jsPrim, riHc, riJs] = await Promise.all([
     hcIds.length ? supabaseAdmin.from('health_checks').select('id, primary_repair_type_id').in('id', hcIds) : Promise.resolve({ data: [] as any[] }),
     jsIds.length ? supabaseAdmin.from('jobsheets').select('id, primary_repair_type_id').in('id', jsIds) : Promise.resolve({ data: [] as any[] }),
     hcIds.length ? supabaseAdmin.from('repair_items').select('health_check_id, repair_type_id, created_at').in('health_check_id', hcIds).not('repair_type_id', 'is', null).order('created_at', { ascending: true }) : Promise.resolve({ data: [] as any[] }),
-    jsIds.length ? supabaseAdmin.from('repair_items').select('jobsheet_id, repair_type_id, created_at').in('jobsheet_id', jsIds).not('repair_type_id', 'is', null).order('created_at', { ascending: true }) : Promise.resolve({ data: [] as any[] }),
-    supabaseAdmin.from('repair_types').select('id').eq('organization_id', orgId).eq('is_active', true).ilike('code', 'mot').limit(1).maybeSingle()
+    jsIds.length ? supabaseAdmin.from('repair_items').select('jobsheet_id, repair_type_id, created_at').in('jobsheet_id', jsIds).not('repair_type_id', 'is', null).order('created_at', { ascending: true }) : Promise.resolve({ data: [] as any[] })
   ])
 
   const hcPrimMap = new Map((hcPrim.data || []).map((r: any) => [r.id, r.primary_repair_type_id]))
   const jsPrimMap = new Map((jsPrim.data || []).map((r: any) => [r.id, r.primary_repair_type_id]))
+  // All repair-type ids present on each parent, so a bundled MOT line counts even
+  // when it isn't the primary/first type that wins the attribution ladder.
   const riHcMap = new Map<string, string>()
-  for (const r of riHc.data || []) if (!riHcMap.has(r.health_check_id)) riHcMap.set(r.health_check_id, r.repair_type_id)
+  const riHcTypes = new Map<string, Set<string>>()
+  for (const r of riHc.data || []) {
+    if (!riHcMap.has(r.health_check_id)) riHcMap.set(r.health_check_id, r.repair_type_id)
+    if (!riHcTypes.has(r.health_check_id)) riHcTypes.set(r.health_check_id, new Set())
+    riHcTypes.get(r.health_check_id)!.add(r.repair_type_id)
+  }
   const riJsMap = new Map<string, string>()
-  for (const r of riJs.data || []) if (!riJsMap.has(r.jobsheet_id)) riJsMap.set(r.jobsheet_id, r.repair_type_id)
-  const motTypeId: string | null = (motType as any)?.data?.id ?? null
+  const riJsTypes = new Map<string, Set<string>>()
+  for (const r of riJs.data || []) {
+    if (!riJsMap.has(r.jobsheet_id)) riJsMap.set(r.jobsheet_id, r.repair_type_id)
+    if (!riJsTypes.has(r.jobsheet_id)) riJsTypes.set(r.jobsheet_id, new Set())
+    riJsTypes.get(r.jobsheet_id)!.add(r.repair_type_id)
+  }
+  const firstMotTypeId: string | null = motTypeIds.size ? [...motTypeIds][0] : null
 
   const byType = new Map<string, { hours: number; jobs: number }>()
-  let uncategorizedHours = 0, uncategorizedJobs = 0
+  let uncategorizedHours = 0, uncategorizedJobs = 0, motBookedJobs = 0
+  const hasMotType = (s?: Set<string>) => !!s && [...s].some(id => motTypeIds.has(id))
   for (const b of bookings as any[]) {
     const rtId =
       (b.health_check_id && hcPrimMap.get(b.health_check_id)) ||
       (b.jobsheet_id && jsPrimMap.get(b.jobsheet_id)) ||
       (b.health_check_id && riHcMap.get(b.health_check_id)) ||
       (b.jobsheet_id && riJsMap.get(b.jobsheet_id)) ||
-      (b.is_mot ? motTypeId : null)
+      (b.is_mot ? firstMotTypeId : null)
     const hours = Number(b.estimated_hours) || 0
     if (rtId) {
       const cur = byType.get(rtId) || { hours: 0, jobs: 0 }
@@ -144,8 +168,13 @@ export async function getCategoryBooked(orgId: string, siteId: string, date: str
     } else {
       uncategorizedHours += hours; uncategorizedJobs += 1
     }
+    const isMotBooking = Boolean(b.is_mot)
+      || (rtId != null && motTypeIds.has(rtId))
+      || hasMotType(b.health_check_id ? riHcTypes.get(b.health_check_id) : undefined)
+      || hasMotType(b.jobsheet_id ? riJsTypes.get(b.jobsheet_id) : undefined)
+    if (isMotBooking) motBookedJobs += 1
   }
-  return { byType, uncategorizedHours, uncategorizedJobs }
+  return { byType, uncategorizedHours, uncategorizedJobs, motBookedJobs }
 }
 
 export interface DayCategory {
@@ -179,6 +208,8 @@ export interface DayCapacity {
   quotasEnabled: boolean
   categories: DayCategory[]
   assets: DayAsset[]
+  motTypeIds: string[]   // repair types flagged is_mot — classify the booking being placed
+  motBookedJobs: number  // MOTs already booked this day (union signal), for the bay cap
 }
 
 // Per-site physical resources (loan cars, waiter seats, MOT bay). Booked counts
@@ -217,19 +248,21 @@ export interface DayCapacityDeps {
   config?: ResourceSiteConfig
   quotas?: Map<string, CategoryQuota>
   assetMap?: Map<string, { quantity: number; name: string | null }>
+  motTypeIds?: Set<string>
 }
 
 export async function getDayCapacity(orgId: string, siteId: string, date: string, today?: string, deps?: DayCapacityDeps): Promise<DayCapacity> {
   const now = today || new Date().toISOString().slice(0, 10)
-  const [config, quotas, assetMap] = await Promise.all([
+  const [config, quotas, assetMap, motTypeIds] = await Promise.all([
     deps?.config ? Promise.resolve(deps.config) : loadSiteConfig(orgId, siteId),
     deps?.quotas ? Promise.resolve(deps.quotas) : loadCategoryQuotas(orgId, siteId),
-    deps?.assetMap ? Promise.resolve(deps.assetMap) : loadAssets(orgId, siteId)
+    deps?.assetMap ? Promise.resolve(deps.assetMap) : loadAssets(orgId, siteId),
+    deps?.motTypeIds ? Promise.resolve(deps.motTypeIds) : loadMotTypeIds(orgId)
   ])
   const [summaryRes, skillCap, booked] = await Promise.all([
     supabaseAdmin.rpc('diary_day_summary', { p_org_id: orgId, p_site_id: siteId, p_from: date, p_to: date }),
     getSkillCapacity(orgId, siteId, date),
-    getCategoryBooked(orgId, siteId, date)
+    getCategoryBooked(orgId, siteId, date, motTypeIds)
   ])
 
   const s = (summaryRes.data || [])[0] || {}
@@ -293,7 +326,9 @@ export async function getDayCapacity(orgId: string, siteId: string, date: string
     band,
     quotasEnabled: config.enableCategoryQuotas,
     categories,
-    assets
+    assets,
+    motTypeIds: [...motTypeIds],
+    motBookedJobs: booked.motBookedJobs
   }
 }
 
@@ -323,6 +358,14 @@ export function canBookOnDay(
   }
 
   const hard = quota.enforcement === 'hard' || !quota.allowOverride
+
+  // 0. MOT bay daily count cap. A physical bay limit on the MOT repair type(s):
+  // when the booking being placed is an MOT and the day already holds the cap, the
+  // bay is full regardless of hours. Gated by quotas-on like the rest of §4.
+  if (config.motDailyCap != null && day.motTypeIds.includes(repairTypeId)
+      && day.motBookedJobs + 1 > config.motDailyCap) {
+    return { status: 'DENY_HARD', reason: 'MOT bay daily cap reached' }
+  }
 
   // 1. Skilled-hours feasibility (only when this category is actually staffed).
   if (cat && cat.eligibleSupplyHours > 0) {
@@ -561,6 +604,7 @@ export async function getAvailabilityStrip(
   const quotas = await loadCategoryQuotas(orgId, siteId)
   const quota = quotas.get(repairTypeId) || defaultQuota(repairTypeId)
   const assetMap = config.enableCategoryQuotas ? await loadAssets(orgId, siteId) : new Map<string, { quantity: number; name: string | null }>()
+  const motTypeIds = config.enableCategoryQuotas ? await loadMotTypeIds(orgId) : new Set<string>()
   const today = new Date().toISOString().slice(0, 10)
   const floor = opts?.leadFloorDays ?? config.bookingLeadTimeDays
   const stripLen = opts?.stripDays ?? 14
@@ -588,7 +632,7 @@ export async function getAvailabilityStrip(
 
     let status: BookVerdict, reason: string, freeHours: number
     if (config.enableCategoryQuotas) {
-      const day = await getDayCapacity(orgId, siteId, d, today, { config, quotas, assetMap })
+      const day = await getDayCapacity(orgId, siteId, d, today, { config, quotas, assetMap, motTypeIds })
       const r = canBookOnDay(day, config, quota, repairTypeId, hours)
       status = r.status; reason = r.reason; freeHours = day.freePool
     } else {

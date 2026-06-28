@@ -17,9 +17,9 @@ repairTypes.use('*', authMiddleware)
 
 // UK garage defaults — lazy-seeded for an org that has none yet. Each maps to a
 // labour code (resolved per org at seed time; NULL if the code is absent).
-const DEFAULTS: Array<{ code: string; colour: string; labourCode: string }> = [
+const DEFAULTS: Array<{ code: string; colour: string; labourCode: string; isMot?: boolean }> = [
   { code: 'Service', colour: '#16A34A', labourCode: 'LAB' },
-  { code: 'MOT', colour: '#EF4444', labourCode: 'MOT' },
+  { code: 'MOT', colour: '#EF4444', labourCode: 'MOT', isMot: true },
   { code: 'Diagnostic', colour: '#6366F1', labourCode: 'DIAG' },
   { code: 'Tyres', colour: '#0EA5E9', labourCode: 'LAB' },
   { code: 'Brakes', colour: '#F97316', labourCode: 'LAB' },
@@ -37,6 +37,7 @@ type Row = {
   default_discount_percent: number | string | null
   sort_order: number
   is_active: boolean
+  is_mot: boolean | null
 }
 
 const shape = (r: Row) => ({
@@ -47,7 +48,8 @@ const shape = (r: Row) => ({
   defaultLabourCodeId: r.default_labour_code_id,
   defaultDiscountPercent: Number(r.default_discount_percent) || 0,
   sortOrder: r.sort_order,
-  isActive: r.is_active
+  isActive: r.is_active,
+  isMot: r.is_mot ?? false
 })
 
 // Clamp a user-supplied percentage to 0–100 (mirrors the DB CHECK constraint).
@@ -93,6 +95,7 @@ repairTypes.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'servi
           label: d.code,
           colour: d.colour,
           default_labour_code_id: codeMap.get(d.labourCode) ?? null,
+          is_mot: d.isMot ?? false,
           sort_order: (i + 1) * 10
         }))
       )
@@ -132,6 +135,7 @@ repairTypes.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'serv
         colour: body.colour || '#6366F1',
         default_labour_code_id: body.defaultLabourCodeId || null,
         default_discount_percent: clampPercent(body.defaultDiscountPercent),
+        is_mot: Boolean(body.isMot),
         sort_order: (maxOrder?.sort_order || 0) + 10,
         is_active: true
       })
@@ -162,6 +166,7 @@ repairTypes.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin']),
     if (body.colour !== undefined) updateData.colour = body.colour
     if (body.defaultLabourCodeId !== undefined) updateData.default_labour_code_id = body.defaultLabourCodeId || null
     if (body.defaultDiscountPercent !== undefined) updateData.default_discount_percent = clampPercent(body.defaultDiscountPercent)
+    if (body.isMot !== undefined) updateData.is_mot = Boolean(body.isMot)
     if (body.sortOrder !== undefined) updateData.sort_order = body.sortOrder
     if (body.isActive !== undefined) updateData.is_active = body.isActive
 

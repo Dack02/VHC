@@ -638,6 +638,11 @@ export interface RepairPart {
   // journal timestamp; both null until marked.
   purchasedAt?: string | null
   purchaseRecognisedAt?: string | null
+  // Full-mode order-in (GMS/PARTS.md §5.3/§5.6): the part-line state machine + the PO
+  // link. lineStatus defaults to 'requested'; purchaseOrderLineId is set once the part
+  // is placed on a purchase order.
+  lineStatus?: string | null
+  purchaseOrderLineId?: string | null
 }
 
 export interface RepairOption {

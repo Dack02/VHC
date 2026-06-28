@@ -4165,6 +4165,7 @@ reports.get('/low-stock', authorize(['super_admin', 'org_admin', 'site_admin', '
       maxQty: r.max_qty != null ? Number(r.max_qty) : null,
       suggestedOrder: Number(r.suggested_order) || 0,
       averageCost: Number(r.average_cost) || 0,
+      preferredSupplierId: (r.preferred_supplier_id as string) ?? null,
     }))
     return c.json({ rows, totals: { itemCount: rows.length } })
   } catch (error) {

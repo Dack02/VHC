@@ -178,7 +178,9 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
             notes,
             allocation_type,
             purchased_at,
-            purchase_recognised_at
+            purchase_recognised_at,
+            line_status,
+            purchase_order_line_id
           )
         ),
         labour:repair_labour!repair_labour_repair_item_id_fkey(
@@ -207,7 +209,9 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
           notes,
           allocation_type,
           purchased_at,
-          purchase_recognised_at
+          purchase_recognised_at,
+          line_status,
+          purchase_order_line_id
         )
       `)
       .eq('health_check_id', id)
@@ -253,7 +257,9 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
           notes,
           allocation_type,
           purchased_at,
-          purchase_recognised_at
+          purchase_recognised_at,
+          line_status,
+          purchase_order_line_id
         )
       `)
       .eq('health_check_id', id)
@@ -355,7 +361,9 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
               notes: part.notes,
               allocationType: part.allocation_type || 'direct',
               purchasedAt: part.purchased_at ?? null,
-              purchaseRecognisedAt: part.purchase_recognised_at ?? null
+              purchaseRecognisedAt: part.purchase_recognised_at ?? null,
+              lineStatus: part.line_status ?? null,
+              purchaseOrderLineId: part.purchase_order_line_id ?? null
             }))
           })) || [],
           labour: item.labour?.map((lab: Record<string, unknown>) => ({
@@ -384,7 +392,9 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
             notes: part.notes,
             allocationType: part.allocation_type || 'direct',
             purchasedAt: part.purchased_at ?? null,
-            purchaseRecognisedAt: part.purchase_recognised_at ?? null
+            purchaseRecognisedAt: part.purchase_recognised_at ?? null,
+            lineStatus: part.line_status ?? null,
+            purchaseOrderLineId: part.purchase_order_line_id ?? null
           })) || [],
           // Include children for groups
           children: children.map((child: Record<string, unknown>) => ({
@@ -446,7 +456,9 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
               notes: part.notes,
               allocationType: part.allocation_type || 'direct',
               purchasedAt: part.purchased_at ?? null,
-              purchaseRecognisedAt: part.purchase_recognised_at ?? null
+              purchaseRecognisedAt: part.purchase_recognised_at ?? null,
+              lineStatus: part.line_status ?? null,
+              purchaseOrderLineId: part.purchase_order_line_id ?? null
             }))
           }))
         }

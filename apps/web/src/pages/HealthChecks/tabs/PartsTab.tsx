@@ -51,6 +51,8 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
   const [markingComplete, setMarkingComplete] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [togglingPurchaseId, setTogglingPurchaseId] = useState<string | null>(null)
+  const [orderingParts, setOrderingParts] = useState(false)
+  const [orderNotice, setOrderNotice] = useState<string | null>(null)
   const [showOtherPartModal, setShowOtherPartModal] = useState(false)
   const [optionsModalItemId, setOptionsModalItemId] = useState<string | null>(null)
   const [optionsModalItemTitle, setOptionsModalItemTitle] = useState('')
@@ -568,6 +570,30 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
     }
   }
 
+  // Raise a purchase order for the job's parts (Full mode). The endpoint groups by
+  // supplier and appends to each supplier's open draft PO, so re-running is safe
+  // (already-ordered parts are skipped server-side).
+  const handleOrderParts = async (partIds: string[]) => {
+    if (!session?.accessToken || !partIds.length) return
+    setOrderingParts(true)
+    try {
+      const res = await api<{ created: Array<{ poNumber: string | null; lineCount: number }> }>(
+        '/api/v1/purchase-orders/raise-from-job',
+        { method: 'POST', token: session.accessToken, body: { repairPartIds: partIds } }
+      )
+      const pos = res.created || []
+      const lines = pos.reduce((s, p) => s + (p.lineCount || 0), 0)
+      const names = pos.map(p => p.poNumber).filter(Boolean).join(', ')
+      await refetchData()
+      setError(null)
+      setOrderNotice(lines ? `Added ${lines} part${lines > 1 ? 's' : ''} to ${names || 'a purchase order'}.` : 'Nothing to order — all parts are already on a PO.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to raise purchase order')
+    } finally {
+      setOrderingParts(false)
+    }
+  }
+
   const handleMarkAllComplete = async () => {
     if (!session?.accessToken || !allActioned) return
 
@@ -695,6 +721,20 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
   // Full mode recognises part cost through goods-in instead, so the control is hidden.
   const simpleMode = pricingSettings?.partsMode !== 'full'
 
+  // Full-mode order-in: every part on the job not already on a PO can be ordered in.
+  // The raise-from-job endpoint auto-consolidates by supplier (GMS/PARTS.md §5.7/§7).
+  const orderablePartIds: string[] = []
+  if (!simpleMode) {
+    const collect = (parts?: RepairPart[]) => {
+      (parts || []).forEach(p => { if (p.id && !p.purchaseOrderLineId) orderablePartIds.push(p.id) })
+    }
+    repairItems.forEach(item => {
+      collect(item.parts)
+      ;(item.options || []).forEach(o => collect(o.parts))
+      ;(item.children || []).forEach(ch => collect(ch.parts))
+    })
+  }
+
   return (
     <div className="space-y-4">
       {/* Header with Progress */}
@@ -709,10 +749,32 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
             {progress.completed} of {progress.total} complete
           </span>
         </div>
-        <div className="text-xs text-gray-500">
-          Tab to navigate | Enter to save | Esc to cancel
+        <div className="flex items-center gap-3">
+          {!simpleMode && (
+            <button
+              onClick={() => handleOrderParts(orderablePartIds)}
+              disabled={orderingParts || orderablePartIds.length === 0}
+              className="px-3 py-1.5 bg-[#16191f] text-white rounded-lg text-sm font-semibold hover:bg-black disabled:opacity-40 flex items-center gap-1.5"
+              title={orderablePartIds.length ? 'Raise a purchase order for the parts on this job' : 'All parts are already on a purchase order'}
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              {orderingParts ? 'Ordering…' : `Order parts${orderablePartIds.length ? ` (${orderablePartIds.length})` : ''}`}
+            </button>
+          )}
+          <div className="text-xs text-gray-500">
+            Tab to navigate | Enter to save | Esc to cancel
+          </div>
         </div>
       </div>
+
+      {orderNotice && (
+        <div className="bg-green-50 border border-green-200 text-green-800 rounded-lg px-4 py-2 text-sm flex items-center justify-between">
+          <span>{orderNotice}</span>
+          <button onClick={() => setOrderNotice(null)} className="text-green-600 hover:text-green-800">✕</button>
+        </div>
+      )}
 
       {/* Checklist Table */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden overflow-x-auto">

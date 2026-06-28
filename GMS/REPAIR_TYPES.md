@@ -372,10 +372,12 @@ the Parts module, §4.4/§12.) Deploy via the pipeline (`supabase db push`), **n
     Type selector per WorkLineCard, hides the per-line labour-code dropdown, shows the locked rate, gates
     "Add labour", `addLabour` drops `labour_code_id`, new `setLineRepairType` PATCH. One shared component →
     covers Jobsheet AND Estimate.
-  - ⬜ **VHC `LabourTab.tsx` (REMAINING):** the 3 inline-editing row editors (group/child/single) — Repair
-    Type selector on group + single headers, hide the code `<select>`, derive the locked rate
-    (resolve-upward for children), gate, drop `labour_code_id` from `saveRowLabour`; + `api.ts`
-    `NewRepairItem`/`RepairItemChild` `repairTypeId`. (CreateRepairGroupModal type pre-fill is P3.)
+  - ✅ **VHC `LabourTab.tsx` (DONE + verified — web build green):** group-header + single-item Repair Type
+    selectors; child + group-labour rows show the **read-only locked code** and resolve the rate
+    upward (children climb to the parent group's type); the per-line labour-code `<select>` is gone;
+    `saveRowLabour` drops `labour_code_id` (server resolves); `setItemRepairType` PATCH; the **AddOtherLabour
+    modal** now picks a Repair Type (not a code). `api.ts` `NewRepairItem`/`RepairItemChild` carry
+    `repairTypeId`. (CreateRepairGroupModal default-type pre-fill is P3.)
 - **P2.5 — Packages:** `service_packages.default_repair_type_id` (+ CRUD/builder) + **stamp-before-apply** in
   all four wrappers + apply-path rate-from-type + retire per-line labour-code column + legacy backfill/flag
   (§5.2).

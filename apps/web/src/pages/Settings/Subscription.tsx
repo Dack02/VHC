@@ -296,7 +296,7 @@ export default function Subscription() {
               <div className="flex justify-between text-sm mb-1">
                 <span className="text-gray-700">Health Checks ({usage.healthChecks.periodLabel})</span>
                 <span className="text-gray-500">
-                  {usage.healthChecks.current} / {usage.healthChecks.limit === -1 ? '∞' : usage.healthChecks.limit.toLocaleString()}
+                  {usage.healthChecks.current} / {formatLimit(usage.healthChecks.limit)}
                 </span>
               </div>
               <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
@@ -312,7 +312,7 @@ export default function Subscription() {
               <div className="flex justify-between text-sm mb-1">
                 <span className="text-gray-700">Storage</span>
                 <span className="text-gray-500">
-                  {usage.storage.currentGb} GB / {parseFloat(usage.storage.limitGb) === -1 ? '∞' : `${usage.storage.limitGb} GB`}
+                  {usage.storage.currentGb} GB / {usage.storage.limitGb == null || parseFloat(usage.storage.limitGb) < 0 ? '∞' : `${usage.storage.limitGb} GB`}
                 </span>
               </div>
               <div className="h-2 bg-gray-200 rounded-full overflow-hidden">

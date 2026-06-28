@@ -7,6 +7,8 @@ import SettingsBackLink from '../../components/SettingsBackLink'
 interface PricingSettingsData {
   defaultMarginPercent: number
   vatRate: number
+  partsMode: 'simple' | 'full'
+  partsModeLocked: boolean
 }
 
 export default function PricingSettings() {
@@ -15,6 +17,8 @@ export default function PricingSettings() {
   const [settings, setSettings] = useState<PricingSettingsData>({
     defaultMarginPercent: 40.00,
     vatRate: 20.00,
+    partsMode: 'simple',
+    partsModeLocked: true,
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -33,7 +37,8 @@ export default function PricingSettings() {
     if (originalSettings) {
       const changed =
         settings.defaultMarginPercent !== originalSettings.defaultMarginPercent ||
-        settings.vatRate !== originalSettings.vatRate
+        settings.vatRate !== originalSettings.vatRate ||
+        settings.partsMode !== originalSettings.partsMode
       setHasChanges(changed)
     }
   }, [settings, originalSettings])
@@ -47,9 +52,11 @@ export default function PricingSettings() {
         `/api/v1/organizations/${organizationId}/pricing-settings`,
         { token: session?.accessToken }
       )
-      const fetchedSettings = {
+      const fetchedSettings: PricingSettingsData = {
         defaultMarginPercent: data.settings?.defaultMarginPercent ?? 40.00,
         vatRate: data.settings?.vatRate ?? 20.00,
+        partsMode: data.settings?.partsMode === 'full' ? 'full' : 'simple',
+        partsModeLocked: data.settings?.partsModeLocked ?? true,
       }
       setSettings(fetchedSettings)
       setOriginalSettings(fetchedSettings)
@@ -73,6 +80,7 @@ export default function PricingSettings() {
           body: {
             default_margin_percent: settings.defaultMarginPercent,
             vat_rate: settings.vatRate,
+            parts_mode: settings.partsMode,
           },
           token: session?.accessToken
         }
@@ -155,6 +163,48 @@ export default function PricingSettings() {
                 <p>Profit: <span className="font-mono text-green-600">£{exampleProfit.toFixed(2)}</span></p>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Parts Mode */}
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">Parts Mode</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              How the parts module handles stock &amp; accounting
+            </p>
+          </div>
+          <div className="p-6 space-y-3">
+            {([
+              { value: 'simple', title: 'Simple', desc: 'No stock tracking. Parts are recorded as a direct P&L cost at purchase (Mark purchased), with the sale recognised when the jobsheet is invoiced.' },
+              { value: 'full', title: 'Full (stock)', desc: 'Perpetual stock on the balance sheet, goods-in, valuation, purchase orders & returns. Requires the Parts & Stock module.' },
+            ] as const).map((opt) => {
+              const disabled = opt.value === 'full' && settings.partsModeLocked
+              const active = settings.partsMode === opt.value
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setSettings({ ...settings, partsMode: opt.value })}
+                  className={`w-full text-left p-4 rounded-[10px] border transition ${
+                    active ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
+                  } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${active ? 'border-gray-900 bg-gray-900' : 'border-gray-300'}`} />
+                    <span className="font-semibold text-gray-900">{opt.title}</span>
+                    {disabled && <span className="text-xs text-gray-400 ml-auto">Needs Parts &amp; Stock module</span>}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1 ml-6">{opt.desc}</p>
+                </button>
+              )
+            })}
+            {settings.partsModeLocked && (
+              <p className="text-xs text-gray-400">
+                Full mode is part of the GMS tier. On a VHC-only plan, parts stay in Simple mode.
+              </p>
+            )}
           </div>
         </div>
 

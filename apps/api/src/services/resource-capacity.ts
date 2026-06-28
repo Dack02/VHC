@@ -211,15 +211,25 @@ function daysUntil(from: string, to: string): number {
   return Math.round((b - a) / 86400000)
 }
 
-export async function getDayCapacity(orgId: string, siteId: string, date: string, today?: string): Promise<DayCapacity> {
+// `deps` lets a range caller (getAvailabilityStrip) preload the day-invariant
+// inputs (config / quotas / assets) once instead of re-reading them per day.
+export interface DayCapacityDeps {
+  config?: ResourceSiteConfig
+  quotas?: Map<string, CategoryQuota>
+  assetMap?: Map<string, { quantity: number; name: string | null }>
+}
+
+export async function getDayCapacity(orgId: string, siteId: string, date: string, today?: string, deps?: DayCapacityDeps): Promise<DayCapacity> {
   const now = today || new Date().toISOString().slice(0, 10)
-  const [config, summaryRes, skillCap, quotas, booked, assetMap] = await Promise.all([
-    loadSiteConfig(orgId, siteId),
+  const [config, quotas, assetMap] = await Promise.all([
+    deps?.config ? Promise.resolve(deps.config) : loadSiteConfig(orgId, siteId),
+    deps?.quotas ? Promise.resolve(deps.quotas) : loadCategoryQuotas(orgId, siteId),
+    deps?.assetMap ? Promise.resolve(deps.assetMap) : loadAssets(orgId, siteId)
+  ])
+  const [summaryRes, skillCap, booked] = await Promise.all([
     supabaseAdmin.rpc('diary_day_summary', { p_org_id: orgId, p_site_id: siteId, p_from: date, p_to: date }),
     getSkillCapacity(orgId, siteId, date),
-    loadCategoryQuotas(orgId, siteId),
-    getCategoryBooked(orgId, siteId, date),
-    loadAssets(orgId, siteId)
+    getCategoryBooked(orgId, siteId, date)
   ])
 
   const s = (summaryRes.data || [])[0] || {}

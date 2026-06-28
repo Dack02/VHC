@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
+import { getEffectiveModulesCached } from '../services/modules.js'
 
 const organizations = new Hono()
 
@@ -240,7 +241,7 @@ organizations.get('/:id/pricing-settings', async (c) => {
     // Get settings from organization_settings table
     const { data: settings, error } = await supabaseAdmin
       .from('organization_settings')
-      .select('default_margin_percent, vat_rate')
+      .select('default_margin_percent, vat_rate, parts_mode, books_locked_through')
       .eq('organization_id', id)
       .single()
 
@@ -249,10 +250,18 @@ organizations.get('/:id/pricing-settings', async (c) => {
       return c.json({ error: error.message }, 500)
     }
 
+    // parts_mode = 'full' only ever applies if the parts_stock module is on (GMS/PARTS.md decision 0)
+    const mods = await getEffectiveModulesCached(c, id)
+    const storedPartsMode = settings?.parts_mode === 'full' ? 'full' : 'simple'
+    const partsMode = mods.parts_stock ? storedPartsMode : 'simple'
+
     return c.json({
       settings: {
         defaultMarginPercent: settings?.default_margin_percent ?? DEFAULT_PRICING.default_margin_percent,
-        vatRate: settings?.vat_rate ?? DEFAULT_PRICING.vat_rate
+        vatRate: settings?.vat_rate ?? DEFAULT_PRICING.vat_rate,
+        partsMode,
+        partsModeLocked: !mods.parts_stock,
+        booksLockedThrough: settings?.books_locked_through ?? null
       }
     })
   } catch (error) {
@@ -273,7 +282,7 @@ organizations.patch('/:id/pricing-settings', authorize(['super_admin', 'org_admi
       return c.json({ error: 'Organisation not found' }, 404)
     }
 
-    const { default_margin_percent, vat_rate } = body
+    const { default_margin_percent, vat_rate, parts_mode, books_locked_through } = body
 
     // Validate values
     if (default_margin_percent !== undefined) {
@@ -286,11 +295,22 @@ organizations.patch('/:id/pricing-settings', authorize(['super_admin', 'org_admi
         return c.json({ error: 'VAT rate must be between 0 and 100' }, 400)
       }
     }
+    if (parts_mode !== undefined && parts_mode !== 'simple' && parts_mode !== 'full') {
+      return c.json({ error: "parts_mode must be 'simple' or 'full'" }, 400)
+    }
 
     // Build update data
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (default_margin_percent !== undefined) updateData.default_margin_percent = default_margin_percent
     if (vat_rate !== undefined) updateData.vat_rate = vat_rate
+    if (books_locked_through !== undefined) updateData.books_locked_through = books_locked_through || null
+
+    // parts_mode = 'full' is only permitted when the parts_stock module is enabled;
+    // otherwise coerce to 'simple' (GMS/PARTS.md decision 0 — VHC-only plans = Simple only).
+    if (parts_mode !== undefined) {
+      const mods = await getEffectiveModulesCached(c, id)
+      updateData.parts_mode = (parts_mode === 'full' && mods.parts_stock) ? 'full' : 'simple'
+    }
 
     // Upsert settings
     const { data: settings, error } = await supabaseAdmin
@@ -301,7 +321,7 @@ organizations.patch('/:id/pricing-settings', authorize(['super_admin', 'org_admi
       }, {
         onConflict: 'organization_id'
       })
-      .select('default_margin_percent, vat_rate')
+      .select('default_margin_percent, vat_rate, parts_mode, books_locked_through')
       .single()
 
     if (error) {
@@ -312,7 +332,9 @@ organizations.patch('/:id/pricing-settings', authorize(['super_admin', 'org_admi
     return c.json({
       settings: {
         defaultMarginPercent: settings.default_margin_percent ?? DEFAULT_PRICING.default_margin_percent,
-        vatRate: settings.vat_rate ?? DEFAULT_PRICING.vat_rate
+        vatRate: settings.vat_rate ?? DEFAULT_PRICING.vat_rate,
+        partsMode: settings.parts_mode ?? 'simple',
+        booksLockedThrough: settings.books_locked_through ?? null
       }
     })
   } catch (error) {

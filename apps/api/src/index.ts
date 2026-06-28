@@ -81,6 +81,7 @@ import vehicleLookup from './routes/vehicle-lookup.js'
 import vehicleDetails from './routes/vehicle-details.js'
 import postcodeLookup from './routes/postcode-lookup.js'
 import jobsheetsRoute from './routes/jobsheets.js'
+import partsAccountingRoute from './routes/parts-accounting.js'
 import estimatesRoute from './routes/estimates.js'
 import estimateSettings from './routes/estimate-settings.js'
 import publicEstimateRoutes from './routes/public-estimate.js'
@@ -195,6 +196,8 @@ app.route('/api/v1/postcode-lookup', postcodeLookup)
 
 // Jobsheets (GMS) — top-level booking document + booking-code / service-type lookups
 app.route('/api/v1/jobsheets', jobsheetsRoute)
+// Parts accounting — Simple-mode "Mark purchased" (parts -> P&L cost)
+app.route('/api/v1/parts-accounting', partsAccountingRoute)
 app.route('/api/v1/estimates', estimatesRoute)
 app.route('/api/v1/booking-codes', bookingCodes)
 // Unified arrivals queue (DMS + jobsheet bookings) — feeds the Arrivals hub + dashboard widget

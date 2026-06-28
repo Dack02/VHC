@@ -5,6 +5,7 @@ import { requireModule } from '../middleware/require-module.js'
 import { aggregateRepairItemsByHc, computeHcConversion, isHcPresented, soldPct } from '../lib/metrics.js'
 import { buildItemList, buildItemDetail } from '../services/item-report-service.js'
 import { buildRepairTypeReport } from '../services/repair-type-report-service.js'
+import { buildPartsGpReport } from '../services/parts-gp-report-service.js'
 import { chunkIds, type GroupBy } from '../services/hc-period-service.js'
 import { logAudit, getRequestContext } from '../services/audit.js'
 import { loadSiteConfig, computeBand } from '../services/resource-config.js'
@@ -4103,6 +4104,25 @@ reports.get('/repair-types', authorize(['super_admin', 'org_admin', 'site_admin'
   } catch (error) {
     console.error('Repair type report error:', error)
     return c.json({ error: 'Failed to build repair type report' }, 500)
+  }
+})
+
+// GET /api/v1/reports/parts-gp — Parts gross profit / margin by Repair Type (GMS/PARTS.md §8)
+reports.get('/parts-gp', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    const data = await buildPartsGpReport(auth.orgId, startDate, endDate)
+    return c.json(data)
+  } catch (error) {
+    console.error('Parts GP report error:', error)
+    return c.json({ error: 'Failed to build parts gross profit report' }, 500)
   }
 })
 

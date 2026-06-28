@@ -20,6 +20,7 @@ export type ModuleKey =
   | 'booking_diary'
   | 'vehicles'
   | 'vehicle_reminders'
+  | 'parts_stock'
 
 export interface ModuleDefinition {
   key: ModuleKey
@@ -45,7 +46,8 @@ export const MODULES: ModuleDefinition[] = [
   { key: 'estimates',          label: 'Estimates (GMS)',    description: 'Standalone pre-booking priced quotes that convert into jobsheets', defaultOn: true },
   { key: 'booking_diary',      label: 'Booking Diary',      description: 'Daily/weekly booking diary with workshop capacity and job-type counts', defaultOn: true },
   { key: 'vehicles',           label: 'Vehicles',           description: 'Vehicle asset register with owners/drivers, notes, MOT/service/custom expiry tracking', defaultOn: true },
-  { key: 'vehicle_reminders',  label: 'Expiry Reminders',   description: 'Expiry-driven (MOT/Service/custom) reminder campaigns via the Follow-Up engine', defaultOn: false }
+  { key: 'vehicle_reminders',  label: 'Expiry Reminders',   description: 'Expiry-driven (MOT/Service/custom) reminder campaigns via the Follow-Up engine', defaultOn: false },
+  { key: 'parts_stock',        label: 'Parts & Stock',      description: 'Full mode: perpetual stock, goods-in, valuation, purchase orders & supplier returns (Simple parts mode is always available)', defaultOn: false }
 ]
 
 export const MODULE_KEYS: ModuleKey[] = MODULES.map((m) => m.key)

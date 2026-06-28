@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
 import { applyServicePackageToRepairItem } from '../services/apply-service-package.js'
+import { invoiceJobsheet, reverseJobsheetInvoice } from '../services/parts-accounting-service.js'
 import { formatRepairItem } from './repair-items/helpers.js'
 import { buildHealthCheckTimeline, extractUser, type TimelineEvent } from './health-checks/timeline.js'
 
@@ -1240,6 +1241,41 @@ jobsheets.get('/:id/timeline', authorize(['super_admin', 'org_admin', 'site_admi
   } catch (error) {
     console.error('Get jobsheet timeline error:', error)
     return c.json({ error: 'Failed to get timeline' }, 500)
+  }
+})
+
+// POST /api/v1/jobsheets/:id/invoice — the single COGS/sale trigger (GMS/PARTS.md §7.3).
+// Stamps the jobsheet invoice (closed_at/invoice_number/tax_point_date) and posts the
+// parts sale journal. A £0-cost billable part blocks (409) unless { force: true }.
+jobsheets.post('/:id/invoice', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const body = await c.req.json().catch(() => ({} as Record<string, unknown>))
+    const result = await invoiceJobsheet(id, auth.orgId, auth.user.id, {
+      force: !!body.force,
+      taxPointDate: (body.taxPointDate as string) ?? null,
+    })
+    if (result.blocked) return c.json({ error: 'zero_cost_lines', blocked: true, blockers: result.blockers }, 409)
+    if (!result.ok) return c.json({ error: result.error ?? 'Failed to invoice jobsheet' }, 400)
+    return c.json(result)
+  } catch (error) {
+    console.error('Invoice jobsheet error:', error)
+    return c.json({ error: 'Failed to invoice jobsheet' }, 500)
+  }
+})
+
+// POST /api/v1/jobsheets/:id/reopen — reverse the invoice (GMS/PARTS.md §7.7).
+jobsheets.post('/:id/reopen', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const result = await reverseJobsheetInvoice(id, auth.orgId, auth.user.id)
+    if (!result.ok) return c.json({ error: result.error ?? 'Failed to reopen jobsheet' }, 400)
+    return c.json(result)
+  } catch (error) {
+    console.error('Reopen jobsheet error:', error)
+    return c.json({ error: 'Failed to reopen jobsheet' }, 500)
   }
 })
 

@@ -43,6 +43,7 @@ estimateSettings.patch('/settings', authorize([...WRITE_ROLES]), async (c) => {
   }
   if (body.autoExpire !== undefined) updateData.estimate_auto_expire = body.autoExpire === true
   if (body.requireSignature !== undefined) updateData.estimate_require_signature = body.requireSignature === true
+  if (body.onlineBookingEnabled !== undefined) updateData.estimate_online_booking_enabled = body.onlineBookingEnabled === true
   if (body.termsText !== undefined) {
     const t = typeof body.termsText === 'string' ? body.termsText : ''
     if (t.length > 10000) return c.json({ error: 'Terms text is too long (max 10,000 characters)' }, 400)

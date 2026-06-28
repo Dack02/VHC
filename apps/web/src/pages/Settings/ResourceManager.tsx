@@ -67,6 +67,119 @@ const Card = ({ title, subtitle, children }: { title: string; subtitle?: string;
   </div>
 )
 
+const InfoIcon = ({ className = 'w-3.5 h-3.5 text-gray-400' }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9 9a1 1 0 011-1h.01a1 1 0 01.99 1v4a1 1 0 11-2 0V9zm1-4a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd" />
+  </svg>
+)
+
+// Compact column header with an optional info-icon tooltip, for the quotas grid.
+const QHead = ({ label, tip }: { label: string; tip?: string }) => (
+  <span className="inline-flex items-center gap-1">
+    {label}
+    {tip && (
+      <Tooltip content={tip} className="cursor-help inline-flex" tabIndex={0}>
+        <InfoIcon className="w-3 h-3 text-gray-400" />
+      </Tooltip>
+    )}
+  </span>
+)
+
+// Plain-English explainer for the whole Category quotas feature. The grid headers
+// only have room for one-line tooltips; this is the "what is this and why" pop-out.
+function QuotaHelpModal({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const Term = ({ name, children }: { name: string; children: React.ReactNode }) => (
+    <div>
+      <dt className="font-semibold text-gray-900">{name}</dt>
+      <dd className="text-gray-600 mt-0.5">{children}</dd>
+    </div>
+  )
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div role="dialog" aria-modal="true" aria-label="How category quotas work"
+        className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[88vh] flex flex-col">
+        <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-3 border-b border-gray-100">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">How category quotas work</h3>
+            <p className="text-sm text-gray-500 mt-0.5">Protecting your service mix without turning work away.</p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 p-1 -mr-1 shrink-0">
+            <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="px-6 py-4 overflow-y-auto text-sm leading-relaxed space-y-4">
+          <p className="text-gray-600">
+            Your workshop runs a mix of work — services, MOTs, brakes, tyres and so on. Left alone, a
+            run of one type can fill a day before the jobs you really want come in, or swallow a bay it
+            shouldn't. <strong className="text-gray-900">Category quotas</strong> reserve a sensible slice
+            of each day for each lane, then quietly hand the hours back if they go unused — so you protect
+            your mix without ever turning a customer away unnecessarily.
+          </p>
+
+          <div className="bg-gray-50 border border-gray-100 rounded-lg p-3 text-gray-600">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1">How it's sized</p>
+            Protection is sized automatically from how each lane is staffed — the grey line under each
+            category shows its primary-tech hours, total able hours and the resulting jobs-per-day
+            ceiling. <strong className="text-gray-900">“No primary tech”</strong> means no one is set as
+            the go-to technician for that lane yet, so there's nothing to size from — set a primary tech
+            on each technician's skills. The columns below are your <em>overrides and caps</em> on top of that.
+          </div>
+
+          <dl className="space-y-3">
+            <Term name="Protect">
+              Hold this lane's unbooked hours for its own work on days still far off, instead of letting
+              any job fill them. Turn off for lanes you're happy for anyone to book into.
+            </Term>
+            <Term name="Release (days)">
+              How many days before the booking date the protection fades to nothing. Far out the hours are
+              guarded; as the day nears and they're still empty, the guard winds down so the bay doesn't sit
+              idle. Lower = release sooner. <strong className="text-gray-900">0 = never hold back.</strong>
+            </Term>
+            <Term name="Min hrs">
+              An optional floor — keep at least this many hours reserved for this lane, on top of the
+              automatic sizing. Leave blank for no floor.
+            </Term>
+            <Term name="Hard cap">
+              An absolute limit on how many of this lane's jobs you'll take in a day — e.g. one MOT bay that
+              can only fit so many tests. Leave blank for no cap.
+            </Term>
+            <Term name="Mode">
+              What happens when a booking would break this lane's quota.
+              {' '}<strong className="text-gray-900">Soft</strong> warns the advisor but lets them override
+              and book anyway. <strong className="text-gray-900">Hard</strong> blocks the booking outright.
+            </Term>
+          </dl>
+
+          <p className="text-xs text-gray-500 bg-amber-50 border border-amber-100 rounded-lg p-3">
+            Nothing is throttled until <strong>Enforce category quotas</strong> is ticked and saved at the
+            top of this card. With it off, the diary still colours days by your loading target — it just
+            won't hold anything back.
+          </p>
+        </div>
+
+        <div className="px-6 py-3 border-t border-gray-100 flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 bg-primary text-white text-sm font-semibold rounded-lg">
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function ResourceManager() {
   const { session, user } = useAuth()
   const toast = useToast()
@@ -77,6 +190,7 @@ export default function ResourceManager() {
   const [saving, setSaving] = useState(false)
   const [quotas, setQuotas] = useState<QuotaRow[] | null>(null)
   const [savingQuotas, setSavingQuotas] = useState(false)
+  const [showQuotaHelp, setShowQuotaHelp] = useState(false)
 
   const token = session?.accessToken
 
@@ -292,6 +406,14 @@ export default function ResourceManager() {
         </div>
 
         <Card title="Category quotas" subtitle="Protect your service mix without turning away work. Protection is sized from how you've staffed each lane (the staffed column); these are overrides + caps.">
+          <button
+            type="button"
+            onClick={() => setShowQuotaHelp(true)}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline mb-4"
+          >
+            <InfoIcon className="w-4 h-4 text-primary" />
+            How category quotas work
+          </button>
           <label className="flex items-center justify-between mb-4">
             <span className="text-sm text-gray-700">Enforce category quotas</span>
             <input type="checkbox" checked={config.enableCategoryQuotas}
@@ -308,7 +430,12 @@ export default function ResourceManager() {
           ) : (
             <>
               <div className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-x-3 gap-y-1 items-center text-[11px] uppercase tracking-wide text-gray-400 pb-1 border-b border-gray-100">
-                <span>Category</span><span>Protect</span><span>Release</span><span>Min hrs</span><span>Hard cap</span><span>Mode</span>
+                <QHead label="Category" tip="Each repair type is its own lane. The grey line below shows how it's staffed — the basis protection is sized from." />
+                <QHead label="Protect" tip="Hold this lane's unbooked hours for its own work on days still far off, instead of letting any job fill them." />
+                <QHead label="Release" tip="Days before the booking date that protection fades to zero. Lower = release the held hours sooner. 0 = never hold back." />
+                <QHead label="Min hrs" tip="Optional floor: keep at least this many hours reserved for this lane, on top of the automatic sizing. Blank = no floor." />
+                <QHead label="Hard cap" tip="Absolute limit on this lane's jobs per day (e.g. one MOT bay). Blank = no cap." />
+                <QHead label="Mode" tip="Soft = warn the advisor but allow them to override. Hard = block the booking outright." />
               </div>
               {quotas.map(q => (
                 <div key={q.repairTypeId} className="grid grid-cols-[1fr_auto_auto_auto_auto_auto] gap-x-3 gap-y-1 items-center py-2 border-b border-gray-50">
@@ -344,6 +471,8 @@ export default function ResourceManager() {
           )}
         </Card>
       </div>
+
+      {showQuotaHelp && <QuotaHelpModal onClose={() => setShowQuotaHelp(false)} />}
     </div>
   )
 }

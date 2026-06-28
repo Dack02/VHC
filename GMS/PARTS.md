@@ -2,7 +2,9 @@
 
 > Branch: work on `dev` · Status: **PLAN — awaiting Leo's review before P0 build (2026-06-28)** · Author: Leo + Claude
 > Locked (Leo, 2026-06-28): **two modes — Simple (no stock, parts→P&L cost) + Full (stock); VHC-only plans = Simple only**
-> (decision 0) · **close = customer invoice** · **Xero = first accounts package**. Remaining decisions in §1/§13.
+> (decision 0) · **the jobsheet invoice = the customer VAT invoice = the single COGS/sale trigger** (VHC close is *not*
+> involved) · **no GRNI — the inventory asset is recognised at the supplier invoice** · **Xero = first accounts
+> package**. All §13 decisions now answered (2026-06-28).
 > Companion to [`REPAIR_TYPES.md`](./REPAIR_TYPES.md) (this module closes its deferred **Parts-module
 > margin** piece — §4.4/§8), [`JOBSHEET.md`](./JOBSHEET.md), [`ESTIMATES.md`](./ESTIMATES.md),
 > [`WORK_DETAILS.md`](./WORK_DETAILS.md), [`RESOURCE_MANAGER.md`](./RESOURCE_MANAGER.md).
@@ -14,16 +16,20 @@ Evolve the "lite" parts module (a flat autocomplete dictionary + priced quote li
 accounting-grade Parts & Stock module** designed from the **double-entry ledger outward**.
 
 - **Two modes, plan-gated (NEW — Leo, 2026-06-28).** **Simple mode** (the default, and the *only* option for
-  VHC-only tenants): **no stock tracking** — parts are priced job lines whose cost is sent to accounting as a
-  **direct P&L cost at the point of purchase** (dated to the factor-invoice month so it reconciles to the
-  supplier's monthly statement); the sale posts separately at close. **Full mode** (GMS-tier opt-in): everything below — perpetual stock on the
-  balance sheet, goods-in, valuation, returns. Same `repair_parts` line, same close→invoice trigger; Full mode
-  only *adds* the balance-sheet machinery. **The bullets below describe Full mode** unless noted (see §2 "Two
-  modes" and §6 "Simple-mode journals").
-- **A part IN is a balance-sheet asset (or a deferred cost).** Receiving *stock* books **Dr Inventory / Cr
-  GRNI** — it is *not* an expense; it sits on the balance sheet until sold. An *order-in (non-stock)* part's
-  supplier invoice is parked on a balance-sheet **WIP / uninvoiced-parts clearing** account, **not** expensed
-  on arrival — so its cost is still held back until the sale (§6 Event 4A).
+  VHC-only tenants): **no stock tracking** — parts are priced job lines whose **purchase/cost** is sent to
+  accounting as a **direct P&L cost at the point of purchase** (dated to the factor-invoice month so it
+  reconciles to the supplier's monthly statement), independent of any billing document and fired for *all*
+  tenants including VHC-only. The **sale leg posts only at the jobsheet invoice** — so **VHC-only tenants get the
+  purchase/cost side only** (no sale leg, no in-app customer invoice). **Full mode** (GMS-tier opt-in):
+  everything below — perpetual stock on the balance sheet, goods-in, valuation, returns. Same `repair_parts`
+  line, same jobsheet-invoice trigger for the sale; Full mode only *adds* the balance-sheet machinery. **The
+  bullets below describe Full mode** unless noted (see §2 "Two modes" and §6 "Simple-mode journals").
+- **A part IN is a balance-sheet asset (or a deferred cost).** Receiving *stock* is a **quantity-only movement —
+  no GL journal at receipt**; the inventory asset is recognised only when the **supplier invoice** arrives
+  (**Dr Inventory / Dr VAT Input / Cr Accounts Payable**) — it is *not* an expense; it sits on the balance sheet
+  until sold (no GRNI). An *order-in (non-stock)* part's supplier invoice is parked on a balance-sheet **WIP /
+  uninvoiced-parts clearing** account, **not** expensed on arrival — so its cost is still held back until the
+  sale (§6 Event 4A).
 - **A part OUT is a P&L cost, recognised against its revenue.** When the part is invoiced out, an automatic
   journal moves the cost **off the balance sheet → COGS** (Dr COGS / Cr Inventory for stock; Dr COGS / Cr
   WIP-clearing for non-stock) **and** the sale books **Dr AR / Cr Parts Sales / Cr VAT Output**. Matching
@@ -43,11 +49,13 @@ accounting-grade Parts & Stock module** designed from the **double-entry ledger 
   FRS-102 compliant, no FIFO layer table. WAVCO at receipt is **provisional** (rolled from the PO/expected
   cost); the supplier invoice trues it up on the residual on-hand qty only (§6 Event 2). Designed so FIFO can
   be added later without breaking callers.
-- **COGS recognised at the real "invoiced out" event — at the BILLING DOCUMENT, not just the VHC.** The seam
-  is the document's close/invoice event: VHC `POST /:id/close` (`status='completed'`, `closed_at` set) **and**
-  jobsheet close (`jobsheets.closed_at`, a first-class P2 trigger, §13 Q4), since many billed parts sit on a
-  jobsheet or estimate that never spawns a VHC. We **snapshot** unit cost immutably at that event (mirroring
-  `estimates.authorised_total`), and **extended COGS = `quantity × cogs_snapshot`**.
+- **COGS recognised at the real "invoiced out" event — the JOBSHEET INVOICE, and ONLY the jobsheet invoice.** The
+  seam is `jobsheets.closed_at` (treated as the invoice issuance — there is no separate invoice entity, so
+  jobsheet close == jobsheet invoiced == the customer VAT invoice; it stamps `invoice_number` + `tax_point_date`).
+  **VHC close is *not* a trigger** — a VHC is an inspection whose `repair_items`/parts transfer up to the parent
+  jobsheet (via `health_checks.jobsheet_id`), and standalone VHC-only tenants don't process parts invoices in the
+  app, so VHC never touches parts accounting. We **snapshot** unit cost immutably at the jobsheet invoice
+  (mirroring `estimates.authorised_total`), and **extended COGS = `quantity × cogs_snapshot`**.
 - **Reuse, don't replace.** Extend `parts_catalog` (→ item master) and `repair_parts` (the priced job line
   stays the single consumption point across VHC/Jobsheet/Estimate). New tables hang off `repair_parts.id`.
   Parts margin by `repair_items.repair_type_id` closes the deferred Repair Types reporting loop.
@@ -56,33 +64,37 @@ accounting-grade Parts & Stock module** designed from the **double-entry ledger 
 
 ## 1. Locked / recommended decisions
 
-> **CONFIRMED by Leo (2026-06-28):** (a) **Close = the customer VAT invoice** — a closed billing document IS
-> the invoice; close stamps `invoice_number` + `tax_point_date` and fires the COGS *and* sale journals together
-> (decision 3/4, §13 Q3). (b) **Xero is the first/target accounts package** — the mapping layer, default
-> code seed, and the P4 push target all orient to Xero's UK chart + tax types (§13 Q7/Q8). (c) Remaining
-> items below stay **RECOMMEND** pending Leo's full read-through of this doc before any P0 build.
+> **CONFIRMED by Leo (2026-06-28):** (a) **The jobsheet invoice = the customer VAT invoice** — a closed/invoiced
+> jobsheet IS the invoice; it stamps `invoice_number` + `tax_point_date` and fires the COGS *and* sale journals
+> together. **VHC close is *not* an accounting trigger** (decision 3/4, §13 Q3). (b) **Xero is the first/target
+> accounts package** — the mapping layer, default code seed, and the P4 push target all orient to Xero's UK chart
+> + tax types (§13 Q7/Q8). (c) All §13 decisions are now answered (2026-06-28).
 
-Each remaining item marked **RECOMMEND** for Leo to confirm in §13. Bias: accounting-correctness + UK-independent reality.
+Bias: accounting-correctness + UK-independent reality.
 
 0. **CONFIRMED (Leo, 2026-06-28) — Two parts modes, plan-gated: `simple` (default) and `full`.**
-   - **Simple — no stock tracking.** Parts are priced `repair_parts` lines; their **cost is expensed straight to
-     the P&L at the point of PURCHASE** (`Dr Parts COGS / Dr VAT Input / Cr Accounts Payable`), dated to the
-     factor-invoice month so it reconciles to the supplier's monthly statement; the **sale posts separately at
-     close** (`Dr AR / Cr Parts Sales / Cr VAT Output`). **No** inventory asset, GRNI, WIP, PO/GRN,
-     `stock_movements`, or stock-based returns. This is the default for every tenant and the **only** option on
-     **VHC-only plans**.
+   - **Simple — no stock tracking.** Parts are priced `repair_parts` lines. The **purchase/cost leg** is expensed
+     straight to the P&L **at the point of PURCHASE** (`Dr Parts COGS / Dr VAT Input / Cr Accounts Payable`),
+     dated to the factor-invoice month so it reconciles to the supplier's monthly statement. This cost leg is
+     **independent of any billing document and fires for ALL tenants including VHC-only** — it is the
+     supplier-statement-reconciliation capture and the core of Simple mode. The **sale leg posts separately, ONLY
+     at the jobsheet invoice** (`Dr AR / Cr Parts Sales / Cr VAT Output`) — i.e. only for GMS tenants who invoice
+     via jobsheets. **VHC-only tenants get the purchase/cost side only** (no sale leg, no in-app customer invoice).
+     **No** inventory asset, WIP, PO/GRN, `stock_movements`, or stock-based returns (and no GRNI anywhere in the
+     module). This is the default for every tenant and the **only** option on **VHC-only plans**.
    - **Full — everything in this doc.** Perpetual stock on the balance sheet (Events 1–6), goods-in, valuation,
      the returns loop. Requires the `parts_stock` module, which is **off on VHC-only plans** (mirrors how
      `jobsheets` is GMS-tier-only).
    - One setting `organization_settings.parts_mode ENUM('simple','full')` defaults `'simple'`; it may be set
      `'full'` **only** when the `parts_stock` module entitlement is on. Both modes share the same `repair_parts`
-     line and the same close→invoice trigger for the **sale**; Full mode only *adds* the inventory legs.
+     line and the same **jobsheet-invoice** trigger for the **sale**; Full mode only *adds* the inventory legs.
      **Cost-timing in Simple mode = at PURCHASE (CONFIRMED Leo, 2026-06-28, §13 Q12):** the cost must fall in the
-     purchase month to reconcile the supplier statement, so it posts at purchase (not at close) and cost/revenue
-     are **intentionally not period-matched** (the accountant's optional year-end stock adjustment is the truing
-     mechanism, not this app). The £0-cost gate (§12) still guards a sold line that never had a cost recorded.
+     purchase month to reconcile the supplier statement, so it posts at purchase (not at the jobsheet invoice) and
+     cost/revenue are **intentionally not period-matched** (the accountant's optional year-end stock adjustment is
+     the truing mechanism, not this app). The £0-cost gate (§12) still guards a sold line that never had a cost
+     recorded.
 
-1. **RECOMMEND — Costing method: weighted-average cost (WAVCO), perpetual.** Per SKU keep only
+1. **CONFIRMED (Leo, 2026-06-28) — Costing method: weighted-average cost (WAVCO) now, FIFO optional later.** Per SKU keep only
    `qty_on_hand` + `average_cost`; each receipt rolls the average
    (`new_avg = (qoh·old_avg + qty_in·cost_in)/(qoh+qty_in)`); issues leave at current average. FRS-102 compliant,
    no cost-layer table, robust to partial returns, and near-identical to FIFO for order-in parts received-then-issued
@@ -101,24 +113,26 @@ Each remaining item marked **RECOMMEND** for Leo to confirm in §13. Bias: accou
    part to a job **without** first creating a master record (ad-hoc sundry line). This single flag forks the
    inventory mechanics, **but not** the timing of cost recognition.
 
-3. **RECOMMEND — COGS recognised at the BILLING-DOCUMENT close/invoice event, not at the VHC alone.** The
-   trigger is the document's terminal "sold + delivered + billed" seam — VHC `POST /:id/close` (gated on
-   `PENDING_OUTCOMES`/`INCOMPLETE_WORK`, verified at `apps/api/src/routes/health-checks/status.ts:1482,1504,1516`;
-   `closableStatuses = ['authorized','declined','expired']` at `status.ts:1438`) **and** jobsheet close
-   (`jobsheets.closed_at`, added as a first-class P2 trigger — see §13 Q4). Because `repair_parts` reaches a
-   document **only** via `repair_items.health_check_id` (NOT NULL — there is no direct estimate/jobsheet FK on
-   the part), parts billed off a jobsheet-direct or estimate line that never spawns a VHC would otherwise
-   **never recognise COGS**; defining the event at the billing-document level closes that gap. At the event,
-   exactly the **authorised** basket is the sold set — authorised `repair_items` **plus their selected
-   `repair_option`** (§7.3) — and its `repair_parts` rows are the COGS to recognise. We **snapshot** unit
-   cost/sell/VAT immutably (mirroring `estimates.authorised_total`, `20260626200000`); a `declined`/`expired`
-   close with an empty authorised basket emits **no journal**.
+3. **CONFIRMED (Leo, 2026-06-28) — COGS recognised at the JOBSHEET INVOICE, and only the jobsheet invoice. VHC
+   close is not a trigger.** The single trigger is `jobsheets.closed_at` (treated as the invoice issuance event).
+   A VHC is an inspection: its `repair_items`/`repair_parts` **transfer up to the parent jobsheet** (the jobsheet
+   is the parent booking document of the VHC, via `health_checks.jobsheet_id`), and the jobsheet is **THE billing
+   document**. Standalone VHC-only tenants do not process parts invoices in the app, so **VHC never triggers
+   accounting**. At the jobsheet invoice, the basket is gathered by collecting the jobsheet's billable
+   `repair_parts` across its child VHC(s) — `health_checks.jobsheet_id = <jobsheet>` → `repair_items` →
+   `repair_parts` (via **both** the `repair_item_id` and `repair_option_id` FKs, selected option included) —
+   **plus** any jobsheet-direct `repair_items`. Only **authorised/billed** items are in the sold set; their
+   `repair_parts` rows are the COGS to recognise. We **snapshot** unit cost/sell/VAT immutably (mirroring
+   `estimates.authorised_total`, `20260626200000`); a jobsheet invoiced with an empty billable basket emits
+   **no journal**.
 
-4. **CONFIRMED (Leo, 2026-06-28) — "Close" is the invoice issuance: it stamps an invoice number + tax-point date.** A closed
-   billing document **is** the customer VAT invoice for output-VAT purposes. The COGS-and-sale journal header
-   carries an `invoice_number` + `tax_point_date` so Output VAT has a document behind it and reconciles to the
-   real invoice (§6 Event 3b). VHC, jobsheet, and estimate-accepted paths each resolve their own invoice-number
-   source. This lets `cogs_recognised_at`, `cogs_snapshot`, and the sale journal share one trigger.
+4. **CONFIRMED (Leo, 2026-06-28) — The jobsheet invoice IS the invoice issuance: it stamps an invoice number + tax-point date.** A closed/invoiced
+   jobsheet **is** the customer VAT invoice for output-VAT purposes (there is no separate invoice entity, so
+   jobsheet close == jobsheet invoiced). The COGS-and-sale journal header carries an `invoice_number` +
+   `tax_point_date` so Output VAT has a document behind it and reconciles to the real invoice (§6 Event 3b). An
+   **estimate that is accepted becomes a jobsheet** and recognises at *that jobsheet's* invoice — not as a
+   separate trigger; VHC is not involved. This lets `cogs_recognised_at`, `cogs_snapshot`, and the sale journal
+   share one trigger.
 
 5. **RECOMMEND — Build journal-ready movement + ledger rows now; NO internal general ledger.** We persist
    immutable balanced Dr/Cr rows (`inventory_journal` + `inventory_journal_lines`) with `internal_account_key`,
@@ -145,14 +159,18 @@ Each remaining item marked **RECOMMEND** for Leo to confirm in §13. Bias: accou
    it, surface a **Negative-Stock Exceptions** report to reconcile at receipt. The **valuation** correction
    path for issuing into / receiving out of negative SOH is defined in §5.4 (not just the quantity).
 
-9. **RECOMMEND — Cores/surcharge: NICE (P3), not v1.** A core charge is a **refundable customer deposit
-   (liability), not revenue**, with a parallel sub-state. Real but secondary for independents — model the
-   fields from day one (`has_core`, `core_charge_amount`, `core_status`) but ship the workflow later. **The VAT
-   treatment on forfeit is unresolved and must be confirmed with the accountant before build** (§6 cores).
+9. **CONFIRMED (Leo, 2026-06-28) — Cores/surcharge: defer to P3, stub the fields now.** A core charge is a
+   **refundable customer deposit (liability), not revenue**, with a parallel sub-state. Real but secondary for
+   independents — model the fields from day one (`has_core`, `core_charge_amount`, `core_status`) but ship the
+   workflow later. **The core-forfeit VAT treatment must be confirmed with the accountant before the P3 build**
+   (§6 cores).
 
-10. **RECOMMEND — Module gating: new `'parts_stock'` key, `defaultOn: false`.** The existing lite catalog,
-    suppliers, and `repair-items/parts` routes stay **ungated** (always-on). Only the new stock/goods-in/PO/
-    returns/journal surfaces gate behind `parts_stock`. Parts reports sit behind the existing `reports` gate.
+10. **CONFIRMED (Leo, 2026-06-28) — Module gating: new `'parts_stock'` key, `defaultOn: false`; Full mode is
+    GMS-only, Simple is for everyone.** **VHC-only tenants get the Simple Parts module** — the lite Catalogue,
+    Suppliers, and parts purchase-cost capture are part of Simple and stay **ungated** (always-on, incl.
+    `repair-items/parts`). **Full mode (`parts_stock`) is GMS-only**; **GMS tenants can use either mode.** Only the
+    new Full stock/goods-in/PO/returns/journal surfaces gate behind `parts_stock`. Parts reports sit behind the
+    existing `reports` gate.
 
 ---
 
@@ -160,18 +178,19 @@ Each remaining item marked **RECOMMEND** for Leo to confirm in §13. Bias: accou
 
 ### Two modes (read this first)
 
-The module ships in **two modes** (decision 0). They share the same priced job line and the same close→invoice
-money event; they differ only in whether stock touches the balance sheet:
+The module ships in **two modes** (decision 0). They share the same priced job line and the same
+jobsheet-invoice money event for the **sale**; they differ only in whether stock touches the balance sheet:
 
 | | **Simple mode** (default; only option for VHC-only plans) | **Full mode** (GMS-tier opt-in via `parts_stock`) |
 |---|---|---|
 | Stock tracking | **None** — no qty-on-hand, no valuation | Perpetual (`stock_movements`, WAVCO) |
-| Balance sheet | Parts **never** touch it | Inventory asset + GRNI / WIP / PPV |
-| Part cost → P&L | **Direct cost at purchase** (`Dr Parts COGS / Cr AP`, dated to factor-invoice month) | Relieved from Inventory/WIP at the sale |
-| Cost vs revenue period | **Not matched** (cost at purchase month, sale at close) — by design | Matched (both at close) |
+| Balance sheet | Parts **never** touch it | Inventory asset + WIP / PPV |
+| Part cost → P&L | **Direct cost at purchase** (`Dr Parts COGS / Cr AP`, dated to factor-invoice month) — fires for **all** tenants incl. VHC-only | Relieved from Inventory/WIP at the sale |
+| Sale leg | **Jobsheet invoice only** (GMS tenants); **VHC-only tenants get no sale leg** | At the jobsheet invoice |
+| Cost vs revenue period | **Not matched** (cost at purchase month, sale at jobsheet invoice) — by design | Matched (both at the jobsheet invoice) |
 | PO / goods-in / returns | Not required (optional supplier ref only) | Full PO → GRN → return loop |
 | Tables used | (a) catalog + (d) line + (e) journal only | all of §5 |
-| Journals (when GL connected) | supplier **bill at purchase** + sales **invoice at close** | the full event set (§6) |
+| Journals (when GL connected) | supplier **bill at purchase** (all tenants) + sales **invoice at jobsheet invoice** (GMS only) | the full event set (§6) |
 
 The five-layer model below is **Full mode**. **Simple mode collapses to three layers** — (a) catalog, (d) the
 priced job line, (e) the journal — skipping (b) stock-on-hand and (c) the order-in stock buffer entirely.
@@ -222,7 +241,7 @@ returned, and never become "stock".
 4. The part is fitted. The supplier's invoice arrives → **Event 4A (invoice leg)**:
    `Dr WIP-clearing / Dr VAT Input / Cr AP`. The cost is **parked on the balance sheet**, *not yet* expensed —
    so it can match the sale whenever that lands (possibly a different VAT period).
-5. Customer authorises + work completes; the billing document closes/invoices → **Event 4A (sale leg)**:
+5. Customer authorises + work completes; the **jobsheet is invoiced** → **Event 4A (sale leg)**:
    `Dr COGS / Cr WIP-clearing` (cost expensed now) **and** the sale `Dr AR / Cr Parts Sales / Cr VAT Output`.
    Gross profit = sell − cost, both recognised in the same event. Line status `invoiced`.
 6. **If the part was NOT used** (ordered 2 calipers, fitted 1, or the customer declined the line): the unused
@@ -232,19 +251,19 @@ returned, and never become "stock".
 ### How one physical part flows (the held-stock minority case)
 
 1. Item is `is_stocked = true` (e.g. screenwash, common oil filter). Stock arrives on a PO → **goods-in**
-   writes a `receipt` **(b)** movement (`+qty`, provisional `unit_cost`) and **Event 1**: `Dr Inventory /
-   Cr GRNI`. `qty_on_hand` ↑, `average_cost` provisionally re-rolled.
-2. Supplier invoice → **Event 2**: `Dr GRNI / Dr VAT Input / Cr AP`, clearing GRNI at the *received* value and
-   posting any price variance to **Inventory** (on-hand) or **PPV** (already issued) — never COGS for unsold
-   stock.
+   writes a `receipt` **(b)** movement (`+qty`, provisional `unit_cost`) — **quantity only, NO GL journal at
+   receipt**. `qty_on_hand` ↑, `average_cost` provisionally re-rolled.
+2. Supplier invoice → **Event 2**: `Dr Inventory / Dr VAT Input / Cr AP` — the inventory asset is recognised
+   here (no GRNI), at actual cost, posting any price variance to **Inventory** (on-hand) or **PPV** (already
+   issued) — never COGS for unsold stock.
 3. Advisor books the item onto a job → **(d) `repair_parts`** line links to the **(a/b) stock item**; an
    `issue` movement (`−qty × average_cost`) is written; SOH ↓.
-4. The billing document closes → **Event 3a** cost: `Dr COGS / Cr Inventory` (asset leaves the balance sheet)
+4. The **jobsheet is invoiced** → **Event 3a** cost: `Dr COGS / Cr Inventory` (asset leaves the balance sheet)
    **and Event 3b** sale: `Dr AR / Cr Parts Sales / Cr VAT Output`. Inventory → COGS → matched against revenue.
 
 The flag `is_stocked` is the inventory fork: **non-stock = Event 4A (WIP-clearing buffer)**; **stocked =
-Events 1→2→3a→3b (inventory asset then relieve)**. **Both defer the cost to the sale** and recognise COGS in
-the same event as the revenue. Both forks live in one engine.
+Events 2→3a→3b (inventory asset recognised at the supplier invoice, then relieved)**. **Both defer the cost to
+the sale** and recognise COGS in the same event as the revenue. Both forks live in one engine.
 
 ---
 
@@ -373,7 +392,7 @@ triggers. Additive columns only:
 | `core_charge_amount` | DECIMAL(10,2) NULL | Refundable deposit. |
 | `core_status` | VARCHAR(24) NULL | Parallel core sub-state (P3). |
 | `cogs_snapshot` | DECIMAL(12,4) NULL | Immutable **unit** cost locked at COGS recognition (NOT extended — multiply by `qty_fitted`). |
-| `cogs_recognised_at` | TIMESTAMPTZ NULL | When COGS journal fired (idempotency guard; **cleared + reversed on document reopen**, §7.7). |
+| `cogs_recognised_at` | TIMESTAMPTZ NULL | When COGS journal fired (idempotency guard; **cleared + reversed on jobsheet reopen**, §7.7). |
 | `purchased_at` | DATE NULL | **Simple mode (P-Simple):** the factor-invoice / purchase date — the `document_date` of the Simple-purchase journal, so the cost lands in the correct supplier-statement + VAT month (§6 Simple-purchase). Defaults to entry date, editable. *(Full mode derives the purchase date from the GRN / supplier invoice instead.)* |
 | `purchase_recognised_at` | TIMESTAMPTZ NULL | **Simple mode:** when the purchase (cost→P&L) journal fired — idempotency guard for the Simple-purchase event, mirroring `cogs_recognised_at` for the sale. |
 
@@ -434,7 +453,7 @@ ordered ──supplier can't supply──► back_order ──re-source/wait─�
    ▼ ◄──────────────────────────────────────────────────────────┘
 received  (GRN booked; on shelf for the job)
    │
-   ├── used (qty_fitted) ──► fitted ──(doc closed/invoiced)──► invoiced (terminal — billed to customer)
+   ├── used (qty_fitted) ──► fitted ──(jobsheet invoiced)──► invoiced (terminal — billed to customer)
    │
    ├── customer DECLINES the line ──► declined ──► to_return (non-stock) | return_in (stocked)
    │
@@ -468,7 +487,8 @@ a supplier with an open `draft` PO appends to it (GA4 pattern).
 `goods_receipts`: `purchase_order_id`, `received_by`, `received_at`, `grn_number`, `notes`.
 `goods_receipt_lines`: `goods_receipt_id`, `purchase_order_line_id`, `stock_item_id` NULL, `qty_received`,
 `unit_cost` (editable on receipt if different from ordered), `condition` (`ok`/`damaged`). Receiving a
-**stocked** line writes a `receipt` `stock_movements` row + **Event 1** journal; a **non-stock** line writes
+**stocked** line writes a `receipt` `stock_movements` row (quantity only at provisional cost — **no GL journal
+at receipt**; the inventory asset is recognised at the supplier invoice, Event 2); a **non-stock** line writes
 **no movement** (cost waits for the supplier invoice, Event 4A) but still advances the line to `received`.
 
 ### 5.9 `supplier_returns` + `supplier_return_lines` — the returns / credit loop (P2)
@@ -506,7 +526,7 @@ on sale-side events, §6 Event 3b), `net_total`, `tax_total`, `gross_total`, `id
 dedup, keyed on `source_event`+`source_id`+line-set; reused on our retries only), `posting_status`
 (`unposted`/`draft`/`posted`/`blocked`/`error`/`voided`), `currency` DEFAULT 'GBP'.
 
-**`inventory_journal_lines` (per Dr/Cr):** `internal_account_key` (`parts_stock`/`grni`/`accounts_payable`/
+**`inventory_journal_lines` (per Dr/Cr):** `internal_account_key` (`parts_stock`/`accounts_payable`/
 `vat_input`/`accounts_receivable`/`parts_sales`/`parts_cogs`/`vat_output`/`stock_adjustment`/
 `purchase_price_variance`/`parts_wip`/`core_liability`), `debit` / `credit` (one populated, **net** — VAT
 isolated on its own line), `tax_code`, `tax_amount`, `tracking_site_id`, `tracking_job_id`, `entity_ref`
@@ -530,7 +550,7 @@ isolated on its own line), `tax_code`, `tax_amount`, `tracking_site_id`, `tracki
 | Table | Purpose / key columns |
 |---|---|
 | `accounting_connections` | per-org connected provider: `provider` (`xero`/`qbo`/`sage`), `tenant_ref`, encrypted tokens, `status`, `default_currency`. (Mirror the postcode-lookup "inert until keyed" pattern.) |
-| `account_code_map` | `internal_account_key` → `provider_account_code`/`provider_account_id`. UNIQUE(connection, internal_account_key). **Xero is the confirmed first provider (Leo, 2026-06-28)** — seed defaults to mirror Xero's UK demo chart (630 Inventory, 310 COGS, 200 Sales, 610 Accounts Receivable, 800 Accounts Payable, 820 VAT; GRNI/WIP-clearing/PPV as added current-liability/asset codes), each marked "remap on connect" so journals are human-readable before connection and never collide with a customer's real chart. (`provider` enum still carries `qbo`/`sage` for later.) |
+| `account_code_map` | `internal_account_key` → `provider_account_code`/`provider_account_id`. UNIQUE(connection, internal_account_key). **Xero is the confirmed first provider (Leo, 2026-06-28)** — seed defaults to mirror Xero's UK demo chart (630 Inventory, 310 COGS, 200 Sales, 610 Accounts Receivable, 800 Accounts Payable, 820 VAT; WIP-clearing/PPV as added asset/expense codes), each marked "remap on connect" so journals are human-readable before connection and never collide with a customer's real chart. (`provider` enum still carries `qbo`/`sage` for later.) |
 | `tax_code_map` | `internal_tax_key` (`STD_20`/`ZERO`/`EXEMPT`/`NO_VAT`) → `rate_percent` + `provider_tax_type`. Xero tax types: `20% (VAT on Income)` / `20% (VAT on Expenses)` / `Zero Rated` / `Exempt` / `No VAT`. |
 | `contact_links` | `party_type`+`party_id` → `provider_contact_id` (reuse, never recreate — avoids duplicate Xero contacts). |
 | `journal_push_log` | per-push idempotency: `journal_id`, `connection_id`, `document_type` (`ACCREC`/`ACCPAY`/`ACCPAYCREDIT`/`manual_journal`), **`external_idempotency_key`** (derived per `(connection_id, journal_id, document_type)`), `provider_document_id`, `status`. **The provider idempotency token lives here, never on the journal header.** |
@@ -585,7 +605,6 @@ revenue — cost and revenue in the same event.**
 |---|---|---|---|
 | `parts_stock` | Inventory / Stock | Asset (BS) | 1001 |
 | `parts_wip` | WIP / Uninvoiced Parts Cost (non-stock clearing) | Asset (BS) | 1002 |
-| `grni` | Goods Received Not Invoiced | Liability (BS) | 2108 |
 | `accounts_payable` | Trade Creditors | Liability (BS) | 2100 |
 | `vat_input` | Purchase VAT (reclaimable) | Asset (BS) | 2201 |
 | `accounts_receivable` | Trade Debtors | Asset (BS) | 1100 |
@@ -597,21 +616,22 @@ revenue — cost and revenue in the same event.**
 | `core_liability` | Core Charge Deposits | Liability (BS) | 2230 |
 
 > **Code-collision note.** These are inert **placeholders**, remapped on GL connect (the map is per-connection,
-> so no collision with the customer's live nominals). `core_liability` was moved to **2230** to avoid the
-> common GRNI-range collision around 2108/2109; `purchase_price_variance` (5008) and `parts_wip` (1002) are
-> new and non-colliding. The seeded chart is flagged "placeholder — confirm with accountant on connect"
-> (§13 Q7).
+> so no collision with the customer's live nominals). `core_liability` sits at **2230**;
+> `purchase_price_variance` (5008) and `parts_wip` (1002) are new and non-colliding. The seeded chart is flagged
+> "placeholder — confirm with accountant on connect" (§13 Q7).
 
 ### Simple-mode journals (no stock) — the DEFAULT path; the only path on VHC-only plans
 
-In **Simple mode** there is no inventory, no GRNI, no WIP buffer, no `stock_movements` — Events 1, 2, 4A-invoice,
-5 (stock) and 6 below **do not fire**. A part generates **two independent postings, on two different dates**
-(CONFIRMED Leo, 2026-06-28 — §13 Q12): the **cost is expensed at PURCHASE** (so it lands in the month the factor
-billed it and reconciles to that supplier's monthly statement), and the **sale posts at close**. Cost and revenue
-are **deliberately NOT matched to the same period** — this is the intended behaviour, not a defect. Worked thread:
-cost **£100 net**, sold **£150 net**.
+In **Simple mode** there is no inventory, no WIP buffer, no `stock_movements` (and no GRNI anywhere) — Events 1,
+2, 4A-invoice, 5 (stock) and 6 below **do not fire**. A part generates **two independent postings, on two
+different dates** (CONFIRMED Leo, 2026-06-28 — §13 Q12): the **cost is expensed at PURCHASE** (so it lands in the
+month the factor billed it and reconciles to that supplier's monthly statement) — this **fires for ALL tenants
+including VHC-only** — and the **sale posts only at the jobsheet invoice**. **VHC-only tenants get the
+purchase/cost leg only** (no sale leg, no in-app customer invoice). Cost and revenue are **deliberately NOT
+matched to the same period** — this is the intended behaviour, not a defect. Worked thread: cost **£100 net**,
+sold **£150 net**.
 
-**Simple-purchase — when the part purchase is recorded (dated to the purchase / factor-invoice date):**
+**Simple-purchase — when the part purchase is recorded (dated to the purchase / factor-invoice date) — ALL tenants incl. VHC-only:**
 
 | Account | Dr | Cr |
 |---|---|---|
@@ -626,7 +646,7 @@ connected this materialises as a **supplier bill** (`ACCPAY`) for that supplier,
 bookkeeper reconciles it directly against the factor statement and does **not** separately re-key the factor
 invoice (no double-counting).
 
-**Simple-close — the sale only (cost already expensed at purchase):**
+**Simple-sale — the sale only, at the JOBSHEET INVOICE (cost already expensed at purchase) — GMS tenants only:**
 
 | Account | Dr | Cr |
 |---|---|---|
@@ -634,53 +654,51 @@ invoice (no double-counting).
 | Parts Sales (`parts_sales`) | | £150.00 |
 | VAT Output (`vat_output`) | | £30.00 |
 
-The close posts **no cost leg** (it was taken at purchase). Output VAT reads `repair_items.vat_amount`. Margin is
-still reportable per job (sell − recorded purchase cost), it just isn't a same-period match. Same account map, same
-`inventory_journal` tables as Full mode — Simple mode simply never writes the stock/WIP legs and splits cost from
-sale across the two real-world dates. **A sold line with no recorded purchase cost still trips the £0-cost gate
-(§12)** so margin isn't silently booked at 100%.
+The jobsheet invoice posts **no cost leg** (it was taken at purchase). Output VAT reads `repair_items.vat_amount`.
+This sale leg **only fires for GMS tenants who invoice via jobsheets — VHC-only tenants never reach it** (purchase
+leg only). Margin is still reportable per job (sell − recorded purchase cost), it just isn't a same-period match.
+Same account map, same `inventory_journal` tables as Full mode — Simple mode simply never writes the stock/WIP
+legs and splits cost from sale across the two real-world dates. **A sold line with no recorded purchase cost still
+trips the £0-cost gate (§12)** so margin isn't silently booked at 100%.
 
 ---
 
-### Event 1 — Goods received into stock (stocked item, no invoice yet)  *(Full mode)*
+### Event 1 — Goods received (stocked item) — quantity-only movement, NO journal  *(Full mode)*
+
+**There is NO GL journal at receipt.** Booking a GRN for a stocked line writes a `receipt` `stock_movements`
+row that updates **on-hand quantity at a provisional (PO/expected) cost** and provisionally re-rolls
+`average_cost` — operational stock control only. The inventory asset does **not** hit the balance sheet here;
+**no GL posting happens until the supplier invoice (Event 2).** (No GRNI account exists in this module.)
+
+### Event 2 — Supplier invoice (stocked) — recognise the inventory asset + AP (no GRNI), post price variance
+
+This is when the asset hits the balance sheet. Worked with an invoice of **£105 net** (PO/received provisional
+value was £100):
 
 | Account | Dr | Cr |
 |---|---|---|
 | Inventory (`parts_stock`) | £100.00 | |
-| GRNI (`grni`) | | £100.00 |
-
-No VAT yet (recognised at the tax invoice). Source: `goods_receipt`. Inventory ↑ asset, GRNI ↑ liability. The
-£100 is the **provisional** receipt cost; the supplier invoice (Event 2) clears GRNI at this same received
-value and posts any variance separately.
-
-### Event 2 — Supplier / purchase invoice received (clears GRNI at received value, books AP + input VAT, posts price variance)
-
-Worked with an invoice of **£105 net** (PO/received value was £100):
-
-| Account | Dr | Cr |
-|---|---|---|
-| GRNI (`grni`) | £100.00 | |
 | Inventory (`parts_stock`) **or** PPV (`purchase_price_variance`) | £5.00 | |
 | VAT Input (`vat_input`) | £21.00 | |
 | Accounts Payable (`accounts_payable`) | | £126.00 |
 
-**GRNI is cleared at the *received* value (£100)** — it was credited at £100 in Event 1, so it nets to zero (no
-£5 stranded in GRNI). The **£5 price variance** goes to **Inventory** (with a WAVCO re-roll on the *residual
-on-hand qty only*) if the stock is still on hand, or to **Purchase Price Variance** if that qty has already
-been issued/sold. **Never to COGS for unsold stock** — that would expense a cost while the asset is still on
-the balance sheet and leave Inventory at the wrong WAVCO.
+The inventory asset is recognised here at **actual cost** (`Dr Inventory / Dr VAT Input / Cr AP`); there is no
+GRNI to clear. The base £100 books the asset; the **£5 price variance** goes to **Inventory** (with a WAVCO
+re-roll on the *residual on-hand qty only*) if the stock is still on hand, or to **Purchase Price Variance** if
+that qty has already been issued/sold. **Never to COGS for unsold stock** — that would expense a cost while the
+asset is still on the balance sheet and leave Inventory at the wrong WAVCO.
 
-> **Worked WAVCO drift example (provisional cost + same-day issue).** Receive 2 @ provisional £100 (Event 1,
-> `average_cost` → £100). Issue 1 @ £100 onto a job *before* the invoice arrives. Invoice lands at £105/unit.
-> The 1 unit **still on hand** re-rolls to £105 (variance £5 → Inventory). The 1 unit **already issued**
-> cannot have its COGS retro-changed (close may already have run), so its £5 under-cost posts to **PPV**, not
-> back into `average_cost`. Net: Inventory correct, the issued unit's variance is visible in PPV, no silent
-> drift.
+> **Worked WAVCO drift example (provisional cost + same-day issue).** Receive 2 @ provisional £100 (Event 1 —
+> quantity only, `average_cost` → £100, no journal). Issue 1 @ £100 onto a job *before* the invoice arrives.
+> Invoice lands at £105/unit (Event 2). The 1 unit **still on hand** re-rolls to £105 (variance £5 → Inventory).
+> The 1 unit **already issued** cannot have its COGS retro-changed (the jobsheet may already have been
+> invoiced), so its £5 under-cost posts to **PPV**, not back into `average_cost`. Net: Inventory correct, the
+> issued unit's variance is visible in PPV, no silent drift.
 
-### Event 3 — Part issued & sold on the customer invoice (perpetual, STOCKED) — fires at billing-document close
+### Event 3 — Part issued & sold on the customer invoice (perpetual, STOCKED) — fires at the JOBSHEET INVOICE
 
-**One business event, two paired journals (matching principle). The close stamps `invoice_number` +
-`tax_point_date` on both headers — close IS the invoice issuance (decision 4).**
+**One business event, two paired journals (matching principle). The jobsheet invoice stamps `invoice_number` +
+`tax_point_date` on both headers — the jobsheet invoice IS the invoice issuance (decision 4).**
 
 **3a — Cost side (relieve inventory → P&L):**
 
@@ -720,7 +738,7 @@ behaviour.
 | VAT Input (`vat_input`) | £20.00 | |
 | Accounts Payable (`accounts_payable`) | | £120.00 |
 
-**4A-sale — billing-document close (expense the cost AND raise the sale, same event):**
+**4A-sale — jobsheet invoice (expense the cost AND raise the sale, same event):**
 
 | Account | Dr | Cr |
 |---|---|---|
@@ -744,7 +762,8 @@ accounting policy and breaks matching; the WIP-clearing route is the recommended
 | Inventory (`parts_stock`) | | £100.00 |
 | VAT Input (`vat_input`) | | £20.00 |
 
-*Stocked, returned before invoice (still in GRNI):* reverse Event 1 — `Dr GRNI £100 / Cr Inventory £100`, no VAT.
+*Stocked, returned before the supplier invoice:* just reverse the quantity movement (`return_out`, SOH ↓) —
+**NO journal** (no asset was booked yet — the inventory asset is only recognised at the supplier invoice).
 
 *Non-stock, returned before the sale:* reverse the parked cost — `Dr AP £120 / Cr WIP-clearing £100 /
 Cr VAT Input £20` (the cost was never expensed, so there is no COGS to relieve).
@@ -816,45 +835,47 @@ price auto-fills `sell_price`. Ad-hoc lines (`stock_item_id` NULL) keep working 
 lines default `allocation_type='direct'` (the migration default; the API coerces unknown values to `direct`,
 `repair-items/parts.ts:81`) — the line-status machine never assumes a `shared` default.
 
-> **Issue-at-booking vs COGS-at-close — the reconciling control.** §7.3 fires the COGS *journal* at close, but
-> the **`issue` movement (SOH↓) is written at booking** (§7.2). Between booking and close the perpetual
-> valuation (`Σ total_cost`) has already dropped while the GL COGS journal hasn't posted, so for every
-> in-flight job the perpetual stock value and the journalled COGS would diverge. **We reconcile this with a
-> `stock_issued_pending_sale` (WIP-stock) control account:** the `issue` movement posts
-> `Dr Stock-Issued-WIP / Cr Inventory` at booking, and Event 3a at close posts `Dr COGS / Cr Stock-Issued-WIP`.
-> SOH and the GL only ever diverge through that explicit control account, and **cancelling/declining a booked
-> line before close reverses the `issue` movement** (back to `Inventory`) rather than leaking stock. *(If Leo
-> prefers, the simpler alternative is deferring the `issue` movement to close so movement + journal are atomic;
-> the control-account route keeps live SOH accurate during the job, which techs want — §13 Q11.)*
+> **Issue-at-booking vs COGS-at-jobsheet-invoice — the reconciling control.** §7.3 fires the COGS *journal* at
+> the jobsheet invoice, but the **`issue` movement (SOH↓) is written at booking** (§7.2). Between booking and the
+> jobsheet invoice the perpetual valuation (`Σ total_cost`) has already dropped while the GL COGS journal hasn't
+> posted, so for every in-flight job the perpetual stock value and the journalled COGS would diverge. **We
+> reconcile this with a `stock_issued_pending_sale` (WIP-stock) control account:** the `issue` movement posts
+> `Dr Stock-Issued-WIP / Cr Inventory` at booking, and Event 3a at the jobsheet invoice posts
+> `Dr COGS / Cr Stock-Issued-WIP`. SOH and the GL only ever diverge through that explicit control account, and
+> **cancelling/declining a booked line before the jobsheet invoice reverses the `issue` movement** (back to
+> `Inventory`) rather than leaking stock. *(If Leo prefers, the simpler alternative is deferring the `issue`
+> movement to the jobsheet invoice so movement + journal are atomic; the control-account route keeps live SOH
+> accurate during the job, which techs want — §13 Q11.)*
 
-### 7.3 COGS-on-invoice trigger (tie to the real "invoiced out" event — at the BILLING DOCUMENT)
-Hook the billing-document close: VHC `POST /health-checks/:id/close` (`status='completed'`, `closed_at` set,
-`status.ts:1516`; `closableStatuses=['authorized','declined','expired']` at `:1438`) **and** jobsheet close
-(`jobsheets.closed_at`, P2). The **sold basket** = authorised `repair_items` **plus their selected
-`repair_option`** (mirror `item-report-service.ts`/`calcItemTotal`'s selected-option substitution), and its
-`repair_parts` are collected via **both** FKs — `repair_part.repair_item_id` **and**
-`repair_part.repair_option_id` — because a part can hang off the chosen option, not just the concern. For each
-**authorised** part (`outcome_status='authorised'`/`is_approved`, the existing filter at `status.ts:1494`):
+### 7.3 COGS-on-invoice trigger (tie to the real "invoiced out" event — the JOBSHEET INVOICE, and only that)
+Hook the **jobsheet invoice** (`jobsheets.closed_at` set — the invoice issuance event; P2). **VHC close is not a
+trigger** and does nothing in the parts-accounting path. The basket is gathered from the jobsheet's child VHC(s):
+`health_checks.jobsheet_id = <jobsheet>` → `repair_items` → `repair_parts`, **plus** any jobsheet-direct
+`repair_items`. The **sold basket** = authorised/billed `repair_items` **plus their selected `repair_option`**
+(mirror `item-report-service.ts`/`calcItemTotal`'s selected-option substitution), and its `repair_parts` are
+collected via **both** FKs — `repair_part.repair_item_id` **and** `repair_part.repair_option_id` — because a part
+can hang off the chosen option, not just the concern. For each **authorised/billed** part:
 - write `cogs_snapshot` (unit) + `cogs_recognised_at` (idempotent — skip if already set), default `qty_fitted`
   to `quantity` if unset,
 - emit Event 3a (stocked) or Event 4A-sale `Dr COGS / Cr WIP-clearing` (non-stock) **and** Event 3b sale, with
   COGS = **`qty_fitted × cogs_snapshot`**,
-- for stocked items, the `issue` movement was already written at booking; close fires the COGS journal and
-  relieves the `stock_issued_pending_sale` control (§7.2).
+- for stocked items, the `issue` movement was already written at booking; the jobsheet invoice fires the COGS
+  journal and relieves the `stock_issued_pending_sale` control (§7.2).
 
 **Shared allocation — no cost-splitting to replicate.** A `shared` part is simply stored against the parent
 group's `repair_item_id` (the pricing triggers ignore `allocation_type` entirely — `calculate_repair_item_totals`
 just `SUM`s `repair_parts` by `repair_item_id`). So the COGS sweep **iterates `repair_parts` by
 `repair_item_id`/`repair_option_id` and treats each row exactly once**; there is no distribution-across-children
 routine to mirror. The only real risk is **double-counting** if the sweep walks both a parent and its children
-— so collect each `repair_parts.id` once.
+— so collect each `repair_parts.id` once across the whole jobsheet basket.
 
-**Empty / partial close.** On a `declined` close the authorised basket is empty and on an `expired` close it
-may be partial — recognise COGS only for authorised items; a **zero-item close emits no journal**. The logic
-handles this by construction (it iterates only authorised parts).
+**Empty / partial jobsheet invoice.** A jobsheet invoiced with no billable parts (e.g. nothing authorised, or
+all lines declined) has an empty basket — **a jobsheet invoiced with no billable parts emits no journal**.
+Recognise COGS only for authorised/billed items; the logic handles this by construction (it iterates only the
+billable parts).
 
-Estimate `accepted` is a further trigger; an estimate that becomes a jobsheet/VHC recognises at *that*
-document's close (no double-fire — `cogs_recognised_at` guards).
+An **estimate that is accepted becomes a jobsheet** and recognises at *that jobsheet's* invoice — not as a
+separate trigger, and VHC is not involved (no double-fire — `cogs_recognised_at` guards).
 
 ### 7.4 Stocktake / adjustment
 Stocktake session: pick category/bin/supplier/all → snapshot expected qty (freeze) → enter counted → system
@@ -873,13 +894,13 @@ reconcile to the original PO → `credited` + Event 5.
 `max_qty − qty_on_hand − qty_on_order`. Low-Stock report groups by `preferred_supplier_id` → becomes a draft
 PO per factor. Colour status (in-stock/low/out/on-order) on lists.
 
-### 7.7 Document reopen → COGS reversal (memory: `vhc-admin-edit-reset-initiative`)
-A closed → reopened → edited → reclosed billing document must not silently desync COGS from the final invoice.
-**On reopen, the close hook posts *reversing* journals for every COGS/sale journal it previously emitted and
-clears `cogs_recognised_at` + `cogs_snapshot` (+ `qty_fitted` if it was auto-defaulted) on the affected
-`repair_parts`.** Re-close then re-recognises against the final basket. Without this, post-reopen edits (added/
-removed parts, changed cost, changed `qty_fitted`) would never adjust COGS because the `cogs_recognised_at`
-guard would skip them.
+### 7.7 Jobsheet reopen → COGS reversal (memory: `vhc-admin-edit-reset-initiative`)
+A invoiced → reopened → edited → re-invoiced jobsheet must not silently desync COGS from the final invoice.
+**On jobsheet reopen, the invoice hook posts *reversing* journals for every COGS/sale journal it previously
+emitted and clears `cogs_recognised_at` + `cogs_snapshot` (+ `qty_fitted` if it was auto-defaulted) on the
+affected `repair_parts`.** Re-invoicing then re-recognises against the final basket. Without this, post-reopen
+edits (added/removed parts, changed cost, changed `qty_fitted`) would never adjust COGS because the
+`cogs_recognised_at` guard would skip them.
 
 ---
 
@@ -904,7 +925,7 @@ tables in the system; raw fetches silently truncate at the **PostgREST ~1000-row
 | **Orphan Parts** | P2 | Received/ordered parts **not on any job card** — driven off **`purchase_order_lines`/`goods_receipt_lines`** (which exist for **both** forks), not `stock_movements` (which the non-stock fork never writes). Definition: PO/GRN lines with `repair_part_id IS NULL`, **plus** received non-stock PO lines with `reconciled=false` (received, never fitted, never returned — the literal money-leak). Catches the leakage the brief cares about. |
 | **Parts Gross Profit / Margin-by-Repair-Type** | P2 | `sell − cost` by part/category/period, and **by `repair_items.repair_type_id`** — **closes the deferred Repair Types margin piece** (REPAIR_TYPES.md §4.4/§8). Reuse `calcItemTotal` (selected-option substitution), `COALESCE(price_override, total_inc_vat)`, parent/child de-dup. Flag below-cost lines. |
 | **Slow-moving / Obsolete (SLOB)** | P3 | No movement in N days, £ tied up. Needs movement history to accumulate first. |
-| **GRNI Ageing** | P3 | Receipts un-matched to invoices (lines stuck in GRNI = missing invoices / short-shipments). A real period-end control. |
+| **Received-Not-Invoiced (RNI)** | P3 | Stocked parts physically received (GRN booked) but with **no supplier invoice entered yet** — chase factor invoices / accrue at period-end. The asset isn't booked until the supplier invoice, so this lists the received-qty exposure awaiting it. A real period-end control. |
 
 Web: one page per report under `apps/web/src/pages/Reports/`, lazy-imported + routed in `App.tsx`, a `NavCard`
 in `ReportsHub.tsx`. Reuse `useReportFilters`, `useReportData<T>`, `StatCard`, `ChartCard`, `ExportButton`,
@@ -967,7 +988,8 @@ Override precedence: **job-line override → item `sell_price_override` → matr
 **P-Simple — Simple-mode accounting (ship first; the majority no-stock tenant).**
 `organization_settings.parts_mode` + plan gating (§9) · `repair_parts.purchased_at` + `purchase_recognised_at`
 (§5.3) · the §6 **Simple-mode journals** — the cost **bill at purchase** (a lightweight "mark purchased" action /
-auto on cost+supplier set, dated to `purchased_at`) **and** the **sale at close** (§7.3) · the journal-ready tables
+auto on cost+supplier set, dated to `purchased_at`; **all tenants incl. VHC-only**) **and** the **sale at the
+jobsheet invoice** (§7.3; **GMS tenants only — VHC-only tenants get no sale leg**) · the journal-ready tables
 it *shares* with Full mode — `inventory_journal`/`_lines` + the mapping layer (`accounting_connections`,
 `account_code_map`, `tax_code_map`, `contact_links`, `journal_push_log`), seeded inert · the **£0-cost gate** ·
 **Parts-GP / Margin-by-Repair-Type report** (closes the deferred Repair Types loop for *every* tenant, not just
@@ -993,22 +1015,23 @@ receiving writes `receipt` movements (stocked) · part-line state machine (reque
 incl. `declined`) · **Parts-on-Order + Negative-Stock reports**. **Ships the core UK order-in flow.**
 *Defers:* the journals + returns.
 
-**P2 — Accounting: journals + returns + margin (+ jobsheet close trigger + £0-cost gate).**
+**P2 — Accounting: journals + returns + margin (+ jobsheet-invoice trigger + £0-cost gate).**
 `inventory_journal`/`_lines` (immutable, balanced, `period_key` + writer period-lock rule) + writer service ·
 `supplier_returns`/`_lines` + the return→credit loop · mapping layer (`accounting_connections`,
 `account_code_map`, `tax_code_map`, `contact_links`, `journal_push_log`, seeded inert) · `jobsheets.closed_at`
-as a first-class COGS trigger · COGS-on-close hook (Events 3a/3b/4A both legs + WIP-clearing + the
-`stock_issued_pending_sale` control + reopen-reversal §7.7) · goods-in journals (Events 1/2 incl. price
-variance/PPV) · adjustment journals (Event 6) · **Parts-to-Return + Orphan-Parts (PO/GRN-driven) +
-Parts-GP/Margin-by-Repair-Type reports**. **Acceptance criterion:** close is **blocked (or forces a £0-cost
-confirmation)** when an authorised stocked/order-in line has null/0 `cost_price`/`cogs_snapshot` — a £0-cost
-line silently books 100% margin and corrupts the ledger this module exists to produce. **Ships the
-accounting-grade promise + closes the deferred Repair Types margin loop.** *Defers:* cores, the live GL push.
+as **THE** COGS/sale trigger · COGS-on-jobsheet-invoice hook (Events 3a/3b/4A both legs + WIP-clearing + the
+`stock_issued_pending_sale` control + reopen-reversal §7.7) · goods-in is quantity-only (no Event-1 journal);
+the supplier-invoice journal (Event 2, incl. price variance/PPV) · adjustment journals (Event 6) ·
+**Parts-to-Return + Orphan-Parts (PO/GRN-driven) + Parts-GP/Margin-by-Repair-Type reports**. **Acceptance
+criterion:** the jobsheet invoice is **blocked (or forces a £0-cost confirmation)** when an authorised
+stocked/order-in line has null/0 `cost_price`/`cogs_snapshot` — a £0-cost line silently books 100% margin and
+corrupts the ledger this module exists to produce. **Ships the accounting-grade promise + closes the deferred
+Repair Types margin loop.** *Defers:* cores, the live GL push.
 
-**P3 — Cores, stocktake sessions, SLOB/GRNI.**
+**P3 — Cores, stocktake sessions, SLOB/RNI.**
 Core/surcharge sub-state + deposit journals (**core-forfeit VAT confirmed with accountant first**, §13 Q6) ·
-structured stocktake sessions (freeze + reason-coded variance) · **SLOB + GRNI-Ageing reports** · supplier
-price-list child table · single-hop supersession + alias search · barcode scanning UI.
+structured stocktake sessions (freeze + reason-coded variance) · **SLOB + Received-Not-Invoiced (RNI) reports** ·
+supplier price-list child table · single-hop supersession + alias search · barcode scanning UI.
 
 **P4 — GL integration + multi-location + period-lock UI.**
 Live Xero/QBO/Sage push (documents + per-push `external_idempotency_key` + draft/posted handling) ·
@@ -1031,7 +1054,7 @@ two-leg customer-credit modelling (§13 Q10).
 | `2026XXXX_purchase_orders.sql` | P1 | `purchase_orders` + `purchase_order_lines` (incl. `reconciled`). |
 | `2026XXXX_goods_receipts.sql` | P1 | `goods_receipts` + `goods_receipt_lines`. |
 | `2026XXXX_repair_parts_stock_extension.sql` | P1 | `ALTER repair_parts ADD COLUMN IF NOT EXISTS …` (stock_item_id, po_line_id, qty_fitted, qty_to_return, line_status, ownership, core, cogs_snapshot, cogs_recognised_at). |
-| `2026XXXX_jobsheets_close_timestamp.sql` | P2 | `ALTER jobsheets ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ` (the parallel COGS trigger). |
+| `2026XXXX_jobsheets_close_timestamp.sql` | P2 | `ALTER jobsheets ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ` (**THE** COGS/sale trigger — the jobsheet's invoiced/closed state; jobsheet close == jobsheet invoiced). |
 | `2026XXXX_inventory_journal.sql` | P2 | `inventory_journal` (incl. `period_key`, `invoice_number`, `tax_point_date`) + `inventory_journal_lines` + balance CHECK + org `books_locked_through`. |
 | `2026XXXX_supplier_returns.sql` | P2 | `supplier_returns` + `supplier_return_lines`. |
 | `2026XXXX_accounting_mapping.sql` | P2 | `accounting_connections`, `account_code_map`, `tax_code_map`, `contact_links`, `journal_push_log` + placeholder default-code seed. |
@@ -1057,19 +1080,27 @@ migration — new file only.
   invoice and only expense it at the sale (Event 4A two legs) — **don't** book `Dr COGS` on the supplier invoice,
   or COGS and revenue land in different periods and matching breaks.
 - **SIMPLE mode is the OPPOSITE — and that is intentional.** Simple mode expenses the cost **at purchase** (dated
-  to the factor-invoice month, to reconcile the supplier statement) and posts the sale at close, so cost and
-  revenue **are deliberately in different periods**. Do **not** "fix" this to match — it is the confirmed Simple
-  policy (§13 Q12). The matching rule above applies to Full mode only; the two modes have opposite cost-timing,
-  so any shared COGS helper must branch on `parts_mode`.
-- **GRNI clears at received value; variance never goes to COGS for unsold stock.** Event 2 clears GRNI at the
-  Event-1 value and posts price variance to Inventory (on-hand) or PPV (already issued). WAVCO at receipt is
-  **provisional**; the invoice trues up the residual on-hand qty only (§5.4, §6 Event 2).
-- **Issue-at-booking vs COGS-at-close** must reconcile through the `stock_issued_pending_sale` control account
-  (or defer the issue to close); cancel/decline before close reverses the `issue` movement (§7.2). Otherwise
-  perpetual valuation and journalled COGS diverge for every in-flight job, and declined lines leak stock.
+  to the factor-invoice month, to reconcile the supplier statement; fires for **all** tenants incl. VHC-only) and
+  posts the sale **only at the jobsheet invoice** (GMS tenants only — VHC-only tenants get no sale leg), so cost
+  and revenue **are deliberately in different periods**. Do **not** "fix" this to match — it is the confirmed
+  Simple policy (§13 Q12). The matching rule above applies to Full mode only; the two modes have opposite
+  cost-timing, so any shared COGS helper must branch on `parts_mode`.
+- **NO GRNI — the inventory asset is recognised at the supplier invoice.** Goods receipt for a stocked line is
+  **quantity-only — no GL journal**; Event 2 (the supplier invoice) books `Dr Inventory / Dr VAT Input / Cr AP`
+  at actual cost and posts price variance to Inventory (on-hand) or PPV (already issued) — variance **never**
+  goes to COGS for unsold stock. WAVCO at receipt is **provisional**; the invoice trues up the residual on-hand
+  qty only (§5.4, §6 Event 2). **Edge:** a stocked part received-but-not-yet-invoiced, then issued at booking
+  and the jobsheet invoiced *before* the supplier invoice arrives → COGS uses the provisional cost and GL
+  Inventory can go **temporarily negative**, self-correcting when the supplier invoice posts `Dr Inventory`
+  (+ PPV true-up). The `stock_issued_pending_sale` control + provisional WAVCO handle it; acceptable for the
+  small-garage target.
+- **Issue-at-booking vs COGS-at-jobsheet-invoice** must reconcile through the `stock_issued_pending_sale`
+  control account (or defer the issue to the jobsheet invoice); cancel/decline before the jobsheet invoice
+  reverses the `issue` movement (§7.2). Otherwise perpetual valuation and journalled COGS diverge for every
+  in-flight job, and declined lines leak stock.
 - **`repair_parts.cost_price` is nullable + defaults 0** (`20260203210001`) — legacy lines have no cost, so
-  COGS is understated. **P2 acceptance criterion: block close (or force £0-cost confirmation) on any authorised
-  stocked/order-in line with null/0 cost** — a £0-cost line silently books 100% margin.
+  COGS is understated. **P2 acceptance criterion: block the jobsheet invoice (or force £0-cost confirmation) on
+  any authorised stocked/order-in line with null/0 cost** — a £0-cost line silently books 100% margin.
 - **`allocation_type='shared'` is not a cost-split.** The pricing triggers ignore `allocation_type`; a `shared`
   part just hangs on the parent group's `repair_item_id`. The COGS sweep iterates `repair_parts` once per row
   (via **both** `repair_item_id` and `repair_option_id`) and must not walk a parent and its children twice. No

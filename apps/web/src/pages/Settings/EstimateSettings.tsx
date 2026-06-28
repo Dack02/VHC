@@ -13,6 +13,7 @@ interface SettingsData {
   // Tenant selling points shown on every customer estimate (max 6). Free text — the icon
   // is auto-matched from the wording (see lib/uspIcons).
   usps: string[]
+  onlineBookingEnabled: boolean
 }
 
 const MAX_USPS = 6
@@ -230,6 +231,15 @@ export default function EstimateSettings() {
             <p className="text-sm text-gray-500 mt-0.5">The customer must sign on the estimate page before they can approve.</p>
           </div>
           <Toggle on={settings.requireSignature} onClick={() => patchSettings({ requireSignature: !settings.requireSignature })} />
+        </div>
+
+        {/* Online booking */}
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 flex items-center justify-between">
+          <div className="pr-4">
+            <div className="text-sm font-medium text-gray-900">Let customers book a slot online</div>
+            <p className="text-sm text-gray-500 mt-0.5">After approving, the customer picks a slot. Availability respects your workshop loading and category limits (Capacity &amp; Resource Manager).</p>
+          </div>
+          <Toggle on={settings.onlineBookingEnabled} onClick={() => patchSettings({ onlineBookingEnabled: !settings.onlineBookingEnabled })} />
         </div>
 
         {/* Terms */}

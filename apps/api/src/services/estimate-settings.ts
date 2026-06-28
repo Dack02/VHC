@@ -18,6 +18,7 @@ export interface EstimateSettings {
   requireSignature: boolean
   termsText: string | null
   usps: string[]
+  onlineBookingEnabled: boolean
 }
 
 const DEFAULTS: EstimateSettings = {
@@ -25,7 +26,8 @@ const DEFAULTS: EstimateSettings = {
   autoExpire: true,
   requireSignature: false,
   termsText: null,
-  usps: []
+  usps: [],
+  onlineBookingEnabled: false
 }
 
 // Normalise a raw usps value (jsonb can arrive as array, string, or null) into a clean,
@@ -46,7 +48,7 @@ export function normaliseUsps(raw: unknown): string[] {
 export async function getEstimateSettings(orgId: string): Promise<EstimateSettings> {
   const { data } = await supabaseAdmin
     .from('organization_settings')
-    .select('estimate_link_expiry_days, estimate_auto_expire, estimate_require_signature, estimate_terms_text, estimate_usps')
+    .select('estimate_link_expiry_days, estimate_auto_expire, estimate_require_signature, estimate_terms_text, estimate_usps, estimate_online_booking_enabled')
     .eq('organization_id', orgId)
     .maybeSingle()
 
@@ -56,6 +58,7 @@ export async function getEstimateSettings(orgId: string): Promise<EstimateSettin
     autoExpire: data.estimate_auto_expire ?? DEFAULTS.autoExpire,
     requireSignature: data.estimate_require_signature ?? DEFAULTS.requireSignature,
     termsText: data.estimate_terms_text ?? DEFAULTS.termsText,
-    usps: normaliseUsps(data.estimate_usps)
+    usps: normaliseUsps(data.estimate_usps),
+    onlineBookingEnabled: data.estimate_online_booking_enabled ?? DEFAULTS.onlineBookingEnabled
   }
 }

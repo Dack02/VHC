@@ -9,6 +9,8 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { getOrganizationBranding } from '../services/email.js'
 import { getEstimateSettings } from '../services/estimate-settings.js'
+import { loadSiteConfig } from '../services/resource-config.js'
+import { canBook } from '../services/resource-capacity.js'
 
 const publicEstimate = new Hono()
 
@@ -45,8 +47,9 @@ async function loadByToken(token: string) {
   const { data } = await supabaseAdmin
     .from('estimates')
     .select(`
-      id, organization_id, reference, status, valid_until, token_expires_at, first_opened_at,
+      id, organization_id, site_id, reference, status, valid_until, token_expires_at, first_opened_at,
       customer_notes, responded_at, response_finalised_at,
+      requested_date, requested_time, requested_slot_minutes, courtesy_car_requested, online_booked_at,
       customer:customers(first_name, last_name),
       vehicle:vehicles(registration, make, model, year)
     `)
@@ -171,7 +174,8 @@ publicEstimate.get('/estimate/:token', async (c) => {
       customerApproved: l.customer_approved,
       customerDeclinedReason: l.customer_declined_reason
     })),
-    totals
+    totals,
+    booking: { enabled: settings.onlineBookingEnabled }
   })
 })
 
@@ -305,6 +309,222 @@ publicEstimate.post('/estimate/:token/sign', async (c) => {
   await trackEstimateActivity(est!.id, 'signed', null, c)
   const status = await recomputeStatus(est!.id, est!.organization_id)
   return c.json({ success: true, status })
+})
+
+// ---------------------------------------------------------------------------
+// Online booking (Resource Manager P3). The customer picks a slot AFTER approving;
+// availability + the final book both run through the capacity engine (canBook), so
+// online bookings respect the same loading target + category quotas as everything
+// else. Drop-off types offer a morning drop-off time; timed types offer slots.
+// ---------------------------------------------------------------------------
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
+
+function ymd(d: Date): string { return d.toISOString().slice(0, 10) }
+function addDays(s: string, n: number): string { const d = new Date(`${s}T12:00:00`); d.setDate(d.getDate() + n); return ymd(d) }
+function isoDow(s: string): number { const d = new Date(`${s}T12:00:00`).getDay(); return ((d + 6) % 7) + 1 }
+function toMin(t: string): number { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+function fmtMin(m: number): string { return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}` }
+function buildTimes(start: string, endInclusive: string, stepMin: number): string[] {
+  const out: string[] = []
+  for (let m = toMin(start); m <= toMin(endInclusive); m += stepMin) out.push(fmtMin(m))
+  return out
+}
+
+async function defaultSiteId(orgId: string): Promise<string | null> {
+  const { data } = await supabaseAdmin
+    .from('sites').select('id').eq('organization_id', orgId)
+    .order('created_at', { ascending: true }).limit(1).maybeSingle()
+  return data?.id ?? null
+}
+
+interface BookingJob { siteId: string; repairTypeId: string; hours: number; bookingMode: 'drop_off' | 'timed_slot'; slotMinutes: number }
+
+// Resolve the estimate's category, hours, and booking mode (its first priced line's
+// repair type). Returns null when there's no site or no categorisable line.
+async function resolveBookingJob(est: any): Promise<BookingJob | null> {
+  const siteId = est.site_id || await defaultSiteId(est.organization_id)
+  if (!siteId) return null
+
+  const { data: items } = await supabaseAdmin
+    .from('repair_items')
+    .select('id, parent_repair_item_id, repair_type_id, created_at')
+    .eq('estimate_id', est.id)
+    .order('created_at', { ascending: true })
+  const top = (items || []).filter((i: any) => !i.parent_repair_item_id && i.repair_type_id)
+  const primary = top[0] || (items || []).find((i: any) => i.repair_type_id)
+  if (!primary?.repair_type_id) return null
+  const repairTypeId = primary.repair_type_id as string
+
+  const itemIds = (items || []).map((i: any) => i.id)
+  let hours = 0
+  if (itemIds.length) {
+    const { data: lab } = await supabaseAdmin.from('repair_labour').select('hours').in('repair_item_id', itemIds)
+    hours = (lab || []).reduce((s: number, l: any) => s + (Number(l.hours) || 0), 0)
+  }
+  const { data: rt } = await supabaseAdmin
+    .from('repair_types')
+    .select('booking_mode, slot_minutes, default_estimated_hours')
+    .eq('id', repairTypeId).eq('organization_id', est.organization_id).maybeSingle()
+  if (hours <= 0) hours = Number(rt?.default_estimated_hours) || 1
+  const bookingMode = rt?.booking_mode === 'timed_slot' ? 'timed_slot' : 'drop_off'
+  const slotMinutes = bookingMode === 'timed_slot'
+    ? (Number(rt?.slot_minutes) || Math.max(15, Math.round(hours * 60)))
+    : Math.max(15, Math.round(hours * 60))
+  return { siteId, repairTypeId, hours, bookingMode, slotMinutes }
+}
+
+interface DayWindow { operatingDays: number[]; dayStart: string; dayEnd: string }
+async function dayWindow(orgId: string, siteId: string): Promise<DayWindow> {
+  const { data } = await supabaseAdmin
+    .from('workshop_board_config')
+    .select('operating_days, day_start_time, day_end_time')
+    .eq('organization_id', orgId).eq('site_id', siteId).maybeSingle()
+  const od = data?.operating_days as number[] | null | undefined
+  return {
+    operatingDays: od && od.length ? od : [1, 2, 3, 4, 5, 6, 7],
+    dayStart: (data?.day_start_time || '08:00').slice(0, 5),
+    dayEnd: (data?.day_end_time || '17:00').slice(0, 5)
+  }
+}
+
+// The bookable times for one day, by mode. On the earliest date, times before the
+// lead-time cutoff are dropped.
+function slotTimesFor(job: BookingJob, cfg: any, win: DayWindow, date: string, earliestDate: string, earliestHHMM: string): string[] {
+  let times: string[]
+  if (job.bookingMode === 'timed_slot') {
+    const lastStart = Math.max(toMin(win.dayStart), toMin(win.dayEnd) - job.slotMinutes)
+    times = buildTimes(win.dayStart, fmtMin(lastStart), job.slotMinutes)
+  } else {
+    times = buildTimes(cfg.dropoffWindowStart, cfg.dropoffWindowEnd, cfg.dropoffSlotIntervalMinutes)
+  }
+  if (date === earliestDate) times = times.filter(t => t >= earliestHHMM)
+  return times
+}
+
+const EMPTY_AVAIL = { enabled: false, bookable: false, courtesyCar: false, slotMinutes: 0, days: [] as any[] }
+
+// GET /estimate/:token/availability  → day strip + slots (drop-off or timed)
+publicEstimate.get('/estimate/:token/availability', async (c) => {
+  const est = await loadByToken(c.req.param('token'))
+  if (!est) return c.json({ error: 'Estimate not found' }, 404)
+
+  const settings = await getEstimateSettings(est.organization_id)
+  if (!settings.onlineBookingEnabled) return c.json(EMPTY_AVAIL)
+
+  // Already booked → bounce the customer straight to their confirmation.
+  if (est.online_booked_at && est.requested_date) {
+    return c.json({
+      ...EMPTY_AVAIL, enabled: true,
+      existingBooking: {
+        requested_date: est.requested_date,
+        requested_time: (est.requested_time || '').slice(0, 5),
+        slot_minutes: est.requested_slot_minutes || 0,
+        courtesy_car_requested: !!est.courtesy_car_requested
+      }
+    })
+  }
+
+  const job = await resolveBookingJob(est)
+  if (!job) return c.json(EMPTY_AVAIL)
+
+  const [cfg, win] = await Promise.all([loadSiteConfig(est.organization_id, job.siteId), dayWindow(est.organization_id, job.siteId)])
+  const now = new Date()
+  const earliest = new Date(now.getTime() + cfg.onlineLeadTimeHours * 3600_000)
+  const earliestDate = ymd(earliest)
+  const earliestHHMM = `${String(earliest.getHours()).padStart(2, '0')}:${String(earliest.getMinutes()).padStart(2, '0')}`
+
+  const days: any[] = []
+  for (let i = 0; i <= cfg.bookingMaxDays && days.length < 14; i++) {
+    const d = addDays(earliestDate, i)
+    if (!win.operatingDays.includes(isoDow(d))) continue
+    const verdict = await canBook(est.organization_id, job.siteId, d, job.repairTypeId, job.hours)
+    const dayOpen = verdict.status === 'OK'
+    const times = slotTimesFor(job, cfg, win, d, earliestDate, earliestHHMM)
+    const slots = times.map(t => ({ time: t, label: t, available: dayOpen }))
+    const dd = new Date(`${d}T12:00:00`)
+    days.push({
+      date: d,
+      weekday: dd.toLocaleDateString('en-GB', { weekday: 'short' }),
+      dayNum: dd.toLocaleDateString('en-GB', { day: 'numeric' }),
+      monthShort: dd.toLocaleDateString('en-GB', { month: 'short' }),
+      full: !slots.some(s => s.available),
+      slots
+    })
+  }
+
+  return c.json({
+    enabled: true,
+    bookable: days.some(d => !d.full),
+    courtesyCar: true,
+    slotMinutes: job.slotMinutes,
+    mode: job.bookingMode,
+    days
+  })
+})
+
+// POST /estimate/:token/book  → persist the chosen slot (re-validated via canBook)
+publicEstimate.post('/estimate/:token/book', async (c) => {
+  const est = await loadByToken(c.req.param('token'))
+  if (!est) return c.json({ error: 'Estimate not found' }, 404)
+  if (est.token_expires_at && new Date(est.token_expires_at) < new Date()) {
+    return c.json({ error: 'This estimate link has expired' }, 410)
+  }
+  const settings = await getEstimateSettings(est.organization_id)
+  if (!settings.onlineBookingEnabled) return c.json({ error: 'Online booking is not available' }, 400)
+  if (est.online_booked_at) return c.json({ error: 'A slot has already been booked for this estimate' }, 400)
+
+  const body = await c.req.json().catch(() => ({}))
+  const date = String(body.date || '')
+  const time = String(body.time || '')
+  if (!DATE_RE.test(date) || !TIME_RE.test(time)) return c.json({ error: 'A valid date and time are required' }, 400)
+
+  const job = await resolveBookingJob(est)
+  if (!job) return c.json({ error: 'Online booking is not available for this estimate' }, 400)
+
+  const [cfg, win] = await Promise.all([loadSiteConfig(est.organization_id, job.siteId), dayWindow(est.organization_id, job.siteId)])
+  const now = new Date()
+  const earliest = new Date(now.getTime() + cfg.onlineLeadTimeHours * 3600_000)
+  const earliestDate = ymd(earliest)
+  const earliestHHMM = `${String(earliest.getHours()).padStart(2, '0')}:${String(earliest.getMinutes()).padStart(2, '0')}`
+
+  // Validate the slot is still genuinely on offer (operating day, lead time,
+  // a real slot for the mode, and capacity still OK).
+  if (date < earliestDate || date > addDays(earliestDate, cfg.bookingMaxDays)) return c.json({ error: 'That date is not available' }, 400)
+  if (!win.operatingDays.includes(isoDow(date))) return c.json({ error: 'That date is not available' }, 400)
+  const validTimes = slotTimesFor(job, cfg, win, date, earliestDate, earliestHHMM)
+  if (!validTimes.includes(time)) return c.json({ error: 'That time is not available' }, 400)
+  const verdict = await canBook(est.organization_id, job.siteId, date, job.repairTypeId, job.hours)
+  if (verdict.status !== 'OK') return c.json({ error: 'That slot has just been taken — please pick another.' }, 409)
+
+  const { error } = await supabaseAdmin
+    .from('estimates')
+    .update({
+      requested_date: date,
+      requested_time: time,
+      requested_slot_minutes: job.slotMinutes,
+      courtesy_car_requested: !!body.courtesyCar,
+      online_booked_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', est.id)
+    .eq('organization_id', est.organization_id)
+  if (error) {
+    console.error('estimate online book error:', error)
+    return c.json({ error: 'Could not book that slot.' }, 500)
+  }
+
+  await trackEstimateActivity(est.id, 'online_booked', null, c, { date, time }).catch(() => {})
+
+  return c.json({
+    booking: {
+      requested_date: date,
+      requested_time: time,
+      slot_minutes: job.slotMinutes,
+      courtesy_car_requested: !!body.courtesyCar
+    }
+  })
 })
 
 export default publicEstimate

@@ -15,7 +15,8 @@ accounting-grade Parts & Stock module** designed from the **double-entry ledger 
 
 - **Two modes, plan-gated (NEW — Leo, 2026-06-28).** **Simple mode** (the default, and the *only* option for
   VHC-only tenants): **no stock tracking** — parts are priced job lines whose cost is sent to accounting as a
-  **direct P&L cost** at the invoice. **Full mode** (GMS-tier opt-in): everything below — perpetual stock on the
+  **direct P&L cost at the point of purchase** (dated to the factor-invoice month so it reconciles to the
+  supplier's monthly statement); the sale posts separately at close. **Full mode** (GMS-tier opt-in): everything below — perpetual stock on the
   balance sheet, goods-in, valuation, returns. Same `repair_parts` line, same close→invoice trigger; Full mode
   only *adds* the balance-sheet machinery. **The bullets below describe Full mode** unless noted (see §2 "Two
   modes" and §6 "Simple-mode journals").
@@ -64,17 +65,22 @@ accounting-grade Parts & Stock module** designed from the **double-entry ledger 
 Each remaining item marked **RECOMMEND** for Leo to confirm in §13. Bias: accounting-correctness + UK-independent reality.
 
 0. **CONFIRMED (Leo, 2026-06-28) — Two parts modes, plan-gated: `simple` (default) and `full`.**
-   - **Simple — no stock tracking.** Parts are priced `repair_parts` lines; their **cost is sent to accounting
-     as a direct P&L cost** (`Dr Parts COGS / Cr Accounts Payable`) at the billing-document close, alongside the
-     sale. **No** inventory asset, GRNI, WIP, PO/GRN, `stock_movements`, or stock-based returns. This is the
-     default for every tenant and the **only** option on **VHC-only plans**.
+   - **Simple — no stock tracking.** Parts are priced `repair_parts` lines; their **cost is expensed straight to
+     the P&L at the point of PURCHASE** (`Dr Parts COGS / Dr VAT Input / Cr Accounts Payable`), dated to the
+     factor-invoice month so it reconciles to the supplier's monthly statement; the **sale posts separately at
+     close** (`Dr AR / Cr Parts Sales / Cr VAT Output`). **No** inventory asset, GRNI, WIP, PO/GRN,
+     `stock_movements`, or stock-based returns. This is the default for every tenant and the **only** option on
+     **VHC-only plans**.
    - **Full — everything in this doc.** Perpetual stock on the balance sheet (Events 1–6), goods-in, valuation,
      the returns loop. Requires the `parts_stock` module, which is **off on VHC-only plans** (mirrors how
      `jobsheets` is GMS-tier-only).
    - One setting `organization_settings.parts_mode ENUM('simple','full')` defaults `'simple'`; it may be set
      `'full'` **only** when the `parts_stock` module entitlement is on. Both modes share the same `repair_parts`
-     line and the same close→invoice trigger; Full mode only *adds* the inventory legs. **Cost-timing in Simple
-     mode (expense at close vs at purchase) — see §13 Q12; RECOMMEND at close (matched to the sale).**
+     line and the same close→invoice trigger for the **sale**; Full mode only *adds* the inventory legs.
+     **Cost-timing in Simple mode = at PURCHASE (CONFIRMED Leo, 2026-06-28, §13 Q12):** the cost must fall in the
+     purchase month to reconcile the supplier statement, so it posts at purchase (not at close) and cost/revenue
+     are **intentionally not period-matched** (the accountant's optional year-end stock adjustment is the truing
+     mechanism, not this app). The £0-cost gate (§12) still guards a sold line that never had a cost recorded.
 
 1. **RECOMMEND — Costing method: weighted-average cost (WAVCO), perpetual.** Per SKU keep only
    `qty_on_hand` + `average_cost`; each receipt rolls the average
@@ -161,10 +167,11 @@ money event; they differ only in whether stock touches the balance sheet:
 |---|---|---|
 | Stock tracking | **None** — no qty-on-hand, no valuation | Perpetual (`stock_movements`, WAVCO) |
 | Balance sheet | Parts **never** touch it | Inventory asset + GRNI / WIP / PPV |
-| Part cost → P&L | **Direct cost at invoice** (`Dr Parts COGS / Cr AP`) | Relieved from Inventory/WIP at invoice |
+| Part cost → P&L | **Direct cost at purchase** (`Dr Parts COGS / Cr AP`, dated to factor-invoice month) | Relieved from Inventory/WIP at the sale |
+| Cost vs revenue period | **Not matched** (cost at purchase month, sale at close) — by design | Matched (both at close) |
 | PO / goods-in / returns | Not required (optional supplier ref only) | Full PO → GRN → return loop |
 | Tables used | (a) catalog + (d) line + (e) journal only | all of §5 |
-| Journals (when GL connected) | sale invoice + a direct parts-cost bill | the full event set (§6) |
+| Journals (when GL connected) | supplier **bill at purchase** + sales **invoice at close** | the full event set (§6) |
 
 The five-layer model below is **Full mode**. **Simple mode collapses to three layers** — (a) catalog, (d) the
 priced job line, (e) the journal — skipping (b) stock-on-hand and (c) the order-in stock buffer entirely.
@@ -367,6 +374,12 @@ triggers. Additive columns only:
 | `core_status` | VARCHAR(24) NULL | Parallel core sub-state (P3). |
 | `cogs_snapshot` | DECIMAL(12,4) NULL | Immutable **unit** cost locked at COGS recognition (NOT extended — multiply by `qty_fitted`). |
 | `cogs_recognised_at` | TIMESTAMPTZ NULL | When COGS journal fired (idempotency guard; **cleared + reversed on document reopen**, §7.7). |
+| `purchased_at` | DATE NULL | **Simple mode (P-Simple):** the factor-invoice / purchase date — the `document_date` of the Simple-purchase journal, so the cost lands in the correct supplier-statement + VAT month (§6 Simple-purchase). Defaults to entry date, editable. *(Full mode derives the purchase date from the GRN / supplier invoice instead.)* |
+| `purchase_recognised_at` | TIMESTAMPTZ NULL | **Simple mode:** when the purchase (cost→P&L) journal fired — idempotency guard for the Simple-purchase event, mirroring `cogs_recognised_at` for the sale. |
+
+> **Phase note:** `purchased_at` + `purchase_recognised_at` ship in **P-Simple** (they drive the Simple-mode
+> purchase journal); the stock/order-in columns above ship in **P1** (Full track). `supplier_id` / `supplier_name`
+> already exist on `repair_parts` (lite module) and carry the Simple-mode bill's supplier — no new supplier column.
 
 ### 5.4 `stock_movements` — the immutable ledger (source of truth for qty + valuation) (P0)
 
@@ -592,32 +605,40 @@ revenue — cost and revenue in the same event.**
 ### Simple-mode journals (no stock) — the DEFAULT path; the only path on VHC-only plans
 
 In **Simple mode** there is no inventory, no GRNI, no WIP buffer, no `stock_movements` — Events 1, 2, 4A-invoice,
-5 (stock) and 6 below **do not fire**. A part is a priced line that becomes **one matched pair of postings at the
-billing-document close** (the *same* trigger as Full mode, §7.3). Worked thread: cost **£100 net**, sold **£150 net**.
+5 (stock) and 6 below **do not fire**. A part generates **two independent postings, on two different dates**
+(CONFIRMED Leo, 2026-06-28 — §13 Q12): the **cost is expensed at PURCHASE** (so it lands in the month the factor
+billed it and reconciles to that supplier's monthly statement), and the **sale posts at close**. Cost and revenue
+are **deliberately NOT matched to the same period** — this is the intended behaviour, not a defect. Worked thread:
+cost **£100 net**, sold **£150 net**.
 
-**Simple-close — cost straight to P&L + the sale, same event:**
+**Simple-purchase — when the part purchase is recorded (dated to the purchase / factor-invoice date):**
 
 | Account | Dr | Cr |
 |---|---|---|
 | COGS — Parts (`parts_cogs`) | £100.00 | |
-| Accounts Payable (`accounts_payable`) | | £100.00 |
 | VAT Input (`vat_input`) | £20.00 | |
-| *…and the sale leg:* Accounts Receivable (`accounts_receivable`) | £180.00 | |
+| Accounts Payable (`accounts_payable`) | | £120.00 |
+
+The part cost goes **straight to the P&L** (`parts_cogs`) — **never capitalised as inventory** — dated to
+`repair_parts.purchased_at` (§5.3; defaults to entry date, editable to the factor-invoice date). The journal's
+`document_date` = that purchase date, so it falls in the correct supplier-statement **and VAT** month. When Xero is
+connected this materialises as a **supplier bill** (`ACCPAY`) for that supplier, dated to the purchase — so the
+bookkeeper reconciles it directly against the factor statement and does **not** separately re-key the factor
+invoice (no double-counting).
+
+**Simple-close — the sale only (cost already expensed at purchase):**
+
+| Account | Dr | Cr |
+|---|---|---|
+| Accounts Receivable (`accounts_receivable`) | £180.00 | |
 | Parts Sales (`parts_sales`) | | £150.00 |
 | VAT Output (`vat_output`) | | £30.00 |
 
-The part cost goes **straight to the P&L** (`parts_cogs`) — **never capitalised as inventory** — on the same date
-as the revenue. This is exactly the **Full-mode 3b/4A-sale leg with the inventory/WIP legs removed**: the
-`Cr parts_stock` / `Cr parts_wip` simply becomes `Cr accounts_payable`. Same account map, same close hook, same
-`inventory_journal` tables — Simple mode just emits fewer lines. When Xero is connected this materialises as a
-**purchase bill** (the cost + input VAT) **and** a **sales invoice** (the sale + output VAT), so the bookkeeper
-does **not** separately re-key the factor bill (avoids double-counting). Output VAT still reads
-`repair_items.vat_amount`; the £0-cost close gate (§12) still applies.
-
-> **Cost-timing fork (§13 Q12).** The table above expenses the cost **at close** (matched to the sale —
-> **RECOMMEND**: clean per-job gross profit, reuses the close hook). The alternative is to expense the part **at
-> purchase** (`Dr parts_cogs / Cr AP` when the cost is entered, independent of the sale) — the most literal "just
-> a cost to P&L," but cost and revenue can land in different periods. Leo to confirm; default = at close.
+The close posts **no cost leg** (it was taken at purchase). Output VAT reads `repair_items.vat_amount`. Margin is
+still reportable per job (sell − recorded purchase cost), it just isn't a same-period match. Same account map, same
+`inventory_journal` tables as Full mode — Simple mode simply never writes the stock/WIP legs and splits cost from
+sale across the two real-world dates. **A sold line with no recorded purchase cost still trips the £0-cost gate
+(§12)** so margin isn't silently booked at 100%.
 
 ---
 
@@ -944,14 +965,15 @@ Override precedence: **job-line override → item `sell_price_override` → matr
 > none of the stock tables. (Phase tags `(P0)`/`(P1)`/`(P2)` on the §5 tables refer to the **Full-mode** track.)
 
 **P-Simple — Simple-mode accounting (ship first; the majority no-stock tenant).**
-`organization_settings.parts_mode` + plan gating (§9) · the §6 **Simple-mode journal pair** wired to the existing
-billing-document **close** trigger (§7.3) · the journal-ready tables it *shares* with Full mode —
-`inventory_journal`/`_lines` + the mapping layer (`accounting_connections`, `account_code_map`, `tax_code_map`,
-`contact_links`, `journal_push_log`), seeded inert · the **£0-cost close gate** · **Parts-GP / Margin-by-Repair-Type
-report** (closes the deferred Repair Types loop for *every* tenant, not just stock-holders). **No `stock_movements`,
-PO, GRN, returns, categories, or matrix required.** Delivers the "parts → P&L costs" promise to the majority
-no-stock garages with ~6 new tables and zero stock admin. *(Live Xero push is still P4; until then journals
-accrue inert, ready to map + send.)*
+`organization_settings.parts_mode` + plan gating (§9) · `repair_parts.purchased_at` + `purchase_recognised_at`
+(§5.3) · the §6 **Simple-mode journals** — the cost **bill at purchase** (a lightweight "mark purchased" action /
+auto on cost+supplier set, dated to `purchased_at`) **and** the **sale at close** (§7.3) · the journal-ready tables
+it *shares* with Full mode — `inventory_journal`/`_lines` + the mapping layer (`accounting_connections`,
+`account_code_map`, `tax_code_map`, `contact_links`, `journal_push_log`), seeded inert · the **£0-cost gate** ·
+**Parts-GP / Margin-by-Repair-Type report** (closes the deferred Repair Types loop for *every* tenant, not just
+stock-holders). **No `stock_movements`, PO, GRN, returns, categories, or matrix required.** Delivers the
+"parts → P&L costs" promise to the majority no-stock garages with ~6 new tables and zero stock admin. *(Live Xero
+push is still P4; until then journals accrue inert, ready to map + send as bills/invoices dated to the right month.)*
 
 The Full-mode phases then layer stock on top for GMS-tier tenants who opt in:
 
@@ -1031,9 +1053,14 @@ migration — new file only.
 - **Quantity is load-bearing.** Every journal/COGS figure is `qty_fitted × cogs_snapshot`; `cogs_snapshot` is a
   **unit** cost. Never use the bare snapshot as the extended cost, and never assume one ordered line = one
   fitted unit (the canonical "ordered 2, fitted 1, return 1" split lives in `qty_fitted`/`qty_to_return`).
-- **Cost is deferred for BOTH forks.** Non-stock parts park their cost in `parts_wip` at supplier invoice and
-  only expense it at the sale (Event 4A two legs) — **don't** book `Dr COGS` on the supplier invoice, or COGS
-  and revenue land in different periods and matching breaks.
+- **Cost is deferred for BOTH forks — in FULL mode.** Non-stock parts park their cost in `parts_wip` at supplier
+  invoice and only expense it at the sale (Event 4A two legs) — **don't** book `Dr COGS` on the supplier invoice,
+  or COGS and revenue land in different periods and matching breaks.
+- **SIMPLE mode is the OPPOSITE — and that is intentional.** Simple mode expenses the cost **at purchase** (dated
+  to the factor-invoice month, to reconcile the supplier statement) and posts the sale at close, so cost and
+  revenue **are deliberately in different periods**. Do **not** "fix" this to match — it is the confirmed Simple
+  policy (§13 Q12). The matching rule above applies to Full mode only; the two modes have opposite cost-timing,
+  so any shared COGS helper must branch on `parts_mode`.
 - **GRNI clears at received value; variance never goes to COGS for unsold stock.** Event 2 clears GRNI at the
   Event-1 value and posts price variance to Inventory (on-hand) or PPV (already issued). WAVCO at receipt is
   **provisional**; the invoice trues up the residual on-hand qty only (§5.4, §6 Event 2).
@@ -1124,9 +1151,12 @@ migration — new file only.
 11. **Issue timing** — keep the `issue` movement **at booking** (live SOH during the job) reconciled via a
     `stock_issued_pending_sale` control account, or defer the issue to close (movement + journal atomic, but
     SOH lags until close)? (RECOMMEND: at booking + control account — techs want accurate live SOH.) *Full mode only.*
-12. **Simple-mode cost timing** *(new — from Leo's two-mode request)* — in **Simple mode**, expense each part's
-    cost **at the billing-document close** (matched to the sale; clean per-job gross profit; reuses the close
-    hook — **RECOMMEND**), or **at purchase/cost-entry** (the most literal "just a cost to P&L," but cost and
-    revenue can fall in different periods)? Also: when Xero is live, should VHC push the parts cost as a
-    **supplier bill** (so the bookkeeper doesn't re-key factor invoices — avoids double-counting) or as a plain
-    **manual journal**? (RECOMMEND: expense at close; push as a bill.)
+12. **Simple-mode cost timing** — ✅ **ANSWERED (Leo, 2026-06-28): expense AT PURCHASE.** The cost must land in
+    the month the part was purchased so it **reconciles to the supplier's monthly statement** (and the input-VAT
+    period is correct). Simple mode therefore posts **two events on two dates** — cost at purchase
+    (`Dr Parts COGS / Dr VAT Input / Cr AP`, dated `purchased_at`), sale at close — and cost/revenue are
+    **intentionally not period-matched** (§6 Simple-mode journals). The cost pushes to Xero as a **supplier bill
+    (`ACCPAY`)** dated to the purchase, so the bookkeeper reconciles it against the factor statement without
+    re-keying. *(Only remaining sub-detail for build: what UI event stamps the purchase — a "mark purchased"
+    action vs auto-recognise once cost + supplier are set. RECOMMEND: explicit "mark purchased", defaulting
+    `purchased_at` to today and editable to the factor-invoice date.)*

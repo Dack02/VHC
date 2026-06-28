@@ -19,6 +19,14 @@ interface JobDetailModalProps {
   onChanged: () => void
 }
 
+interface TechSuggestion {
+  technicianId: string
+  name: string
+  isPrimary: boolean
+  proficiency: number
+  reasons: string[]
+}
+
 const STAGE_TONE_CLASSES: Record<string, string> = {
   grey: 'bg-gray-100 text-gray-600',
   blue: 'bg-blue-100 text-blue-700',
@@ -51,6 +59,7 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
   const [hoursDraft, setHoursDraft] = useState(card.estimatedHours?.toString() ?? '')
   const [smsPrompt, setSmsPrompt] = useState<{ message: string; statusName: string | null } | null>(null)
   const [timeData, setTimeData] = useState<JobTimeData | null>(null)
+  const [techSuggestions, setTechSuggestions] = useState<TechSuggestion[] | null>(null)
 
   const stage = pipelineStage(card.status)
   const activeStatuses = statuses.filter(s => s.isActive)
@@ -65,6 +74,19 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
   const canUnassign = ['created', 'assigned', 'awaiting_checkin'].includes(card.status)
 
   const workedMinutes = Math.round(actualWorkedMinutes(card, new Date()))
+
+  // Advisory skill-based technician suggestions for this job (Resource Manager).
+  // Resolves the job's repair type server-side; never blocks assignment.
+  useEffect(() => {
+    if (isTechnician || !token) return
+    let cancelled = false
+    api<{ suggestions?: TechSuggestion[] }>('/api/v1/resource-manager/suggest-technician', {
+      method: 'POST', token, body: { healthCheckId: card.healthCheckId, date: boardDate }
+    })
+      .then(r => { if (!cancelled) setTechSuggestions(r.suggestions || []) })
+      .catch(() => { if (!cancelled) setTechSuggestions([]) })
+    return () => { cancelled = true }
+  }, [token, isTechnician, card.healthCheckId, boardDate])
 
   // Close on Escape
   useEffect(() => {
@@ -434,6 +456,36 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
                         </select>
                       </div>
                     </div>
+                    {techSuggestions && techSuggestions.length > 0 && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">Suggested technician</label>
+                        <div className="flex flex-wrap gap-2">
+                          {techSuggestions.slice(0, 3).map(s => {
+                            const col = techColumns.find(tc => tc.technicianId === s.technicianId)
+                            const isCurrent = !!currentTechColumn && currentTechColumn.technicianId === s.technicianId
+                            return (
+                              <button
+                                key={s.technicianId}
+                                type="button"
+                                disabled={!col || isCurrent}
+                                onClick={() => col && handleTechnicianChange(col.id)}
+                                title={[...s.reasons, col ? '' : 'no board column'].filter(Boolean).join(' · ')}
+                                className={`px-2.5 py-1 rounded-full text-xs border ${
+                                  isCurrent
+                                    ? 'border-rag-green text-rag-green bg-rag-green/5'
+                                    : col
+                                      ? 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                                      : 'border-gray-200 text-gray-400 cursor-not-allowed'
+                                }`}
+                              >
+                                {s.isPrimary && <span className="text-amber-500">★ </span>}
+                                {s.name}{isCurrent ? ' ✓' : ''}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
                     <div>
                       <label className="block text-xs font-medium text-gray-500 mb-1">Planned start ({boardDate})</label>
                       <div className="flex items-center gap-2">

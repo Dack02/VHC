@@ -14,6 +14,10 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { loadSiteConfig, type ResourceSiteConfig } from '../services/resource-config.js'
+import {
+  loadCategoryQuotas, defaultQuota, getSkillCapacity,
+  getDayCapacity, canBook, recommendDay
+} from '../services/resource-capacity.js'
 
 const resourceManager = new Hono()
 
@@ -319,9 +323,30 @@ resourceManager.post('/suggest-technician', authorize([...ADVISOR_ROLES]), async
 
   let body: any
   try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
-  const repairTypeId = body?.repairTypeId
-  if (!repairTypeId) return c.json({ error: 'repairTypeId is required' }, 400)
   const onDate = (typeof body?.date === 'string' && body.date) ? body.date : new Date().toISOString().slice(0, 10)
+
+  // Category can be given directly, or resolved from a job (its first priced
+  // repair item's repair type). The downstream org-scoped repair_types lookup
+  // re-validates the id, so a foreign id simply yields no suggestions.
+  let repairTypeId: string | null = body?.repairTypeId ?? null
+  const healthCheckId = body?.healthCheckId ?? null
+  if (!repairTypeId && healthCheckId) {
+    const { data: ri } = await supabaseAdmin
+      .from('repair_items')
+      .select('repair_type_id')
+      .eq('health_check_id', healthCheckId)
+      .not('repair_type_id', 'is', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    repairTypeId = ri?.repair_type_id ?? null
+  }
+  if (!repairTypeId) {
+    if (healthCheckId) {
+      return c.json({ siteId, suggestions: [], reason: 'No repair type set on this job yet' })
+    }
+    return c.json({ error: 'repairTypeId or healthCheckId is required' }, 400)
+  }
 
   const { data: rt } = await supabaseAdmin
     .from('repair_types')
@@ -329,7 +354,7 @@ resourceManager.post('/suggest-technician', authorize([...ADVISOR_ROLES]), async
     .eq('id', repairTypeId)
     .eq('organization_id', auth.orgId)
     .maybeSingle()
-  if (!rt) return c.json({ error: 'Repair type not found' }, 404)
+  if (!rt) return c.json({ siteId, suggestions: [], reason: 'Repair type not found' })
   const requiredCert: string | null = rt.required_cert ?? null
 
   // Skilled techs for this type + the active technician roster (for names / site).
@@ -391,6 +416,130 @@ resourceManager.post('/suggest-technician', authorize([...ADVISOR_ROLES]), async
     .sort((a, b) => b.score - a.score)
 
   return c.json({ siteId, repairType: { id: rt.id, code: rt.code, label: rt.label ?? rt.code }, date: onDate, requiredCert, suggestions })
+})
+
+// ---------------------------------------------------------------------------
+// P2 — category quotas + capacity engine
+// ---------------------------------------------------------------------------
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+// GET /quotas?siteId=...  → one row per active repair type (defaults merged) +
+// today's staffed snapshot for the grid's read-only "staffed" column.
+resourceManager.get('/quotas', authorize([...ADVISOR_ROLES]), async (c) => {
+  const auth = c.get('auth')
+  const siteId = await resolveSiteId(c)
+  if (!siteId) return c.json({ error: 'No site selected' }, 400)
+  const today = new Date().toISOString().slice(0, 10)
+
+  const [{ data: rts, error: rtErr }, quotas, staffed] = await Promise.all([
+    supabaseAdmin.from('repair_types')
+      .select('id, code, label, colour, sort_order')
+      .eq('organization_id', auth.orgId).eq('is_active', true)
+      .order('sort_order', { ascending: true }).order('code', { ascending: true }),
+    loadCategoryQuotas(auth.orgId, siteId),
+    getSkillCapacity(auth.orgId, siteId, today)
+  ])
+  if (rtErr) {
+    console.error('quotas load error:', rtErr)
+    return c.json({ error: 'Failed to load quotas' }, 500)
+  }
+
+  const rows = (rts || []).map((r: any) => {
+    const q = quotas.get(r.id) || defaultQuota(r.id)
+    const cap = staffed.get(r.id)
+    return {
+      repairTypeId: r.id, code: r.code, label: r.label ?? r.code, colour: r.colour, sortOrder: r.sort_order,
+      valueRank: q.valueRank, protectPrimary: q.protectPrimary, releaseWindowDays: q.releaseWindowDays,
+      minHours: q.minHours, hardCapJobs: q.hardCapJobs, hardCapHours: q.hardCapHours,
+      enforcement: q.enforcement, allowOverride: q.allowOverride,
+      staffed: cap
+        ? { primaryHours: Math.round(cap.primaryHours * 10) / 10, eligibleHours: Math.round(cap.eligibleHours * 10) / 10, jobCeiling: cap.uncappedTechs === 0 ? cap.jobCapSum : null }
+        : { primaryHours: 0, eligibleHours: 0, jobCeiling: null }
+    }
+  })
+  return c.json({ siteId, quotas: rows })
+})
+
+// PUT /quotas/:repairTypeId?siteId=...  → upsert one category's quota (site_admin+)
+resourceManager.put('/quotas/:repairTypeId', authorize([...ADMIN_ROLES]), async (c) => {
+  const auth = c.get('auth')
+  const siteId = await resolveSiteId(c)
+  if (!siteId) return c.json({ error: 'No site selected' }, 400)
+  const repairTypeId = c.req.param('repairTypeId')
+
+  const { data: rt } = await supabaseAdmin.from('repair_types')
+    .select('id').eq('id', repairTypeId).eq('organization_id', auth.orgId).maybeSingle()
+  if (!rt) return c.json({ error: 'Repair type not found' }, 404)
+
+  let body: any
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
+
+  const current = (await loadCategoryQuotas(auth.orgId, siteId)).get(repairTypeId) || defaultQuota(repairTypeId)
+  const num = (v: any, fallback: number | null) => v === '' || v == null ? fallback : Number(v)
+
+  const { error } = await supabaseAdmin.from('resource_category_quotas').upsert({
+    organization_id: auth.orgId,
+    site_id: siteId,
+    repair_type_id: repairTypeId,
+    value_rank: body.valueRank != null ? clamp(Math.round(Number(body.valueRank)), 0, 999) : current.valueRank,
+    protect_primary: body.protectPrimary != null ? Boolean(body.protectPrimary) : current.protectPrimary,
+    release_window_days: body.releaseWindowDays != null ? clamp(Math.round(Number(body.releaseWindowDays)), 0, 60) : current.releaseWindowDays,
+    min_hours: body.minHours !== undefined ? num(body.minHours, null) : current.minHours,
+    hard_cap_jobs: body.hardCapJobs !== undefined ? num(body.hardCapJobs, null) : current.hardCapJobs,
+    hard_cap_hours: body.hardCapHours !== undefined ? num(body.hardCapHours, null) : current.hardCapHours,
+    enforcement: body.enforcement === 'hard' ? 'hard' : (body.enforcement === 'soft' ? 'soft' : current.enforcement),
+    allow_override: body.allowOverride != null ? Boolean(body.allowOverride) : current.allowOverride,
+    is_active: true,
+    updated_at: new Date().toISOString()
+  }, { onConflict: 'organization_id,site_id,repair_type_id' })
+
+  if (error) {
+    console.error('category quota upsert error:', error)
+    return c.json({ error: 'Failed to save quota' }, 500)
+  }
+  return c.json({ ok: true })
+})
+
+// GET /capacity/day?date=YYYY-MM-DD&siteId=...  → the full per-category day bundle
+resourceManager.get('/capacity/day', authorize([...ADVISOR_ROLES]), async (c) => {
+  const auth = c.get('auth')
+  const siteId = await resolveSiteId(c)
+  if (!siteId) return c.json({ error: 'No site selected' }, 400)
+  const date = c.req.query('date')
+  if (!date || !DATE_RE.test(date)) return c.json({ error: 'date (YYYY-MM-DD) is required' }, 400)
+
+  const capacity = await getDayCapacity(auth.orgId, siteId, date)
+  return c.json({ siteId, capacity })
+})
+
+// POST /can-book?siteId=...  body {repairTypeId, hours, date} → verdict
+resourceManager.post('/can-book', authorize([...ADVISOR_ROLES]), async (c) => {
+  const auth = c.get('auth')
+  const siteId = await resolveSiteId(c)
+  if (!siteId) return c.json({ error: 'No site selected' }, 400)
+  let body: any
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
+  if (!body?.repairTypeId || !body?.date || !DATE_RE.test(body.date)) {
+    return c.json({ error: 'repairTypeId and date (YYYY-MM-DD) are required' }, 400)
+  }
+  const hours = Number(body.hours) || 0
+  const result = await canBook(auth.orgId, siteId, body.date, body.repairTypeId, hours)
+  return c.json(result)
+})
+
+// POST /availability?siteId=...  body {repairTypeId, hours, fromDate?} → recommended day + alternatives
+resourceManager.post('/availability', authorize([...ADVISOR_ROLES]), async (c) => {
+  const auth = c.get('auth')
+  const siteId = await resolveSiteId(c)
+  if (!siteId) return c.json({ error: 'No site selected' }, 400)
+  let body: any
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
+  if (!body?.repairTypeId) return c.json({ error: 'repairTypeId is required' }, 400)
+  const hours = Number(body.hours) || 0
+  const fromDate = (typeof body.fromDate === 'string' && DATE_RE.test(body.fromDate)) ? body.fromDate : undefined
+  const result = await recommendDay(auth.orgId, siteId, body.repairTypeId, hours, fromDate)
+  return c.json({ siteId, ...result })
 })
 
 export default resourceManager

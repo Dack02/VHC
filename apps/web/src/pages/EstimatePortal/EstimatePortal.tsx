@@ -190,6 +190,7 @@ export default function EstimatePortal() {
   const declinedCount = lines.filter(l => l.customerApproved === false).length
   const approvedTotal = lines.filter(l => l.customerApproved === true).reduce((s, l) => s + l.totalIncVat, 0)
   const anyDecided = approvedCount + declinedCount > 0
+  const undecidedCount = lines.length - approvedCount - declinedCount
   const requireSig = estimate.requireSignature
   const canAccept = !requireSig || !!signature
 
@@ -231,9 +232,10 @@ export default function EstimatePortal() {
                 </div>
               </div>
             </div>
-            {/* Desktop-only headline total — the figure customers care about, above the fold. */}
+            {/* Desktop-only headline — the FULL estimate value (not necessarily what the
+                customer authorises; the amount they approve is shown by the action). */}
             <div className="hidden lg:block text-right shrink-0">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-white/60">Total inc VAT</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-white/60">Full estimate inc VAT</div>
               <div className="mt-1 text-[34px] font-extrabold tracking-tight tabular-nums">{money(totals.totalIncVat)}</div>
               {estimate.validUntil && <div className="text-[11.5px] text-white/65">Valid until {formatDate(estimate.validUntil)}</div>}
             </div>
@@ -343,13 +345,14 @@ export default function EstimatePortal() {
         {/* ── Sidebar: summary & actions — sticky beside the detail on desktop,
              stacked below it on mobile. ─────────────────────────────── */}
         <div className="mt-4 lg:mt-5 lg:sticky lg:top-5 space-y-4">
-          {/* ── Totals ─────────────────────────────────────────────── */}
+          {/* ── Full estimate breakdown (the whole quote — not what's authorised) ── */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 text-sm">
+            <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-gray-400 mb-3">Full estimate</div>
             <div className="flex justify-between text-gray-500"><span>Net</span><span className="tabular-nums">{money(totals.subtotal)}</span></div>
             <div className="flex justify-between text-gray-500 mt-1"><span>VAT</span><span className="tabular-nums">{money(totals.vatAmount)}</span></div>
             <div className="flex justify-between items-baseline mt-3 pt-3 border-t border-gray-100">
               <span className="text-[15px] font-bold text-gray-900">Total inc VAT</span>
-              <span className="text-[22px] font-extrabold tracking-tight tabular-nums" style={{ color: brand }}>{money(totals.totalIncVat)}</span>
+              <span className="text-[18px] font-extrabold tracking-tight tabular-nums text-gray-900">{money(totals.totalIncVat)}</span>
             </div>
           </div>
 
@@ -377,16 +380,31 @@ export default function EstimatePortal() {
         {/* ── Action: per-line response ────────────────────────────── */}
         {!responded && !requireSig && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
+            {/* The amount the customer is actually authorising — prominent + live, so the full
+                estimate total above is never mistaken for what they're committing to. */}
+            <div className="rounded-xl p-4 border" style={{ backgroundColor: brandTint, borderColor: `color-mix(in srgb, ${brand} 22%, #ffffff)` }}>
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-[12px] font-bold uppercase tracking-[0.05em]" style={{ color: onTintInk }}>You’re approving</span>
+                <span className="text-[26px] font-extrabold tracking-tight tabular-nums" style={{ color: brand }}>{money(approvedTotal)}</span>
+              </div>
+              <div className="text-[12px] mt-1" style={{ color: onTintInk }}>
+                {anyDecided
+                  ? `${approvedCount} approved · ${declinedCount} declined${undecidedCount > 0 ? ` · ${undecidedCount} not yet decided` : ''}`
+                  : 'Approve or decline each item to build your response.'}
+              </div>
+            </div>
+
             <button disabled={busy || !anyDecided} onClick={() => post('/submit')}
               style={{ backgroundColor: brand }}
-              className="w-full h-12 text-white font-bold rounded-xl disabled:opacity-50">
-              Submit my response
+              className="w-full h-12 mt-4 text-white font-bold rounded-xl disabled:opacity-50">
+              {approvedCount > 0 ? `Approve ${money(approvedTotal)} of work` : 'Submit my response'}
             </button>
             <p className="text-xs text-gray-500 mt-2 text-center">
-              {anyDecided
-                ? `Approving ${approvedCount} ${approvedCount === 1 ? 'item' : 'items'}${approvedCount ? ` · ${money(approvedTotal)}` : ''}${declinedCount ? `, declining ${declinedCount}` : ''}. Anything left undecided won’t be booked.`
-                : 'Approve or decline at least one item above, then submit your response.'}
+              {undecidedCount > 0
+                ? `Anything left undecided won’t be booked. You can change any choice before submitting.`
+                : 'You can change any choice before submitting.'}
             </p>
+
             <div className="flex items-center justify-center gap-2 mt-4 pt-4 border-t border-gray-100">
               <span className="text-xs text-gray-400">Or quickly:</span>
               <button disabled={busy} onClick={() => post('/approve-all')}

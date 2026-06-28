@@ -265,7 +265,8 @@ export default function NewHealthCheck() {
             fuelType: lookupDraft.fuelType || undefined,
             engineSize: lookupDraft.engineSize || undefined,
             year: lookupDraft.year ? parseInt(lookupDraft.year, 10) : undefined,
-            syncMotHistory: true
+            syncMotHistory: true,
+            enrichVehicleDetails: true
           }
         }
       )

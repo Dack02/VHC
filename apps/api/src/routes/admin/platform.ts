@@ -738,4 +738,35 @@ platformRoutes.post('/vehicle-lookup/test', async (c) => {
   }
 })
 
+/**
+ * POST /api/v1/admin/platform/vehicle-details/test
+ * Test the Vehicle Data Global key with a sample registration.
+ */
+platformRoutes.post('/vehicle-details/test', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const body = await c.req.json().catch(() => ({} as Record<string, unknown>))
+  const sampleReg = typeof body.registration === 'string' ? body.registration : undefined
+
+  try {
+    const result = await testVehicleDetailsConnection(sampleReg)
+
+    await logSuperAdminActivity(
+      superAdmin.id,
+      'test_vehicle_details',
+      'platform_settings',
+      'vehicle_details',
+      { success: result.success, sampleReg: sampleReg || null },
+      getClientIp(c),
+      c.req.header('User-Agent')
+    )
+
+    return c.json(result)
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: error instanceof Error ? error.message : 'Vehicle details test failed'
+    })
+  }
+})
+
 export default platformRoutes

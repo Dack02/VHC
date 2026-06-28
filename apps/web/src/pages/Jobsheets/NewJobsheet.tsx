@@ -232,7 +232,7 @@ export default function NewJobsheet() {
         body: {
           registration: lookupDraft.registration, make: lookupDraft.make || undefined, model: lookupDraft.model || undefined,
           color: lookupDraft.color || undefined, fuelType: lookupDraft.fuelType || undefined, engineSize: lookupDraft.engineSize || undefined,
-          year: lookupDraft.year ? parseInt(lookupDraft.year, 10) : undefined, syncMotHistory: true
+          year: lookupDraft.year ? parseInt(lookupDraft.year, 10) : undefined, syncMotHistory: true, enrichVehicleDetails: true
         }
       })
       setSelectedVehicle(created); setLookupDraft(null); setSearchQuery(''); setSearchResults([])

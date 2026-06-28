@@ -197,14 +197,14 @@ export default function EstimatePortal() {
     <div className="min-h-screen bg-gray-50 pb-16 font-sans" style={{ ['--est-brand' as string]: brand } as CSSProperties}>
       {/* ── Brand hero ─────────────────────────────────────────────── */}
       <div style={{ backgroundColor: brand }} className="text-white">
-        <div className="max-w-2xl mx-auto px-5 pt-6 pb-7">
+        <div className="max-w-2xl lg:max-w-6xl mx-auto px-5 lg:px-8 pt-6 pb-7 lg:pt-10 lg:pb-12">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               {organization.logoUrl
-                ? <img src={organization.logoUrl} alt={orgName} className="h-9 max-w-[150px] object-contain" />
+                ? <img src={organization.logoUrl} alt={orgName} className="h-9 lg:h-11 max-w-[150px] lg:max-w-[200px] object-contain" />
                 : <>
-                    <div className="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center text-[12px] font-extrabold shrink-0">{initials(orgName)}</div>
-                    <span className="font-bold text-sm truncate">{orgName}</span>
+                    <div className="w-8 h-8 lg:w-10 lg:h-10 rounded-lg bg-white/15 flex items-center justify-center text-[12px] lg:text-sm font-extrabold shrink-0">{initials(orgName)}</div>
+                    <span className="font-bold text-sm lg:text-base truncate">{orgName}</span>
                   </>}
             </div>
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold bg-white/15 rounded-full px-2.5 py-1 shrink-0">
@@ -212,32 +212,45 @@ export default function EstimatePortal() {
             </span>
           </div>
 
-          <div className="mt-6">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-white/60">Estimate · {estimate.reference}</div>
-            <h1 className="mt-1.5 text-[26px] leading-tight font-extrabold tracking-tight">Your repair estimate</h1>
-            <div className="mt-4 flex items-center gap-3 flex-wrap">
-              {vehicle?.registration && (
-                <span className="font-mono text-sm font-semibold rounded-md px-2.5 py-1.5 tracking-wide" style={{ background: '#fdf6dd', border: '1px solid #efe2a8', color: '#6f6320' }}>
-                  {vehicle.registration}
-                </span>
-              )}
-              <div className="leading-tight">
-                {vehicle && <div className="text-[13px] font-semibold">{[vehicle.make, vehicle.model].filter(Boolean).join(' ')}</div>}
-                <div className="text-[11.5px] text-white/65">
-                  {[vehicle?.year, customer && `${customer.firstName} ${customer.lastName}`].filter(Boolean).join(' · ')}
+          {/* On desktop the title sits left, a headline total sits right; on mobile it stacks. */}
+          <div className="mt-6 lg:mt-9 lg:flex lg:items-end lg:justify-between lg:gap-8">
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-white/60">Estimate · {estimate.reference}</div>
+              <h1 className="mt-1.5 text-[26px] lg:text-[36px] leading-tight font-extrabold tracking-tight">Your repair estimate</h1>
+              <div className="mt-4 flex items-center gap-3 flex-wrap">
+                {vehicle?.registration && (
+                  <span className="font-mono text-sm lg:text-base font-semibold rounded-md px-2.5 py-1.5 tracking-wide" style={{ background: '#fdf6dd', border: '1px solid #efe2a8', color: '#6f6320' }}>
+                    {vehicle.registration}
+                  </span>
+                )}
+                <div className="leading-tight">
+                  {vehicle && <div className="text-[13px] lg:text-sm font-semibold">{[vehicle.make, vehicle.model].filter(Boolean).join(' ')}</div>}
+                  <div className="text-[11.5px] text-white/65">
+                    {[vehicle?.year, customer && `${customer.firstName} ${customer.lastName}`].filter(Boolean).join(' · ')}
+                  </div>
                 </div>
               </div>
+            </div>
+            {/* Desktop-only headline total — the figure customers care about, above the fold. */}
+            <div className="hidden lg:block text-right shrink-0">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-white/60">Total inc VAT</div>
+              <div className="mt-1 text-[34px] font-extrabold tracking-tight tabular-nums">{money(totals.totalIncVat)}</div>
+              {estimate.validUntil && <div className="text-[11.5px] text-white/65">Valid until {formatDate(estimate.validUntil)}</div>}
             </div>
           </div>
         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto px-4">
+      {/* Two-column on desktop: scrolling detail (left) + sticky summary & actions (right).
+          Collapses to the single stacked column on mobile. */}
+      <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 lg:px-8 lg:grid lg:grid-cols-[minmax(0,1fr)_370px] lg:gap-8 lg:items-start">
+        {/* ── Main column: the detail ──────────────────────────────── */}
+        <div className="min-w-0">
         {/* ── Why choose us (USP trust strip) ──────────────────────── */}
         {usps.length > 0 && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 mt-5">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 lg:p-6 mt-5">
             <div className="text-[11px] font-bold uppercase tracking-[0.06em] text-gray-400 mb-4">Why choose {orgName}</div>
-            <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {usps.map((u, i) => (
                 <div key={i} className="flex items-center gap-3">
                   <span className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: brandTint, color: brand }}>
@@ -258,8 +271,9 @@ export default function EstimatePortal() {
           </div>
         )}
 
+        {/* Desktop shows "valid until" in the hero; keep it inline on mobile only. */}
         {estimate.validUntil && (
-          <p className="text-center text-xs text-gray-400 mt-4">Valid until {formatDate(estimate.validUntil)}</p>
+          <p className="lg:hidden text-center text-xs text-gray-400 mt-4">Valid until {formatDate(estimate.validUntil)}</p>
         )}
 
         {error && <div className="bg-red-50 text-red-700 p-3 mt-4 rounded-xl text-sm">{error}</div>}
@@ -317,27 +331,31 @@ export default function EstimatePortal() {
           })}
         </div>
 
-        {/* ── Totals ───────────────────────────────────────────────── */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 mt-4 p-4 text-sm">
-          <div className="flex justify-between text-gray-500"><span>Net</span><span className="tabular-nums">{money(totals.subtotal)}</span></div>
-          <div className="flex justify-between text-gray-500 mt-1"><span>VAT</span><span className="tabular-nums">{money(totals.vatAmount)}</span></div>
-          <div className="flex justify-between items-baseline mt-3 pt-3 border-t border-gray-100">
-            <span className="text-[15px] font-bold text-gray-900">Total inc VAT</span>
-            <span className="text-[22px] font-extrabold tracking-tight tabular-nums" style={{ color: brand }}>{money(totals.totalIncVat)}</span>
-          </div>
+          {/* Terms */}
+          {estimate.termsText && (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 mt-4 p-4">
+              <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-2">Terms &amp; Conditions</h2>
+              <p className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed">{estimate.termsText}</p>
+            </div>
+          )}
         </div>
 
-        {/* Terms */}
-        {estimate.termsText && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 mt-4 p-4">
-            <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-2">Terms &amp; Conditions</h2>
-            <p className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed">{estimate.termsText}</p>
+        {/* ── Sidebar: summary & actions — sticky beside the detail on desktop,
+             stacked below it on mobile. ─────────────────────────────── */}
+        <div className="mt-4 lg:mt-5 lg:sticky lg:top-5 space-y-4">
+          {/* ── Totals ─────────────────────────────────────────────── */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 text-sm">
+            <div className="flex justify-between text-gray-500"><span>Net</span><span className="tabular-nums">{money(totals.subtotal)}</span></div>
+            <div className="flex justify-between text-gray-500 mt-1"><span>VAT</span><span className="tabular-nums">{money(totals.vatAmount)}</span></div>
+            <div className="flex justify-between items-baseline mt-3 pt-3 border-t border-gray-100">
+              <span className="text-[15px] font-bold text-gray-900">Total inc VAT</span>
+              <span className="text-[22px] font-extrabold tracking-tight tabular-nums" style={{ color: brand }}>{money(totals.totalIncVat)}</span>
+            </div>
           </div>
-        )}
 
         {/* ── Action: signature flow ───────────────────────────────── */}
         {!responded && requireSig && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 mt-4 p-5">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
             <p className="text-sm font-medium text-gray-700 mb-2">Please sign to approve this estimate</p>
             <SignaturePad onChange={setSignature} />
             <div className="flex flex-col sm:flex-row gap-2 mt-4">
@@ -358,7 +376,7 @@ export default function EstimatePortal() {
 
         {/* ── Action: per-line response ────────────────────────────── */}
         {!responded && !requireSig && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 mt-4 p-5">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
             <button disabled={busy || !anyDecided} onClick={() => post('/submit')}
               style={{ backgroundColor: brand }}
               className="w-full h-12 text-white font-bold rounded-xl disabled:opacity-50">
@@ -384,15 +402,16 @@ export default function EstimatePortal() {
         )}
 
         {responded && (
-          <div className="rounded-2xl mt-4 p-5 text-center border" style={{ backgroundColor: brandTint, borderColor: `color-mix(in srgb, ${brand} 22%, #ffffff)` }}>
+          <div className="rounded-2xl p-5 text-center border" style={{ backgroundColor: brandTint, borderColor: `color-mix(in srgb, ${brand} 22%, #ffffff)` }}>
             <p className="text-sm font-semibold" style={{ color: onTintInk }}>
               Thank you — your response has been recorded{approvedCount > 0 ? ` (${approvedCount} item${approvedCount > 1 ? 's' : ''} approved)` : ''}.
             </p>
             {organization.phone && <p className="text-xs mt-1" style={{ color: onTintInk }}>Questions? Call us on {organization.phone}.</p>}
           </div>
         )}
+        </div>
 
-        <p className="text-center text-xs text-gray-400 mt-6">
+        <p className="lg:col-span-2 text-center text-xs text-gray-400 mt-6">
           {orgName}{organization.phone ? ` · ${organization.phone}` : ''}
         </p>
       </div>

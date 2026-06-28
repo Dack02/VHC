@@ -40,6 +40,12 @@ interface PlatformSettings {
     motClientSecret: string
     motApiKey: string
   }
+  vehicleDetails: {
+    enabled: boolean
+    managedByEnv?: boolean
+    baseUrl: string
+    apiKey: string
+  }
   billing: {
     smsUnitCost: number
     emailUnitCost: number
@@ -75,6 +81,11 @@ export default function AdminSettings() {
   const [showTestLookupModal, setShowTestLookupModal] = useState(false)
   const [testLookupReg, setTestLookupReg] = useState('')
   const [testingLookup, setTestingLookup] = useState(false)
+
+  // Vehicle details (Vehicle Data Global) test modal state
+  const [showTestDetailsModal, setShowTestDetailsModal] = useState(false)
+  const [testDetailsReg, setTestDetailsReg] = useState('')
+  const [testingDetails, setTestingDetails] = useState(false)
 
   useEffect(() => {
     fetchData()
@@ -237,6 +248,42 @@ export default function AdminSettings() {
       setTimeout(() => setErrorMessage(''), 6000)
     } finally {
       setTestingLookup(false)
+    }
+  }
+
+  const handleTestDetails = async () => {
+    if (!session?.accessToken) return
+
+    setTestingDetails(true)
+    setErrorMessage('')
+    setSuccessMessage('')
+
+    try {
+      const result = await api<{ success: boolean; message?: string }>(
+        '/api/v1/admin/platform/vehicle-details/test',
+        {
+          method: 'POST',
+          body: { registration: testDetailsReg || undefined },
+          token: session.accessToken
+        }
+      )
+
+      if (result.success) {
+        setSuccessMessage(result.message || 'Vehicle details credentials are working')
+        setShowTestDetailsModal(false)
+        setTestDetailsReg('')
+      } else {
+        setErrorMessage(result.message || 'Vehicle details test failed')
+      }
+      setTimeout(() => {
+        setSuccessMessage('')
+        setErrorMessage('')
+      }, 6000)
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : 'Vehicle details test failed')
+      setTimeout(() => setErrorMessage(''), 6000)
+    } finally {
+      setTestingDetails(false)
     }
   }
 
@@ -664,6 +711,73 @@ export default function AdminSettings() {
                 </div>
               </div>
 
+              {/* Vehicle Data (DVLA spec) - Vehicle Data Global */}
+              <div className="border-t border-gray-200 pt-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-900">Vehicle Data (DVLA spec — Vehicle Data Global)</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Paid DVLA spec, provenance &amp; keeper/V5 enrichment. Enable the
+                      <code className="mx-1 px-1 py-0.5 bg-gray-100 rounded text-xs">vehicle_details</code>
+                      module per-org to use it (it costs per lookup).
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.vehicleDetails.enabled}
+                      disabled={settings.vehicleDetails.managedByEnv}
+                      onChange={(e) => updateSettings('vehicleDetails', 'enabled', e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+                {settings.vehicleDetails.managedByEnv && (
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                    <strong>Managed via environment variables.</strong> The key comes from the
+                    <code className="mx-1 px-1 py-0.5 bg-blue-100 rounded text-xs">VEHICLE_DETAILS_*</code>
+                    env vars (set in Railway) and overrides anything entered here. Use
+                    Test Lookup below to verify.
+                  </div>
+                )}
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+                      <input
+                        type="password"
+                        value={settings.vehicleDetails.apiKey}
+                        disabled={settings.vehicleDetails.managedByEnv}
+                        onChange={(e) => updateSettings('vehicleDetails', 'apiKey', e.target.value)}
+                        placeholder="••••••••••••••••"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Base URL <span className="text-gray-400 font-normal">(optional)</span></label>
+                      <input
+                        type="text"
+                        value={settings.vehicleDetails.baseUrl}
+                        disabled={settings.vehicleDetails.managedByEnv}
+                        onChange={(e) => updateSettings('vehicleDetails', 'baseUrl', e.target.value)}
+                        placeholder="https://uk.api.vehicledataglobal.com/r2/lookup"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setShowTestDetailsModal(true)}
+                      className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg font-medium hover:bg-gray-50"
+                    >
+                      Test Lookup
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {/* Test Notification Buttons */}
               <div className="border-t border-gray-200 pt-4">
                 <h3 className="text-sm font-medium text-gray-900 mb-3">Test Notifications</h3>
@@ -895,6 +1009,56 @@ export default function AdminSettings() {
                 className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
               >
                 {testingLookup ? 'Testing...' : 'Run Test'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showTestDetailsModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Test Vehicle Data Lookup</h2>
+              <button
+                onClick={() => { setShowTestDetailsModal(false); setTestDetailsReg('') }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-gray-600 mb-4">
+                Verifies the Vehicle Data Global key by running a live (billed) lookup. Enter a
+                registration — sandbox keys only accept VRMs containing the letter "A".
+              </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Registration</label>
+                <input
+                  type="text"
+                  value={testDetailsReg}
+                  onChange={(e) => setTestDetailsReg(e.target.value.toUpperCase())}
+                  placeholder="e.g. SA22MWF"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 uppercase"
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => { setShowTestDetailsModal(false); setTestDetailsReg('') }}
+                className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTestDetails}
+                disabled={testingDetails}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {testingDetails ? 'Testing...' : 'Run Test'}
               </button>
             </div>
           </div>

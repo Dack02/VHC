@@ -37,6 +37,9 @@ interface ChecklistItem {
   childIndex?: number          // Index among siblings
 }
 
+// Repair Type lookup option (drives the locked labour rate via its default labour code)
+interface RepairTypeOpt { id: string; code: string; colour: string; defaultLabourCodeId: string | null }
+
 // Row edit state for inline editing
 interface RowEditState {
   repairItemId: string
@@ -52,6 +55,7 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
   const { session, user, refreshSession } = useAuth()
   const [repairItems, setRepairItems] = useState<NewRepairItem[]>([])
   const [labourCodes, setLabourCodes] = useState<LabourCode[]>([])
+  const [repairTypes, setRepairTypes] = useState<RepairTypeOpt[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [markingComplete, setMarkingComplete] = useState(false)
@@ -90,7 +94,7 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
       setError(null)
 
       try {
-        const [itemsRes, codesRes, pricingRes] = await Promise.all([
+        const [itemsRes, codesRes, pricingRes, repairTypesRes] = await Promise.all([
           api<{ repairItems: NewRepairItem[] }>(
             `/api/v1/health-checks/${healthCheckId}/repair-items`,
             { token: session.accessToken }
@@ -102,12 +106,17 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
           api<{ settings: PricingSettings }>(
             `/api/v1/organizations/${user.organization.id}/pricing-settings`,
             { token: session.accessToken }
+          ),
+          api<{ repairTypes: RepairTypeOpt[] }>(
+            `/api/v1/repair-types?active_only=true`,
+            { token: session.accessToken }
           )
         ])
 
         setRepairItems(itemsRes.repairItems || [])
         setLabourCodes(codesRes.labourCodes || [])
         setPricingSettings(pricingRes.settings || null)
+        setRepairTypes(repairTypesRes.repairTypes || [])
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load data')
       } finally {
@@ -381,9 +390,10 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
   }, [])
 
   // Save labour for a row
+  // Labour is locked to the work group's Repair Type — no labour code is sent; the server resolves
+  // the rate from the type's default labour code (and 400s if the line has no resolvable type).
   const saveRowLabour = useCallback(async (
     repairItemId: string,
-    labourCodeId: string,
     hours: string,
     existingLabourId?: string,
     discountPercent: number = 0
@@ -391,7 +401,7 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
     if (!session?.accessToken) return false
 
     const hoursNum = parseFloat(hours)
-    if (!labourCodeId || isNaN(hoursNum) || hoursNum <= 0) {
+    if (isNaN(hoursNum) || hoursNum <= 0) {
       return false
     }
 
@@ -404,7 +414,6 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
           method: 'PATCH',
           token: session.accessToken,
           body: {
-            labour_code_id: labourCodeId,
             hours: hoursNum,
             discount_percent: discountPercent
           }
@@ -415,7 +424,6 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
           method: 'POST',
           token: session.accessToken,
           body: {
-            labour_code_id: labourCodeId,
             hours: hoursNum,
             discount_percent: discountPercent
           }
@@ -435,6 +443,22 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
       return false
     }
   }, [session?.accessToken, updateEditState, refetchData])
+
+  // Set the Repair Type on a top-level work group / single item. The server re-rates the group's
+  // existing labour to the new type's rate; we refetch to reflect it.
+  const setItemRepairType = useCallback(async (repairItemId: string, repairTypeId: string) => {
+    if (!session?.accessToken) return
+    try {
+      await api(`/api/v1/repair-items/${repairItemId}`, {
+        method: 'PATCH',
+        token: session.accessToken,
+        body: { repairTypeId: repairTypeId || null }
+      })
+      await refetchData()
+    } catch (err) {
+      console.error('Failed to set repair type:', err)
+    }
+  }, [session?.accessToken, refetchData])
 
   const handleMarkNoLabourRequired = async (repairItemId: string) => {
     console.log('handleMarkNoLabourRequired called with:', repairItemId)
@@ -887,6 +911,8 @@ interface GroupLabourRowProps {
   item: ChecklistItem
   rowIndex: number
   labourCodes: LabourCode[]
+  repairTypes: RepairTypeOpt[]
+  repairTypeId: string | null
   editState: RowEditState
   isLoading: boolean
   onUpdateEditState: (updates: Partial<RowEditState>) => void
@@ -904,6 +930,8 @@ function GroupLabourRow({
   item,
   rowIndex,
   labourCodes,
+  repairTypes,
+  repairTypeId,
   editState,
   isLoading,
   onUpdateEditState,
@@ -921,27 +949,18 @@ function GroupLabourRow({
   const isNA = item.status === 'na'
 
   // Local state for inputs
-  const [localCode, setLocalCode] = useState(existingLabour?.labourCodeId || editState.labourCodeId)
+  const repairType = repairTypes.find(rt => rt.id === repairTypeId) || null
+  const lockedCode = repairType?.defaultLabourCodeId ? (labourCodes.find(c => c.id === repairType.defaultLabourCodeId) || null) : null
+  const localCode = lockedCode?.id || ''
   const [localHours, setLocalHours] = useState(existingLabour?.hours?.toString() || editState.hours)
   const [localDiscount, setLocalDiscount] = useState(existingLabour?.discountPercent?.toString() || '0')
   const saveTriggeredRef = useRef(false)
 
-  // Fix 1: Default labour code selection
-  useEffect(() => {
-    if (!existingLabour && !localCode && labourCodes.length > 0) {
-      const defaultCode = labourCodes.find(c => c.isDefault) || labourCodes[0]
-      if (defaultCode) {
-        setLocalCode(defaultCode.id)
-      }
-    }
-  }, [labourCodes, existingLabour, localCode])
-
   const isDirty = hasLabour
-    ? localCode !== existingLabour.labourCodeId || localHours !== existingLabour.hours.toString() || localDiscount !== (existingLabour.discountPercent?.toString() || '0')
-    : localCode !== '' || localHours !== '' || localDiscount !== '0'
+    ? localHours !== existingLabour.hours.toString() || localDiscount !== (existingLabour.discountPercent?.toString() || '0')
+    : localHours !== '' || localDiscount !== '0'
 
-  const selectedLabourCode = labourCodes.find(c => c.id === localCode)
-  const rate = selectedLabourCode?.hourlyRate || existingLabour?.rate || 0
+  const rate = lockedCode?.hourlyRate || existingLabour?.rate || 0
   const hoursNum = parseFloat(localHours) || 0
   const discountPct = parseFloat(localDiscount) || 0
   const subtotal = hoursNum * rate
@@ -1237,6 +1256,8 @@ interface ChildLabourRowProps {
   item: ChecklistItem
   rowIndex: number
   labourCodes: LabourCode[]
+  repairTypes: RepairTypeOpt[]
+  repairTypeId: string | null
   editState: RowEditState
   isLoading: boolean
   onUpdateEditState: (updates: Partial<RowEditState>) => void
@@ -1254,6 +1275,8 @@ function ChildLabourRow({
   item,
   rowIndex,
   labourCodes,
+  repairTypes,
+  repairTypeId,
   editState,
   isLoading,
   onUpdateEditState,
@@ -1278,27 +1301,18 @@ function ChildLabourRow({
   const treeConnector = item.isLastChild ? '└─' : '├─'
 
   // Local state for inputs
-  const [localCode, setLocalCode] = useState(existingLabour?.labourCodeId || editState.labourCodeId)
+  const repairType = repairTypes.find(rt => rt.id === repairTypeId) || null
+  const lockedCode = repairType?.defaultLabourCodeId ? (labourCodes.find(c => c.id === repairType.defaultLabourCodeId) || null) : null
+  const localCode = lockedCode?.id || ''
   const [localHours, setLocalHours] = useState(existingLabour?.hours?.toString() || editState.hours)
   const [localDiscount, setLocalDiscount] = useState(existingLabour?.discountPercent?.toString() || '0')
   const saveTriggeredRef = useRef(false)
 
-  // Fix 1: Default labour code selection
-  useEffect(() => {
-    if (!existingLabour && !localCode && labourCodes.length > 0) {
-      const defaultCode = labourCodes.find(c => c.isDefault) || labourCodes[0]
-      if (defaultCode) {
-        setLocalCode(defaultCode.id)
-      }
-    }
-  }, [labourCodes, existingLabour, localCode])
-
   const isDirty = hasLabour
-    ? localCode !== existingLabour.labourCodeId || localHours !== existingLabour.hours.toString() || localDiscount !== (existingLabour.discountPercent?.toString() || '0')
-    : localCode !== '' || localHours !== '' || localDiscount !== '0'
+    ? localHours !== existingLabour.hours.toString() || localDiscount !== (existingLabour.discountPercent?.toString() || '0')
+    : localHours !== '' || localDiscount !== '0'
 
-  const selectedLabourCode = labourCodes.find(c => c.id === localCode)
-  const rate = selectedLabourCode?.hourlyRate || existingLabour?.rate || 0
+  const rate = lockedCode?.hourlyRate || existingLabour?.rate || 0
   const hoursNum = parseFloat(localHours) || 0
   const discountPct = parseFloat(localDiscount) || 0
   const subtotal = hoursNum * rate
@@ -1606,9 +1620,12 @@ function ChildLabourRow({
 // ============================================================================
 
 interface InlineLabourRowProps {
+  onSetRepairType: (repairTypeId: string) => void
   item: ChecklistItem
   rowIndex: number
   labourCodes: LabourCode[]
+  repairTypes: RepairTypeOpt[]
+  repairTypeId: string | null
   editState: RowEditState
   isLoading: boolean
   onUpdateEditState: (updates: Partial<RowEditState>) => void
@@ -1623,9 +1640,12 @@ interface InlineLabourRowProps {
 }
 
 function InlineLabourRow({
+  onSetRepairType,
   item,
   rowIndex,
   labourCodes,
+  repairTypes,
+  repairTypeId,
   editState,
   isLoading,
   onUpdateEditState,
@@ -1643,31 +1663,22 @@ function InlineLabourRow({
   const isNA = item.status === 'na'
 
   // Local state for inputs (synced with editState but allows immediate updates)
-  const [localCode, setLocalCode] = useState(existingLabour?.labourCodeId || editState.labourCodeId)
+  const repairType = repairTypes.find(rt => rt.id === repairTypeId) || null
+  const lockedCode = repairType?.defaultLabourCodeId ? (labourCodes.find(c => c.id === repairType.defaultLabourCodeId) || null) : null
+  const localCode = lockedCode?.id || ''
   const [localHours, setLocalHours] = useState(existingLabour?.hours?.toString() || editState.hours)
   const [localDiscount, setLocalDiscount] = useState(existingLabour?.discountPercent?.toString() || '0')
 
   // Track if save was triggered by keyboard (to prevent double-save from blur)
   const saveTriggeredRef = useRef(false)
 
-  // Fix 1: Default labour code selection
-  useEffect(() => {
-    if (!existingLabour && !localCode && labourCodes.length > 0) {
-      const defaultCode = labourCodes.find(c => c.isDefault) || labourCodes[0]
-      if (defaultCode) {
-        setLocalCode(defaultCode.id)
-      }
-    }
-  }, [labourCodes, existingLabour, localCode])
-
   // Track if we have unsaved changes
   const isDirty = hasLabour
-    ? localCode !== existingLabour.labourCodeId || localHours !== existingLabour.hours.toString() || localDiscount !== (existingLabour.discountPercent?.toString() || '0')
-    : localCode !== '' || localHours !== '' || localDiscount !== '0'
+    ? localHours !== existingLabour.hours.toString() || localDiscount !== (existingLabour.discountPercent?.toString() || '0')
+    : localHours !== '' || localDiscount !== '0'
 
   // Get selected labour code for rate calculation
-  const selectedLabourCode = labourCodes.find(c => c.id === localCode)
-  const rate = selectedLabourCode?.hourlyRate || existingLabour?.rate || 0
+  const rate = lockedCode?.hourlyRate || existingLabour?.rate || 0
   const hoursNum = parseFloat(localHours) || 0
   const discountPct = parseFloat(localDiscount) || 0
   const subtotal = hoursNum * rate

@@ -203,6 +203,28 @@ export async function getVehicleDetailsStatus(): Promise<{ configured: boolean; 
 // Mapping helpers
 // ============================================
 
+/**
+ * VDGL returns .NET-style PascalCase JSON (e.g. `Results.VehicleDetails.
+ * VehicleIdentification.DvlaMake`, `BillingInformation.TransactionCost`). Lower-
+ * casing the first character of every key recursively maps it exactly onto the
+ * camelCase paths the mapper + the documentation use, so the rest of this file
+ * can read `results.vehicleDetails…` regardless of the wire casing.
+ */
+function lowerFirst(s: string): string {
+  return s.length ? s[0].toLowerCase() + s.slice(1) : s
+}
+function normaliseKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normaliseKeys)
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[lowerFirst(k)] = normaliseKeys(v)
+    }
+    return out
+  }
+  return value
+}
+
 function str(v: unknown): string | null {
   if (v === null || v === undefined) return null
   const s = String(v).trim()
@@ -280,7 +302,8 @@ function mapVehicleDetails(reg: string, raw: RawVehicleDetailsResponse): Vehicle
     registration: str(ident.vrm) || reg,
     uvc: str((results.vehicleCodes || {}).uvc),
 
-    vin: str(ident.vin),
+    // Sandbox (and VIN-permission-gated accounts) return "Permission Required" — treat as absent.
+    vin: ((): string | null => { const v = str(ident.vin); return v && /permission required/i.test(v) ? null : v })(),
     make: str(ident.dvlaMake) || str(modelIdent.make),
     model: str(modelIdent.model) || str(ident.dvlaModel),
     derivative: str(modelIdent.modelVariant) || str(modelIdent.series),
@@ -379,7 +402,8 @@ async function performLookup(cfg: VehicleDetailsConfig, reg: string): Promise<Ve
 
   let raw: RawVehicleDetailsResponse
   try {
-    raw = (await res.json()) as RawVehicleDetailsResponse
+    // VDGL responds in PascalCase; normalise to the camelCase the mapper expects.
+    raw = normaliseKeys(await res.json()) as RawVehicleDetailsResponse
   } catch (err) {
     return { ...empty, error: 'Vehicle details returned an invalid response', errorCode: 'API_ERROR' }
   }

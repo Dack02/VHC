@@ -14,6 +14,7 @@ import PackagePickerModal from './components/PackagePickerModal'
  */
 
 interface LabourCode { id: string; code: string; description: string; hourlyRate: number; isDefault?: boolean }
+interface RepairTypeOpt { id: string; code: string; colour: string; defaultLabourCodeId: string | null }
 interface SupplierOpt { id: string; name: string }
 interface PackageOpt { id: string; name: string; description?: string | null }
 
@@ -21,6 +22,7 @@ interface WLLabour { id: string; labourCode: { code: string; description: string
 interface WLPart { id: string; partNumber: string | null; description: string; quantity: number; sellPrice: number; costPrice: number; lineTotal: number; marginPercent: number | null; supplierName: string | null }
 interface WorkLine {
   id: string; name: string; description: string | null; origin: 'booking' | 'inspection' | 'estimate'
+  repairTypeId: string | null
   labourTotal: number; partsTotal: number; subtotal: number; vatAmount: number; totalIncVat: number
   outcomeStatus: string | null; labour: WLLabour[]; parts: WLPart[]
 }
@@ -50,6 +52,7 @@ export default function WorkDetailsPanel({
   const [totals, setTotals] = useState<Totals>(ZERO)
   const [loading, setLoading] = useState(true)
   const [labourCodes, setLabourCodes] = useState<LabourCode[]>([])
+  const [repairTypes, setRepairTypes] = useState<RepairTypeOpt[]>([])
   const [suppliers, setSuppliers] = useState<SupplierOpt[]>([])
   const [packages, setPackages] = useState<PackageOpt[]>([])
   const [notes, setNotes] = useState(notesConfig?.value || '')
@@ -79,6 +82,8 @@ export default function WorkDetailsPanel({
     if (!organizationId) return
     api<{ labourCodes: LabourCode[] }>(`/api/v1/organizations/${organizationId}/labour-codes`, { token })
       .then(d => setLabourCodes(d.labourCodes || [])).catch(() => {})
+    api<{ repairTypes: RepairTypeOpt[] }>(`/api/v1/repair-types?active_only=true`, { token })
+      .then(d => setRepairTypes(d.repairTypes || [])).catch(() => {})
     api<{ suppliers: SupplierOpt[] }>(`/api/v1/organizations/${organizationId}/suppliers`, { token })
       .then(d => setSuppliers(d.suppliers || [])).catch(() => {})
     api<{ servicePackages: PackageOpt[] }>(`/api/v1/organizations/${organizationId}/service-packages`, { token })
@@ -130,9 +135,15 @@ export default function WorkDetailsPanel({
     catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to remove line') }
   }
 
-  const addLabour = async (lineId: string, labourCodeId: string, hours: number, description: string) => {
-    try { await api(`/api/v1/repair-items/${lineId}/labour`, { method: 'POST', token, body: { labour_code_id: labourCodeId, hours, notes: description || undefined } }); await refresh(); return true }
+  // Labour is locked to the line's Repair Type — no labour code is sent; the server resolves the
+  // rate from the type's default labour code (and 400s if the line has no type).
+  const addLabour = async (lineId: string, hours: number, description: string) => {
+    try { await api(`/api/v1/repair-items/${lineId}/labour`, { method: 'POST', token, body: { hours, notes: description || undefined } }); await refresh(); return true }
     catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to add labour'); return false }
+  }
+  const setLineRepairType = async (lineId: string, repairTypeId: string) => {
+    try { await api(`/api/v1/repair-items/${lineId}`, { method: 'PATCH', token, body: { repairTypeId: repairTypeId || null } }); await refresh() }
+    catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to set repair type') }
   }
   const deleteLabour = async (id: string) => {
     try { await api(`/api/v1/repair-labour/${id}`, { method: 'DELETE', token }); await refresh() }
@@ -190,8 +201,8 @@ export default function WorkDetailsPanel({
               {editableLines.length === 0 && <p className="text-sm text-gray-400 py-1">{emptyLabel}</p>}
               {editableLines.map(line => (
                 <WorkLineCard key={line.id} line={line} editable expanded={expanded.has(line.id)}
-                  labourCodes={labourCodes} suppliers={suppliers}
-                  onToggle={() => toggle(line.id)} onDeleteLine={() => deleteLine(line.id)}
+                  labourCodes={labourCodes} repairTypes={repairTypes} suppliers={suppliers}
+                  onToggle={() => toggle(line.id)} onDeleteLine={() => deleteLine(line.id)} onSetRepairType={setLineRepairType}
                   onAddLabour={addLabour} onDeleteLabour={deleteLabour} onAddPart={addPart} onDeletePart={deletePart} />
               ))}
             </div>
@@ -233,8 +244,8 @@ export default function WorkDetailsPanel({
               <div className="space-y-2">
                 {inspection.map(line => (
                   <WorkLineCard key={line.id} line={line} editable={false} expanded={expanded.has(line.id)}
-                    labourCodes={labourCodes} suppliers={suppliers}
-                    onToggle={() => toggle(line.id)} onDeleteLine={() => {}}
+                    labourCodes={labourCodes} repairTypes={repairTypes} suppliers={suppliers}
+                    onToggle={() => toggle(line.id)} onDeleteLine={() => {}} onSetRepairType={async () => {}}
                     onAddLabour={async () => false} onDeleteLabour={async () => {}} onAddPart={async () => false} onDeletePart={async () => {}} />
                 ))}
               </div>
@@ -258,31 +269,33 @@ export default function WorkDetailsPanel({
 // ---------------------------------------------------------------------------
 
 function WorkLineCard({
-  line, editable, expanded, labourCodes, suppliers,
-  onToggle, onDeleteLine, onAddLabour, onDeleteLabour, onAddPart, onDeletePart
+  line, editable, expanded, labourCodes, repairTypes, suppliers,
+  onToggle, onDeleteLine, onSetRepairType, onAddLabour, onDeleteLabour, onAddPart, onDeletePart
 }: {
   line: WorkLine
   editable: boolean
   expanded: boolean
   labourCodes: LabourCode[]
+  repairTypes: RepairTypeOpt[]
   suppliers: SupplierOpt[]
   onToggle: () => void
   onDeleteLine: () => void
-  onAddLabour: (lineId: string, labourCodeId: string, hours: number, description: string) => Promise<boolean>
+  onSetRepairType: (lineId: string, repairTypeId: string) => Promise<void>
+  onAddLabour: (lineId: string, hours: number, description: string) => Promise<boolean>
   onDeleteLabour: (id: string) => Promise<void>
   onAddPart: (lineId: string, body: Record<string, unknown>) => Promise<boolean>
   onDeletePart: (id: string) => Promise<void>
 }) {
-  const [labCode, setLabCode] = useState('')
   const [labDesc, setLabDesc] = useState('')
   const [labHours, setLabHours] = useState('')
   const [savingLab, setSavingLab] = useState(false)
   const [part, setPart] = useState({ description: '', quantity: '1', costPrice: '', sellPrice: '', supplierId: '' })
   const [savingPart, setSavingPart] = useState(false)
 
-  useEffect(() => {
-    if (!labCode && labourCodes.length) setLabCode((labourCodes.find(c => c.isDefault) || labourCodes[0]).id)
-  }, [labourCodes, labCode])
+  // Labour is locked to the line's Repair Type → its default labour code → rate.
+  const repairType = repairTypes.find(rt => rt.id === line.repairTypeId) || null
+  const lockedCode = repairType?.defaultLabourCodeId ? (labourCodes.find(c => c.id === repairType.defaultLabourCodeId) || null) : null
+  const canAddLabour = !!repairType && !!lockedCode
 
   const sp = parseFloat(part.sellPrice)
   const cp = parseFloat(part.costPrice) || 0
@@ -290,9 +303,9 @@ function WorkLineCard({
 
   const submitLabour = async () => {
     const h = parseFloat(labHours)
-    if (!labCode || !labDesc.trim() || isNaN(h) || h <= 0) return
+    if (!canAddLabour || !labDesc.trim() || isNaN(h) || h <= 0) return
     setSavingLab(true)
-    const ok = await onAddLabour(line.id, labCode, h, labDesc.trim())
+    const ok = await onAddLabour(line.id, h, labDesc.trim())
     setSavingLab(false)
     if (ok) { setLabHours(''); setLabDesc('') }
   }
@@ -327,6 +340,22 @@ function WorkLineCard({
 
       {expanded && (
         <div className="px-3 pb-3 pt-1 border-t border-gray-100 space-y-3">
+          {/* Repair Type — drives the labour rate (locked) */}
+          <div className="flex items-center flex-wrap gap-2 text-sm">
+            <span className="text-xs font-medium text-gray-500">Repair Type</span>
+            {editable ? (
+              <select value={line.repairTypeId || ''} onChange={e => onSetRepairType(line.id, e.target.value)} className={inputCls}>
+                <option value="">— Select —</option>
+                {repairTypes.map(rt => <option key={rt.id} value={rt.id}>{rt.code}</option>)}
+              </select>
+            ) : (
+              <span className="text-gray-700">{repairType?.code || '—'}</span>
+            )}
+            {repairType && (lockedCode
+              ? <span className="text-xs text-gray-400">Labour @ {money(lockedCode.hourlyRate)}/hr</span>
+              : <span className="text-xs text-amber-600">No labour code on this type</span>)}
+          </div>
+
           {/* Labour */}
           <div>
             <div className="flex justify-between text-xs font-medium text-gray-500 mb-1"><span>Labour</span><span>{money(line.labourTotal)}</span></div>
@@ -340,18 +369,18 @@ function WorkLineCard({
                 </span>
               </div>
             ))}
-            {editable && (
+            {editable && (canAddLabour ? (
               <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                <select value={labCode} onChange={e => setLabCode(e.target.value)} className={inputCls}>
-                  {labourCodes.map(c => <option key={c.id} value={c.id}>{c.code}</option>)}
-                </select>
+                <span className="text-xs text-gray-500 px-2 py-1 bg-gray-50 rounded shrink-0">{lockedCode!.code} @ {money(lockedCode!.hourlyRate)}/hr</span>
                 <input value={labDesc} onChange={e => setLabDesc(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') submitLabour() }} placeholder="Description" className={`${inputCls} flex-1 min-w-[8rem]`} />
                 <input type="number" step="0.1" min="0" value={labHours} onChange={e => setLabHours(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') submitLabour() }} placeholder="hrs" className={`${inputCls} w-20 text-right`} />
-                <button onClick={submitLabour} disabled={savingLab || !labCode || !labDesc.trim() || !labHours} className="px-2.5 py-1 bg-gray-100 text-gray-700 text-sm rounded hover:bg-gray-200 disabled:opacity-50">Add labour</button>
+                <button onClick={submitLabour} disabled={savingLab || !labDesc.trim() || !labHours} className="px-2.5 py-1 bg-gray-100 text-gray-700 text-sm rounded hover:bg-gray-200 disabled:opacity-50">Add labour</button>
               </div>
-            )}
+            ) : (
+              <p className="text-xs text-amber-600 mt-1.5">Pick a Repair Type {repairType && !lockedCode ? 'with a default labour code ' : ''}above to add labour.</p>
+            ))}
           </div>
 
           {/* Parts */}

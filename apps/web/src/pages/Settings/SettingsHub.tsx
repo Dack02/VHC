@@ -21,7 +21,9 @@ const CARD_MODULE: Record<string, ModuleKey> = {
   '/settings/message-templates': 'customer_comms',
   '/settings/service-types': 'jobsheets',
   '/settings/booking-codes': 'jobsheets',
-  '/settings/estimate-settings': 'estimates'
+  '/settings/estimate-settings': 'estimates',
+  '/settings/expiry-types': 'vehicles',
+  '/settings/reminder-campaigns': 'vehicle_reminders'
 }
 
 interface SettingsCard {
@@ -214,6 +216,28 @@ export default function SettingsHub() {
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/expiry-types',
+      title: 'Vehicle Expiry Types',
+      description: 'MOT, Service, Tax and custom date types tracked against vehicles',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/reminder-campaigns',
+      title: 'Expiry Reminder Campaigns',
+      description: 'Automatic MOT/Service/custom reminders to the vehicle’s contact',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
         </svg>
       ),
       roles: ['super_admin', 'org_admin', 'site_admin']

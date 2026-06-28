@@ -87,6 +87,8 @@ import arrivalsRoute from './routes/arrivals.js'
 import bookingCodes from './routes/booking-codes.js'
 import serviceTypes from './routes/service-types.js'
 import repairTypes from './routes/repair-types.js'
+import expiryTypes from './routes/expiry-types.js'
+import expiryCampaigns from './routes/expiry-campaigns.js'
 import feedback from './routes/feedback.js'
 import olloDevWebhookRoutes from './routes/webhooks/ollo-dev.js'
 
@@ -197,6 +199,10 @@ app.route('/api/v1/booking-codes', bookingCodes)
 app.route('/api/v1/arrivals', arrivalsRoute)
 app.route('/api/v1/service-types', serviceTypes)
 app.route('/api/v1/repair-types', repairTypes)
+
+// Vehicles module — typed expiry config + expiry reminder campaigns
+app.route('/api/v1/expiry-types', expiryTypes)
+app.route('/api/v1/expiry-campaigns', expiryCampaigns)
 
 // In-app feedback / bug reporting (pushed to Ollo Dev)
 app.route('/api/v1/feedback', feedback)

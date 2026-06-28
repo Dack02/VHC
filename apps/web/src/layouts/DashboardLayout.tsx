@@ -203,6 +203,17 @@ export default function DashboardLayout() {
       roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor']
     },
     {
+      to: '/vehicles',
+      label: 'Vehicles',
+      icon: (
+        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l1.5-4.5A2 2 0 018.4 7h7.2a2 2 0 011.9 1.5L19 13m-14 0h14m-14 0v4a1 1 0 001 1h1a1 1 0 001-1v-1m10 1v-1a1 1 0 011-1h0a1 1 0 011 1v1a1 1 0 01-1 1h-1a1 1 0 01-1-1zm-12 0a1 1 0 01-1-1v-3h14v3a1 1 0 01-1 1M7 16h.01M17 16h.01" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor'],
+      module: 'vehicles'
+    },
+    {
       to: '/follow-ups',
       label: 'Follow-Ups',
       icon: (

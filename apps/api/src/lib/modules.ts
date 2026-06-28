@@ -26,6 +26,8 @@ export type ModuleKey =
   | 'jobsheets'
   | 'estimates'
   | 'booking_diary'
+  | 'vehicles'
+  | 'vehicle_reminders'
 
 export interface ModuleDefinition {
   key: ModuleKey
@@ -50,7 +52,9 @@ export const MODULES: ModuleDefinition[] = [
   { key: 'vehicle_details',    label: 'Vehicle Data (DVLA spec)', description: 'Paid DVLA spec, provenance & keeper/V5 enrichment (Vehicle Data Global)', defaultOn: true },
   { key: 'jobsheets',          label: 'Jobsheets (GMS)',    description: 'Top-level booking document with attached health checks', defaultOn: false },
   { key: 'estimates',          label: 'Estimates (GMS)',    description: 'Standalone pre-booking priced quotes that convert into jobsheets', defaultOn: true },
-  { key: 'booking_diary',      label: 'Booking Diary',      description: 'Daily/weekly booking diary with workshop capacity and job-type counts', defaultOn: true }
+  { key: 'booking_diary',      label: 'Booking Diary',      description: 'Daily/weekly booking diary with workshop capacity and job-type counts', defaultOn: true },
+  { key: 'vehicles',           label: 'Vehicles',           description: 'Vehicle asset register with owners/drivers, notes, MOT/service/custom expiry tracking', defaultOn: true },
+  { key: 'vehicle_reminders',  label: 'Expiry Reminders',   description: 'Expiry-driven (MOT/Service/custom) reminder campaigns via the Follow-Up engine', defaultOn: false }
 ]
 
 export const MODULE_KEYS: ModuleKey[] = MODULES.map((m) => m.key)

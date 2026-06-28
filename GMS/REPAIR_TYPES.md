@@ -1,8 +1,9 @@
 # GMS — Repair Types + Main Booking Requirement (Plan)
 
-> Branch: work on `dev` · Status: **P1 (Foundation) BUILT + VERIFIED (uncommitted, 2026-06-26)** — API
-> `tsc` + web `tsc && vite build` both green; migration `20260628130000_repair_types.sql` pending pipeline
-> deploy. P2–P4 not started. Audit gaps closed in §14. · Author: Leo + Claude
+> Branch: work on `dev` · Status: **P1 DONE + P2 IN PROGRESS (uncommitted, 2026-06-26)** — P1 foundation
+> built+verified; P2 server lock + shared jobsheet/estimate `WorkDetailsPanel` built + verified (API `tsc` +
+> web build green); **VHC `LabourTab` is the remaining P2 piece** (see §11). Migration
+> `20260628130000_repair_types.sql` pending pipeline deploy. Audit gaps closed in §14. · Author: Leo + Claude
 > Companion to [`JOBSHEET.md`](./JOBSHEET.md), [`WORK_DETAILS.md`](./WORK_DETAILS.md), [`ESTIMATES.md`](./ESTIMATES.md).
 
 ## 0. TL;DR
@@ -356,14 +357,22 @@ the Parts module, §4.4/§12.) Deploy via the pipeline (`supabase db push`), **n
   card under "Pricing & Parts". Service Type → **Main Booking Requirement** label rename (Settings page +
   card, NewJobsheet, JobsheetDetail, EstimateDetail convert modal). No behaviour change yet. **Verified:**
   API `tsc` + web `tsc && vite build` green. **Pending:** pipeline deploy of the migration.
-- **P2 — Labour lock:** Repair Type selector on the group-header / WorkLineCard in `LabourTab.tsx`
-  (≈L660-697) **and the shared** `WorkDetailsPanel.tsx` (≈L343-354 — covers estimate AND jobsheet flat
-  lines; add a **parent-agnostic "set repair type on line" PATCH**, §14 gap 10); one
-  `resolveLockedRate({itemId|optionId})` helper (resolve-upward) across the item + option + PATCH +
-  package-apply + group-migration sites (§5.1-A); hide the per-line code selector + replace the rate
-  *preview* with the type's rate; **server-side 400 gate** + relax `labour_code_id` validation (§14 gap 5).
-  Carry `repair_type_id` through `formatRepairItem`, **both** `shapeWorkLine`s + `WORK_LINE_SELECT`s, web
-  `api.ts` types, create/PATCH, and `copyLineToJobsheet`.
+- **P2 — Labour lock:** IN PROGRESS (2026-06-26).
+  - ✅ **Server lock (DONE + verified — API `tsc` green):** `resolveLockedRate({itemId|optionId})` helper
+    (resolve-upward) + `reRateLabourForRepairItem` in `repair-items/helpers.ts`; labour `item POST` +
+    `option POST` resolve the rate from the type with a **server-side 400 gate** (`REPAIR_TYPE_REQUIRED`) +
+    relaxed `labour_code_id` validation; labour `PATCH` keeps the snapshot (no re-resolve); `repairTypeId`
+    on `formatRepairItem`; `repair-items` create sets the type (top-level only) + PATCH accepts
+    `repairTypeId` and re-rates existing labour; `copyLineToJobsheet` carries `repair_type_id` +
+    `discount_percent`. (`shapeWorkLine`/`WORK_LINE_SELECT` use `*` + `formatRepairItem`, so they surface it.)
+  - ✅ **Shared jobsheet/estimate UI (DONE + verified — web build green):** `WorkDetailsPanel.tsx` — Repair
+    Type selector per WorkLineCard, hides the per-line labour-code dropdown, shows the locked rate, gates
+    "Add labour", `addLabour` drops `labour_code_id`, new `setLineRepairType` PATCH. One shared component →
+    covers Jobsheet AND Estimate.
+  - ⬜ **VHC `LabourTab.tsx` (REMAINING):** the 3 inline-editing row editors (group/child/single) — Repair
+    Type selector on group + single headers, hide the code `<select>`, derive the locked rate
+    (resolve-upward for children), gate, drop `labour_code_id` from `saveRowLabour`; + `api.ts`
+    `NewRepairItem`/`RepairItemChild` `repairTypeId`. (CreateRepairGroupModal type pre-fill is P3.)
 - **P2.5 — Packages:** `service_packages.default_repair_type_id` (+ CRUD/builder) + **stamp-before-apply** in
   all four wrappers + apply-path rate-from-type + retire per-line labour-code column + legacy backfill/flag
   (§5.2).

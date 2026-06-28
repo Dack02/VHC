@@ -17,6 +17,7 @@
 import { decrypt, isEncryptionConfigured } from '../lib/encryption.js'
 import { logger } from '../lib/logger.js'
 import { supabaseAdmin } from '../lib/supabase.js'
+import { recomputeVehicleExpiries } from './vehicle-expiry.js'
 
 // ============================================
 // Configuration
@@ -488,6 +489,9 @@ export async function persistMotHistory(
     .update(summary)
     .eq('id', vehicleId)
     .eq('organization_id', organizationId)
+
+  // Project the MOT expiry into the typed expiry surface (powers campaigns).
+  await recomputeVehicleExpiries(organizationId, vehicleId)
 
   return { persisted: result.found ? result.motTests.length : 0 }
 }

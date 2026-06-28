@@ -40,6 +40,10 @@ const EstimatesList = lazy(() => import('./pages/Estimates/EstimatesList'))
 const NewEstimate = lazy(() => import('./pages/Estimates/NewEstimate'))
 const EstimateDetail = lazy(() => import('./pages/Estimates/EstimateDetail'))
 const EstimatePortal = lazy(() => import('./pages/EstimatePortal/EstimatePortal'))
+const VehicleList = lazy(() => import('./pages/Vehicles/VehicleList'))
+const VehicleDetail = lazy(() => import('./pages/Vehicles/VehicleDetail'))
+const VehicleExpiryTypes = lazy(() => import('./pages/Settings/VehicleExpiryTypes'))
+const VehicleReminderCampaigns = lazy(() => import('./pages/Settings/VehicleReminderCampaigns'))
 const ArrivalsHub = lazy(() => import('./pages/Arrivals/ArrivalsHub'))
 const BookingCodes = lazy(() => import('./pages/Settings/BookingCodes'))
 const ServiceTypes = lazy(() => import('./pages/Settings/ServiceTypes'))
@@ -241,6 +245,8 @@ function App() {
                         <Route path="/arrivals" element={<ArrivalsHub />} />
                         <Route path="/customers" element={<CustomerList />} />
                         <Route path="/customers/:id" element={<CustomerDetail />} />
+                        <Route path="/vehicles" element={<RequireModule module="vehicles"><VehicleList /></RequireModule>} />
+                        <Route path="/vehicles/:id" element={<RequireModule module="vehicles"><VehicleDetail /></RequireModule>} />
                         <Route path="/messages" element={<RequireModule module="customer_comms"><Messages /></RequireModule>} />
                         <Route path="/follow-ups" element={<RequireModule module="follow_up"><FollowUpList /></RequireModule>} />
                         <Route path="/notes" element={<NotesPage />} />
@@ -287,6 +293,8 @@ function App() {
                         <Route path="/settings/workshop-statuses" element={<WorkshopStatuses />} />
                         <Route path="/settings/booking-codes" element={<BookingCodes />} />
                         <Route path="/settings/service-types" element={<ServiceTypes />} />
+                        <Route path="/settings/expiry-types" element={<RequireModule module="vehicles"><VehicleExpiryTypes /></RequireModule>} />
+                        <Route path="/settings/reminder-campaigns" element={<RequireModule module="vehicle_reminders"><VehicleReminderCampaigns /></RequireModule>} />
                         <Route path="/settings/estimate-settings" element={<EstimateSettings />} />
                         <Route path="/settings/workshop-board" element={<WorkshopBoardSettings />} />
                         <Route path="/settings/time-tracking" element={<TimeTrackingSettings />} />

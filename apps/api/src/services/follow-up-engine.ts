@@ -20,6 +20,8 @@ import { supabaseAdmin } from '../lib/supabase.js'
 import { logger } from '../lib/logger.js'
 import { sendSms, formatPhoneNumber } from './sms.js'
 import { sendEmail, getOrganizationBranding } from './email.js'
+import { getEffectiveModules } from './modules.js'
+import { processExpiryRemindersForOrg } from './expiry-reminders.js'
 import { getSmsCredentials } from './credentials.js'
 import { emitToOrganization, emitToHealthCheck, WS_EVENTS } from './websocket.js'
 import { gbp, fmtDate, startOfDay, addDays, todayStart, calendarDate, dateStr, chunk, render, followUpDryRun } from './follow-up-utils.js'
@@ -974,7 +976,20 @@ export async function runFollowUpSweep(
   let casesProcessed = 0
   let anySimulation = false
 
+  let remindersSent = 0
+
   for (const orgId of orgIds) {
+    // Expiry reminder campaigns run independently of Follow-Up (own module gate),
+    // so they execute even for orgs with Follow-Up disabled. Isolated try/catch.
+    try {
+      const mods = await getEffectiveModules(orgId)
+      if (mods.vehicle_reminders) {
+        remindersSent += await processExpiryRemindersForOrg(orgId, globalDryRun)
+      }
+    } catch (e) {
+      logger.error('Expiry reminders: sweep failed for org', { organizationId: orgId, error: String(e) })
+    }
+
     try {
       const settings = await getFollowUpSettings(orgId)
       if (!settings.enabled) continue // opt-in: skip disabled orgs entirely
@@ -999,7 +1014,7 @@ export async function runFollowUpSweep(
   }
 
   const dryRun = globalDryRun || anySimulation
-  if (orgsSwept > 0) logger.info('Follow-up sweep complete', { trigger, orgs: orgIds.length, orgsSwept, casesCreated, casesProcessed, dryRun })
+  if (orgsSwept > 0 || remindersSent > 0) logger.info('Follow-up sweep complete', { trigger, orgs: orgIds.length, orgsSwept, casesCreated, casesProcessed, remindersSent, dryRun })
   return {
     orgsProcessed: orgIds.length,
     orgsSwept,

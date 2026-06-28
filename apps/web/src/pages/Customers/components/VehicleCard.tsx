@@ -1,4 +1,6 @@
+import { Link } from 'react-router-dom'
 import type { CustomerVehicle } from '../../../lib/api'
+import { useModules } from '../../../contexts/ModulesContext'
 
 interface VehicleCardProps {
   vehicle: CustomerVehicle
@@ -6,8 +8,17 @@ interface VehicleCardProps {
 }
 
 export default function VehicleCard({ vehicle, healthCheckCount }: VehicleCardProps) {
+  const { isEnabled } = useModules()
+  const linked = isEnabled('vehicles')
+  const Wrapper = linked
+    ? ({ children }: { children: React.ReactNode }) => (
+        <Link to={`/vehicles/${vehicle.id}`} className="block bg-white border border-gray-200 rounded-xl p-4 hover:border-primary/40 hover:shadow-sm transition">
+          {children}
+        </Link>
+      )
+    : ({ children }: { children: React.ReactNode }) => <div className="bg-white border border-gray-200 rounded-xl p-4">{children}</div>
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4">
+    <Wrapper>
       <div className="flex items-start justify-between mb-3">
         <div className="bg-yellow-300 text-black px-3 py-1 font-bold text-lg tracking-wider">
           {vehicle.registration}
@@ -51,6 +62,6 @@ export default function VehicleCard({ vehicle, healthCheckCount }: VehicleCardPr
           )}
         </div>
       </div>
-    </div>
+    </Wrapper>
   )
 }

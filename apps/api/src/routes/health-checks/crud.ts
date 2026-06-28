@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { authorize } from '../../middleware/auth.js'
 import { autoGenerateRepairItems, getStorageUrl } from './helpers.js'
+import { stampVehicleActivity, recordMileageReading } from '../../services/vehicle-expiry.js'
 
 const crud = new Hono()
 
@@ -222,6 +223,13 @@ crud.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_adv
         change_source: 'user',
         notes: statusNotes
       })
+
+    // Vehicles module: stamp recency (drives expiry-campaign suppression) and
+    // capture the odometer reading. Best-effort, fire-and-forget.
+    void stampVehicleActivity(auth.orgId, vehicleId)
+    if (typeof mileageIn === 'number' && mileageIn > 0) {
+      void recordMileageReading(auth.orgId, vehicleId, mileageIn, 'health_check')
+    }
 
     return c.json({
       id: healthCheck.id,

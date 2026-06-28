@@ -657,6 +657,7 @@ export interface RepairItemChild {
   description: string | null
   isGroup: boolean
   parentRepairItemId: string | null
+  repairTypeId?: string | null
   labourStatus: 'pending' | 'in_progress' | 'complete'
   partsStatus: 'pending' | 'in_progress' | 'complete'
   noLabourRequired: boolean
@@ -684,6 +685,7 @@ export interface NewRepairItem {
   description: string | null
   isGroup: boolean
   parentRepairItemId: string | null
+  repairTypeId?: string | null
   labourTotal: number
   partsTotal: number
   subtotal: number

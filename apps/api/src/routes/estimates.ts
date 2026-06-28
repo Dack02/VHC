@@ -442,7 +442,7 @@ estimates.post('/:id/send', authorize(['super_admin', 'org_admin', 'site_admin',
 async function copyLineToJobsheet(srcLineId: string, jobsheetId: string, orgId: string, userId: string): Promise<string | null> {
   const { data: src } = await supabaseAdmin
     .from('repair_items')
-    .select('name, description')
+    .select('name, description, repair_type_id')
     .eq('id', srcLineId)
     .eq('organization_id', orgId)
     .maybeSingle()
@@ -456,6 +456,9 @@ async function copyLineToJobsheet(srcLineId: string, jobsheetId: string, orgId: 
       organization_id: orgId,
       name: src.name,
       description: src.description,
+      // Carry the Repair Type so the won job keeps its classification for reporting (copy-time:
+      // do NOT re-derive — the snapshotted labour rate below preserves the approved price).
+      repair_type_id: src.repair_type_id ?? null,
       source: 'booking',
       // Booked off an estimate the customer already priced/approved → pre-authorised.
       outcome_status: 'authorised',
@@ -472,7 +475,7 @@ async function copyLineToJobsheet(srcLineId: string, jobsheetId: string, orgId: 
 
   const { data: labour } = await supabaseAdmin
     .from('repair_labour')
-    .select('labour_code_id, hours, rate, is_vat_exempt, notes')
+    .select('labour_code_id, hours, rate, discount_percent, is_vat_exempt, notes')
     .eq('repair_item_id', srcLineId)
   if (labour && labour.length) {
     await supabaseAdmin.from('repair_labour').insert(labour.map((l) => ({ ...l, repair_item_id: item.id })))

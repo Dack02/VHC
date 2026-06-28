@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { authorize } from '../../middleware/auth.js'
-import { verifyHealthCheckAccess, verifyRepairItemAccess, formatRepairItem } from './helpers.js'
+import { verifyHealthCheckAccess, verifyRepairItemAccess, formatRepairItem, reRateLabourForRepairItem } from './helpers.js'
 import { checkQuoteEditable } from '../health-checks/helpers.js'
 
 const repairItemsRouter = new Hono()
@@ -316,6 +316,9 @@ repairItemsRouter.post('/health-checks/:id/repair-items', authorize(['super_admi
         name: name.trim(),
         description: description?.trim() || null,
         is_group: is_group || false,
+        // Repair Type lives on the top-level row (resolve-upward). Children created during grouping
+        // below are left untyped on purpose — they inherit the header's type at rate time.
+        repair_type_id: body.repair_type_id ?? body.repairTypeId ?? null,
         created_by: auth.user.id
       })
       .select()
@@ -662,6 +665,7 @@ repairItemsRouter.patch('/repair-items/:id', authorize(['super_admin', 'org_admi
     const { id } = c.req.param()
     const body = await c.req.json()
     const { name, description, price_override, price_override_reason } = body
+    const repairTypeId = body.repairTypeId ?? body.repair_type_id
 
     const existing = await verifyRepairItemAccess(id, auth.orgId)
     if (!existing) {
@@ -673,6 +677,7 @@ repairItemsRouter.patch('/repair-items/:id', authorize(['super_admin', 'org_admi
     if (description !== undefined) updateData.description = description?.trim() || null
     if (price_override !== undefined) updateData.price_override = price_override
     if (price_override_reason !== undefined) updateData.price_override_reason = price_override_reason
+    if (repairTypeId !== undefined) updateData.repair_type_id = repairTypeId || null
 
     const { data: item, error } = await supabaseAdmin
       .from('repair_items')
@@ -684,6 +689,18 @@ repairItemsRouter.patch('/repair-items/:id', authorize(['super_admin', 'org_admi
     if (error) {
       console.error('Update repair item error:', error)
       return c.json({ error: error.message }, 500)
+    }
+
+    // When the work group's Repair Type changes, re-rate its existing labour (item + options) to the
+    // new type's rate so a reclassified group bills consistently (the lock's core invariant).
+    if (repairTypeId !== undefined) {
+      await reRateLabourForRepairItem(id, auth.orgId)
+      const { data: refreshed } = await supabaseAdmin
+        .from('repair_items')
+        .select()
+        .eq('id', id)
+        .single()
+      return c.json(formatRepairItem(refreshed || item))
     }
 
     return c.json(formatRepairItem(item))

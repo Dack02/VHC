@@ -288,7 +288,7 @@ labourRouter.patch('/repair-labour/:id', authorize(['super_admin', 'org_admin', 
     const auth = c.get('auth')
     const { id } = c.req.param()
     const body = await c.req.json()
-    const { labour_code_id, hours, notes, discount_percent } = body
+    const { hours, notes, discount_percent } = body
 
     console.log('PATCH /repair-labour/:id - id:', id, 'body:', body)
 
@@ -324,25 +324,12 @@ labourRouter.patch('/repair-labour/:id', authorize(['super_admin', 'org_admin', 
       return c.json({ error: 'Labour entry not found' }, 404)
     }
 
-    let rate = parseFloat(existing.rate)
-    let isVatExempt = existing.is_vat_exempt
-
-    // If labour code changed, get new rate
-    if (labour_code_id && labour_code_id !== existing.labour_code_id) {
-      const { data: labourCode } = await supabaseAdmin
-        .from('labour_codes')
-        .select('hourly_rate, is_vat_exempt')
-        .eq('id', labour_code_id)
-        .eq('organization_id', auth.orgId)
-        .single()
-
-      if (!labourCode) {
-        return c.json({ error: 'Labour code not found' }, 404)
-      }
-
-      rate = parseFloat(labourCode.hourly_rate)
-      isVatExempt = labourCode.is_vat_exempt
-    }
+    // Lock model: the rate + VAT-exemption are snapshotted from the group's Repair Type at add-time
+    // and are NOT re-derived on edit (the per-line labour code is no longer client-chosen). Editing
+    // only recomputes the total from the new hours/discount; the rate stays put. Re-rating to a new
+    // type happens via PATCH /repair-items/:id (reRateLabourForRepairItem), not here.
+    const rate = parseFloat(existing.rate)
+    const isVatExempt = existing.is_vat_exempt
 
     const newHours = hours !== undefined ? parseFloat(hours) : parseFloat(existing.hours)
     const discountPct = discount_percent !== undefined ? parseFloat(discount_percent) : (parseFloat(existing.discount_percent) || 0)
@@ -357,7 +344,6 @@ labourRouter.patch('/repair-labour/:id', authorize(['super_admin', 'org_admin', 
       is_vat_exempt: isVatExempt,
       updated_at: new Date().toISOString()
     }
-    if (labour_code_id) updateData.labour_code_id = labour_code_id
     if (notes !== undefined) updateData.notes = notes?.trim() || null
 
     const { data: labour, error } = await supabaseAdmin

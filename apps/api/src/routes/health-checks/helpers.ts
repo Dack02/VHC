@@ -116,7 +116,7 @@ export async function autoGenerateRepairItems(healthCheckId: string) {
       .from('check_results')
       .select(`
         id, template_item_id, rag_status, notes, is_mot_failure, vehicle_location_name,
-        template_item:template_items(name, description)
+        template_item:template_items(name, description, repair_type_id)
       `)
       .eq('health_check_id', healthCheckId)
       .in('rag_status', ['red', 'amber'])
@@ -172,6 +172,7 @@ export async function autoGenerateRepairItems(healthCheckId: string) {
           name: repairName,
           description: result.notes || (templateItem as { description?: string })?.description || null,
           is_group: false,
+          repair_type_id: (templateItem as { repair_type_id?: string | null })?.repair_type_id ?? null,
           labour_total: 0,
           parts_total: 0,
           subtotal: 0,

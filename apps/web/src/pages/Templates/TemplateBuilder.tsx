@@ -49,6 +49,12 @@ interface TemplateItem {
   excludeFromAi?: boolean
   sortOrder: number
   reasonType?: string | null
+  repairTypeId?: string | null
+}
+
+interface RepairTypeLite {
+  id: string
+  code: string
 }
 
 interface TemplateSection {
@@ -85,6 +91,7 @@ export default function TemplateBuilder() {
   const [generatingReasons, setGeneratingReasons] = useState(false)
   const [generateResult, setGenerateResult] = useState<{ success: boolean; message: string } | null>(null)
   const [reasonTypes, setReasonTypes] = useState<ReasonType[]>([])
+  const [repairTypes, setRepairTypes] = useState<RepairTypeLite[]>([])
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -97,6 +104,7 @@ export default function TemplateBuilder() {
     fetchTemplate()
     fetchReasonCounts()
     fetchReasonTypes()
+    fetchRepairTypes()
   }, [id])
 
   const fetchReasonTypes = async () => {
@@ -107,6 +115,17 @@ export default function TemplateBuilder() {
       setReasonTypes(data.reasonTypes || [])
     } catch (err) {
       console.error('Failed to fetch reason types:', err)
+    }
+  }
+
+  const fetchRepairTypes = async () => {
+    try {
+      const data = await api<{ repairTypes: RepairTypeLite[] }>('/api/v1/repair-types?active_only=true', {
+        token: session?.accessToken
+      })
+      setRepairTypes(data.repairTypes || [])
+    } catch (err) {
+      console.error('Failed to fetch repair types:', err)
     }
   }
 
@@ -290,7 +309,7 @@ export default function TemplateBuilder() {
     }
   }
 
-  const handleAddItem = async (sectionId: string, itemData: { name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean }, keepOpen?: boolean): Promise<boolean> => {
+  const handleAddItem = async (sectionId: string, itemData: { name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean; repairTypeId?: string | null }, keepOpen?: boolean): Promise<boolean> => {
     try {
       const item = await api<TemplateItem>(`/api/v1/sections/${sectionId}/items`, {
         method: 'POST',
@@ -314,7 +333,7 @@ export default function TemplateBuilder() {
     }
   }
 
-  const handleAddItems = async (sectionId: string, items: Array<{ name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean; sourceItemId?: string }>) => {
+  const handleAddItems = async (sectionId: string, items: Array<{ name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean; sourceItemId?: string; repairTypeId?: string | null }>) => {
     if (items.length === 0) return
     try {
       const addedItems: TemplateItem[] = []
@@ -340,7 +359,7 @@ export default function TemplateBuilder() {
     }
   }
 
-  const handleUpdateItem = async (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean }) => {
+  const handleUpdateItem = async (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean; repairTypeId?: string | null }) => {
     try {
       await api(`/api/v1/items/${itemId}`, {
         method: 'PATCH',
@@ -594,11 +613,11 @@ interface SortableSectionProps {
   isInlineAdding: boolean
   onStartInlineAdd: () => void
   onCancelInlineAdd: () => void
-  onInlineAddItem: (itemData: { name: string; itemType: string; reasonType?: string; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean }) => Promise<boolean>
+  onInlineAddItem: (itemData: { name: string; itemType: string; reasonType?: string; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean; repairTypeId?: string | null }) => Promise<boolean>
   onOpenImportModal: () => void
   editingItemId: string | null
   onEditItem: (itemId: string) => void
-  onSaveItem: (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean }) => void
+  onSaveItem: (itemId: string, updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean; repairTypeId?: string | null }) => void
   onCancelEditItem: () => void
   onDeleteItem: (itemId: string) => void
   onItemDragEnd: (event: DragEndEvent) => void
@@ -607,6 +626,7 @@ interface SortableSectionProps {
   onGenerateReasons: (itemId: string, reasonType?: string | null) => Promise<void>
   templateId: string
   reasonTypes: ReasonType[]
+  repairTypes: RepairTypeLite[]
 }
 
 function SortableSection({
@@ -631,7 +651,8 @@ function SortableSection({
   itemReasonCounts,
   onGenerateReasons,
   templateId,
-  reasonTypes
+  reasonTypes,
+  repairTypes
 }: SortableSectionProps) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: section.id })
   const [editName, setEditName] = useState(section.name)
@@ -800,6 +821,7 @@ function SortableSection({
                 isEven={index % 2 === 0}
                 isLastItem={index === section.items.length - 1}
                 reasonTypes={reasonTypes}
+                repairTypes={repairTypes}
               />
             ))}
           </div>
@@ -810,6 +832,7 @@ function SortableSection({
       {isInlineAdding && (
         <InlineNewItemRow
           reasonTypes={reasonTypes}
+          repairTypes={repairTypes}
           onAdd={onInlineAddItem}
           onCancel={onCancelInlineAdd}
         />
@@ -840,7 +863,7 @@ interface SortableItemProps {
   item: TemplateItem
   isEditing: boolean
   onEdit: () => void
-  onSave: (updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean }) => void
+  onSave: (updates: { name?: string; itemType?: string; config?: Record<string, unknown>; reasonType?: string | null; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean; repairTypeId?: string | null }) => void
   onCancel: () => void
   onDelete: () => void
   reasonInfo?: { reasonCount: number; reasonType: string | null }
@@ -1147,7 +1170,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
 
 function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
   reasonTypes: ReasonType[]
-  onAdd: (itemData: { name: string; itemType: string; reasonType?: string; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean }) => Promise<boolean>
+  onAdd: (itemData: { name: string; itemType: string; reasonType?: string; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean; repairTypeId?: string | null }) => Promise<boolean>
   onCancel: () => void
 }) {
   const [name, setName] = useState('')

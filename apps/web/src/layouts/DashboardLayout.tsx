@@ -259,16 +259,6 @@ export default function DashboardLayout() {
       module: 'reports'
     },
     {
-      to: '/templates',
-      label: 'Templates',
-      icon: (
-        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
-        </svg>
-      ),
-      roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor']
-    },
-    {
       to: '/service-packages',
       label: 'Packages',
       icon: (
@@ -277,16 +267,6 @@ export default function DashboardLayout() {
         </svg>
       ),
       roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor']
-    },
-    {
-      to: '/users',
-      label: 'Users',
-      icon: (
-        <svg className="w-[18px] h-[18px] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-        </svg>
-      ),
-      roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
       to: '/settings',

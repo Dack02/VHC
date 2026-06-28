@@ -170,7 +170,7 @@ items.post('/sections/:sectionId/items', authorize(['super_admin', 'org_admin', 
     const auth = c.get('auth')
     const { sectionId } = c.req.param()
     const body = await c.req.json()
-    const { name, description, itemType, config, isRequired, reasonType, sourceItemId, requiresLocation, excludeFromAi } = body
+    const { name, description, itemType, config, isRequired, reasonType, repairTypeId, sourceItemId, requiresLocation, excludeFromAi } = body
 
     if (!name) {
       return c.json({ error: 'Item name is required' }, 400)
@@ -213,7 +213,8 @@ items.post('/sections/:sectionId/items', authorize(['super_admin', 'org_admin', 
         requires_location: requiresLocation ?? false,
         exclude_from_ai: excludeFromAi ?? false,
         sort_order: sortOrder,
-        reason_type: reasonType || null
+        reason_type: reasonType || null,
+        repair_type_id: repairTypeId || null
       })
       .select()
       .single()
@@ -263,7 +264,8 @@ items.post('/sections/:sectionId/items', authorize(['super_admin', 'org_admin', 
       requiresLocation: item.requires_location,
       excludeFromAi: item.exclude_from_ai,
       sortOrder: item.sort_order,
-      reasonType: item.reason_type
+      reasonType: item.reason_type,
+      repairTypeId: item.repair_type_id
     }, 201)
   } catch (error) {
     console.error('Add item error:', error)
@@ -277,7 +279,7 @@ items.patch('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admin
     const auth = c.get('auth')
     const { itemId } = c.req.param()
     const body = await c.req.json()
-    const { name, description, itemType, config, isRequired, reasonType, requiresLocation, excludeFromAi } = body
+    const { name, description, itemType, config, isRequired, reasonType, repairTypeId, requiresLocation, excludeFromAi } = body
 
     // Verify item belongs to a template in this org
     const { data: existingItem } = await supabaseAdmin
@@ -308,6 +310,7 @@ items.patch('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admin
     if (requiresLocation !== undefined) updateData.requires_location = requiresLocation
     if (excludeFromAi !== undefined) updateData.exclude_from_ai = excludeFromAi
     if (reasonType !== undefined) updateData.reason_type = reasonType || null
+    if (repairTypeId !== undefined) updateData.repair_type_id = repairTypeId || null
 
     const { data: item, error } = await supabaseAdmin
       .from('template_items')
@@ -330,7 +333,8 @@ items.patch('/items/:itemId', authorize(['super_admin', 'org_admin', 'site_admin
       requiresLocation: item.requires_location,
       excludeFromAi: item.exclude_from_ai,
       sortOrder: item.sort_order,
-      reasonType: item.reason_type
+      reasonType: item.reason_type,
+      repairTypeId: item.repair_type_id
     })
   } catch (error) {
     console.error('Update item error:', error)

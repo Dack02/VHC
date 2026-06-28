@@ -200,10 +200,10 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
         .single()
 
       if (!existingLink) {
-        // Get template item name for description
+        // Get template item name (+ default repair type) for the rectification work
         const { data: templateItem } = await supabaseAdmin
           .from('template_items')
-          .select('name')
+          .select('name, repair_type_id')
           .eq('id', templateItemId)
           .single()
 
@@ -233,6 +233,7 @@ results.post('/health-checks/:id/results', authorize(['super_admin', 'org_admin'
             organization_id: hcData?.organization_id,
             name: itemName,
             description: `MOT FAILURE: ${itemName} requires immediate attention`,
+            repair_type_id: templateItem?.repair_type_id ?? null,
             labour_total: 0,
             parts_total: 0,
             subtotal: 0,

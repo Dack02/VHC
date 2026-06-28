@@ -25,8 +25,7 @@ interface EstimateData {
   vehicle: { registration: string; make: string | null; model: string | null; year: number | null } | null
   lines: Line[]
   totals: { subtotal: number; vatAmount: number; totalIncVat: number }
-  // Online booking flags. Sourced from the estimate settings on the GET payload; until the
-  // availability API is wired this stays undefined, so the whole booking flow stays inert.
+  // Online booking flags (see README §7 — added to the GET payload from settings).
   booking?: { enabled: boolean; courtesyCar: boolean }
 }
 
@@ -198,12 +197,9 @@ export default function EstimatePortal() {
   const declinedCount = lines.filter(l => l.customerApproved === false).length
   const approvedTotal = lines.filter(l => l.customerApproved === true).reduce((s, l) => s + l.totalIncVat, 0)
   const anyDecided = approvedCount + declinedCount > 0
-  const undecidedCount = lines.length - approvedCount - declinedCount
   const requireSig = estimate.requireSignature
   const canAccept = !requireSig || !!signature
-  // Online booking is offered only once the customer has finalised an approval (accepted /
-  // partial). `booking.enabled` comes from the GET payload — undefined until the availability
-  // API is wired, so this whole branch stays dormant by default.
+  // Booking is offered after the customer has finalised an approval (accepted / partial).
   const bookingEnabled = !!data.booking?.enabled
   const finalisedApproved = estimate.responseFinalised && (estimate.status === 'accepted' || estimate.status === 'partial')
   const showBooking = bookingEnabled && finalisedApproved && approvedCount > 0
@@ -212,19 +208,14 @@ export default function EstimatePortal() {
     <div className="min-h-screen bg-gray-50 pb-16 font-sans" style={{ ['--est-brand' as string]: brand } as CSSProperties}>
       {/* ── Brand hero ─────────────────────────────────────────────── */}
       <div style={{ backgroundColor: brand }} className="text-white">
-        <div className="max-w-2xl lg:max-w-6xl mx-auto px-5 lg:px-8 pt-6 pb-7 lg:pt-10 lg:pb-12">
+        <div className="max-w-2xl mx-auto px-5 pt-6 pb-7">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               {organization.logoUrl
-                ? // Tenant logos are arbitrary and often ship with a white/opaque background,
-                  // which looks like a bare rectangle on the brand hero. Frame it in a clean
-                  // white chip so any logo reads as a deliberate lockup.
-                  <span className="inline-flex items-center justify-center bg-white rounded-xl px-3.5 py-2.5 shadow-sm ring-1 ring-black/5 shrink-0">
-                    <img src={organization.logoUrl} alt={orgName} className="block h-8 lg:h-10 w-auto max-w-[160px] lg:max-w-[180px] object-contain" />
-                  </span>
+                ? <img src={organization.logoUrl} alt={orgName} className="h-9 max-w-[150px] object-contain" />
                 : <>
-                    <div className="w-8 h-8 lg:w-10 lg:h-10 rounded-lg bg-white/15 flex items-center justify-center text-[12px] lg:text-sm font-extrabold shrink-0">{initials(orgName)}</div>
-                    <span className="font-bold text-sm lg:text-base truncate">{orgName}</span>
+                    <div className="w-8 h-8 rounded-lg bg-white/15 flex items-center justify-center text-[12px] font-extrabold shrink-0">{initials(orgName)}</div>
+                    <span className="font-bold text-sm truncate">{orgName}</span>
                   </>}
             </div>
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold bg-white/15 rounded-full px-2.5 py-1 shrink-0">
@@ -232,46 +223,32 @@ export default function EstimatePortal() {
             </span>
           </div>
 
-          {/* On desktop the title sits left, a headline total sits right; on mobile it stacks. */}
-          <div className="mt-6 lg:mt-9 lg:flex lg:items-end lg:justify-between lg:gap-8">
-            <div className="min-w-0">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-white/60">Estimate · {estimate.reference}</div>
-              <h1 className="mt-1.5 text-[26px] lg:text-[36px] leading-tight font-extrabold tracking-tight">Your repair estimate</h1>
-              <div className="mt-4 flex items-center gap-3 flex-wrap">
-                {vehicle?.registration && (
-                  <span className="font-mono text-sm lg:text-base font-semibold rounded-md px-2.5 py-1.5 tracking-wide" style={{ background: '#fdf6dd', border: '1px solid #efe2a8', color: '#6f6320' }}>
-                    {vehicle.registration}
-                  </span>
-                )}
-                <div className="leading-tight">
-                  {vehicle && <div className="text-[13px] lg:text-sm font-semibold">{[vehicle.make, vehicle.model].filter(Boolean).join(' ')}</div>}
-                  <div className="text-[11.5px] text-white/65">
-                    {[vehicle?.year, customer && `${customer.firstName} ${customer.lastName}`].filter(Boolean).join(' · ')}
-                  </div>
+          <div className="mt-6">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-white/60">Estimate · {estimate.reference}</div>
+            <h1 className="mt-1.5 text-[26px] leading-tight font-extrabold tracking-tight">Your repair estimate</h1>
+            <div className="mt-4 flex items-center gap-3 flex-wrap">
+              {vehicle?.registration && (
+                <span className="font-mono text-sm font-semibold rounded-md px-2.5 py-1.5 tracking-wide" style={{ background: '#fdf6dd', border: '1px solid #efe2a8', color: '#6f6320' }}>
+                  {vehicle.registration}
+                </span>
+              )}
+              <div className="leading-tight">
+                {vehicle && <div className="text-[13px] font-semibold">{[vehicle.make, vehicle.model].filter(Boolean).join(' ')}</div>}
+                <div className="text-[11.5px] text-white/65">
+                  {[vehicle?.year, customer && `${customer.firstName} ${customer.lastName}`].filter(Boolean).join(' · ')}
                 </div>
               </div>
-            </div>
-            {/* Desktop-only headline — the FULL estimate value (not necessarily what the
-                customer authorises; the amount they approve is shown by the action). */}
-            <div className="hidden lg:block text-right shrink-0">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-white/60">Full estimate inc VAT</div>
-              <div className="mt-1 text-[34px] font-extrabold tracking-tight tabular-nums">{money(totals.totalIncVat)}</div>
-              {estimate.validUntil && <div className="text-[11.5px] text-white/65">Valid until {formatDate(estimate.validUntil)}</div>}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Two-column on desktop: scrolling detail (left) + sticky summary & actions (right).
-          Collapses to the single stacked column on mobile. */}
-      <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 lg:px-8 lg:grid lg:grid-cols-[minmax(0,1fr)_370px] lg:gap-8 lg:items-start">
-        {/* ── Main column: the detail ──────────────────────────────── */}
-        <div className="min-w-0">
+      <div className="max-w-2xl mx-auto px-4">
         {/* ── Why choose us (USP trust strip) ──────────────────────── */}
         {usps.length > 0 && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 lg:p-6 mt-5">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 mt-5">
             <div className="text-[11px] font-bold uppercase tracking-[0.06em] text-gray-400 mb-4">Why choose {orgName}</div>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-4">
               {usps.map((u, i) => (
                 <div key={i} className="flex items-center gap-3">
                   <span className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: brandTint, color: brand }}>
@@ -292,9 +269,8 @@ export default function EstimatePortal() {
           </div>
         )}
 
-        {/* Desktop shows "valid until" in the hero; keep it inline on mobile only. */}
         {estimate.validUntil && (
-          <p className="lg:hidden text-center text-xs text-gray-400 mt-4">Valid until {formatDate(estimate.validUntil)}</p>
+          <p className="text-center text-xs text-gray-400 mt-4">Valid until {formatDate(estimate.validUntil)}</p>
         )}
 
         {error && <div className="bg-red-50 text-red-700 p-3 mt-4 rounded-xl text-sm">{error}</div>}
@@ -352,35 +328,34 @@ export default function EstimatePortal() {
           })}
         </div>
 
-          {/* Terms */}
-          {estimate.termsText && (
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 mt-4 p-4">
-              <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-2">Terms &amp; Conditions</h2>
-              <p className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed">{estimate.termsText}</p>
-            </div>
-          )}
+        {/* ── Totals ───────────────────────────────────────────────── */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 mt-4 p-4 text-sm">
+          <div className="flex justify-between text-gray-500"><span>Net</span><span className="tabular-nums">{money(totals.subtotal)}</span></div>
+          <div className="flex justify-between text-gray-500 mt-1"><span>VAT</span><span className="tabular-nums">{money(totals.vatAmount)}</span></div>
+          <div className="flex justify-between items-baseline mt-3 pt-3 border-t border-gray-100">
+            <span className="text-[15px] font-bold text-gray-900">Total inc VAT</span>
+            <span className="text-[22px] font-extrabold tracking-tight tabular-nums" style={{ color: brand }}>{money(totals.totalIncVat)}</span>
+          </div>
         </div>
 
-        {/* ── Sidebar: summary & actions — sticky beside the detail on desktop,
-             stacked below it on mobile. ─────────────────────────────── */}
-        <div className="mt-4 lg:mt-5 lg:sticky lg:top-5 space-y-4">
-          {/* ── Full estimate breakdown (the whole quote — not what's authorised) ── */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 text-sm">
-            <div className="text-[11px] font-bold uppercase tracking-[0.05em] text-gray-400 mb-3">Full estimate</div>
-            <div className="flex justify-between text-gray-500"><span>Net</span><span className="tabular-nums">{money(totals.subtotal)}</span></div>
-            <div className="flex justify-between text-gray-500 mt-1"><span>VAT</span><span className="tabular-nums">{money(totals.vatAmount)}</span></div>
-            <div className="flex justify-between items-baseline mt-3 pt-3 border-t border-gray-100">
-              <span className="text-[15px] font-bold text-gray-900">Total inc VAT</span>
-              <span className="text-[18px] font-extrabold tracking-tight tabular-nums text-gray-900">{money(totals.totalIncVat)}</span>
-            </div>
+        {/* Terms */}
+        {estimate.termsText && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 mt-4 p-4">
+            <h2 className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-2">Terms &amp; Conditions</h2>
+            <p className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed">{estimate.termsText}</p>
           </div>
+        )}
 
-        {/* ── "What happens next" — sets booking as the step after approval ── */}
-        {!responded && bookingEnabled && <NextStepTracker current="approve" brand={brand} />}
+        {/* ── "What happens next" tracker — sets booking as the next step ── */}
+        {!responded && bookingEnabled && (
+          <div className="mt-4">
+            <NextStepTracker current="approve" brand={brand} />
+          </div>
+        )}
 
         {/* ── Action: signature flow ───────────────────────────────── */}
         {!responded && requireSig && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 mt-4 p-5">
             <p className="text-sm font-medium text-gray-700 mb-2">Please sign to approve this estimate</p>
             <SignaturePad onChange={setSignature} />
             <div className="flex flex-col sm:flex-row gap-2 mt-4">
@@ -401,35 +376,17 @@ export default function EstimatePortal() {
 
         {/* ── Action: per-line response ────────────────────────────── */}
         {!responded && !requireSig && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
-            {/* The amount the customer is actually authorising — prominent + live, so the full
-                estimate total above is never mistaken for what they're committing to. */}
-            <div className="rounded-xl p-4 border" style={{ backgroundColor: brandTint, borderColor: `color-mix(in srgb, ${brand} 22%, #ffffff)` }}>
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="text-[12px] font-bold uppercase tracking-[0.05em]" style={{ color: onTintInk }}>You’re approving</span>
-                <span className="text-[26px] font-extrabold tracking-tight tabular-nums" style={{ color: brand }}>{money(approvedTotal)}</span>
-              </div>
-              <div className="text-[12px] mt-1" style={{ color: onTintInk }}>
-                {anyDecided
-                  ? `${approvedCount} approved · ${declinedCount} declined${undecidedCount > 0 ? ` · ${undecidedCount} not yet decided` : ''}`
-                  : 'Approve or decline each item to build your response.'}
-              </div>
-            </div>
-
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 mt-4 p-5">
             <button disabled={busy || !anyDecided} onClick={() => post('/submit')}
               style={{ backgroundColor: brand }}
-              className="w-full h-12 mt-4 text-white font-bold rounded-xl disabled:opacity-50">
-              {approvedCount > 0
-                ? bookingEnabled ? `Approve ${money(approvedTotal)} & book` : `Approve ${money(approvedTotal)} of work`
-                : 'Submit my response'}
+              className="w-full h-12 text-white font-bold rounded-xl disabled:opacity-50">
+              {bookingEnabled && approvedCount > 0 ? 'Submit & book your slot' : 'Submit my response'}
             </button>
             <p className="text-xs text-gray-500 mt-2 text-center">
-              {undecidedCount > 0
-                ? `Anything left undecided won’t be booked. You can change any choice before submitting.`
-                : 'You can change any choice before submitting.'}
-              {bookingEnabled && approvedCount > 0 ? ' You’ll pick your slot next.' : ''}
+              {anyDecided
+                ? `Approving ${approvedCount} ${approvedCount === 1 ? 'item' : 'items'}${approvedCount ? ` · ${money(approvedTotal)}` : ''}${declinedCount ? `, declining ${declinedCount}` : ''}.${bookingEnabled && approvedCount > 0 ? ' You’ll pick a date next.' : ' Anything left undecided won’t be booked.'}`
+                : 'Approve or decline at least one item above, then submit your response.'}
             </p>
-
             <div className="flex items-center justify-center gap-2 mt-4 pt-4 border-t border-gray-100">
               <span className="text-xs text-gray-400">Or quickly:</span>
               <button disabled={busy} onClick={() => post('/approve-all')}
@@ -446,29 +403,33 @@ export default function EstimatePortal() {
 
         {/* ── After approval: book online (the clear next step) ────── */}
         {confirmedBooking && (
-          <BookingConfirmation booking={confirmedBooking} brand={brand} orgName={orgName} phone={organization.phone} address={organization.address} />
+          <div className="mt-4">
+            <BookingConfirmation booking={confirmedBooking} brand={brand} orgName={orgName} phone={organization.phone} address={organization.address} />
+          </div>
         )}
 
         {!confirmedBooking && showBooking && !skipBooking && (
-          <div className="space-y-3">
+          <div className="mt-4">
             <NextStepTracker current="book" brand={brand} />
-            <BookingFlow
-              token={token!}
-              brand={brand}
-              approvedSummary={`${approvedCount} item${approvedCount > 1 ? 's' : ''} approved · ${money(approvedTotal)}`}
-              onBooked={(b) => { setConfirmedBooking(b); if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' }) }}
-            />
+            <div className="mt-4">
+              <BookingFlow
+                token={token!}
+                brand={brand}
+                approvedSummary={`${approvedCount} item${approvedCount > 1 ? 's' : ''} approved · ${money(approvedTotal)}`}
+                onBooked={(b) => { setConfirmedBooking(b); if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+              />
+            </div>
             <button onClick={() => setSkipBooking(true)}
-              className="w-full h-11 rounded-xl border border-gray-200 bg-white text-gray-500 text-sm font-semibold hover:bg-gray-50">
+              className="w-full mt-3 h-11 rounded-xl border border-gray-200 bg-white text-gray-500 text-sm font-semibold hover:bg-gray-50">
               I’ll book later
             </button>
           </div>
         )}
 
         {!confirmedBooking && responded && (!showBooking || skipBooking) && (
-          <div className="rounded-2xl p-5 text-center border" style={{ backgroundColor: brandTint, borderColor: `color-mix(in srgb, ${brand} 22%, #ffffff)` }}>
+          <div className="rounded-2xl mt-4 p-5 text-center border" style={{ backgroundColor: brandTint, borderColor: `color-mix(in srgb, ${brand} 22%, #ffffff)` }}>
             <p className="text-sm font-semibold" style={{ color: onTintInk }}>
-              Thank you — your response has been recorded{approvedCount > 0 ? ` — ${approvedCount} item${approvedCount > 1 ? 's' : ''} approved (${money(approvedTotal)})` : ''}.
+              Thank you — your response has been recorded{approvedCount > 0 ? ` (${approvedCount} item${approvedCount > 1 ? 's' : ''} approved)` : ''}.
             </p>
             {showBooking && skipBooking && (
               <button onClick={() => setSkipBooking(false)} style={{ backgroundColor: brand }}
@@ -479,9 +440,8 @@ export default function EstimatePortal() {
             {organization.phone && <p className="text-xs mt-2" style={{ color: onTintInk }}>Questions? Call us on {organization.phone}.</p>}
           </div>
         )}
-        </div>
 
-        <p className="lg:col-span-2 text-center text-xs text-gray-400 mt-6">
+        <p className="text-center text-xs text-gray-400 mt-6">
           {orgName}{organization.phone ? ` · ${organization.phone}` : ''}
         </p>
       </div>

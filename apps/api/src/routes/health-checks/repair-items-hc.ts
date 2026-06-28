@@ -458,7 +458,7 @@ repairItemsHC.post('/:id/repair-items/generate', authorize(['super_admin', 'org_
         id, organization_id, status,
         results:check_results(
           id, rag_status, notes, is_mot_failure,
-          template_item:template_items(name, description)
+          template_item:template_items(name, description, repair_type_id)
         )
       `)
       .eq('id', id)
@@ -513,6 +513,7 @@ repairItemsHC.post('/:id/repair-items/generate', authorize(['super_admin', 'org_
           description: ((result as Record<string, unknown>).notes as string) ||
             (templateItem?.description as string) || null,
           is_group: false,
+          repair_type_id: (templateItem?.repair_type_id as string | null) ?? null,
           labour_total: 0,
           parts_total: 0,
           subtotal: 0,

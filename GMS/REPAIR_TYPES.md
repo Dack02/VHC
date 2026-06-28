@@ -1,9 +1,12 @@
 # GMS — Repair Types + Main Booking Requirement (Plan)
 
-> Branch: work on `dev` · Status: **P1 DONE + P2 IN PROGRESS (uncommitted, 2026-06-26)** — P1 foundation
-> built+verified; P2 server lock + shared jobsheet/estimate `WorkDetailsPanel` built + verified (API `tsc` +
-> web build green); **VHC `LabourTab` is the remaining P2 piece** (see §11). Migration
-> `20260628130000_repair_types.sql` pending pipeline deploy. Audit gaps closed in §14. · Author: Leo + Claude
+> Branch: work on `dev` · Status: **P1 + P2 DONE & VERIFIED (uncommitted, 2026-06-26)** — P1 foundation;
+> P2 labour-lock complete across the server (resolveLockedRate + 400 gate + PATCH snapshot + re-rate on
+> type change), the shared jobsheet/estimate `WorkDetailsPanel`, AND the VHC `LabourTab` (group-header +
+> single-item Repair Type selectors, read-only locked code on child/group-labour rows, AddOtherLabour
+> modal converted). API `tsc` + web `vite build` both green (0 errors). Migration
+> `20260628130000_repair_types.sql` pending pipeline deploy. P2.5 (packages) + P3 (VHC defaults) + P4
+> (reporting) not started. Audit gaps closed in §14. · Author: Leo + Claude
 > Companion to [`JOBSHEET.md`](./JOBSHEET.md), [`WORK_DETAILS.md`](./WORK_DETAILS.md), [`ESTIMATES.md`](./ESTIMATES.md).
 
 ## 0. TL;DR
@@ -357,7 +360,7 @@ the Parts module, §4.4/§12.) Deploy via the pipeline (`supabase db push`), **n
   card under "Pricing & Parts". Service Type → **Main Booking Requirement** label rename (Settings page +
   card, NewJobsheet, JobsheetDetail, EstimateDetail convert modal). No behaviour change yet. **Verified:**
   API `tsc` + web `tsc && vite build` green. **Pending:** pipeline deploy of the migration.
-- **P2 — Labour lock:** IN PROGRESS (2026-06-26).
+- **P2 — Labour lock:** ✅ DONE & VERIFIED (2026-06-26 — API `tsc` + web `vite build` green).
   - ✅ **Server lock (DONE + verified — API `tsc` green):** `resolveLockedRate({itemId|optionId})` helper
     (resolve-upward) + `reRateLabourForRepairItem` in `repair-items/helpers.ts`; labour `item POST` +
     `option POST` resolve the rate from the type with a **server-side 400 gate** (`REPAIR_TYPE_REQUIRED`) +

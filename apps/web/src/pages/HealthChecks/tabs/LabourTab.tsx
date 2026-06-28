@@ -720,10 +720,17 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
                       </div>
                     </td>
 
-                    {/* Empty cells for code/hours/rate */}
-                    <td className="px-3 py-2"></td>
-                    <td className="px-3 py-2"></td>
-                    <td className="px-3 py-2"></td>
+                    {/* Repair Type — drives the locked labour rate for this group */}
+                    <td className="px-3 py-2" colSpan={3}>
+                      <select
+                        value={groupItem.repairTypeId || ''}
+                        onChange={(e) => setItemRepairType(groupItem.id, e.target.value)}
+                        className="px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+                      >
+                        <option value="">Repair Type…</option>
+                        {repairTypes.map(rt => <option key={rt.id} value={rt.id}>{rt.code}</option>)}
+                      </select>
+                    </td>
 
                     {/* Aggregated total */}
                     <td className="px-3 py-2 text-sm font-semibold text-gray-900 text-right">
@@ -751,11 +758,13 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
                     item={item}
                     rowIndex={rowIndex}
                     labourCodes={labourCodes}
+                    repairTypes={repairTypes}
+                    repairTypeId={(repairItem as NewRepairItem).repairTypeId ?? null}
                     editState={getEditState(repairItem.id, item.labourEntries[0])}
                     isLoading={actionLoading === repairItem.id}
                     onUpdateEditState={(updates) => updateEditState(repairItem.id, updates)}
-                    onSave={(labourCodeId, hours, existingLabourId, discountPercent) =>
-                      saveRowLabour(repairItem.id, labourCodeId, hours, existingLabourId, discountPercent)
+                    onSave={(hours, existingLabourId, discountPercent) =>
+                      saveRowLabour(repairItem.id, hours, existingLabourId, discountPercent)
                     }
                     onMarkNA={() => handleMarkNoLabourRequired(repairItem.id)}
                     onRemoveNA={() => handleRemoveNoLabourRequired(repairItem.id)}
@@ -776,11 +785,13 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
                     item={item}
                     rowIndex={rowIndex}
                     labourCodes={labourCodes}
+                    repairTypes={repairTypes}
+                    repairTypeId={repairItems.find(p => p.id === (repairItem as RepairItemChild).parentRepairItemId)?.repairTypeId ?? null}
                     editState={getEditState(repairItem.id, item.labourEntries[0])}
                     isLoading={actionLoading === repairItem.id}
                     onUpdateEditState={(updates) => updateEditState(repairItem.id, updates)}
-                    onSave={(labourCodeId, hours, existingLabourId, discountPercent) =>
-                      saveRowLabour(repairItem.id, labourCodeId, hours, existingLabourId, discountPercent)
+                    onSave={(hours, existingLabourId, discountPercent) =>
+                      saveRowLabour(repairItem.id, hours, existingLabourId, discountPercent)
                     }
                     onMarkNA={() => handleMarkNoLabourRequired(repairItem.id)}
                     onRemoveNA={() => handleRemoveNoLabourRequired(repairItem.id)}
@@ -800,11 +811,14 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
                   item={item}
                   rowIndex={rowIndex}
                   labourCodes={labourCodes}
+                  repairTypes={repairTypes}
+                  repairTypeId={(repairItem as NewRepairItem).repairTypeId ?? null}
+                  onSetRepairType={(rtId) => setItemRepairType(repairItem.id, rtId)}
                   editState={getEditState(repairItem.id, item.labourEntries[0])}
                   isLoading={actionLoading === repairItem.id}
                   onUpdateEditState={(updates) => updateEditState(repairItem.id, updates)}
-                  onSave={(labourCodeId, hours, existingLabourId, discountPercent) =>
-                    saveRowLabour(repairItem.id, labourCodeId, hours, existingLabourId, discountPercent)
+                  onSave={(hours, existingLabourId, discountPercent) =>
+                    saveRowLabour(repairItem.id, hours, existingLabourId, discountPercent)
                   }
                   onMarkNA={() => handleMarkNoLabourRequired(repairItem.id)}
                   onRemoveNA={() => handleRemoveNoLabourRequired(repairItem.id)}
@@ -895,6 +909,7 @@ export function LabourTab({ healthCheckId, onUpdate }: LabourTabProps) {
         <AddOtherLabourModal
           healthCheckId={healthCheckId}
           labourCodes={labourCodes}
+          repairTypes={repairTypes}
           onClose={() => setShowOtherLabourModal(false)}
           onSaved={handleLabourSaved}
         />
@@ -916,7 +931,7 @@ interface GroupLabourRowProps {
   editState: RowEditState
   isLoading: boolean
   onUpdateEditState: (updates: Partial<RowEditState>) => void
-  onSave: (labourCodeId: string, hours: string, existingLabourId?: string, discountPercent?: number) => Promise<boolean>
+  onSave: (hours: string, existingLabourId?: string, discountPercent?: number) => Promise<boolean>
   onMarkNA: () => void
   onRemoveNA: () => void
   onDelete: (labourId: string) => void
@@ -971,16 +986,10 @@ function GroupLabourRow({
 
   useEffect(() => {
     if (existingLabour && !editState.isDirty) {
-      setLocalCode(existingLabour.labourCodeId)
       setLocalHours(existingLabour.hours.toString())
       setLocalDiscount(existingLabour.discountPercent?.toString() || '0')
     }
   }, [existingLabour, editState.isDirty])
-
-  const handleCodeChange = (value: string) => {
-    setLocalCode(value)
-    onUpdateEditState({ labourCodeId: value, isDirty: true })
-  }
 
   const handleHoursChange = (value: string) => {
     setLocalHours(value)
@@ -994,10 +1003,10 @@ function GroupLabourRow({
 
   const handleSave = async (moveToNext = false) => {
     if (editState.isSaving) return
-    if (!localCode || !localHours || parseFloat(localHours) <= 0) return
+    if (!lockedCode || !localHours || parseFloat(localHours) <= 0) return
 
     saveTriggeredRef.current = true
-    const success = await onSave(localCode, localHours, existingLabour?.id, parseFloat(localDiscount) || 0)
+    const success = await onSave(localHours, existingLabour?.id, parseFloat(localDiscount) || 0)
 
     if (success && moveToNext) {
       setTimeout(() => {
@@ -1012,11 +1021,9 @@ function GroupLabourRow({
 
   const handleClear = () => {
     if (existingLabour) {
-      setLocalCode(existingLabour.labourCodeId)
       setLocalHours(existingLabour.hours.toString())
       setLocalDiscount(existingLabour.discountPercent?.toString() || '0')
     } else {
-      setLocalCode('')
       setLocalHours('')
       setLocalDiscount('0')
     }
@@ -1091,25 +1098,9 @@ function GroupLabourRow({
         </div>
       </td>
 
-      {/* Labour Code Select */}
-      <td className="px-3 py-2">
-        <select
-          ref={(el) => registerRef(codeRefKey, el)}
-          value={localCode}
-          onChange={(e) => handleCodeChange(e.target.value)}
-          onKeyDown={(e) => handleKeyDown(e, 'code')}
-          disabled={editState.isSaving}
-          className={`w-full px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-primary ${
-            editState.error ? 'border-red-300' : 'border-gray-300'
-          } ${editState.isSaving ? 'bg-gray-100' : ''}`}
-        >
-          <option value="">Select...</option>
-          {labourCodes.map(code => (
-            <option key={code.id} value={code.id}>
-              {code.code}
-            </option>
-          ))}
-        </select>
+      {/* Labour code (locked — derived from the work group's Repair Type) */}
+      <td className="px-3 py-2 text-sm text-gray-600">
+        {lockedCode ? lockedCode.code : <span className="text-amber-600 text-xs">Set type</span>}
       </td>
 
       {/* Hours Input */}
@@ -1261,7 +1252,7 @@ interface ChildLabourRowProps {
   editState: RowEditState
   isLoading: boolean
   onUpdateEditState: (updates: Partial<RowEditState>) => void
-  onSave: (labourCodeId: string, hours: string, existingLabourId?: string, discountPercent?: number) => Promise<boolean>
+  onSave: (hours: string, existingLabourId?: string, discountPercent?: number) => Promise<boolean>
   onMarkNA: () => void
   onRemoveNA: () => void
   onDelete: (labourId: string) => void
@@ -1323,16 +1314,10 @@ function ChildLabourRow({
 
   useEffect(() => {
     if (existingLabour && !editState.isDirty) {
-      setLocalCode(existingLabour.labourCodeId)
       setLocalHours(existingLabour.hours.toString())
       setLocalDiscount(existingLabour.discountPercent?.toString() || '0')
     }
   }, [existingLabour, editState.isDirty])
-
-  const handleCodeChange = (value: string) => {
-    setLocalCode(value)
-    onUpdateEditState({ labourCodeId: value, isDirty: true })
-  }
 
   const handleHoursChange = (value: string) => {
     setLocalHours(value)
@@ -1346,10 +1331,10 @@ function ChildLabourRow({
 
   const handleSave = async (moveToNext = false) => {
     if (editState.isSaving) return
-    if (!localCode || !localHours || parseFloat(localHours) <= 0) return
+    if (!lockedCode || !localHours || parseFloat(localHours) <= 0) return
 
     saveTriggeredRef.current = true
-    const success = await onSave(localCode, localHours, existingLabour?.id, parseFloat(localDiscount) || 0)
+    const success = await onSave(localHours, existingLabour?.id, parseFloat(localDiscount) || 0)
 
     if (success && moveToNext) {
       setTimeout(() => {
@@ -1364,11 +1349,9 @@ function ChildLabourRow({
 
   const handleClear = () => {
     if (existingLabour) {
-      setLocalCode(existingLabour.labourCodeId)
       setLocalHours(existingLabour.hours.toString())
       setLocalDiscount(existingLabour.discountPercent?.toString() || '0')
     } else {
-      setLocalCode('')
       setLocalHours('')
       setLocalDiscount('0')
     }
@@ -1458,25 +1441,9 @@ function ChildLabourRow({
         </div>
       </td>
 
-      {/* Labour Code Select */}
-      <td className="px-3 py-2">
-        <select
-          ref={(el) => registerRef(codeRefKey, el)}
-          value={localCode}
-          onChange={(e) => handleCodeChange(e.target.value)}
-          onKeyDown={(e) => handleKeyDown(e, 'code')}
-          disabled={editState.isSaving}
-          className={`w-full px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-primary ${
-            editState.error ? 'border-red-300' : 'border-gray-300'
-          } ${editState.isSaving ? 'bg-gray-100' : ''}`}
-        >
-          <option value="">Select...</option>
-          {labourCodes.map(code => (
-            <option key={code.id} value={code.id}>
-              {code.code}
-            </option>
-          ))}
-        </select>
+      {/* Labour code (locked — derived from the work group's Repair Type) */}
+      <td className="px-3 py-2 text-sm text-gray-600">
+        {lockedCode ? lockedCode.code : <span className="text-amber-600 text-xs">Set type</span>}
       </td>
 
       {/* Hours Input */}
@@ -1629,7 +1596,7 @@ interface InlineLabourRowProps {
   editState: RowEditState
   isLoading: boolean
   onUpdateEditState: (updates: Partial<RowEditState>) => void
-  onSave: (labourCodeId: string, hours: string, existingLabourId?: string, discountPercent?: number) => Promise<boolean>
+  onSave: (hours: string, existingLabourId?: string, discountPercent?: number) => Promise<boolean>
   onMarkNA: () => void
   onRemoveNA: () => void
   onDelete: (labourId: string) => void
@@ -1691,16 +1658,10 @@ function InlineLabourRow({
   // Sync local state with existing labour when data changes
   useEffect(() => {
     if (existingLabour && !editState.isDirty) {
-      setLocalCode(existingLabour.labourCodeId)
       setLocalHours(existingLabour.hours.toString())
       setLocalDiscount(existingLabour.discountPercent?.toString() || '0')
     }
   }, [existingLabour, editState.isDirty])
-
-  const handleCodeChange = (value: string) => {
-    setLocalCode(value)
-    onUpdateEditState({ labourCodeId: value, isDirty: true })
-  }
 
   const handleHoursChange = (value: string) => {
     setLocalHours(value)
@@ -1715,10 +1676,10 @@ function InlineLabourRow({
   const handleSave = async (moveToNext = false) => {
     // Prevent double-save if already saving
     if (editState.isSaving) return
-    if (!localCode || !localHours || parseFloat(localHours) <= 0) return
+    if (!lockedCode || !localHours || parseFloat(localHours) <= 0) return
 
     saveTriggeredRef.current = true
-    const success = await onSave(localCode, localHours, existingLabour?.id, parseFloat(localDiscount) || 0)
+    const success = await onSave(localHours, existingLabour?.id, parseFloat(localDiscount) || 0)
 
     if (success && moveToNext) {
       // Use setTimeout to let React re-render first, then focus next
@@ -1736,12 +1697,10 @@ function InlineLabourRow({
   const handleClear = () => {
     if (existingLabour) {
       // Revert to saved values
-      setLocalCode(existingLabour.labourCodeId)
       setLocalHours(existingLabour.hours.toString())
       setLocalDiscount(existingLabour.discountPercent?.toString() || '0')
     } else {
       // Clear inputs
-      setLocalCode('')
       setLocalHours('')
       setLocalDiscount('0')
     }
@@ -1840,30 +1799,24 @@ function InlineLabourRow({
         }`} />
       </td>
 
-      {/* Item Name */}
+      {/* Item Name + Repair Type (single item — drives the locked labour rate) */}
       <td className="px-3 py-2 text-sm text-gray-900">
-        <span>{item.repairItem.name}</span>
+        <div className="flex flex-col gap-1">
+          <span>{item.repairItem.name}</span>
+          <select
+            value={repairTypeId || ''}
+            onChange={(e) => onSetRepairType(e.target.value)}
+            className="px-1.5 py-0.5 text-xs border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary bg-white w-fit"
+          >
+            <option value="">Repair Type…</option>
+            {repairTypes.map(rt => <option key={rt.id} value={rt.id}>{rt.code}</option>)}
+          </select>
+        </div>
       </td>
 
-      {/* Labour Code Select */}
-      <td className="px-3 py-2">
-        <select
-          ref={(el) => registerRef(codeRefKey, el)}
-          value={localCode}
-          onChange={(e) => handleCodeChange(e.target.value)}
-          onKeyDown={(e) => handleKeyDown(e, 'code')}
-          disabled={editState.isSaving}
-          className={`w-full px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-primary ${
-            editState.error ? 'border-red-300' : 'border-gray-300'
-          } ${editState.isSaving ? 'bg-gray-100' : ''}`}
-        >
-          <option value="">Select...</option>
-          {labourCodes.map(code => (
-            <option key={code.id} value={code.id}>
-              {code.code}
-            </option>
-          ))}
-        </select>
+      {/* Labour code (locked — derived from the work group's Repair Type) */}
+      <td className="px-3 py-2 text-sm text-gray-600">
+        {lockedCode ? lockedCode.code : <span className="text-amber-600 text-xs">Set type</span>}
       </td>
 
       {/* Hours Input */}
@@ -2027,6 +1980,7 @@ function InlineLabourRow({
 interface AddOtherLabourModalProps {
   healthCheckId: string
   labourCodes: LabourCode[]
+  repairTypes: RepairTypeOpt[]
   onClose: () => void
   onSaved: () => void
 }
@@ -2034,6 +1988,7 @@ interface AddOtherLabourModalProps {
 function AddOtherLabourModal({
   healthCheckId,
   labourCodes,
+  repairTypes,
   onClose,
   onSaved
 }: AddOtherLabourModalProps) {
@@ -2043,47 +1998,49 @@ function AddOtherLabourModal({
 
   // Form state
   const [itemName, setItemName] = useState('')
-  const [selectedLabourCodeId, setSelectedLabourCodeId] = useState('')
+  const [selectedRepairTypeId, setSelectedRepairTypeId] = useState('')
   const [hours, setHours] = useState('1.0')
   const [notes, setNotes] = useState('')
 
-  // Get selected labour code
-  const selectedLabourCode = labourCodes.find(c => c.id === selectedLabourCodeId)
-  const rate = selectedLabourCode?.hourlyRate || 0
+  // Rate is locked to the chosen Repair Type's default labour code (the server resolves it too).
+  const selectedRepairType = repairTypes.find(rt => rt.id === selectedRepairTypeId) || null
+  const lockedCode = selectedRepairType?.defaultLabourCodeId
+    ? (labourCodes.find(c => c.id === selectedRepairType.defaultLabourCodeId) || null)
+    : null
+  const rate = lockedCode?.hourlyRate || 0
   const total = parseFloat(hours) * rate
 
-  // Set default labour code
+  // Default to the first repair type
   useEffect(() => {
-    const defaultCode = labourCodes.find(c => c.isDefault) || labourCodes[0]
-    if (defaultCode && !selectedLabourCodeId) {
-      setSelectedLabourCodeId(defaultCode.id)
+    if (repairTypes.length > 0 && !selectedRepairTypeId) {
+      setSelectedRepairTypeId(repairTypes[0].id)
     }
-  }, [labourCodes, selectedLabourCodeId])
+  }, [repairTypes, selectedRepairTypeId])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!session?.accessToken || !itemName.trim() || !selectedLabourCodeId) return
+    if (!session?.accessToken || !itemName.trim() || !selectedRepairTypeId) return
 
     setSaving(true)
     setError(null)
 
     try {
-      // Step 1: Create the repair item
+      // Step 1: Create the repair item with its Repair Type (drives the labour rate)
       const itemRes = await api<{ id: string }>(`/api/v1/health-checks/${healthCheckId}/repair-items`, {
         method: 'POST',
         token: session.accessToken,
         body: {
           name: itemName.trim(),
-          description: 'Additional labour item'
+          description: 'Additional labour item',
+          repairTypeId: selectedRepairTypeId
         }
       })
 
-      // Step 2: Add labour to the repair item
+      // Step 2: Add labour — rate is resolved server-side from the item's Repair Type
       await api(`/api/v1/repair-items/${itemRes.id}/labour`, {
         method: 'POST',
         token: session.accessToken,
         body: {
-          labour_code_id: selectedLabourCodeId,
           hours: parseFloat(hours),
           notes: notes.trim() || null
         }
@@ -2124,10 +2081,10 @@ function AddOtherLabourModal({
             Use this to add labour for items not listed above (e.g., diagnostic time, additional work discovered).
           </div>
 
-          {labourCodes.length === 0 && (
+          {repairTypes.length === 0 && (
             <div className="bg-amber-50 border border-amber-200 text-amber-700 p-4 rounded text-sm">
-              <p className="font-medium">No labour codes configured</p>
-              <p className="mt-1">Please create labour codes in Settings &gt; Labour Codes before adding labour entries.</p>
+              <p className="font-medium">No repair types configured</p>
+              <p className="mt-1">Please create repair types in Settings &gt; Repair Types before adding labour entries.</p>
             </div>
           )}
 
@@ -2150,17 +2107,17 @@ function AddOtherLabourModal({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Labour Code
+                Repair Type
               </label>
               <select
-                value={selectedLabourCodeId}
-                onChange={e => setSelectedLabourCodeId(e.target.value)}
+                value={selectedRepairTypeId}
+                onChange={e => setSelectedRepairTypeId(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary"
                 required
               >
-                {labourCodes.map(code => (
-                  <option key={code.id} value={code.id}>
-                    {code.code} - {code.description}
+                {repairTypes.map(rt => (
+                  <option key={rt.id} value={rt.id}>
+                    {rt.code}
                   </option>
                 ))}
               </select>
@@ -2226,7 +2183,7 @@ function AddOtherLabourModal({
             </button>
             <button
               type="submit"
-              disabled={saving || labourCodes.length === 0 || !itemName.trim()}
+              disabled={saving || repairTypes.length === 0 || !selectedRepairTypeId || !itemName.trim()}
               className="flex-1 px-4 py-2 bg-primary text-white rounded hover:bg-primary-dark disabled:opacity-50"
             >
               {saving ? 'Adding...' : 'Add Labour'}

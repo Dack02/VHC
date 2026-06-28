@@ -12,6 +12,10 @@ interface TodayData {
     noShowCount: number
     noShowRate: number
     customerWaitingCount: number
+    dropOffArrivals?: Array<{
+      jobsheetId: string; reference: string | null; registration: string | null
+      customerName: string | null; dropOffTime: string | null; scheduledDate: string; serviceTypeLabel: string | null
+    }>
   }
   speed: {
     avgTechInspectionMinutes: number | null
@@ -264,6 +268,30 @@ export default function Today() {
                 title={`No-Show: ${arrivals!.noShowCount}`}
               />
             )}
+          </div>
+        )}
+        {/* Early drop-offs: car comes in today, work scheduled for a later day */}
+        {(arrivals?.dropOffArrivals?.length || 0) > 0 && (
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <h3 className="text-sm font-semibold text-gray-900 mb-2">
+              Arriving today <span className="font-normal text-gray-400">· dropped in early, work scheduled later</span>
+            </h3>
+            <ul className="divide-y divide-gray-100">
+              {arrivals!.dropOffArrivals!.map(a => (
+                <li key={a.jobsheetId} className="flex items-center justify-between py-2 gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-gray-900 truncate">
+                      {a.registration || '—'}
+                      {a.customerName && <span className="text-gray-500 font-normal"> · {a.customerName}</span>}
+                    </div>
+                    <div className="text-xs text-gray-500 truncate">
+                      {a.serviceTypeLabel || 'Booking'} · work {new Date(`${a.scheduledDate}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    </div>
+                  </div>
+                  <div className="text-xs text-gray-500 shrink-0">{a.dropOffTime || 'Any time'}</div>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </div>

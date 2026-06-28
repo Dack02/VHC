@@ -301,14 +301,44 @@ export function DayDetail({ date, density }: { date: string; density: Density })
         <Spinner />
       ) : error ? (
         <ErrorNote message={error} />
-      ) : !detail || detail.bookings.length === 0 ? (
+      ) : !detail ? (
         <div className="px-4 py-12 text-center text-sm text-gray-400">No bookings for this day.</div>
       ) : (
         <>
-          <BookingListHeader />
-          <div className="flex flex-col gap-1.5">
-            {detail.bookings.map(b => <BookingRow key={b.bookingId} booking={b} onOpen={() => open(b)} density={density} />)}
-          </div>
+          {/* Cars dropped in today but scheduled (and loaded) on a later day */}
+          {detail.arrivals && detail.arrivals.length > 0 && (
+            <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50/50 p-3">
+              <h3 className="text-xs font-semibold text-blue-800 mb-2">
+                Arriving today <span className="font-normal text-blue-700/70">· dropped in early, worked on a later day</span>
+              </h3>
+              <div className="flex flex-col gap-1">
+                {detail.arrivals.map(a => (
+                  <div key={a.jobsheetId} className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 bg-white/60">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-gray-900 truncate">
+                        {a.registration || '—'}
+                        {a.customerName && <span className="text-gray-500 font-normal"> · {a.customerName}</span>}
+                      </div>
+                      <div className="text-xs text-gray-500 truncate">
+                        {a.serviceTypeLabel || 'Booking'} · work {new Date(`${a.scheduledDate}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-500 shrink-0">{a.dropOffTime || 'Any time'}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {detail.bookings.length === 0 ? (
+            <div className="px-4 py-12 text-center text-sm text-gray-400">No bookings scheduled for this day.</div>
+          ) : (
+            <>
+              <BookingListHeader />
+              <div className="flex flex-col gap-1.5">
+                {detail.bookings.map(b => <BookingRow key={b.bookingId} booking={b} onOpen={() => open(b)} density={density} />)}
+              </div>
+            </>
+          )}
         </>
       )}
       {modal}

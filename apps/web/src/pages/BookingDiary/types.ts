@@ -105,6 +105,18 @@ export interface DiaryDayDetail {
     totalOutreach: number
   }
   bookings: DiaryBooking[]
+  // Cars dropped in on this day but scheduled to be worked on a later day.
+  arrivals?: DiaryDropOffArrival[]
+}
+
+export interface DiaryDropOffArrival {
+  jobsheetId: string
+  reference: string | null
+  registration: string | null
+  customerName: string | null
+  dropOffTime: string | null
+  scheduledDate: string
+  serviceTypeLabel: string | null
 }
 
 export interface DmsBookingLabour {

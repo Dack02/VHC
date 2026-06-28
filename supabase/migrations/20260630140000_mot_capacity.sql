@@ -38,9 +38,12 @@ COMMENT ON COLUMN resource_site_config.mot_capacity_hours IS
   'Workshop-time each MOT booking contributes to the diary loading %, standing in for the small priced labour line.';
 
 -- 4. diary_day_summary — MOT bookings load at mot_capacity_hours -----------
--- Signature unchanged, so CREATE OR REPLACE is safe. Booked hours now charge a
--- booking-level MOT (Main Booking Requirement = MOT / DMS is_mot_booking) at the
--- site's mot_capacity_hours when set, instead of its own (tiny) estimate.
+-- Signature unchanged, so CREATE OR REPLACE is safe. A booking is an MOT when it
+-- carries an Is-MOT repair type (repair_types.is_mot) — the Main Booking
+-- Requirement no longer factors in — or, for DMS imports (which have no repair
+-- lines), the importer's own MOT flag. Such a booking loads as (its non-MOT work)
+-- + the site's mot_capacity_hours, so a Service+MOT combo isn't wiped down to the
+-- MOT figure and a bare MOT counts the real bay time, not its tiny labour line.
 CREATE OR REPLACE FUNCTION diary_day_summary(
   p_org_id  uuid,
   p_site_id uuid,
@@ -70,23 +73,52 @@ AS $$
   days AS (
     SELECT generate_series(p_from, p_to, interval '1 day')::date AS d
   ),
+  -- Per booking: is it an MOT (Is-MOT repair type on the job, or a DMS import
+  -- flagged at import time), and how many of its hours are the MOT line itself —
+  -- so a Service+MOT job loads as (its other work) + mot_capacity_hours, not double.
+  bk AS (
+    SELECT
+      v.appt_date,
+      v.is_waiting,
+      v.is_loan,
+      v.origin_source,
+      COALESCE(v.estimated_hours, (SELECT dbh FROM cfg), 1.0) AS est_hours,
+      (
+        EXISTS (
+          SELECT 1 FROM repair_items ri
+            JOIN repair_types rt ON rt.id = ri.repair_type_id
+          WHERE rt.is_mot AND ri.deleted_at IS NULL
+            AND (ri.jobsheet_id = v.jobsheet_id OR ri.health_check_id = v.health_check_id)
+        )
+        OR (v.source = 'dms' AND v.is_mot)
+      ) AS is_mot_final,
+      COALESCE((
+        SELECT SUM(rl.hours) FROM repair_items ri
+          JOIN repair_types rt ON rt.id = ri.repair_type_id
+          JOIN repair_labour rl ON rl.repair_item_id = ri.id
+        WHERE rt.is_mot AND ri.deleted_at IS NULL
+          AND (ri.jobsheet_id = v.jobsheet_id OR ri.health_check_id = v.health_check_id)
+      ), 0) AS mot_labour_hours
+    FROM vw_diary_bookings v
+    WHERE v.organization_id = p_org_id AND v.site_id = p_site_id
+      AND v.appt_date BETWEEN p_from AND p_to
+  ),
   b AS (
     SELECT
       appt_date,
       COUNT(*)                                                          AS jobs,
       SUM(
         CASE
-          WHEN is_mot AND (SELECT mch FROM cfg) IS NOT NULL THEN (SELECT mch FROM cfg)
-          ELSE COALESCE(estimated_hours, (SELECT dbh FROM cfg), 1.0)
+          WHEN is_mot_final AND (SELECT mch FROM cfg) IS NOT NULL
+            THEN GREATEST(0, est_hours - mot_labour_hours) + (SELECT mch FROM cfg)
+          ELSE est_hours
         END
       )                                                                 AS booked,
-      COUNT(*) FILTER (WHERE is_mot)                                    AS mots,
+      COUNT(*) FILTER (WHERE is_mot_final)                              AS mots,
       COUNT(*) FILTER (WHERE is_waiting)                                AS waiting,
       COUNT(*) FILTER (WHERE is_loan)                                   AS loans,
       COUNT(*) FILTER (WHERE origin_source = 'follow_up')               AS outreach
-    FROM vw_diary_bookings
-    WHERE organization_id = p_org_id AND site_id = p_site_id
-      AND appt_date BETWEEN p_from AND p_to
+    FROM bk
     GROUP BY appt_date
   )
   SELECT

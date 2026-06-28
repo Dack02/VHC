@@ -17,6 +17,7 @@ import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
 import { DMS_BOOKING_DETAIL_SELECT, mapDmsBookingDetailRow } from '../services/dms-booking-detail.js'
 import { loadSiteConfig, computeBand } from '../services/resource-config.js'
+import { getDropOffArrivals } from '../services/drop-off-arrivals.js'
 
 const bookingDiary = new Hono()
 
@@ -215,7 +216,7 @@ bookingDiary.get('/day', authorize([...ADVISOR_ROLES]), async (c) => {
   const siteId = await resolveSiteId(c)
   if (!siteId) return c.json({ error: 'No site selected' }, 400)
 
-  const [summaryRes, bookingsRes, config] = await Promise.all([
+  const [summaryRes, bookingsRes, config, arrivals] = await Promise.all([
     supabaseAdmin.rpc('diary_day_summary', {
       p_org_id: auth.orgId,
       p_site_id: siteId,
@@ -227,7 +228,9 @@ bookingDiary.get('/day', authorize([...ADVISOR_ROLES]), async (c) => {
       p_site_id: siteId,
       p_date: date
     }),
-    loadSiteConfig(auth.orgId, siteId)
+    loadSiteConfig(auth.orgId, siteId),
+    // Cars dropped in on this day but scheduled for later — shown as arrivals, not load.
+    getDropOffArrivals(auth.orgId, siteId, date)
   ])
 
   if (summaryRes.error || bookingsRes.error) {
@@ -255,7 +258,7 @@ bookingDiary.get('/day', authorize([...ADVISOR_ROLES]), async (c) => {
 
   const bookings = (bookingsRes.data || []).map((r: any) => mapBookingRow(r, date))
 
-  return c.json({ date, siteId, capacity, bookings })
+  return c.json({ date, siteId, capacity, bookings, arrivals })
 })
 
 // GET /booking?id=<healthCheckId>  → full captured detail for one DMS booking

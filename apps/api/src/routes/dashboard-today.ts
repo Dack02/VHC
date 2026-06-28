@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { aggregateRepairItemsByHc, type RepairItemLike } from '../lib/metrics.js'
 import { chunkIds } from '../services/hc-period-service.js'
+import { getDropOffArrivals } from '../services/drop-off-arrivals.js'
 
 const dashboardToday = new Hono()
 
@@ -513,6 +514,11 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       ? Math.round((totalAuthorized / totalIdentified) * 1000) / 10
       : 0
 
+    // Cars dropped in EARLY today (work scheduled for a later day) — surfaced for ALL
+    // bookings (VHC or not) so advisors can greet customers, separate from the counts.
+    const todayDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const dropOffArrivals = await getDropOffArrivals(auth.orgId, site_id || null, todayDateStr)
+
     return c.json({
       arrivals: {
         totalBookings,
@@ -522,7 +528,8 @@ dashboardToday.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         noShowRate: totalBookings > 0
           ? Math.round((noShowCount / totalBookings) * 1000) / 10
           : 0,
-        customerWaitingCount
+        customerWaitingCount,
+        dropOffArrivals
       },
       speed: {
         avgTechInspectionMinutes,

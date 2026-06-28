@@ -109,9 +109,9 @@ export async function loadMotTypeIds(orgId: string): Promise<Set<string>> {
 // Resolve each of a day's bookings to a repair type and total hours/jobs by type.
 // Ladder: health_checks/jobsheets.primary_repair_type_id → first priced repair
 // item → MOT inference → uncategorised (site pool only). Separately counts MOT
-// bookings for the bay cap via the union signal: a booking counts as an MOT when
-// its resolved type is_mot OR the booking-level is_mot flag is set (Main Booking
-// Requirement = MOT / DMS is_mot_booking) — so Service+MOT bundles still count.
+// bookings for the bay cap: a booking is an MOT when it carries an Is-MOT repair
+// type (so Service+MOT bundles count), or — for DMS imports, which have no repair
+// lines — the import's MOT flag. The Main Booking Requirement no longer factors in.
 export async function getCategoryBooked(orgId: string, siteId: string, date: string, motTypeIds: Set<string>): Promise<CategoryBooked> {
   const empty: CategoryBooked = { byType: new Map(), uncategorizedHours: 0, uncategorizedJobs: 0, motBookedJobs: 0 }
   const { data: bookings, error } = await supabaseAdmin.rpc('diary_day_bookings', {
@@ -168,7 +168,7 @@ export async function getCategoryBooked(orgId: string, siteId: string, date: str
     } else {
       uncategorizedHours += hours; uncategorizedJobs += 1
     }
-    const isMotBooking = Boolean(b.is_mot)
+    const isMotBooking = (b.source === 'dms' && Boolean(b.is_mot))
       || (rtId != null && motTypeIds.has(rtId))
       || hasMotType(b.health_check_id ? riHcTypes.get(b.health_check_id) : undefined)
       || hasMotType(b.jobsheet_id ? riJsTypes.get(b.jobsheet_id) : undefined)

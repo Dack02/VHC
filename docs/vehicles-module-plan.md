@@ -472,17 +472,22 @@ ORDER BY e.due_date ASC;
 
 ---
 
-## 8. Open product decisions (one recommendation each)
+## 8. Product decisions
 
-1. **Expiry reminders — reuse `follow_up_cases` or a dedicated table?** → **Recommend the dedicated `expiry_reminder_cases` table** (this plan). Overloading `follow_up_cases` means making its `health_check_id` nullable, dropping `UNIQUE(health_check_id)`, and null-auditing the live engine — risky on a deployed table. *Alt: extend the table for maximal reuse.* **This is the biggest architectural fork.**
-2. **Is auto "Service due" needed in v1?** → **Recommend manual service-date entry in v1** (no service-event date/mileage source exists today; `vehicles.mileage` is current-only, no history). Capture service date + mileage at jobsheet/HC close into `vehicle_mileage_readings`, then auto-predict in P4. *Alt: build service-event capture first (bigger v1).*
-3. **Reminders default recipient — owner or driver?** → **Recommend per-org default (retail = owner, lease/fleet = driver) + per-vehicle `is_reminder_recipient` override.** Confirm whether adding a driver to a lease vehicle should auto-flip reminders to the driver or require a manual toggle.
-4. **Marketing consent (UK PECR/GDPR).** → **Recommend treating MOT/Service as service messages (legitimate interest)** under the existing `contact_opt_out`/STOP for v1. If custom expiry types become pure marketing, add a distinct marketing-consent flag later. Confirm.
-5. **Should technicians browse the standalone list (mobile)?** → **Recommend API allows `technician` GET (mobile reuse), nav hidden (advisor/admin browse).** Confirm.
-6. **Ownership transfer scope.** → **Recommend simple re-link + audit row; work history stays with the car.** Skip Tekmetric-style multi-tier rewriting of historical HC refs in v1 (risky for reporting).
-7. **Registered keeper (DVLA) → ever auto-created as a customer/driver?** → **Recommend read-only provenance on the vehicle** (the keeper is often not a customer). Keep the `keeper` role available but manual.
-8. **Recency suppression window** → **Recommend 2 years (Motasoft precedent), per-org configurable.**
-9. **`vehicle_details` `defaultOn`** is already `false` (paid). Keep it — the refresh button's paid path inherits that gate.
+### Locked 2026-06-28
+
+1. **Expiry-reminder engine →** **dedicated `expiry_reminder_cases` table** that reuses the Follow-Up send/opt-out/logging primitives. No structural change to the live `follow_up_cases` (it stays `health_check_id NOT NULL`). *(§3.10, §6.)*
+2. **"Service due" →** **manual date/mileage entry in v1.** Capture service date + mileage at jobsheet/HC close into `vehicle_mileage_readings`; auto-prediction lights up in Phase 4. *(§4, §7.)*
+3. **Reminder recipient →** **per-vehicle, smart default** (retail = owner, lease/fleet = driver) via `vehicle_customer_links.is_reminder_recipient`, overridable per vehicle. *(§6.)*
+4. **Ownership transfer →** **simple re-link + `vehicle_ownership_history` audit; work history stays with the car.** No multi-tier historical rewrite in v1. *(§4 `transfer-owner`.)*
+
+### Still open (sensible defaults applied; flag if you disagree)
+
+5. **Marketing consent (UK PECR/GDPR).** Default: treat MOT/Service as service messages (legitimate interest) under the existing `contact_opt_out`/STOP. Revisit a dedicated marketing-consent flag if custom expiry types become pure marketing.
+6. **Technicians browse the standalone list (mobile)?** Default: API allows `technician` GET (mobile reuse), nav item hidden (advisor/admin browse).
+7. **Registered keeper (DVLA) auto-created as a customer/driver?** Default: read-only provenance on the vehicle; `keeper` role available but added manually.
+8. **Recency suppression window.** Default: 2 years (Motasoft precedent), per-org configurable.
+9. **`vehicle_details` `defaultOn`** is already `false` (paid). Kept — the refresh button's paid path inherits that gate.
 
 ---
 

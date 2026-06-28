@@ -99,6 +99,117 @@ export async function verifyRepairOptionAccess(optionId: string, orgId: string) 
   return data
 }
 
+// Resolve the LOCKED labour rate for a work line (P2 — "labour locked to Repair Type").
+// Resolve-upward: the Repair Type lives only on the top-level repair_item (a group header or a
+// standalone item); children and repair_options carry no type, so we climb to the parent. The
+// type → default_labour_code → { rate, is_vat_exempt }. Returns null when there is no type, the
+// type has no default labour code, or the code is missing — callers treat null as the gate.
+export async function resolveLockedRate(
+  input: { itemId?: string; optionId?: string },
+  orgId: string
+): Promise<{ rate: number; isVatExempt: boolean; labourCodeId: string } | null> {
+  // 1. Find the repair_item id the rate is read from (an option resolves via its parent item).
+  let itemId = input.itemId || null
+  if (!itemId && input.optionId) {
+    const { data: opt } = await supabaseAdmin
+      .from('repair_options')
+      .select('repair_item_id')
+      .eq('id', input.optionId)
+      .single()
+    itemId = (opt?.repair_item_id as string | undefined) || null
+  }
+  if (!itemId) return null
+
+  // 2. Read the item; if it is a child, climb to the parent (children inherit the type).
+  const { data: item } = await supabaseAdmin
+    .from('repair_items')
+    .select('id, organization_id, parent_repair_item_id, repair_type_id')
+    .eq('id', itemId)
+    .eq('organization_id', orgId)
+    .single()
+  if (!item) return null
+
+  let repairTypeId = (item.repair_type_id as string | null) ?? null
+  if (item.parent_repair_item_id) {
+    const { data: parent } = await supabaseAdmin
+      .from('repair_items')
+      .select('repair_type_id')
+      .eq('id', item.parent_repair_item_id as string)
+      .single()
+    repairTypeId = (parent?.repair_type_id as string | null) ?? null
+  }
+  if (!repairTypeId) return null
+
+  // 3. Type → default labour code → rate + VAT-exemption.
+  const { data: rt } = await supabaseAdmin
+    .from('repair_types')
+    .select('default_labour_code_id')
+    .eq('id', repairTypeId)
+    .eq('organization_id', orgId)
+    .single()
+  if (!rt?.default_labour_code_id) return null
+
+  const { data: lc } = await supabaseAdmin
+    .from('labour_codes')
+    .select('id, hourly_rate, is_vat_exempt')
+    .eq('id', rt.default_labour_code_id as string)
+    .eq('organization_id', orgId)
+    .single()
+  if (!lc) return null
+
+  return {
+    rate: parseFloat(lc.hourly_rate as string),
+    isVatExempt: !!lc.is_vat_exempt,
+    labourCodeId: lc.id as string
+  }
+}
+
+// Re-rate every labour line of a repair_item (and its options) to the item's current Repair Type
+// rate. Called when a group's type is set/changed so a reclassified group bills consistently. The
+// per-row total is recomputed from the existing hours + discount (snapshot of those inputs is kept).
+// No-op when the type has no resolvable rate. The DB triggers recompute the rolled-up totals.
+export async function reRateLabourForRepairItem(itemId: string, orgId: string) {
+  const resolved = await resolveLockedRate({ itemId }, orgId)
+  if (!resolved) return
+
+  const reRate = async (rows: Array<{ id: string; hours: string; discount_percent: string | null }> | null) => {
+    for (const r of rows || []) {
+      const hours = parseFloat(r.hours) || 0
+      const discount = parseFloat(r.discount_percent as string) || 0
+      const total = resolved.rate * hours * (1 - discount / 100)
+      await supabaseAdmin
+        .from('repair_labour')
+        .update({
+          labour_code_id: resolved.labourCodeId,
+          rate: resolved.rate,
+          is_vat_exempt: resolved.isVatExempt,
+          total,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', r.id)
+    }
+  }
+
+  const { data: itemRows } = await supabaseAdmin
+    .from('repair_labour')
+    .select('id, hours, discount_percent')
+    .eq('repair_item_id', itemId)
+  await reRate(itemRows)
+
+  const { data: opts } = await supabaseAdmin
+    .from('repair_options')
+    .select('id')
+    .eq('repair_item_id', itemId)
+  const optionIds = (opts || []).map((o) => o.id as string)
+  if (optionIds.length > 0) {
+    const { data: optRows } = await supabaseAdmin
+      .from('repair_labour')
+      .select('id, hours, discount_percent')
+      .in('repair_option_id', optionIds)
+    await reRate(optRows)
+  }
+}
+
 // Helper to auto-update repair item workflow status when labour/parts are added or deleted
 export async function updateRepairItemWorkflowStatus(repairItemId: string | null, repairOptionId: string | null) {
   if (!repairItemId && !repairOptionId) return
@@ -249,6 +360,7 @@ export function formatRepairItem(item: Record<string, unknown>) {
     description: item.description,
     isGroup: item.is_group,
     parentRepairItemId: item.parent_repair_item_id || null,
+    repairTypeId: item.repair_type_id ?? null,
     labourTotal: parseFloat(item.labour_total as string) || 0,
     partsTotal: parseFloat(item.parts_total as string) || 0,
     subtotal: parseFloat(item.subtotal as string) || 0,

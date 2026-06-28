@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { supabaseAdmin } from '../../lib/supabase.js'
 import { authorize } from '../../middleware/auth.js'
-import { verifyRepairItemAccess, verifyRepairOptionAccess, updateRepairItemWorkflowStatus } from './helpers.js'
+import { verifyRepairItemAccess, verifyRepairOptionAccess, updateRepairItemWorkflowStatus, resolveLockedRate } from './helpers.js'
 import { logAudit } from '../../services/audit.js'
 
 const labourRouter = new Hono()
@@ -62,10 +62,10 @@ labourRouter.post('/repair-items/:id/labour', authorize(['super_admin', 'org_adm
     const auth = c.get('auth')
     const { id } = c.req.param()
     const body = await c.req.json()
-    const { labour_code_id, hours, notes, discount_percent } = body
+    const { hours, notes, discount_percent } = body
 
-    if (!labour_code_id || hours === undefined) {
-      return c.json({ error: 'labour_code_id and hours are required' }, 400)
+    if (hours === undefined) {
+      return c.json({ error: 'hours is required' }, 400)
     }
 
     const existing = await verifyRepairItemAccess(id, auth.orgId)
@@ -73,19 +73,15 @@ labourRouter.post('/repair-items/:id/labour', authorize(['super_admin', 'org_adm
       return c.json({ error: 'Repair item not found' }, 404)
     }
 
-    // Get labour code details
-    const { data: labourCode, error: codeError } = await supabaseAdmin
-      .from('labour_codes')
-      .select('id, hourly_rate, is_vat_exempt')
-      .eq('id', labour_code_id)
-      .eq('organization_id', auth.orgId)
-      .single()
-
-    if (codeError || !labourCode) {
-      return c.json({ error: 'Labour code not found' }, 404)
+    // Labour is LOCKED to the work group's Repair Type — the rate + VAT-exemption come from the
+    // type's default labour code (resolve-upward), not a client-supplied code. No type (or no
+    // default code) → reject (the server-side gate): there is no rate to bill the line at.
+    const resolved = await resolveLockedRate({ itemId: id }, auth.orgId)
+    if (!resolved) {
+      return c.json({ error: 'Set a Repair Type (with a default labour code) on this work group before adding labour', code: 'REPAIR_TYPE_REQUIRED' }, 400)
     }
 
-    const rate = parseFloat(labourCode.hourly_rate)
+    const rate = resolved.rate
     const discountPct = parseFloat(discount_percent) || 0
     const subtotal = rate * parseFloat(hours)
     const total = subtotal * (1 - discountPct / 100)
@@ -94,12 +90,12 @@ labourRouter.post('/repair-items/:id/labour', authorize(['super_admin', 'org_adm
       .from('repair_labour')
       .insert({
         repair_item_id: id,
-        labour_code_id,
+        labour_code_id: resolved.labourCodeId,
         hours: parseFloat(hours),
         rate,
         discount_percent: discountPct,
         total,
-        is_vat_exempt: labourCode.is_vat_exempt,
+        is_vat_exempt: resolved.isVatExempt,
         notes: notes?.trim() || null,
         created_by: auth.user.id
       })
@@ -220,10 +216,10 @@ labourRouter.post('/repair-options/:id/labour', authorize(['super_admin', 'org_a
     const auth = c.get('auth')
     const { id } = c.req.param()
     const body = await c.req.json()
-    const { labour_code_id, hours, notes, discount_percent } = body
+    const { hours, notes, discount_percent } = body
 
-    if (!labour_code_id || hours === undefined) {
-      return c.json({ error: 'labour_code_id and hours are required' }, 400)
+    if (hours === undefined) {
+      return c.json({ error: 'hours is required' }, 400)
     }
 
     const existing = await verifyRepairOptionAccess(id, auth.orgId)
@@ -231,19 +227,13 @@ labourRouter.post('/repair-options/:id/labour', authorize(['super_admin', 'org_a
       return c.json({ error: 'Repair option not found' }, 404)
     }
 
-    // Get labour code details
-    const { data: labourCode, error: codeError } = await supabaseAdmin
-      .from('labour_codes')
-      .select('id, hourly_rate, is_vat_exempt')
-      .eq('id', labour_code_id)
-      .eq('organization_id', auth.orgId)
-      .single()
-
-    if (codeError || !labourCode) {
-      return c.json({ error: 'Labour code not found' }, 404)
+    // Locked to the parent work group's Repair Type (resolve-upward via the option).
+    const resolved = await resolveLockedRate({ optionId: id }, auth.orgId)
+    if (!resolved) {
+      return c.json({ error: 'Set a Repair Type (with a default labour code) on this work group before adding labour', code: 'REPAIR_TYPE_REQUIRED' }, 400)
     }
 
-    const rate = parseFloat(labourCode.hourly_rate)
+    const rate = resolved.rate
     const discountPct = parseFloat(discount_percent) || 0
     const subtotal = rate * parseFloat(hours)
     const total = subtotal * (1 - discountPct / 100)
@@ -252,12 +242,12 @@ labourRouter.post('/repair-options/:id/labour', authorize(['super_admin', 'org_a
       .from('repair_labour')
       .insert({
         repair_option_id: id,
-        labour_code_id,
+        labour_code_id: resolved.labourCodeId,
         hours: parseFloat(hours),
         rate,
         discount_percent: discountPct,
         total,
-        is_vat_exempt: labourCode.is_vat_exempt,
+        is_vat_exempt: resolved.isVatExempt,
         notes: notes?.trim() || null,
         created_by: auth.user.id
       })

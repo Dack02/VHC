@@ -769,7 +769,26 @@ export default function AdminSettings() {
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-400"
                       />
                     </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Low-credit alert threshold (£)</label>
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        value={settings.vehicleDetails.lowCreditThreshold}
+                        onChange={(e) => updateSettings('vehicleDetails', 'lowCreditThreshold', parseFloat(e.target.value) || 0)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Super admins are texted when the VDGL balance drops below this.</p>
+                    </div>
                   </div>
+                  {settings.vehicleDetails.accountBalance != null && (
+                    <div className={`p-3 rounded-lg text-sm border ${settings.vehicleDetails.accountBalance < settings.vehicleDetails.lowCreditThreshold ? 'bg-red-50 border-red-200 text-red-800' : 'bg-gray-50 border-gray-200 text-gray-700'}`}>
+                      <strong>VDGL credit remaining:</strong> £{Number(settings.vehicleDetails.accountBalance).toFixed(2)}
+                      {settings.vehicleDetails.balanceUpdatedAt ? ` (as of ${new Date(settings.vehicleDetails.balanceUpdatedAt).toLocaleString()})` : ''}
+                      {settings.vehicleDetails.accountBalance < settings.vehicleDetails.lowCreditThreshold ? ' — below threshold, top up to avoid lookup failures.' : ''}
+                    </div>
+                  )}
                   <div>
                     <button
                       type="button"

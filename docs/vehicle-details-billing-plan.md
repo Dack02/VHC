@@ -1,7 +1,12 @@
 # Vehicle Details — Usage Metering & Tenant Billing Plan
 
-**Status:** Planned 2026-06-28 — build not started
+**Status:** BUILT 2026-06-28 (uncommitted; migrations 20260628130000 + 20260628150000 pending deploy)
 **Depends on:** the VehicleDetails integration ([vehicle-details-integration-plan.md](vehicle-details-integration-plan.md))
+
+**Decisions taken:** flat platform-wide sell price, default **£0.08**, editable in Admin →
+Platform Settings → Billing. Detail log browser deferred. Credit-low alert **built**
+(super-admin SMS via the existing alert recipients, threshold default £10 editable in the
+Vehicle Data settings block; balance surfaced read-only). Both apps type-check clean.
 
 ---
 

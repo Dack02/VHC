@@ -37,6 +37,7 @@ interface SelectedItemInfo {
   name: string
   ragStatus: 'red' | 'amber'
   existingRepairItem?: RepairItem
+  repairTypeId?: string | null
 }
 
 export function HealthCheckTabContent({
@@ -323,7 +324,8 @@ export function HealthCheckTabContent({
           checkResultId,
           name: result.template_item?.name || 'Unknown Item',
           ragStatus: result.rag_status as 'red' | 'amber',
-          existingRepairItem: repairItem
+          existingRepairItem: repairItem,
+          repairTypeId: result.template_item?.repair_type_id ?? null
         })
       }
     })

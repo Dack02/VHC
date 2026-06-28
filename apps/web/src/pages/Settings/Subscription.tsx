@@ -10,11 +10,12 @@ interface SubscriptionPlan {
   priceMonthly: number | null
   priceAnnual: number | null
   currency: string
-  maxSites: number
-  maxUsers: number
-  maxHealthChecksPerMonth: number
-  maxStorageGb: number
-  features: string[]
+  // Limits are nullable: null (or -1) means "unlimited" (e.g. the Enterprise plan).
+  maxSites: number | null
+  maxUsers: number | null
+  maxHealthChecksPerMonth: number | null
+  maxStorageGb: number | null
+  features: string[] | null
 }
 
 interface SubscriptionData {
@@ -88,6 +89,14 @@ export default function Subscription() {
     if (amount === null) return 'N/A'
     const symbols: Record<string, string> = { GBP: '£', USD: '$', EUR: '€' }
     return `${symbols[currency] || currency}${amount.toFixed(2)}`
+  }
+
+  // A plan/usage limit is "unlimited" when it's null, undefined, or negative
+  // (the API uses both null and -1). Guard against null so we never call
+  // .toLocaleString() on it, which would crash the whole page.
+  const formatLimit = (value: number | null | undefined, suffix = '') => {
+    if (value === null || value === undefined || value < 0) return '∞'
+    return `${value.toLocaleString()}${suffix}`
   }
 
   const getStatusColor = (status: string) => {
@@ -196,32 +205,35 @@ export default function Subscription() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="text-center p-4 bg-gray-50 rounded-lg">
               <p className="text-3xl font-bold text-gray-900">
-                {subscription.plan.maxSites === -1 ? '∞' : subscription.plan.maxSites}
+                {formatLimit(subscription.plan.maxSites)}
               </p>
               <p className="text-sm text-gray-500">Sites</p>
             </div>
             <div className="text-center p-4 bg-gray-50 rounded-lg">
               <p className="text-3xl font-bold text-gray-900">
-                {subscription.plan.maxUsers === -1 ? '∞' : subscription.plan.maxUsers}
+                {formatLimit(subscription.plan.maxUsers)}
               </p>
               <p className="text-sm text-gray-500">Users</p>
             </div>
             <div className="text-center p-4 bg-gray-50 rounded-lg">
               <p className="text-3xl font-bold text-gray-900">
-                {subscription.plan.maxHealthChecksPerMonth === -1 ? '∞' : subscription.plan.maxHealthChecksPerMonth.toLocaleString()}
+                {formatLimit(subscription.plan.maxHealthChecksPerMonth)}
               </p>
               <p className="text-sm text-gray-500">Health Checks/Month</p>
             </div>
             <div className="text-center p-4 bg-gray-50 rounded-lg">
               <p className="text-3xl font-bold text-gray-900">
-                {subscription.plan.maxStorageGb === -1 ? '∞' : `${subscription.plan.maxStorageGb}GB`}
+                {subscription.plan.maxStorageGb === -1 || subscription.plan.maxStorageGb == null
+                  ? '∞'
+                  : `${subscription.plan.maxStorageGb}GB`}
               </p>
               <p className="text-sm text-gray-500">Storage</p>
             </div>
           </div>
 
-          {/* Features */}
-          {subscription.plan.features && subscription.plan.features.length > 0 && (
+          {/* Features — only an array is renderable; the API may return a
+              feature-flag object, which we simply skip rather than crash on. */}
+          {Array.isArray(subscription.plan.features) && subscription.plan.features.length > 0 && (
             <div className="mt-6 pt-6 border-t border-gray-200">
               <h3 className="text-sm font-medium text-gray-700 mb-3">Included Features</h3>
               <div className="flex flex-wrap gap-2">
@@ -252,7 +264,7 @@ export default function Subscription() {
               <div className="flex justify-between text-sm mb-1">
                 <span className="text-gray-700">Sites</span>
                 <span className="text-gray-500">
-                  {usage.sites.current} / {usage.sites.limit === -1 ? '∞' : usage.sites.limit}
+                  {usage.sites.current} / {formatLimit(usage.sites.limit)}
                 </span>
               </div>
               <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
@@ -268,7 +280,7 @@ export default function Subscription() {
               <div className="flex justify-between text-sm mb-1">
                 <span className="text-gray-700">Users</span>
                 <span className="text-gray-500">
-                  {usage.users.current} / {usage.users.limit === -1 ? '∞' : usage.users.limit}
+                  {usage.users.current} / {formatLimit(usage.users.limit)}
                 </span>
               </div>
               <div className="h-2 bg-gray-200 rounded-full overflow-hidden">

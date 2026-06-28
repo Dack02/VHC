@@ -3,7 +3,7 @@
  * Modal for creating a repair group from selected check results
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { RepairItem, api } from '../../../lib/api'
 import { useAuth } from '../../../contexts/AuthContext'
 
@@ -12,6 +12,12 @@ interface SelectedItemInfo {
   name: string
   ragStatus: 'red' | 'amber'
   existingRepairItem?: RepairItem
+  repairTypeId?: string | null
+}
+
+interface RepairTypeOpt {
+  id: string
+  code: string
 }
 
 interface CreateRepairGroupModalProps {
@@ -45,6 +51,25 @@ export function CreateRepairGroupModal({
   const [isGroup, setIsGroup] = useState(selectedItems.length > 1)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [repairTypes, setRepairTypes] = useState<RepairTypeOpt[]>([])
+  // Pre-fill the Repair Type from the selected findings' template defaults (most frequent; tie → first).
+  const [repairTypeId, setRepairTypeId] = useState<string>(() => {
+    const counts = new Map<string, number>()
+    selectedItems.forEach(i => {
+      if (i.repairTypeId) counts.set(i.repairTypeId, (counts.get(i.repairTypeId) || 0) + 1)
+    })
+    let best = ''
+    let bestN = 0
+    counts.forEach((n, id) => { if (n > bestN) { bestN = n; best = id } })
+    return best
+  })
+
+  useEffect(() => {
+    if (!session?.accessToken) return
+    api<{ repairTypes: RepairTypeOpt[] }>('/api/v1/repair-types?active_only=true', { token: session.accessToken })
+      .then(d => setRepairTypes(d.repairTypes || []))
+      .catch(() => {})
+  }, [session?.accessToken])
 
   // Check if any selected items have existing labour/parts
   const existingDataSummary = useMemo(() => {
@@ -85,6 +110,7 @@ export function CreateRepairGroupModal({
             name: name.trim(),
             description: description.trim() || null,
             is_group: isGroup,
+            repairTypeId: repairTypeId || null,
             check_result_ids: checkResultIds
           }
         }
@@ -149,6 +175,23 @@ export function CreateRepairGroupModal({
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
                 placeholder="Additional notes about this repair..."
               />
+            </div>
+
+            {/* Repair Type — drives the labour rate; pre-filled from the findings' template defaults */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Repair Type <span className="text-gray-400">(sets the labour rate)</span>
+              </label>
+              <select
+                value={repairTypeId}
+                onChange={(e) => setRepairTypeId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+              >
+                <option value="">Set later (when pricing labour)</option>
+                {repairTypes.map(rt => (
+                  <option key={rt.id} value={rt.id}>{rt.code}</option>
+                ))}
+              </select>
             </div>
 
             {/* Group toggle (only if multiple items) */}

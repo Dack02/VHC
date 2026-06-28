@@ -567,6 +567,7 @@ export default function TemplateBuilder() {
                 onGenerateReasons={handleGenerateReasonsForItem}
                 templateId={id!}
                 reasonTypes={reasonTypes}
+                repairTypes={repairTypes}
               />
             ))}
           </div>
@@ -872,13 +873,15 @@ interface SortableItemProps {
   isEven?: boolean
   isLastItem?: boolean
   reasonTypes: ReasonType[]
+  repairTypes: RepairTypeLite[]
 }
 
-function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, reasonInfo, onGenerateReasons, isEven, isLastItem, reasonTypes }: SortableItemProps) {
+function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, reasonInfo, onGenerateReasons, isEven, isLastItem, reasonTypes, repairTypes }: SortableItemProps) {
   const navigate = useNavigate()
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: item.id })
   const [editName, setEditName] = useState(item.name)
   const [editReasonType, setEditReasonType] = useState(item.reasonType || '')
+  const [editRepairType, setEditRepairType] = useState(item.repairTypeId || '')
   const [editIsRequired, setEditIsRequired] = useState(item.isRequired || false)
   const [editRequiresLocation, setEditRequiresLocation] = useState(item.requiresLocation || false)
   const [editExcludeFromAi, setEditExcludeFromAi] = useState(item.excludeFromAi || false)
@@ -902,7 +905,7 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
       if (!confirmed) return
     }
 
-    onSave({ name: editName, reasonType: newReasonType, isRequired: editIsRequired, requiresLocation: editRequiresLocation, excludeFromAi: editExcludeFromAi })
+    onSave({ name: editName, reasonType: newReasonType, repairTypeId: editRepairType || null, isRequired: editIsRequired, requiresLocation: editRequiresLocation, excludeFromAi: editExcludeFromAi })
   }
 
   const handleManageReasons = () => {
@@ -976,6 +979,19 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
             {reasonTypes.map((rt) => (
               <option key={rt.id} value={rt.id}>
                 {rt.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={editRepairType}
+            onChange={(e) => setEditRepairType(e.target.value)}
+            className="w-32 px-2 py-1 border border-gray-300 text-sm rounded"
+            title="Default Repair Type for findings on this item"
+          >
+            <option value="">Repair Type…</option>
+            {repairTypes.map((rt) => (
+              <option key={rt.id} value={rt.id}>
+                {rt.code}
               </option>
             ))}
           </select>
@@ -1168,14 +1184,16 @@ function SortableItem({ item, isEditing, onEdit, onSave, onCancel, onDelete, rea
   )
 }
 
-function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
+function InlineNewItemRow({ reasonTypes, repairTypes, onAdd, onCancel }: {
   reasonTypes: ReasonType[]
+  repairTypes: RepairTypeLite[]
   onAdd: (itemData: { name: string; itemType: string; reasonType?: string; isRequired?: boolean; requiresLocation?: boolean; excludeFromAi?: boolean; repairTypeId?: string | null }) => Promise<boolean>
   onCancel: () => void
 }) {
   const [name, setName] = useState('')
   const [itemType, setItemType] = useState('rag')
   const [reasonType, setReasonType] = useState('')
+  const [repairType, setRepairType] = useState('')
   const [isRequired, setIsRequired] = useState(false)
   const [requiresLocation, setRequiresLocation] = useState(false)
   const [excludeFromAi, setExcludeFromAi] = useState(false)
@@ -1189,6 +1207,7 @@ function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
       name: name.trim(),
       itemType,
       reasonType: reasonType || undefined,
+      repairTypeId: repairType || null,
       isRequired,
       requiresLocation,
       excludeFromAi
@@ -1198,6 +1217,7 @@ function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
       setName('')
       setItemType('rag')
       setReasonType('')
+      setRepairType('')
       setIsRequired(false)
       setRequiresLocation(false)
       setExcludeFromAi(false)
@@ -1269,6 +1289,23 @@ function InlineNewItemRow({ reasonTypes, onAdd, onCancel }: {
         {reasonTypes.map((rt) => (
           <option key={rt.id} value={rt.id}>
             {rt.name}
+          </option>
+        ))}
+      </select>
+
+      {/* Repair Type select - hidden on mobile */}
+      <select
+        value={repairType}
+        onChange={(e) => setRepairType(e.target.value)}
+        onKeyDown={handleKeyDown}
+        className="hidden sm:block px-1.5 py-1.5 border border-gray-300 bg-white rounded-xl text-xs"
+        disabled={saving}
+        title="Default Repair Type for findings on this item"
+      >
+        <option value="">Repair Type…</option>
+        {repairTypes.map((rt) => (
+          <option key={rt.id} value={rt.id}>
+            {rt.code}
           </option>
         ))}
       </select>

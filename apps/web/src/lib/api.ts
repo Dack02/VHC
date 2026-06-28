@@ -428,6 +428,7 @@ export interface CheckResult {
     description: string | null
     item_type: string
     config: Record<string, unknown>
+    repair_type_id?: string | null
     section?: {
       id: string
       name: string

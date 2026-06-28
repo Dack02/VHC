@@ -1,12 +1,12 @@
 # GMS — Repair Types + Main Booking Requirement (Plan)
 
-> Branch: work on `dev` · Status: **P1 + P2 + P2.5 DONE & VERIFIED (uncommitted, 2026-06-26)** — P1
-> foundation; P2 labour-lock across server (resolveLockedRate + 400 gate + PATCH snapshot + re-rate),
-> shared jobsheet/estimate `WorkDetailsPanel`, AND VHC `LabourTab`; P2.5 packages (one type per package,
-> apply stamps type + bills at the locked rate, builder retypes from a Repair Type selector, labour code
-> retired). API `tsc` + web `vite build` both green (0 errors). Migrations
-> `20260628130000_repair_types.sql` + `20260628150000_repair_types_packages.sql` pending pipeline deploy.
-> P3 (VHC defaults) + P4 (reporting) not started. Audit gaps closed in §14. · Author: Leo + Claude
+> Branch: work on `dev` · Status: **P1 + P2 + P2.5 + P3 DONE & VERIFIED (uncommitted, 2026-06-28)** — P1
+> foundation; P2 labour-lock (server + `WorkDetailsPanel` + VHC `LabourTab`); P2.5 packages; P3 VHC
+> defaults (`template_items.repair_type_id` editable in TemplateBuilder + clone/seed; **all server-side
+> auto-create paths stamp a type** — autoGenerate, generate route, MOT-failure; CreateRepairGroupModal
+> pre-fills + sends the type). API `tsc` + web `vite build` both green (0 errors). Migrations
+> `20260628130000` + `20260628150000` (DEPLOYED) + `20260628160000_starter_template_repair_type.sql`
+> (pending deploy). **Only P4 (reporting) remains.** Audit gaps closed in §14. · Author: Leo + Claude
 > Companion to [`JOBSHEET.md`](./JOBSHEET.md), [`WORK_DETAILS.md`](./WORK_DETAILS.md), [`ESTIMATES.md`](./ESTIMATES.md).
 
 ## 0. TL;DR
@@ -268,8 +268,9 @@ un-priceable. So **every** creation path must stamp a type:
    `template_items.repair_type_id` — the join must **add that column** (it currently pulls name/description only).
 3. **MRI auto-create** (`helpers.ts` ≈L233-252): stamp from the linked package's `default_repair_type_id`
    **before** applying the package (§5.2). `mri_items` has no type source today — use the package's.
-4. **MOT-failure auto-create** (`results.ts` ≈L231): stamp the org's **MOT** repair type (VAT-exempt) so the
-   lock keeps VAT correct.
+4. **MOT-failure auto-create** (`results.ts` ≈L231): stamp the **template item's** repair type — an MOT
+   *failure* is rectified by normal VATable repair work, **not** MOT labour, so it must NOT get the
+   VAT-exempt "MOT" rate. (Revised from the original "stamp MOT type", which would mis-rate the repair.)
 
 Where no source exists (e.g. an untemplated finding), the item is left **Unassigned** and the advisor must
 set a type before adding labour (the server gate, §5). `repair_items.repair_type_id` is always authoritative;
@@ -386,9 +387,18 @@ the Parts module, §4.4/§12.) Deploy via the pipeline (`supabase db push`), **n
   CRUD accepts/returns `defaultRepairTypeId`, labour code now optional. Builder (`ServicePackages.tsx`) gains
   a package-level **Repair Type** selector, retires the per-line labour-code + rate inputs (rate shown
   read-only from the type), validates a type when labour exists. Combined "Service & MOT" = two packages.
-- **P3 — VHC defaults + auto-create:** `template_items.repair_type_id` in TemplateBuilder + clone/seed; derive
-  in `CreateRepairGroupModal.tsx`; **stamp a type in ALL server-side creation paths** — `autoGenerate`,
-  generate route, MRI (from package), MOT-failure (MOT type) (§6).
+- **P3 — VHC defaults + auto-create:** ✅ DONE & VERIFIED (2026-06-28 — API `tsc` + web build green).
+  `template_items.repair_type_id` wired: `items.ts` CRUD accepts/returns it, `templates.ts` GET shaper +
+  same-org clone carry it, TemplateBuilder has a per-item **Repair Type** selector (edit row + inline-add,
+  threaded through the SortableSection→SortableItem/InlineNewItemRow chain). **All server-side auto-create
+  paths now stamp `repair_type_id` from the template item**: `autoGenerateRepairItems`, the
+  `repair-items-hc.ts` generate route, and the `results.ts` MOT-failure path. **Correction to §6 #4:** the
+  MOT-failure item is stamped with the **template item's** repair type (the rectification is normal VATable
+  work), **not** a VAT-exempt "MOT" type — that would mis-rate the repair. MRI is already typed via its
+  package (P2.5). `CreateRepairGroupModal` pre-fills the type from the selected findings' template defaults
+  (most-frequent; tie → first) + a selector + sends `repairTypeId`. Cross-org starter-template copy maps
+  `repair_type_id` **by code** (migration `20260628160000`). `crud.ts` results fetch + `api.ts`
+  `CheckResult.template_item` now surface `repair_type_id`.
 - **P4 — Reporting:** repair-type RPC + report page + brand/fuel slicing (revenue/conversion only).
 - **(Later, with Parts module) — Margin:** cost capture + margin reporting (§4.4/§12). Not in this initiative.
 

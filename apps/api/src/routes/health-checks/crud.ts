@@ -448,7 +448,7 @@ crud.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
         .select(`
           *,
           template_item:template_items(
-            id, name, description, item_type, config,
+            id, name, description, item_type, config, repair_type_id,
             section:template_sections(id, name, sort_order)
           ),
           media:result_media(*)

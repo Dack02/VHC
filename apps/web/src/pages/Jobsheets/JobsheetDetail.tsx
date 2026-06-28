@@ -563,7 +563,7 @@ export default function JobsheetDetail() {
                   <input type="time" value={form.dueInTime} onChange={e => setForm({ ...form, dueInTime: e.target.value })} className={inputCls} />
                 </div>
                 <div>
-                  <label className={labelCls}>Service Type</label>
+                  <label className={labelCls}>Main Booking Requirement</label>
                   <select value={form.serviceTypeId} onChange={e => setForm({ ...form, serviceTypeId: e.target.value })} className={inputCls}>
                     <option value="">None</option>
                     {serviceTypes.map(st => <option key={st.id} value={st.id}>{st.code}</option>)}

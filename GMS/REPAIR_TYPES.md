@@ -1,6 +1,8 @@
 # GMS — Repair Types + Main Booking Requirement (Plan)
 
-> Branch: work on `dev` · Status: **PLANNED — pricing-engine audit done (2026-06-25); 15 gaps closed (see §14); ready to build** · Author: Leo + Claude · Date: 2026-06-25
+> Branch: work on `dev` · Status: **P1 (Foundation) CODE-COMPLETE (uncommitted, 2026-06-26)** — migration
+> `20260628130000_repair_types.sql` pending deploy; `tsc`/`vite build` verification still pending (local
+> build tooling was unavailable at build time). P2–P4 not started. Audit gaps closed in §14. · Author: Leo + Claude
 > Companion to [`JOBSHEET.md`](./JOBSHEET.md), [`WORK_DETAILS.md`](./WORK_DETAILS.md), [`ESTIMATES.md`](./ESTIMATES.md).
 
 ## 0. TL;DR
@@ -346,8 +348,14 @@ the Parts module, §4.4/§12.) Deploy via the pipeline (`supabase db push`), **n
 
 ## 11. Phasing
 
-- **P1 — Foundation:** `repair_types` table + CRUD + Settings page + `repair_items.repair_type_id`;
-  label-rename Service Type → Main Booking Requirement. No behaviour change yet.
+- **P1 — Foundation:** ✅ CODE-COMPLETE (2026-06-26, uncommitted). Migration
+  `20260628130000_repair_types.sql` (repair_types table + RLS/trigger/index + seed; `repair_items.repair_type_id`;
+  + inert `template_items.repair_type_id` & `service_packages.default_repair_type_id` for later phases).
+  API `routes/repair-types.ts` (ungated CRUD, soft-delete, labour-code-mapped lazy-seed) mounted at
+  `/api/v1/repair-types`. Web `Settings/RepairTypes.tsx` (+ default-labour-code dropdown) + route + Settings
+  card under "Pricing & Parts". Service Type → **Main Booking Requirement** label rename (Settings page +
+  card, NewJobsheet, JobsheetDetail, EstimateDetail convert modal). No behaviour change yet. **Pending:**
+  `tsc`/`vite build` run + pipeline deploy of the migration.
 - **P2 — Labour lock:** Repair Type selector on the group-header / WorkLineCard in `LabourTab.tsx`
   (≈L660-697) **and the shared** `WorkDetailsPanel.tsx` (≈L343-354 — covers estimate AND jobsheet flat
   lines; add a **parent-agnostic "set repair type on line" PATCH**, §14 gap 10); one

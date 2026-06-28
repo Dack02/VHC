@@ -35,7 +35,7 @@ export default function ServiceTypes() {
       const data = await api<{ serviceTypes: LookupRow[] }>('/api/v1/service-types', { token })
       setRows(data.serviceTypes)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to load service types')
+      toast.error(err instanceof Error ? err.message : 'Failed to load booking requirements')
     } finally {
       setLoading(false)
     }
@@ -53,18 +53,18 @@ export default function ServiceTypes() {
           method: 'PATCH', token,
           body: { code: editing.code.trim(), colour: editing.colour }
         })
-        toast.success('Service type updated')
+        toast.success('Booking requirement updated')
       } else {
         await api('/api/v1/service-types', {
           method: 'POST', token,
           body: { code: editing.code.trim(), colour: editing.colour || '#6366F1' }
         })
-        toast.success('Service type created')
+        toast.success('Booking requirement created')
       }
       setEditing(null)
       fetchRows()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save service type')
+      toast.error(err instanceof Error ? err.message : 'Failed to save booking requirement')
     } finally {
       setSaving(false)
     }
@@ -76,19 +76,19 @@ export default function ServiceTypes() {
       await api(`/api/v1/service-types/${row.id}`, { method: 'PATCH', token, body: { isActive: !row.isActive } })
       fetchRows()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update service type')
+      toast.error(err instanceof Error ? err.message : 'Failed to update booking requirement')
     }
   }
 
   const handleDelete = async (row: LookupRow) => {
     if (!token) return
-    if (!window.confirm(`Delete "${row.code}"? Jobsheets using it will have the service type cleared.`)) return
+    if (!window.confirm(`Delete "${row.code}"? Jobsheets using it will have the booking requirement cleared.`)) return
     try {
       await api(`/api/v1/service-types/${row.id}`, { method: 'DELETE', token })
-      toast.success('Service type deleted')
+      toast.success('Booking requirement deleted')
       fetchRows()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete service type')
+      toast.error(err instanceof Error ? err.message : 'Failed to delete booking requirement')
     }
   }
 
@@ -116,11 +116,11 @@ export default function ServiceTypes() {
         <Link to="/settings" className="text-sm text-gray-500 hover:text-gray-700">← Settings</Link>
         <div className="flex items-center justify-between mt-2">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Service Types</h1>
-            <p className="text-gray-600 mt-1">Selectable on a jobsheet (MOT, Service, Repair…).</p>
+            <h1 className="text-2xl font-bold text-gray-900">Main Booking Requirements</h1>
+            <p className="text-gray-600 mt-1">The main reason a vehicle is booked in (MOT, Service, Repair…). Selectable on a jobsheet.</p>
           </div>
           <button onClick={() => setEditing({ colour: '#6366F1' })} className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg">
-            + New service type
+            + New booking requirement
           </button>
         </div>
       </div>
@@ -148,14 +148,14 @@ export default function ServiceTypes() {
               <button onClick={() => handleDelete(row)} className="text-sm text-red-600 hover:underline">Delete</button>
             </div>
           ))}
-          {rows.length === 0 && <div className="px-4 py-8 text-center text-sm text-gray-400">No service types yet.</div>}
+          {rows.length === 0 && <div className="px-4 py-8 text-center text-sm text-gray-400">No booking requirements yet.</div>}
         </div>
       )}
 
       {editing && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setEditing(null)}>
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
-            <h3 className="text-base font-semibold text-gray-900 mb-4">{editing.id ? 'Edit service type' : 'New service type'}</h3>
+            <h3 className="text-base font-semibold text-gray-900 mb-4">{editing.id ? 'Edit booking requirement' : 'New booking requirement'}</h3>
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Name</label>

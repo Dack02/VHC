@@ -165,8 +165,8 @@ export default function SettingsHub() {
     },
     {
       to: '/settings/service-types',
-      title: 'Service Types',
-      description: 'Service types selectable on a jobsheet (MOT, Service, Repair…)',
+      title: 'Main Booking Requirement',
+      description: 'The main reason a vehicle is booked in (MOT, Service, Repair…)',
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -203,6 +203,17 @@ export default function SettingsHub() {
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
+      to: '/settings/repair-types',
+      title: 'Repair Types',
+      description: 'Classify work groups (Clutch, Service, MOT…); sets the labour rate and powers reporting',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085" />
         </svg>
       ),
       roles: ['super_admin', 'org_admin', 'site_admin']
@@ -543,6 +554,7 @@ export default function SettingsHub() {
       routes: [
         '/settings/pricing',
         '/settings/labour-codes',
+        '/settings/repair-types',
         '/settings/suppliers',
         '/settings/supplier-types'
       ]

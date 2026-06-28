@@ -13,14 +13,18 @@ interface VehicleLookupResponse {
   vehicle?: {
     registration: string; make: string | null; model: string | null; primaryColour: string | null
     fuelType: string | null; engineSize: string | null; firstUsedDate: string | null; manufactureDate: string | null
+    derivative?: string | null; bodyType?: string | null; transmission?: string | null
+    powertrainType?: string | null; year?: number | null
   }
   motTests: unknown[]
   motStatus: string | null
   motExpiryDate: string | null
+  details?: unknown
 }
 interface VehicleLookupDraft {
   registration: string; make: string; model: string; color: string; fuelType: string
   engineSize: string; year: string; motStatus: string | null; motExpiryDate: string | null; motTestCount: number
+  derivative: string; details?: unknown
 }
 interface CustomerSearchResult { id: string; firstName: string; lastName: string; email: string | null; mobile: string | null }
 interface LookupOption { id: string; code: string; colour: string }
@@ -206,7 +210,7 @@ export default function NewJobsheet() {
     try {
       const result = await api<VehicleLookupResponse>(`/api/v1/vehicle-lookup/${encodeURIComponent(reg)}`, { token })
       if (!result.found || !result.vehicle) {
-        setLookupDraft({ registration: reg, make: '', model: '', color: '', fuelType: '', engineSize: '', year: '', motStatus: result.motStatus, motExpiryDate: result.motExpiryDate, motTestCount: 0 })
+        setLookupDraft({ registration: reg, make: '', model: '', color: '', fuelType: '', engineSize: '', year: '', motStatus: result.motStatus, motExpiryDate: result.motExpiryDate, motTestCount: 0, derivative: '', details: undefined })
         setLookupError('No DVSA record found — you can still enter the details manually.')
         return
       }
@@ -215,8 +219,9 @@ export default function NewJobsheet() {
       setLookupDraft({
         registration: v.registration || reg, make: v.make || '', model: v.model || '', color: v.primaryColour || '',
         fuelType: v.fuelType || '', engineSize: v.engineSize || '',
-        year: dateForYear ? String(new Date(dateForYear).getFullYear()) : '',
-        motStatus: result.motStatus, motExpiryDate: result.motExpiryDate, motTestCount: result.motTests?.length || 0
+        year: v.year ? String(v.year) : (dateForYear ? String(new Date(dateForYear).getFullYear()) : ''),
+        motStatus: result.motStatus, motExpiryDate: result.motExpiryDate, motTestCount: result.motTests?.length || 0,
+        derivative: v.derivative || '', details: result.details
       })
     } catch (err) {
       setLookupError(err instanceof Error ? err.message : 'Vehicle lookup failed')
@@ -232,7 +237,8 @@ export default function NewJobsheet() {
         body: {
           registration: lookupDraft.registration, make: lookupDraft.make || undefined, model: lookupDraft.model || undefined,
           color: lookupDraft.color || undefined, fuelType: lookupDraft.fuelType || undefined, engineSize: lookupDraft.engineSize || undefined,
-          year: lookupDraft.year ? parseInt(lookupDraft.year, 10) : undefined, syncMotHistory: true, enrichVehicleDetails: true
+          year: lookupDraft.year ? parseInt(lookupDraft.year, 10) : undefined, syncMotHistory: true, enrichVehicleDetails: true,
+          vehicleDetails: lookupDraft.details
         }
       })
       setSelectedVehicle(created); setLookupDraft(null); setSearchQuery(''); setSearchResults([])
@@ -275,7 +281,7 @@ export default function NewJobsheet() {
       setForm(f => ({ ...f, serviceTypeId: created.id }))
       setNewServiceType(''); setAddingServiceType(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add service type')
+      setError(err instanceof Error ? err.message : 'Failed to add booking requirement')
     }
   }
   const handleAddCode = async () => {
@@ -377,14 +383,14 @@ export default function NewJobsheet() {
           ) : lookupDraft ? (
             <div className="border border-indigo-200 bg-indigo-50/40 rounded-xl p-4 space-y-4">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold text-gray-900">DVSA lookup</span>
+                <span className="text-sm font-semibold text-gray-900">{lookupDraft.details ? 'DVLA & DVSA lookup' : 'DVSA lookup'}</span>
                 <button type="button" onClick={() => { setLookupDraft(null); setLookupError(null) }} className="text-gray-400 hover:text-gray-600">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </div>
               {lookupError && <p className="text-xs text-amber-700">{lookupError}</p>}
               <div className="grid grid-cols-2 gap-3">
-                {([['registration', 'Registration'], ['year', 'Year'], ['make', 'Make'], ['model', 'Model'], ['color', 'Colour'], ['fuelType', 'Fuel'], ['engineSize', 'Engine size']] as const).map(([key, label]) => (
+                {([['registration', 'Registration'], ['year', 'Year'], ['make', 'Make'], ['model', 'Model'], ['derivative', 'Derivative'], ['color', 'Colour'], ['fuelType', 'Fuel'], ['engineSize', 'Engine size']] as const).map(([key, label]) => (
                   <div key={key}>
                     <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
                     <input type="text" value={lookupDraft[key] as string}
@@ -416,7 +422,7 @@ export default function NewJobsheet() {
               )}
               {lookupEnabled && !searching && searchResults.length === 0 && searchQuery.trim().length >= 2 && (
                 <button type="button" onClick={handleLookup} disabled={lookingUp} className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2 border border-indigo-300 text-indigo-700 rounded-lg text-sm font-medium hover:bg-indigo-50 disabled:opacity-50">
-                  {lookingUp ? 'Looking up…' : `Look up "${searchQuery.trim().toUpperCase().replace(/\s/g, '')}" via DVSA`}
+                  {lookingUp ? 'Looking up…' : `Look up "${searchQuery.trim().toUpperCase().replace(/\s/g, '')}" via ${isEnabled('vehicle_details') ? 'DVLA & DVSA' : 'DVSA'}`}
                 </button>
               )}
               {lookupError && <p className="mt-2 text-sm text-amber-700">{lookupError}</p>}
@@ -478,7 +484,7 @@ export default function NewJobsheet() {
 
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <label className="text-sm font-medium text-gray-700">Service Type</label>
+              <label className="text-sm font-medium text-gray-700">Main Booking Requirement</label>
               <button type="button" onClick={() => setAddingServiceType(v => !v)} className="text-xs text-primary hover:underline">+ New</button>
             </div>
             <select value={form.serviceTypeId} onChange={(e) => setForm({ ...form, serviceTypeId: e.target.value })} className={inputCls}>
@@ -487,7 +493,7 @@ export default function NewJobsheet() {
             </select>
             {addingServiceType && (
               <div className="flex gap-2 mt-2">
-                <input type="text" value={newServiceType} onChange={e => setNewServiceType(e.target.value)} placeholder="New service type" className={inputCls} />
+                <input type="text" value={newServiceType} onChange={e => setNewServiceType(e.target.value)} placeholder="New booking requirement" className={inputCls} />
                 <button type="button" onClick={handleAddServiceType} className="px-3 py-2 bg-primary text-white text-sm rounded-lg shrink-0">Add</button>
               </div>
             )}

@@ -202,7 +202,12 @@ export default function EstimatePortal() {
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               {organization.logoUrl
-                ? <img src={organization.logoUrl} alt={orgName} className="h-9 lg:h-11 max-w-[150px] lg:max-w-[200px] object-contain" />
+                ? // Tenant logos are arbitrary and often ship with a white/opaque background,
+                  // which looks like a bare rectangle on the brand hero. Frame it in a clean
+                  // white chip so any logo reads as a deliberate lockup.
+                  <span className="inline-flex items-center justify-center bg-white rounded-xl px-3.5 py-2.5 shadow-sm ring-1 ring-black/5 shrink-0">
+                    <img src={organization.logoUrl} alt={orgName} className="block h-8 lg:h-10 w-auto max-w-[160px] lg:max-w-[180px] object-contain" />
+                  </span>
                 : <>
                     <div className="w-8 h-8 lg:w-10 lg:h-10 rounded-lg bg-white/15 flex items-center justify-center text-[12px] lg:text-sm font-extrabold shrink-0">{initials(orgName)}</div>
                     <span className="font-bold text-sm lg:text-base truncate">{orgName}</span>
@@ -422,7 +427,7 @@ export default function EstimatePortal() {
         {responded && (
           <div className="rounded-2xl p-5 text-center border" style={{ backgroundColor: brandTint, borderColor: `color-mix(in srgb, ${brand} 22%, #ffffff)` }}>
             <p className="text-sm font-semibold" style={{ color: onTintInk }}>
-              Thank you — your response has been recorded{approvedCount > 0 ? ` (${approvedCount} item${approvedCount > 1 ? 's' : ''} approved)` : ''}.
+              Thank you — your response has been recorded{approvedCount > 0 ? ` — ${approvedCount} item${approvedCount > 1 ? 's' : ''} approved (${money(approvedTotal)})` : ''}.
             </p>
             {organization.phone && <p className="text-xs mt-1" style={{ color: onTintInk }}>Questions? Call us on {organization.phone}.</p>}
           </div>

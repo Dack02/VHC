@@ -256,7 +256,8 @@ vehicles.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
     const body = await c.req.json()
     const {
       customerId, registration, vin, make, model, year,
-      color, fuelType, engineSize, syncMotHistory, enrichVehicleDetails
+      color, fuelType, engineSize, syncMotHistory, enrichVehicleDetails,
+      vehicleDetails: passedDetails
     } = body
 
     if (!registration) {
@@ -320,12 +321,18 @@ vehicles.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
     // module so an org without the (paid) module never incurs a lookup; the
     // service also no-ops when no key is configured. Identity fields (make/model/
     // colour/fuel) are overwritten — DVLA is the authoritative source.
-    if (enrichVehicleDetails && vehicle) {
+    if ((enrichVehicleDetails || passedDetails) && vehicle) {
       try {
         const mods = await getEffectiveModulesCached(c, auth.orgId)
         if (mods.vehicle_details) {
-          const detailsResult = await lookupVehicleDetailsByRegistration(vehicle.registration)
-          if (detailsResult.success && detailsResult.found) {
+          // Reuse the result the lookup already paid for, if the client passed it
+          // back; only fetch fresh when it wasn't supplied.
+          let detailsResult = passedDetails && passedDetails.found ? passedDetails : null
+          if (!detailsResult) {
+            const fetched = await lookupVehicleDetailsByRegistration(vehicle.registration)
+            if (fetched.success && fetched.found) detailsResult = fetched
+          }
+          if (detailsResult) {
             await persistVehicleDetails(auth.orgId, vehicle.id, detailsResult, { overwriteIdentity: true })
           }
         }

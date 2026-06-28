@@ -86,6 +86,7 @@ import publicEstimateRoutes from './routes/public-estimate.js'
 import arrivalsRoute from './routes/arrivals.js'
 import bookingCodes from './routes/booking-codes.js'
 import serviceTypes from './routes/service-types.js'
+import repairTypes from './routes/repair-types.js'
 import feedback from './routes/feedback.js'
 import olloDevWebhookRoutes from './routes/webhooks/ollo-dev.js'
 
@@ -195,6 +196,7 @@ app.route('/api/v1/booking-codes', bookingCodes)
 // Unified arrivals queue (DMS + jobsheet bookings) — feeds the Arrivals hub + dashboard widget
 app.route('/api/v1/arrivals', arrivalsRoute)
 app.route('/api/v1/service-types', serviceTypes)
+app.route('/api/v1/repair-types', repairTypes)
 
 // In-app feedback / bug reporting (pushed to Ollo Dev)
 app.route('/api/v1/feedback', feedback)

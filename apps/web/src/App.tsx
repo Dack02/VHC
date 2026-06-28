@@ -43,6 +43,7 @@ const EstimatePortal = lazy(() => import('./pages/EstimatePortal/EstimatePortal'
 const ArrivalsHub = lazy(() => import('./pages/Arrivals/ArrivalsHub'))
 const BookingCodes = lazy(() => import('./pages/Settings/BookingCodes'))
 const ServiceTypes = lazy(() => import('./pages/Settings/ServiceTypes'))
+const RepairTypes = lazy(() => import('./pages/Settings/RepairTypes'))
 const TyreManufacturers = lazy(() => import('./pages/Admin/TyreManufacturers'))
 const TyreSizes = lazy(() => import('./pages/Admin/TyreSizes'))
 const InspectionThresholds = lazy(() => import('./pages/Admin/InspectionThresholds'))
@@ -265,6 +266,7 @@ function App() {
                         <Route path="/settings/ai-usage" element={<AIUsage />} />
                         <Route path="/settings/ai-usage/history" element={<AIUsageHistory />} />
                         <Route path="/settings/labour-codes" element={<LabourCodes />} />
+                        <Route path="/settings/repair-types" element={<RepairTypes />} />
                         <Route path="/settings/suppliers" element={<Suppliers />} />
                         <Route path="/settings/supplier-types" element={<SupplierTypes />} />
                         <Route path="/settings/pricing" element={<PricingSettings />} />

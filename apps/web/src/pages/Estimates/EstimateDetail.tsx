@@ -536,7 +536,7 @@ export default function EstimateDetail() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Service type</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Main Booking Requirement</label>
                   <select value={convertOpts.serviceTypeId} onChange={e => setConvertOpts(o => ({ ...o, serviceTypeId: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary">
                     <option value="">None</option>

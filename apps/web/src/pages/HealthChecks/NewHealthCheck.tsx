@@ -17,10 +17,18 @@ interface VehicleLookupResponse {
     engineSize: string | null
     firstUsedDate: string | null
     manufactureDate: string | null
+    // DVLA-only extras (present when the vehicle_details merge ran)
+    derivative?: string | null
+    bodyType?: string | null
+    transmission?: string | null
+    powertrainType?: string | null
+    year?: number | null
   }
   motTests: unknown[]
   motStatus: string | null
   motExpiryDate: string | null
+  /** Full DVLA result, passed back to create so persistence reuses this lookup. */
+  details?: unknown
 }
 
 interface VehicleLookupDraft {
@@ -34,6 +42,8 @@ interface VehicleLookupDraft {
   motStatus: string | null
   motExpiryDate: string | null
   motTestCount: number
+  derivative: string
+  details?: unknown
 }
 
 interface CustomerSearchResult {
@@ -219,7 +229,8 @@ export default function NewHealthCheck() {
         setLookupDraft({
           registration: reg, make: '', model: '', color: '', fuelType: '',
           engineSize: '', year: '', motStatus: result.motStatus,
-          motExpiryDate: result.motExpiryDate, motTestCount: 0
+          motExpiryDate: result.motExpiryDate, motTestCount: 0,
+          derivative: '', details: undefined
         })
         setLookupError('No DVSA record found — you can still enter the details manually.')
         return
@@ -234,10 +245,12 @@ export default function NewHealthCheck() {
         color: v.primaryColour || '',
         fuelType: v.fuelType || '',
         engineSize: v.engineSize || '',
-        year: dateForYear ? String(new Date(dateForYear).getFullYear()) : '',
+        year: v.year ? String(v.year) : (dateForYear ? String(new Date(dateForYear).getFullYear()) : ''),
         motStatus: result.motStatus,
         motExpiryDate: result.motExpiryDate,
-        motTestCount: result.motTests?.length || 0
+        motTestCount: result.motTests?.length || 0,
+        derivative: v.derivative || '',
+        details: result.details
       })
     } catch (err) {
       setLookupError(err instanceof Error ? err.message : 'Vehicle lookup failed')
@@ -266,7 +279,8 @@ export default function NewHealthCheck() {
             engineSize: lookupDraft.engineSize || undefined,
             year: lookupDraft.year ? parseInt(lookupDraft.year, 10) : undefined,
             syncMotHistory: true,
-            enrichVehicleDetails: true
+            enrichVehicleDetails: true,
+            vehicleDetails: lookupDraft.details
           }
         }
       )
@@ -442,7 +456,7 @@ export default function NewHealthCheck() {
               <div className="border border-indigo-200 bg-indigo-50/40 rounded-xl p-4 space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold text-gray-900">DVSA lookup</span>
+                    <span className="text-sm font-semibold text-gray-900">{lookupDraft.details ? 'DVLA & DVSA lookup' : 'DVSA lookup'}</span>
                     {lookupDraft.motTestCount > 0 && (
                       <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
                         {lookupDraft.motTestCount} MOT test{lookupDraft.motTestCount === 1 ? '' : 's'}
@@ -505,6 +519,17 @@ export default function NewHealthCheck() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
+                  {!!lookupDraft.details && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Derivative</label>
+                      <input
+                        type="text"
+                        value={lookupDraft.derivative}
+                        onChange={(e) => setLookupDraft(d => d ? { ...d, derivative: e.target.value } : d)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </div>
+                  )}
                   <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">Colour</label>
                     <input
@@ -592,7 +617,7 @@ export default function NewHealthCheck() {
                     disabled={lookingUp}
                     className="mt-2 w-full flex items-center justify-center gap-2 px-4 py-2 border border-indigo-300 text-indigo-700 rounded-lg text-sm font-medium hover:bg-indigo-50 disabled:opacity-50"
                   >
-                    {lookingUp ? 'Looking up…' : `Look up "${searchQuery.trim().toUpperCase().replace(/\s/g, '')}" via DVSA`}
+                    {lookingUp ? 'Looking up…' : `Look up "${searchQuery.trim().toUpperCase().replace(/\s/g, '')}" via ${isEnabled('vehicle_details') ? 'DVLA & DVSA' : 'DVSA'}`}
                   </button>
                 )}
                 {lookupError && (

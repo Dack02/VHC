@@ -49,6 +49,10 @@ function shapeJobsheet(row: any) {
     vehicleOnSite: row.vehicle_on_site,
     customerContactNotes: row.customer_contact_notes,
     jobsheetComplete: row.jobsheet_complete,
+    // Invoice state (the parts COGS/sale trigger — GMS/PARTS.md §7.3)
+    closedAt: row.closed_at ?? null,
+    invoiceNumber: row.invoice_number ?? null,
+    taxPointDate: row.tax_point_date ?? null,
     vhcRequired: row.vhc_required,
     bookingNotes: row.booking_notes,
     bookingSource: row.booking_source ?? null, // 'online_estimate' = customer self-booked
@@ -1258,7 +1262,7 @@ jobsheets.post('/:id/invoice', authorize(['super_admin', 'org_admin', 'site_admi
       force: !!body.force,
       taxPointDate: (body.taxPointDate as string) ?? null,
     })
-    if (result.blocked) return c.json({ error: 'zero_cost_lines', blocked: true, blockers: result.blockers }, 409)
+    if (result.blocked) return c.json({ error: 'Some parts have no recorded cost', code: 'zero_cost_lines', details: { blockers: result.blockers } }, 409)
     if (!result.ok) return c.json({ error: result.error ?? 'Failed to invoice jobsheet' }, 400)
     return c.json(result)
   } catch (error) {

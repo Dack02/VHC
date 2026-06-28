@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { useModules } from '../../contexts/ModulesContext'
-import { api, User, TimelineEvent } from '../../lib/api'
+import { api, ApiError, User, TimelineEvent } from '../../lib/api'
 import ComposeMessageModal from '../../components/ComposeMessageModal'
 import FollowUpDetailModal from '../FollowUps/FollowUpDetailModal'
 import WorkDetailsPanel from './WorkDetailsPanel'
@@ -28,6 +28,9 @@ interface Jobsheet {
   vehicleOnSite: boolean
   customerContactNotes: string | null
   jobsheetComplete: boolean
+  closedAt: string | null
+  invoiceNumber: string | null
+  taxPointDate: string | null
   vhcRequired: boolean
   bookingNotes: string | null
   vehicleStatus: string
@@ -147,6 +150,7 @@ export default function JobsheetDetail() {
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [invoicing, setInvoicing] = useState(false)
   const [ensuring, setEnsuring] = useState(false)
   const [checkinEnabled, setCheckinEnabled] = useState(false)
   const [showCompose, setShowCompose] = useState(false)
@@ -274,6 +278,50 @@ export default function JobsheetDetail() {
     }
   }
 
+  // Invoice the jobsheet — the parts COGS/sale trigger (GMS/PARTS.md §7.3).
+  const handleInvoice = async (force = false) => {
+    if (!token || !id) return
+    setInvoicing(true)
+    try {
+      const res = await api<{ invoiceNumber?: string; warnings?: string[] }>(
+        `/api/v1/jobsheets/${id}/invoice`, { method: 'POST', body: { force }, token }
+      )
+      toast.success(`Invoiced${res.invoiceNumber ? ` · ${res.invoiceNumber}` : ''}`)
+      res.warnings?.forEach(w => toast.error(w))
+      load()
+    } catch (err) {
+      const blockers = err instanceof ApiError && err.code === 'zero_cost_lines'
+        ? (err.details?.blockers as Array<{ label: string }> | undefined)
+        : undefined
+      if (blockers?.length) {
+        const list = blockers.map(b => `• ${b.label}`).join('\n')
+        if (window.confirm(`These parts have no recorded cost (margin would book at 100%):\n\n${list}\n\nInvoice anyway?`)) {
+          await handleInvoice(true)
+          return
+        }
+      } else {
+        toast.error(err instanceof Error ? err.message : 'Failed to invoice')
+      }
+    } finally {
+      setInvoicing(false)
+    }
+  }
+
+  const handleReopen = async () => {
+    if (!token || !id) return
+    if (!window.confirm('Reopen this invoice? The parts sale journal will be reversed so the jobsheet can be edited and re-invoiced.')) return
+    setInvoicing(true)
+    try {
+      await api(`/api/v1/jobsheets/${id}/reopen`, { method: 'POST', token })
+      toast.success('Invoice reopened')
+      load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to reopen')
+    } finally {
+      setInvoicing(false)
+    }
+  }
+
   // Bring the vehicle in: ensure a health_check (a visit shell for no-VHC jobsheets), mark it
   // arrived, then the Check-In panel renders against it. Mirrors the Arrivals hub action.
   const handleStartCheckIn = useCallback(async () => {
@@ -370,6 +418,16 @@ export default function JobsheetDetail() {
               <Link to={`/health-checks/${hc.id}`} className="px-3 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50">
                 Open VHC{hc.vhcReference ? ` · ${hc.vhcReference}` : ''}
               </Link>
+            )}
+            {js.closedAt ? (
+              <>
+                <span className="px-3 py-2 rounded-lg text-sm font-medium bg-rag-green/10 text-rag-green inline-flex items-center gap-1.5" title={js.taxPointDate ? `Tax point ${formatDate(js.taxPointDate)}` : undefined}>
+                  Invoiced{js.invoiceNumber ? ` · ${js.invoiceNumber}` : ''}
+                </span>
+                <button onClick={handleReopen} disabled={invoicing} className="px-3 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50">Reopen</button>
+              </>
+            ) : (
+              <button onClick={() => handleInvoice(false)} disabled={invoicing} className="px-4 py-2 bg-[#16191f] text-white text-sm font-medium rounded-lg hover:bg-black disabled:opacity-50">{invoicing ? 'Invoicing…' : 'Invoice'}</button>
             )}
             {activeTab === 'overview' && (!editing ? (
               <button onClick={() => setEditing(true)} className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg">Edit</button>

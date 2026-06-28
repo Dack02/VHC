@@ -196,4 +196,112 @@ partsStock.get('/stock-items/:id/movements', authorize(['super_admin', 'org_admi
   }
 })
 
+// ===========================================================================
+// Part Categories (lookup) — GMS/PARTS.md §5.1
+// ===========================================================================
+partsStock.get('/part-categories', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { data, error } = await supabaseAdmin
+      .from('part_categories')
+      .select('id, name, description, parent_id, is_active, is_system, sort_order')
+      .eq('organization_id', auth.orgId)
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true })
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ categories: data ?? [] })
+  } catch (error) {
+    console.error('List part categories error:', error)
+    return c.json({ error: 'Failed to list part categories' }, 500)
+  }
+})
+
+partsStock.post('/part-categories', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const b = await c.req.json()
+    if (!b.name) return c.json({ error: 'name is required' }, 400)
+    const { data, error } = await supabaseAdmin
+      .from('part_categories')
+      .insert({ organization_id: auth.orgId, name: b.name, description: b.description ?? null, parent_id: b.parent_id ?? null, sort_order: b.sort_order ?? 0 })
+      .select('id')
+      .single()
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ id: data.id })
+  } catch (error) {
+    console.error('Create part category error:', error)
+    return c.json({ error: 'Failed to create part category' }, 500)
+  }
+})
+
+partsStock.patch('/part-categories/:id', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const b = await c.req.json()
+    const update: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    for (const k of ['name', 'description', 'parent_id', 'is_active', 'sort_order']) if (b[k] !== undefined) update[k] = b[k]
+    const { error } = await supabaseAdmin.from('part_categories').update(update).eq('id', id).eq('organization_id', auth.orgId)
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ ok: true })
+  } catch (error) {
+    console.error('Update part category error:', error)
+    return c.json({ error: 'Failed to update part category' }, 500)
+  }
+})
+
+// ===========================================================================
+// Stock Locations (lookup) — GMS/PARTS.md §5.5
+// ===========================================================================
+partsStock.get('/stock-locations', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { data, error } = await supabaseAdmin
+      .from('stock_locations')
+      .select('id, name, code, is_default, is_active, sort_order')
+      .eq('organization_id', auth.orgId)
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true })
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ locations: data ?? [] })
+  } catch (error) {
+    console.error('List stock locations error:', error)
+    return c.json({ error: 'Failed to list stock locations' }, 500)
+  }
+})
+
+partsStock.post('/stock-locations', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const b = await c.req.json()
+    if (!b.name) return c.json({ error: 'name is required' }, 400)
+    const { data, error } = await supabaseAdmin
+      .from('stock_locations')
+      .insert({ organization_id: auth.orgId, name: b.name, code: b.code ?? null, sort_order: b.sort_order ?? 0 })
+      .select('id')
+      .single()
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ id: data.id })
+  } catch (error) {
+    console.error('Create stock location error:', error)
+    return c.json({ error: 'Failed to create stock location' }, 500)
+  }
+})
+
+partsStock.patch('/stock-locations/:id', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const b = await c.req.json()
+    const update: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    for (const k of ['name', 'code', 'is_active', 'sort_order']) if (b[k] !== undefined) update[k] = b[k]
+    const { error } = await supabaseAdmin.from('stock_locations').update(update).eq('id', id).eq('organization_id', auth.orgId)
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ ok: true })
+  } catch (error) {
+    console.error('Update stock location error:', error)
+    return c.json({ error: 'Failed to update stock location' }, 500)
+  }
+})
+
 export default partsStock

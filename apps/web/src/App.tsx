@@ -100,6 +100,8 @@ const FinancialReports = lazy(() => import('./pages/Reports/FinancialReports'))
 const ItemPerformance = lazy(() => import('./pages/Reports/ItemPerformance'))
 const RepairTypesReport = lazy(() => import('./pages/Reports/RepairTypes'))
 const PartsGrossProfit = lazy(() => import('./pages/Reports/PartsGrossProfit'))
+const StockValuation = lazy(() => import('./pages/Reports/StockValuation'))
+const LowStock = lazy(() => import('./pages/Reports/LowStock'))
 const TechnicianPerformance = lazy(() => import('./pages/Reports/TechnicianPerformance'))
 const AdvisorPerformance = lazy(() => import('./pages/Reports/AdvisorPerformance'))
 const CustomerInsights = lazy(() => import('./pages/Reports/CustomerInsights'))
@@ -114,6 +116,7 @@ const DailyOverview = lazy(() => import('./pages/Reports/DailyOverview'))
 const DeletedHealthChecks = lazy(() => import('./pages/Reports/DeletedHealthChecks'))
 const Today = lazy(() => import('./pages/Today'))
 const PartsCatalog = lazy(() => import('./pages/Parts/PartsCatalog'))
+const StockList = lazy(() => import('./pages/Parts/StockList'))
 const Messages = lazy(() => import('./pages/Messages/Messages'))
 const NotesPage = lazy(() => import('./pages/Notes/NotesPage'))
 const ServicePackages = lazy(() => import('./pages/ServicePackages/ServicePackages'))
@@ -225,6 +228,8 @@ function App() {
                         <Route path="/reports/items" element={<ItemPerformance />} />
                         <Route path="/reports/repair-types" element={<RepairTypesReport />} />
                         <Route path="/reports/parts-gp" element={<PartsGrossProfit />} />
+                        <Route path="/reports/stock-valuation" element={<StockValuation />} />
+                        <Route path="/reports/low-stock" element={<LowStock />} />
                         <Route path="/reports/technicians" element={<TechnicianPerformance />} />
                         <Route path="/reports/advisors" element={<AdvisorPerformance />} />
                         <Route path="/reports/customers" element={<CustomerInsights />} />
@@ -259,6 +264,7 @@ function App() {
                         <Route path="/follow-ups" element={<RequireModule module="follow_up"><FollowUpList /></RequireModule>} />
                         <Route path="/notes" element={<NotesPage />} />
                         <Route path="/parts" element={<PartsCatalog />} />
+                        <Route path="/parts/stock" element={<RequireModule module="parts_stock"><StockList /></RequireModule>} />
                         <Route path="/templates" element={<TemplateList />} />
                         <Route path="/templates/:id" element={<TemplateBuilder />} />
                         <Route path="/service-packages" element={<ServicePackages />} />

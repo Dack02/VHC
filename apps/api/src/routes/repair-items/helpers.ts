@@ -15,7 +15,7 @@ export async function verifyHealthCheckAccess(healthCheckId: string, orgId: stri
 export async function verifyRepairItemAccess(repairItemId: string, orgId: string) {
   const { data } = await supabaseAdmin
     .from('repair_items')
-    .select('id, name, health_check_id, organization_id, is_group')
+    .select('id, name, health_check_id, organization_id, is_group, parent_repair_item_id')
     .eq('id', repairItemId)
     .eq('organization_id', orgId)
     .single()

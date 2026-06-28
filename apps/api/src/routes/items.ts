@@ -24,6 +24,7 @@ items.get('/template-items/search', authorize(['super_admin', 'org_admin', 'site
         name,
         item_type,
         reason_type,
+        repair_type_id,
         config,
         is_required,
         description,
@@ -57,6 +58,7 @@ items.get('/template-items/search', authorize(['super_admin', 'org_admin', 'site
       name: string
       itemType: string
       reasonType: string | null
+      repairTypeId: string | null
       config: Record<string, unknown>
       isRequired: boolean
       description: string | null
@@ -82,6 +84,7 @@ items.get('/template-items/search', authorize(['super_admin', 'org_admin', 'site
         name: row.name,
         itemType: row.item_type,
         reasonType: row.reason_type,
+        repairTypeId: row.repair_type_id,
         config: row.config as Record<string, unknown>,
         isRequired: row.is_required,
         description: row.description,

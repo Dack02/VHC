@@ -534,6 +534,12 @@ repairItemsRouter.post('/health-checks/:id/repair-items', authorize(['super_admi
       }
     }
 
+    // Grouping migrates re-parented children's labour into a "Standard" option at their OLD snapshot rate.
+    // If the new group is typed, re-rate that migrated labour to the group's locked rate (no-op otherwise).
+    if (item.repair_type_id) {
+      await reRateLabourForRepairItem(item.id, auth.orgId)
+    }
+
     return c.json(formatRepairItem(item), 201)
   } catch (error) {
     console.error('Create repair item error:', error)
@@ -677,7 +683,10 @@ repairItemsRouter.patch('/repair-items/:id', authorize(['super_admin', 'org_admi
     if (description !== undefined) updateData.description = description?.trim() || null
     if (price_override !== undefined) updateData.price_override = price_override
     if (price_override_reason !== undefined) updateData.price_override_reason = price_override_reason
-    if (repairTypeId !== undefined) updateData.repair_type_id = repairTypeId || null
+    // Repair Type lives ONLY on the top-level row (resolve-upward). Ignore attempts to set it on a child
+    // so we never persist dead/misleading type state — the child's rate resolves via its parent regardless.
+    const setRepairType = repairTypeId !== undefined && !existing.parent_repair_item_id
+    if (setRepairType) updateData.repair_type_id = repairTypeId || null
 
     const { data: item, error } = await supabaseAdmin
       .from('repair_items')
@@ -693,7 +702,7 @@ repairItemsRouter.patch('/repair-items/:id', authorize(['super_admin', 'org_admi
 
     // When the work group's Repair Type changes, re-rate its existing labour (item + options) to the
     // new type's rate so a reclassified group bills consistently (the lock's core invariant).
-    if (repairTypeId !== undefined) {
+    if (setRepairType) {
       await reRateLabourForRepairItem(id, auth.orgId)
       const { data: refreshed } = await supabaseAdmin
         .from('repair_items')

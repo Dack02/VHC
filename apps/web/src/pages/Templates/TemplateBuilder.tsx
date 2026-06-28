@@ -1425,6 +1425,7 @@ interface ExistingItem {
   name: string
   itemType: string
   reasonType: string | null
+  repairTypeId: string | null
   config: Record<string, unknown>
   isRequired: boolean
   description: string | null
@@ -1433,7 +1434,7 @@ interface ExistingItem {
 
 function AddItemModal({ onClose, onSaveBatch, session }: {
   onClose: () => void
-  onSaveBatch: (items: Array<{ name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; sourceItemId?: string }>) => void
+  onSaveBatch: (items: Array<{ name: string; itemType: string; reasonType?: string; config?: Record<string, unknown>; isRequired?: boolean; sourceItemId?: string; repairTypeId?: string | null }>) => void
   session: { accessToken?: string } | null
 }) {
   const [searchQuery, setSearchQuery] = useState('')
@@ -1506,6 +1507,7 @@ function AddItemModal({ onClose, onSaveBatch, session }: {
         name: i.name,
         itemType: i.itemType,
         reasonType: i.reasonType || undefined,
+        repairTypeId: i.repairTypeId,
         config: i.config,
         isRequired: i.isRequired,
         sourceItemId: i.sourceItemId

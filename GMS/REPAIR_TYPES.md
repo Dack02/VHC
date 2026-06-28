@@ -473,3 +473,31 @@ snapshotted labour **keeps its rate** (we never re-derive on move — so a group
 labour snapshotted at a different type's rate; snapshot wins for money, group type wins for classification).
 On **ungroup** (`repair-items.ts` ≈L730-818): freed children become standalone and **Unassigned** until typed
 (their labour keeps its snapshot); the demoted-but-kept group retains its type.
+
+## 15. Post-build review & test (2026-06-28)
+
+**DB / endpoint-logic test (read-only against ollo-inspect-dev `abjorenmuxbofdxenhfe`).** All green:
+all four migrations applied (columns + nullability); 16/16 orgs seeded (128 types) with **every** type's
+`default_labour_code_id` resolvable; rate chain resolves per type incl. **MOT £54.85 VAT-exempt**; the
+report aggregation returns sane figures; **0 cross-org `repair_type_id` leaks**, 0 duplicate type codes.
+Historical `repair_items` are un-typed (no backfill — by design) → "Unassigned"; new work types going forward.
+
+**Adversarial code review (6 reviewers → verify pass): 10 confirmed, 0 false positives.** Fixes applied:
+- **(HIGH) Report undercounted Sold £/conversion for grouped work** — the report decided authorisation from
+  the top-level only; the dashboard credits a group via its approved children. Fixed: replicate the
+  `aggregateRepairItemsByHc` group-children fallback (+ else-if outcome buckets) in
+  `repair-type-report-service.ts` so numbers match the other reports.
+- **(MED) Modal type pre-fill was dead** — the advisor-view check_results mapper (`crud.ts`) dropped
+  `template_item.repair_type_id` though the SELECT fetched it. Fixed: map it through.
+- **(LOW) PATCH could stamp a type on a child** — now ignored unless the row is top-level
+  (`verifyRepairItemAccess` returns `parent_repair_item_id`; re-rate gated the same).
+- **(LOW) `resolveLockedRate` parent fetch** — added the missing `organization_id` filter (defence-in-depth).
+- **(LOW) Grouping (POST) didn't re-rate migrated child labour** to the new group's type — now calls
+  `reRateLabourForRepairItem` when the created group is typed.
+- **(LOW) "Import existing item" dropped the repair type** — search API + picker now carry `repairTypeId`.
+- Verified-and-accepted (no change): backfill tie-break non-determinism (single-VAT only, any tied code maps
+  to a same-class type — not worth a new migration on a deployed file); row editors block labour when a
+  repair type's default labour code is **archived** (rare; mitigation: reassign the type's code before
+  archiving). Both noted for future polish.
+
+API `tsc` + web `vite build` green after all fixes.

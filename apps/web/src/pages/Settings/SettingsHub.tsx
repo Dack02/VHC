@@ -178,6 +178,17 @@ export default function SettingsHub() {
       roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
+      to: '/settings/technician-skills',
+      title: 'Technician Skills',
+      description: 'What each technician can do, their primary lane, and per-day job caps',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
       to: '/settings/time-tracking',
       title: 'Time Tracking',
       description: 'Clocking categories, indirect time, and stale-clock auto-close',
@@ -586,6 +597,7 @@ export default function SettingsHub() {
         '/settings/workflow',
         '/settings/workshop-board',
         '/settings/resource-manager',
+        '/settings/technician-skills',
         '/settings/time-tracking',
         '/settings/workshop-statuses'
       ]

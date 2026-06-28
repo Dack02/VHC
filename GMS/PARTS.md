@@ -1,6 +1,8 @@
 # GMS — Parts & Stock (Accounting-Grade Plan)
 
-> Branch: work on `dev` · Status: **PLAN — build not started (2026-06-28)** · Author: Leo + Claude
+> Branch: work on `dev` · Status: **PLAN — awaiting Leo's review before P0 build (2026-06-28)** · Author: Leo + Claude
+> Locked (Leo, 2026-06-28): **two modes — Simple (no stock, parts→P&L cost) + Full (stock); VHC-only plans = Simple only**
+> (decision 0) · **close = customer invoice** · **Xero = first accounts package**. Remaining decisions in §1/§13.
 > Companion to [`REPAIR_TYPES.md`](./REPAIR_TYPES.md) (this module closes its deferred **Parts-module
 > margin** piece — §4.4/§8), [`JOBSHEET.md`](./JOBSHEET.md), [`ESTIMATES.md`](./ESTIMATES.md),
 > [`WORK_DETAILS.md`](./WORK_DETAILS.md), [`RESOURCE_MANAGER.md`](./RESOURCE_MANAGER.md).
@@ -11,6 +13,12 @@
 Evolve the "lite" parts module (a flat autocomplete dictionary + priced quote lines) into a **full,
 accounting-grade Parts & Stock module** designed from the **double-entry ledger outward**.
 
+- **Two modes, plan-gated (NEW — Leo, 2026-06-28).** **Simple mode** (the default, and the *only* option for
+  VHC-only tenants): **no stock tracking** — parts are priced job lines whose cost is sent to accounting as a
+  **direct P&L cost** at the invoice. **Full mode** (GMS-tier opt-in): everything below — perpetual stock on the
+  balance sheet, goods-in, valuation, returns. Same `repair_parts` line, same close→invoice trigger; Full mode
+  only *adds* the balance-sheet machinery. **The bullets below describe Full mode** unless noted (see §2 "Two
+  modes" and §6 "Simple-mode journals").
 - **A part IN is a balance-sheet asset (or a deferred cost).** Receiving *stock* books **Dr Inventory / Cr
   GRNI** — it is *not* an expense; it sits on the balance sheet until sold. An *order-in (non-stock)* part's
   supplier invoice is parked on a balance-sheet **WIP / uninvoiced-parts clearing** account, **not** expensed
@@ -47,7 +55,26 @@ accounting-grade Parts & Stock module** designed from the **double-entry ledger 
 
 ## 1. Locked / recommended decisions
 
-Each marked **RECOMMEND** for Leo to confirm in §13. Bias: accounting-correctness + UK-independent reality.
+> **CONFIRMED by Leo (2026-06-28):** (a) **Close = the customer VAT invoice** — a closed billing document IS
+> the invoice; close stamps `invoice_number` + `tax_point_date` and fires the COGS *and* sale journals together
+> (decision 3/4, §13 Q3). (b) **Xero is the first/target accounts package** — the mapping layer, default
+> code seed, and the P4 push target all orient to Xero's UK chart + tax types (§13 Q7/Q8). (c) Remaining
+> items below stay **RECOMMEND** pending Leo's full read-through of this doc before any P0 build.
+
+Each remaining item marked **RECOMMEND** for Leo to confirm in §13. Bias: accounting-correctness + UK-independent reality.
+
+0. **CONFIRMED (Leo, 2026-06-28) — Two parts modes, plan-gated: `simple` (default) and `full`.**
+   - **Simple — no stock tracking.** Parts are priced `repair_parts` lines; their **cost is sent to accounting
+     as a direct P&L cost** (`Dr Parts COGS / Cr Accounts Payable`) at the billing-document close, alongside the
+     sale. **No** inventory asset, GRNI, WIP, PO/GRN, `stock_movements`, or stock-based returns. This is the
+     default for every tenant and the **only** option on **VHC-only plans**.
+   - **Full — everything in this doc.** Perpetual stock on the balance sheet (Events 1–6), goods-in, valuation,
+     the returns loop. Requires the `parts_stock` module, which is **off on VHC-only plans** (mirrors how
+     `jobsheets` is GMS-tier-only).
+   - One setting `organization_settings.parts_mode ENUM('simple','full')` defaults `'simple'`; it may be set
+     `'full'` **only** when the `parts_stock` module entitlement is on. Both modes share the same `repair_parts`
+     line and the same close→invoice trigger; Full mode only *adds* the inventory legs. **Cost-timing in Simple
+     mode (expense at close vs at purchase) — see §13 Q12; RECOMMEND at close (matched to the sale).**
 
 1. **RECOMMEND — Costing method: weighted-average cost (WAVCO), perpetual.** Per SKU keep only
    `qty_on_hand` + `average_cost`; each receipt rolls the average
@@ -81,7 +108,7 @@ Each marked **RECOMMEND** for Leo to confirm in §13. Bias: accounting-correctne
    cost/sell/VAT immutably (mirroring `estimates.authorised_total`, `20260626200000`); a `declined`/`expired`
    close with an empty authorised basket emits **no journal**.
 
-4. **RECOMMEND — "Close" is the invoice issuance: it stamps an invoice number + tax-point date.** A closed
+4. **CONFIRMED (Leo, 2026-06-28) — "Close" is the invoice issuance: it stamps an invoice number + tax-point date.** A closed
    billing document **is** the customer VAT invoice for output-VAT purposes. The COGS-and-sale journal header
    carries an `invoice_number` + `tax_point_date` so Output VAT has a document behind it and reconciles to the
    real invoice (§6 Event 3b). VHC, jobsheet, and estimate-accepted paths each resolve their own invoice-number
@@ -124,6 +151,27 @@ Each marked **RECOMMEND** for Leo to confirm in §13. Bias: accounting-correctne
 ---
 
 ## 2. The mental model (the heart of this doc)
+
+### Two modes (read this first)
+
+The module ships in **two modes** (decision 0). They share the same priced job line and the same close→invoice
+money event; they differ only in whether stock touches the balance sheet:
+
+| | **Simple mode** (default; only option for VHC-only plans) | **Full mode** (GMS-tier opt-in via `parts_stock`) |
+|---|---|---|
+| Stock tracking | **None** — no qty-on-hand, no valuation | Perpetual (`stock_movements`, WAVCO) |
+| Balance sheet | Parts **never** touch it | Inventory asset + GRNI / WIP / PPV |
+| Part cost → P&L | **Direct cost at invoice** (`Dr Parts COGS / Cr AP`) | Relieved from Inventory/WIP at invoice |
+| PO / goods-in / returns | Not required (optional supplier ref only) | Full PO → GRN → return loop |
+| Tables used | (a) catalog + (d) line + (e) journal only | all of §5 |
+| Journals (when GL connected) | sale invoice + a direct parts-cost bill | the full event set (§6) |
+
+The five-layer model below is **Full mode**. **Simple mode collapses to three layers** — (a) catalog, (d) the
+priced job line, (e) the journal — skipping (b) stock-on-hand and (c) the order-in stock buffer entirely.
+Everything from §5.4 (`stock_movements`) onward is **Full-mode-only**; Simple mode needs only `parts_catalog` +
+`repair_parts` + the journal/mapping tables. See §6's **Simple-mode journals** for the (much smaller) money trail.
+
+### The five layers (Full mode)
 
 A single physical part can occupy up to **five distinct conceptual layers**. Keeping them separate is the
 whole design. UK-independent reality: **most parts skip layer (b) entirely** — they are ordered-in, fitted or
@@ -469,9 +517,9 @@ isolated on its own line), `tax_code`, `tax_amount`, `tracking_site_id`, `tracki
 | Table | Purpose / key columns |
 |---|---|
 | `accounting_connections` | per-org connected provider: `provider` (`xero`/`qbo`/`sage`), `tenant_ref`, encrypted tokens, `status`, `default_currency`. (Mirror the postcode-lookup "inert until keyed" pattern.) |
-| `account_code_map` | `internal_account_key` → `provider_account_code`/`provider_account_id`. UNIQUE(connection, internal_account_key). Seeded with **placeholder** UK Sage-range defaults (clearly marked "remap on connect"), so journals are human-readable before any provider connects but never collide with a customer's real chart. |
-| `tax_code_map` | `internal_tax_key` (`STD_20`/`ZERO`/`EXEMPT`/`NO_VAT`) → `rate_percent` + `provider_tax_type`. |
-| `contact_links` | `party_type`+`party_id` → `provider_contact_id` (reuse, never recreate — avoids duplicate Xero/QBO contacts). |
+| `account_code_map` | `internal_account_key` → `provider_account_code`/`provider_account_id`. UNIQUE(connection, internal_account_key). **Xero is the confirmed first provider (Leo, 2026-06-28)** — seed defaults to mirror Xero's UK demo chart (630 Inventory, 310 COGS, 200 Sales, 610 Accounts Receivable, 800 Accounts Payable, 820 VAT; GRNI/WIP-clearing/PPV as added current-liability/asset codes), each marked "remap on connect" so journals are human-readable before connection and never collide with a customer's real chart. (`provider` enum still carries `qbo`/`sage` for later.) |
+| `tax_code_map` | `internal_tax_key` (`STD_20`/`ZERO`/`EXEMPT`/`NO_VAT`) → `rate_percent` + `provider_tax_type`. Xero tax types: `20% (VAT on Income)` / `20% (VAT on Expenses)` / `Zero Rated` / `Exempt` / `No VAT`. |
+| `contact_links` | `party_type`+`party_id` → `provider_contact_id` (reuse, never recreate — avoids duplicate Xero contacts). |
 | `journal_push_log` | per-push idempotency: `journal_id`, `connection_id`, `document_type` (`ACCREC`/`ACCPAY`/`ACCPAYCREDIT`/`manual_journal`), **`external_idempotency_key`** (derived per `(connection_id, journal_id, document_type)`), `provider_document_id`, `status`. **The provider idempotency token lives here, never on the journal header.** |
 
 > Building these now (even inert) is the difference between "map codes + push" and a schema rewrite when the
@@ -541,7 +589,39 @@ revenue — cost and revenue in the same event.**
 > new and non-colliding. The seeded chart is flagged "placeholder — confirm with accountant on connect"
 > (§13 Q7).
 
-### Event 1 — Goods received into stock (stocked item, no invoice yet)
+### Simple-mode journals (no stock) — the DEFAULT path; the only path on VHC-only plans
+
+In **Simple mode** there is no inventory, no GRNI, no WIP buffer, no `stock_movements` — Events 1, 2, 4A-invoice,
+5 (stock) and 6 below **do not fire**. A part is a priced line that becomes **one matched pair of postings at the
+billing-document close** (the *same* trigger as Full mode, §7.3). Worked thread: cost **£100 net**, sold **£150 net**.
+
+**Simple-close — cost straight to P&L + the sale, same event:**
+
+| Account | Dr | Cr |
+|---|---|---|
+| COGS — Parts (`parts_cogs`) | £100.00 | |
+| Accounts Payable (`accounts_payable`) | | £100.00 |
+| VAT Input (`vat_input`) | £20.00 | |
+| *…and the sale leg:* Accounts Receivable (`accounts_receivable`) | £180.00 | |
+| Parts Sales (`parts_sales`) | | £150.00 |
+| VAT Output (`vat_output`) | | £30.00 |
+
+The part cost goes **straight to the P&L** (`parts_cogs`) — **never capitalised as inventory** — on the same date
+as the revenue. This is exactly the **Full-mode 3b/4A-sale leg with the inventory/WIP legs removed**: the
+`Cr parts_stock` / `Cr parts_wip` simply becomes `Cr accounts_payable`. Same account map, same close hook, same
+`inventory_journal` tables — Simple mode just emits fewer lines. When Xero is connected this materialises as a
+**purchase bill** (the cost + input VAT) **and** a **sales invoice** (the sale + output VAT), so the bookkeeper
+does **not** separately re-key the factor bill (avoids double-counting). Output VAT still reads
+`repair_items.vat_amount`; the £0-cost close gate (§12) still applies.
+
+> **Cost-timing fork (§13 Q12).** The table above expenses the cost **at close** (matched to the sale —
+> **RECOMMEND**: clean per-job gross profit, reuses the close hook). The alternative is to expense the part **at
+> purchase** (`Dr parts_cogs / Cr AP` when the cost is entered, independent of the sale) — the most literal "just
+> a cost to P&L," but cost and revenue can land in different periods. Leo to confirm; default = at close.
+
+---
+
+### Event 1 — Goods received into stock (stocked item, no invoice yet)  *(Full mode)*
 
 | Account | Dr | Cr |
 |---|---|---|
@@ -825,6 +905,16 @@ cleanly):
 for free (`PATCH /admin/organizations/:id/modules`). **The existing lite catalog/suppliers/`repair-items/parts`
 routes stay ungated**; only new stock surfaces gate.
 
+**Parts mode + plan gating (decision 0).** Add `organization_settings.parts_mode ENUM('simple','full') DEFAULT
+'simple'`. A tenant may resolve to `'full'` **only** when the `parts_stock` module is on (per-org override →
+`subscription_plans.features.parts_stock` → registry `defaultOn:false`, resolved by
+`apps/api/src/services/modules.ts`). **VHC-only plans set `parts_stock:false` in their plan `features`** — exactly
+as they do for `jobsheets` — so those tenants are locked to `'simple'`: the API coerces `parts_mode` to `'simple'`
+when the entitlement is off, and the Full UI (Stock / Goods-In / PO / Returns nav + the mode toggle) is hidden by
+`<RequireModule module="parts_stock">`. GMS-tier plans (`parts_stock:true`) get a **Settings → Pricing & Parts →
+"Parts mode"** toggle. **Simple mode still emits journals** (the §6 Simple-mode pair) — the only difference from
+today's lite behaviour is the journal output, which stays inert until `accounting_connections` has a live provider.
+
 **API:** new router `apps/api/src/routes/parts-stock.ts` mounted at `/api/v1/parts-stock` with
 `parts.use('*', requireModule('parts_stock'))`. PO/goods-in/returns/journal endpoints live here. Settings
 lookups (`part_categories`, `stock_locations`) mount under the org-scoped path like `suppliers`.
@@ -848,6 +938,22 @@ Override precedence: **job-line override → item `sell_price_override` → matr
 ---
 
 ## 10. Phasing — each phase a shippable slice
+
+> **Two tracks.** The P0–P4 phases below build the **Full-mode** stock machinery. **Simple mode** (the default,
+> and every VHC-only tenant) is a *much thinner* slice that can ship **first and independently** — it touches
+> none of the stock tables. (Phase tags `(P0)`/`(P1)`/`(P2)` on the §5 tables refer to the **Full-mode** track.)
+
+**P-Simple — Simple-mode accounting (ship first; the majority no-stock tenant).**
+`organization_settings.parts_mode` + plan gating (§9) · the §6 **Simple-mode journal pair** wired to the existing
+billing-document **close** trigger (§7.3) · the journal-ready tables it *shares* with Full mode —
+`inventory_journal`/`_lines` + the mapping layer (`accounting_connections`, `account_code_map`, `tax_code_map`,
+`contact_links`, `journal_push_log`), seeded inert · the **£0-cost close gate** · **Parts-GP / Margin-by-Repair-Type
+report** (closes the deferred Repair Types loop for *every* tenant, not just stock-holders). **No `stock_movements`,
+PO, GRN, returns, categories, or matrix required.** Delivers the "parts → P&L costs" promise to the majority
+no-stock garages with ~6 new tables and zero stock admin. *(Live Xero push is still P4; until then journals
+accrue inert, ready to map + send.)*
+
+The Full-mode phases then layer stock on top for GMS-tier tenants who opt in:
 
 **P0 — Stock foundation + valuation (real value, no GL).**
 `part_categories` + seeder · `stock_locations` (default) · `parts_catalog` extension (is_stocked, qty_on_hand,
@@ -989,10 +1095,9 @@ migration — new file only.
    WIP-clearing account** (Event 4A two legs), so cost and revenue match — vs the simpler-but-wrong
    "expense on supplier invoice"? (RECOMMEND: WIP-clearing, matches stocked behaviour.) And confirm **close** is
    the trigger (vs at authorisation)? (RECOMMEND: close.)
-3. **Close = invoice issuance?** — confirm a closed billing document **is** the customer VAT invoice (stamps
-   `invoice_number` + `tax_point_date`, so Output VAT has a document behind it), rather than a separate
-   later-raised invoice. If you raise customer invoices elsewhere, we must split the sale/Output-VAT journal
-   from COGS and source the invoice number from that system. (RECOMMEND: close = invoice for v1.)
+3. **Close = invoice issuance?** — ✅ **ANSWERED (Leo, 2026-06-28): close = the invoice.** A closed billing
+   document IS the customer VAT invoice; it stamps `invoice_number` + `tax_point_date`, and the COGS + sale/
+   Output-VAT journals fire together at close. No separate external invoicing seam for v1.
 4. **Jobsheet close** — confirmed we add **`jobsheets.closed_at` as a first-class P2 COGS trigger** (not a
    deferred parenthetical), because parts billed off a jobsheet/estimate that never spawns a VHC would
    otherwise never recognise COGS. Any reason the VHC close should be the *only* money event? (RECOMMEND: add
@@ -1004,12 +1109,13 @@ migration — new file only.
    treatment on a forfeited core deposit with your accountant before build** — if the original core charge
    carried VAT, the forfeit is VATable consideration. Which factors actually charge you cores
    (calipers/turbos/DPFs/batteries)?
-7. **Default GL codes** — happy to seed **placeholder** UK Sage-style nominal/tax defaults
-   (1001/1002/2100/2200/2230/4000/5000/5008/5009/T1…), clearly marked "remap on connect" so they never collide
-   with your real chart? Or do you have a preferred chart of accounts to mirror so the future Xero/QBO/Sage map
-   is one-to-one?
-8. **First GL provider** — which of Xero / QuickBooks / Sage do you (or your pilot garages) actually use? That
-   decides the P4 push target and the exact document-type mapping.
+7. **Default GL codes** — ✅ **ANSWERED via Q8 (Xero):** seed defaults will mirror **Xero's UK chart** (630
+   Inventory, 310 COGS, 200 Sales, 610 AR, 800 AP, 820 VAT; GRNI/WIP/PPV as added codes), marked "remap on
+   connect" (§5.11). *Still useful if you have a specific Xero chart-of-accounts you want mirrored one-to-one
+   for the pilot garage — otherwise we use the demo-chart defaults.*
+8. **First GL provider** — ✅ **ANSWERED (Leo, 2026-06-28): Xero.** P4 push target = Xero (Accounting API:
+   `ACCREC`/`ACCPAY` invoices + `ACCPAYCREDIT` credit notes + manual journals; tracking categories for
+   site/department). `provider` enum keeps `qbo`/`sage` for later, but build + test against Xero first.
 9. **Bring lite catalog under `parts_stock`?** — keep the existing Catalogue page ungated/always-on (RECOMMEND),
    or fold it under the new module so the whole Parts area toggles together?
 10. **Already-sold supplier returns** — when a part whose COGS+sale already posted is returned to the factor, do
@@ -1017,4 +1123,10 @@ migration — new file only.
     unused/unsold parts only" sufficient for v1? (RECOMMEND: unused-only for P2; two-leg in P4.)
 11. **Issue timing** — keep the `issue` movement **at booking** (live SOH during the job) reconciled via a
     `stock_issued_pending_sale` control account, or defer the issue to close (movement + journal atomic, but
-    SOH lags until close)? (RECOMMEND: at booking + control account — techs want accurate live SOH.)
+    SOH lags until close)? (RECOMMEND: at booking + control account — techs want accurate live SOH.) *Full mode only.*
+12. **Simple-mode cost timing** *(new — from Leo's two-mode request)* — in **Simple mode**, expense each part's
+    cost **at the billing-document close** (matched to the sale; clean per-job gross profit; reuses the close
+    hook — **RECOMMEND**), or **at purchase/cost-entry** (the most literal "just a cost to P&L," but cost and
+    revenue can fall in different periods)? Also: when Xero is live, should VHC push the parts cost as a
+    **supplier bill** (so the bookkeeper doesn't re-key factor invoices — avoids double-counting) or as a plain
+    **manual journal**? (RECOMMEND: expense at close; push as a bill.)

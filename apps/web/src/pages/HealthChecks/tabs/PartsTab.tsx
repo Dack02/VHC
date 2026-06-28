@@ -50,6 +50,7 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
   const [error, setError] = useState<string | null>(null)
   const [markingComplete, setMarkingComplete] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [togglingPurchaseId, setTogglingPurchaseId] = useState<string | null>(null)
   const [showOtherPartModal, setShowOtherPartModal] = useState(false)
   const [optionsModalItemId, setOptionsModalItemId] = useState<string | null>(null)
   const [optionsModalItemTitle, setOptionsModalItemTitle] = useState('')
@@ -548,6 +549,25 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
     }
   }
 
+  // Mark a part purchased / undo it (Simple parts mode). Posts (or reverses) the
+  // cost-to-P&L journal server-side, then reloads so the row reflects the new state.
+  const handleTogglePurchased = async (part: RepairPart, next: boolean) => {
+    if (!session?.accessToken) return
+    if (!next && !confirm('Undo this purchase? The cost journal will be reversed.')) return
+    setTogglingPurchaseId(part.id)
+    try {
+      await api(
+        `/api/v1/parts-accounting/repair-parts/${part.id}/${next ? 'mark-purchased' : 'unmark-purchased'}`,
+        { method: 'POST', token: session.accessToken }
+      )
+      await refetchData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update purchase status')
+    } finally {
+      setTogglingPurchaseId(null)
+    }
+  }
+
   const handleMarkAllComplete = async () => {
     if (!session?.accessToken || !allActioned) return
 
@@ -671,6 +691,9 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
   }
 
   const defaultMargin = pricingSettings?.defaultMarginPercent || 40
+  // Simple parts mode (the ungated default) shows the per-part "Mark purchased" control.
+  // Full mode recognises part cost through goods-in instead, so the control is hidden.
+  const simpleMode = pricingSettings?.partsMode !== 'full'
 
   return (
     <div className="space-y-4">
@@ -876,6 +899,9 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                   savingToCatalog={savingToCatalog}
                                   catalogEntries={catalogEntries}
                                   onSaveToCatalog={saveToPartsCatalog}
+                                  simpleMode={simpleMode}
+                                  onTogglePurchased={handleTogglePurchased}
+                                  isTogglingPurchase={!!part && togglingPurchaseId === part.id}
                                   indent={2}
                                 />
                               )
@@ -911,6 +937,9 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                   savingToCatalog={savingToCatalog}
                                   catalogEntries={catalogEntries}
                                   onSaveToCatalog={saveToPartsCatalog}
+                                  simpleMode={simpleMode}
+                                  onTogglePurchased={handleTogglePurchased}
+                                  isTogglingPurchase={false}
                                   indent={2}
                                 />
                               )
@@ -1004,6 +1033,9 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         savingToCatalog={savingToCatalog}
                                         catalogEntries={catalogEntries}
                                         onSaveToCatalog={saveToPartsCatalog}
+                                        simpleMode={simpleMode}
+                                        onTogglePurchased={handleTogglePurchased}
+                                        isTogglingPurchase={!!part && togglingPurchaseId === part.id}
                                         indent={2}
                                       />
                                     )
@@ -1039,6 +1071,9 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         savingToCatalog={savingToCatalog}
                                         catalogEntries={catalogEntries}
                                         onSaveToCatalog={saveToPartsCatalog}
+                                        simpleMode={simpleMode}
+                                        onTogglePurchased={handleTogglePurchased}
+                                        isTogglingPurchase={false}
                                         indent={2}
                                       />
                                     )
@@ -1185,6 +1220,9 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         savingToCatalog={savingToCatalog}
                                         catalogEntries={catalogEntries}
                                         onSaveToCatalog={saveToPartsCatalog}
+                                        simpleMode={simpleMode}
+                                        onTogglePurchased={handleTogglePurchased}
+                                        isTogglingPurchase={!!part && togglingPurchaseId === part.id}
                                         indent={3}
                                       />
                                     )
@@ -1220,6 +1258,9 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         savingToCatalog={savingToCatalog}
                                         catalogEntries={catalogEntries}
                                         onSaveToCatalog={saveToPartsCatalog}
+                                        simpleMode={simpleMode}
+                                        onTogglePurchased={handleTogglePurchased}
+                                        isTogglingPurchase={false}
                                         indent={3}
                                       />
                                     )
@@ -1354,6 +1395,9 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                               savingToCatalog={savingToCatalog}
                               catalogEntries={catalogEntries}
                               onSaveToCatalog={saveToPartsCatalog}
+                              simpleMode={simpleMode}
+                              onTogglePurchased={handleTogglePurchased}
+                              isTogglingPurchase={!!part && togglingPurchaseId === part.id}
                               indent={1}
                             />
                           )
@@ -1389,6 +1433,9 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                               savingToCatalog={savingToCatalog}
                               catalogEntries={catalogEntries}
                               onSaveToCatalog={saveToPartsCatalog}
+                              simpleMode={simpleMode}
+                              onTogglePurchased={handleTogglePurchased}
+                              isTogglingPurchase={false}
                               indent={1}
                             />
                           )
@@ -1480,6 +1527,9 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         savingToCatalog={savingToCatalog}
                                         catalogEntries={catalogEntries}
                                         onSaveToCatalog={saveToPartsCatalog}
+                                        simpleMode={simpleMode}
+                                        onTogglePurchased={handleTogglePurchased}
+                                        isTogglingPurchase={!!part && togglingPurchaseId === part.id}
                                         indent={1}
                                       />
                                     )
@@ -1515,6 +1565,9 @@ export function PartsTab({ healthCheckId, onUpdate }: PartsTabProps) {
                                         savingToCatalog={savingToCatalog}
                                         catalogEntries={catalogEntries}
                                         onSaveToCatalog={saveToPartsCatalog}
+                                        simpleMode={simpleMode}
+                                        onTogglePurchased={handleTogglePurchased}
+                                        isTogglingPurchase={false}
                                         indent={1}
                                       />
                                     )
@@ -1667,6 +1720,11 @@ interface MultiPartRowProps {
   savingToCatalog: Set<string>
   catalogEntries: PartsCatalogEntry[]
   onSaveToCatalog: (partNumber: string, description: string, costPrice: string) => void
+  // Simple-mode "Mark purchased" (GMS/PARTS.md §6) — only wired for saved parts when
+  // the org runs the Simple parts mode (Full mode recognises cost via goods-in instead).
+  simpleMode?: boolean
+  onTogglePurchased?: (part: RepairPart, next: boolean) => void
+  isTogglingPurchase?: boolean
 }
 
 function MultiPartRow({
@@ -1695,7 +1753,10 @@ function MultiPartRow({
   catalogPartNumbers,
   savingToCatalog,
   catalogEntries,
-  onSaveToCatalog
+  onSaveToCatalog,
+  simpleMode,
+  onTogglePurchased,
+  isTogglingPurchase
 }: MultiPartRowProps) {
   const [localPartNumber, setLocalPartNumber] = useState(part?.partNumber || editState.partNumber || '')
   const [localDescription, setLocalDescription] = useState(part?.description || editState.description || '')
@@ -2180,6 +2241,32 @@ function MultiPartRow({
                         </div>
                       )}
                     </div>
+                  )}
+                  {/* Mark purchased (Simple mode) — expense the part cost at purchase */}
+                  {simpleMode && onTogglePurchased && (
+                    part.purchaseRecognisedAt ? (
+                      <button
+                        onClick={() => onTogglePurchased(part, false)}
+                        disabled={isTogglingPurchase}
+                        className="p-1 text-green-600 hover:text-green-700 hover:bg-green-50 rounded disabled:opacity-50"
+                        title={`Purchased${part.purchasedAt ? ` ${new Date(part.purchasedAt).toLocaleDateString()}` : ''} — click to undo`}
+                      >
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                      </button>
+                    ) : (part.costPrice ?? 0) > 0 ? (
+                      <button
+                        onClick={() => onTogglePurchased(part, true)}
+                        disabled={isTogglingPurchase}
+                        className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded disabled:opacity-50"
+                        title="Mark purchased — expense the part cost"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" />
+                        </svg>
+                      </button>
+                    ) : null
                   )}
                   <button
                     onClick={onDelete}

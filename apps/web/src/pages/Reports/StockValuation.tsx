@@ -46,7 +46,7 @@ export default function StockValuation() {
       <div>
         <Link to="/reports" className="text-sm text-gray-500 hover:text-gray-700">← Reports</Link>
         <h1 className="text-2xl font-bold text-gray-900 mt-1">Stock Valuation</h1>
-        <p className="text-gray-500 text-sm mt-1">Current inventory asset (qty × average cost) by category</p>
+        <p className="text-gray-500 text-sm mt-1">Current inventory asset (ledger cost) by category — foots to the stock journals</p>
       </div>
 
       {error && <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm">{error}</div>}

@@ -176,7 +176,9 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
             margin_percent,
             markup_percent,
             notes,
-            allocation_type
+            allocation_type,
+            purchased_at,
+            purchase_recognised_at
           )
         ),
         labour:repair_labour!repair_labour_repair_item_id_fkey(
@@ -203,7 +205,9 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
           margin_percent,
           markup_percent,
           notes,
-          allocation_type
+          allocation_type,
+          purchased_at,
+          purchase_recognised_at
         )
       `)
       .eq('health_check_id', id)
@@ -247,7 +251,9 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
           margin_percent,
           markup_percent,
           notes,
-          allocation_type
+          allocation_type,
+          purchased_at,
+          purchase_recognised_at
         )
       `)
       .eq('health_check_id', id)
@@ -347,7 +353,9 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
               marginPercent: part.margin_percent ? parseFloat(part.margin_percent as string) : null,
               markupPercent: part.markup_percent ? parseFloat(part.markup_percent as string) : null,
               notes: part.notes,
-              allocationType: part.allocation_type || 'direct'
+              allocationType: part.allocation_type || 'direct',
+              purchasedAt: part.purchased_at ?? null,
+              purchaseRecognisedAt: part.purchase_recognised_at ?? null
             }))
           })) || [],
           labour: item.labour?.map((lab: Record<string, unknown>) => ({
@@ -374,7 +382,9 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
             marginPercent: part.margin_percent ? parseFloat(part.margin_percent as string) : null,
             markupPercent: part.markup_percent ? parseFloat(part.markup_percent as string) : null,
             notes: part.notes,
-            allocationType: part.allocation_type || 'direct'
+            allocationType: part.allocation_type || 'direct',
+            purchasedAt: part.purchased_at ?? null,
+            purchaseRecognisedAt: part.purchase_recognised_at ?? null
           })) || [],
           // Include children for groups
           children: children.map((child: Record<string, unknown>) => ({
@@ -434,7 +444,9 @@ repairItemsHC.get('/:id/repair-items', authorize(['super_admin', 'org_admin', 's
               marginPercent: part.margin_percent ? parseFloat(part.margin_percent as string) : null,
               markupPercent: part.markup_percent ? parseFloat(part.markup_percent as string) : null,
               notes: part.notes,
-              allocationType: part.allocation_type || 'direct'
+              allocationType: part.allocation_type || 'direct',
+              purchasedAt: part.purchased_at ?? null,
+              purchaseRecognisedAt: part.purchase_recognised_at ?? null
             }))
           }))
         }

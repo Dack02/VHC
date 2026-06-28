@@ -368,6 +368,41 @@ async function seedDefaultLibraries(orgId: string): Promise<boolean> {
     console.error('Failed to seed tyre reference data:', err)
   }
 
+  // Parts module foundations — default part categories, a "Main" stock location, and
+  // the Xero-shaped account/tax code maps (all idempotent; inert until the org turns
+  // on stock or wires an accounting connection). See GMS/PARTS.md §5.2/§5.8/§7.
+  try {
+    const { error } = await supabaseAdmin.rpc('seed_default_part_categories_for_org', p)
+    if (error) { allOk = false; console.error('Failed to seed default part categories:', error.message) }
+  } catch (err) {
+    allOk = false
+    console.error('Failed to seed default part categories:', err)
+  }
+
+  try {
+    const { error } = await supabaseAdmin.rpc('seed_default_stock_location_for_org', p)
+    if (error) { allOk = false; console.error('Failed to seed default stock location:', error.message) }
+  } catch (err) {
+    allOk = false
+    console.error('Failed to seed default stock location:', err)
+  }
+
+  try {
+    const { error } = await supabaseAdmin.rpc('seed_default_account_code_map_for_org', p)
+    if (error) { allOk = false; console.error('Failed to seed default account code map:', error.message) }
+  } catch (err) {
+    allOk = false
+    console.error('Failed to seed default account code map:', err)
+  }
+
+  try {
+    const { error } = await supabaseAdmin.rpc('seed_default_tax_code_map_for_org', p)
+    if (error) { allOk = false; console.error('Failed to seed default tax code map:', error.message) }
+  } catch (err) {
+    allOk = false
+    console.error('Failed to seed default tax code map:', err)
+  }
+
   return allOk
 }
 

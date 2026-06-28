@@ -65,6 +65,8 @@ const AIUsageHistory = lazy(() => import('./pages/Settings/AIUsageHistory'))
 const LabourCodes = lazy(() => import('./pages/Settings/LabourCodes'))
 const Suppliers = lazy(() => import('./pages/Settings/Suppliers'))
 const SupplierTypes = lazy(() => import('./pages/Settings/SupplierTypes'))
+const PartCategories = lazy(() => import('./pages/Settings/PartCategories'))
+const StockLocations = lazy(() => import('./pages/Settings/StockLocations'))
 const PricingSettings = lazy(() => import('./pages/Settings/PricingSettings'))
 const DeclinedReasons = lazy(() => import('./pages/Settings/DeclinedReasons'))
 const UnableToSendReasons = lazy(() => import('./pages/Settings/UnableToSendReasons'))
@@ -102,6 +104,7 @@ const RepairTypesReport = lazy(() => import('./pages/Reports/RepairTypes'))
 const PartsGrossProfit = lazy(() => import('./pages/Reports/PartsGrossProfit'))
 const StockValuation = lazy(() => import('./pages/Reports/StockValuation'))
 const LowStock = lazy(() => import('./pages/Reports/LowStock'))
+const StockMovements = lazy(() => import('./pages/Reports/StockMovements'))
 const TechnicianPerformance = lazy(() => import('./pages/Reports/TechnicianPerformance'))
 const AdvisorPerformance = lazy(() => import('./pages/Reports/AdvisorPerformance'))
 const CustomerInsights = lazy(() => import('./pages/Reports/CustomerInsights'))
@@ -230,6 +233,7 @@ function App() {
                         <Route path="/reports/parts-gp" element={<PartsGrossProfit />} />
                         <Route path="/reports/stock-valuation" element={<StockValuation />} />
                         <Route path="/reports/low-stock" element={<LowStock />} />
+                        <Route path="/reports/stock-movements" element={<StockMovements />} />
                         <Route path="/reports/technicians" element={<TechnicianPerformance />} />
                         <Route path="/reports/advisors" element={<AdvisorPerformance />} />
                         <Route path="/reports/customers" element={<CustomerInsights />} />
@@ -289,6 +293,8 @@ function App() {
                         <Route path="/settings/repair-types" element={<RepairTypes />} />
                         <Route path="/settings/suppliers" element={<Suppliers />} />
                         <Route path="/settings/supplier-types" element={<SupplierTypes />} />
+                        <Route path="/settings/part-categories" element={<RequireModule module="parts_stock"><PartCategories /></RequireModule>} />
+                        <Route path="/settings/stock-locations" element={<RequireModule module="parts_stock"><StockLocations /></RequireModule>} />
                         <Route path="/settings/pricing" element={<PricingSettings />} />
                         <Route path="/settings/declined-reasons" element={<DeclinedReasons />} />
                         <Route path="/settings/follow-up-settings" element={<FollowUpSettings />} />

@@ -23,6 +23,9 @@ interface NavItem {
   module?: ModuleKey
   /** When present, this is an expandable group; `to` points at the group's hub. */
   children?: NavItem[]
+  /** A pure section header — the label toggles the group instead of navigating
+   *  (avoids a parent that duplicates one of its children). `to` is just the key. */
+  sectionOnly?: boolean
 }
 
 const NAV_GROUPS_KEY = 'vhc-nav-expanded-groups'
@@ -246,6 +249,7 @@ export default function DashboardLayout() {
         </svg>
       ),
       roles: ['super_admin', 'org_admin', 'site_admin', 'service_advisor'],
+      sectionOnly: true,
       children: [
         {
           to: '/parts',
@@ -368,10 +372,14 @@ export default function DashboardLayout() {
     const open = expandedGroups.has(item.to) || active
     const tone = active ? 'bg-primary/10 text-primary font-semibold' : 'text-[#5f636c] font-medium hover:bg-[#f3f3f1]'
 
+    // A section-only header navigates nowhere itself; its first child is the
+    // collapsed-rail fallback target.
+    const headerTarget = item.sectionOnly ? (item.children?.[0]?.to ?? item.to) : item.to
+
     if (isCollapsed) {
       return (
         <NavTooltip label={item.label}>
-          <Link to={item.to} className={`flex items-center justify-center text-[13.5px] rounded-[9px] px-2 py-[9px] transition-colors duration-150 ${tone}`}>
+          <Link to={headerTarget} className={`flex items-center justify-center text-[13.5px] rounded-[9px] px-2 py-[9px] transition-colors duration-150 ${tone}`}>
             {item.icon}
           </Link>
         </NavTooltip>
@@ -381,10 +389,17 @@ export default function DashboardLayout() {
     return (
       <div>
         <div className={`flex items-center rounded-[9px] pr-1 transition-colors duration-150 ${tone}`}>
-          <Link to={item.to} className="flex items-center gap-[11px] flex-1 min-w-0 text-[13.5px] px-[11px] py-[9px]">
-            {item.icon}
-            <span className="flex-1 truncate">{item.label}</span>
-          </Link>
+          {item.sectionOnly ? (
+            <button onClick={() => toggleGroup(item.to)} className="flex items-center gap-[11px] flex-1 min-w-0 text-[13.5px] px-[11px] py-[9px] text-left">
+              {item.icon}
+              <span className="flex-1 truncate">{item.label}</span>
+            </button>
+          ) : (
+            <Link to={item.to} className="flex items-center gap-[11px] flex-1 min-w-0 text-[13.5px] px-[11px] py-[9px]">
+              {item.icon}
+              <span className="flex-1 truncate">{item.label}</span>
+            </Link>
+          )}
           <button onClick={() => toggleGroup(item.to)} className="p-1 text-[#a4a8b0] hover:text-[#5f636c]" aria-label={open ? 'Collapse section' : 'Expand section'}>
             <svg className={`w-4 h-4 transition-transform duration-150 ${open ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />

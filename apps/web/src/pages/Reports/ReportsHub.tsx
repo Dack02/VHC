@@ -126,6 +126,16 @@ const navCards: NavCard[] = [
     ),
   },
   {
+    to: '/reports/stock-movements',
+    title: 'Stock Movements',
+    description: 'Audit trail of receipts, issues and adjustments',
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+      </svg>
+    ),
+  },
+  {
     to: '/reports/technicians',
     title: 'Technicians',
     description: 'KPIs, inspection times, quality',

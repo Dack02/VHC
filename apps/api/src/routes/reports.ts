@@ -4173,6 +4173,42 @@ reports.get('/low-stock', authorize(['super_admin', 'org_admin', 'site_admin', '
   }
 })
 
+// GET /api/v1/reports/stock-movements?from=&to= — the stock audit trail for a date
+// window (every receipt/issue/adjustment), aggregated in SQL (GMS/PARTS.md §8).
+reports.get('/stock-movements', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const today = new Date().toISOString().slice(0, 10)
+    const from = c.req.query('from') || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    const to = c.req.query('to') || today
+    const { data, error } = await supabaseAdmin.rpc('report_stock_movements', {
+      p_org_id: auth.orgId,
+      p_from: from,
+      p_to: to,
+    })
+    if (error) throw new Error(error.message)
+    const rows = (data ?? []).map((r: Record<string, unknown>) => ({
+      id: r.id as string,
+      movementAt: r.movement_at as string,
+      documentDate: r.document_date as string,
+      movementType: (r.movement_type as string) ?? '',
+      partNumber: (r.part_number as string) ?? '',
+      description: (r.description as string) ?? '',
+      categoryName: (r.category_name as string) ?? 'Uncategorised',
+      qtyDelta: Number(r.qty_delta) || 0,
+      unitCost: Number(r.unit_cost) || 0,
+      totalCost: Number(r.total_cost) || 0,
+      referenceType: (r.reference_type as string) ?? null,
+      reasonCode: (r.reason_code as string) ?? null,
+      isNegativeFlagged: Boolean(r.is_negative_flagged),
+    }))
+    return c.json({ rows, range: { from, to }, totals: { count: rows.length } })
+  } catch (error) {
+    console.error('Stock movements report error:', error)
+    return c.json({ error: 'Failed to build stock movements report' }, 500)
+  }
+})
+
 // GET /api/v1/reports/capacity-utilisation — booked vs available hours per day vs
 // the loading target (Resource Manager). Plan-side utilisation; pairs with the
 // diary banding. Aggregated in SQL (diary_day_summary) so it's row-cap safe.

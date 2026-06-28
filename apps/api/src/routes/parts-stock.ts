@@ -250,6 +250,26 @@ partsStock.patch('/part-categories/:id', authorize(['super_admin', 'org_admin', 
   }
 })
 
+// Soft-delete (deactivate). System rows are protected so the default set survives.
+partsStock.delete('/part-categories/:id', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const { data: row } = await supabaseAdmin
+      .from('part_categories').select('is_system').eq('id', id).eq('organization_id', auth.orgId).single()
+    if (row?.is_system) return c.json({ error: 'Default categories cannot be deleted' }, 400)
+    const { error } = await supabaseAdmin
+      .from('part_categories')
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq('id', id).eq('organization_id', auth.orgId)
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ ok: true })
+  } catch (error) {
+    console.error('Delete part category error:', error)
+    return c.json({ error: 'Failed to delete part category' }, 500)
+  }
+})
+
 // ===========================================================================
 // Stock Locations (lookup) — GMS/PARTS.md §5.5
 // ===========================================================================
@@ -301,6 +321,27 @@ partsStock.patch('/stock-locations/:id', authorize(['super_admin', 'org_admin', 
   } catch (error) {
     console.error('Update stock location error:', error)
     return c.json({ error: 'Failed to update stock location' }, 500)
+  }
+})
+
+// Soft-delete (deactivate). The default location is protected — stock must always
+// have somewhere to live.
+partsStock.delete('/stock-locations/:id', authorize(['super_admin', 'org_admin', 'site_admin']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const { data: row } = await supabaseAdmin
+      .from('stock_locations').select('is_default').eq('id', id).eq('organization_id', auth.orgId).single()
+    if (row?.is_default) return c.json({ error: 'The default location cannot be deleted' }, 400)
+    const { error } = await supabaseAdmin
+      .from('stock_locations')
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq('id', id).eq('organization_id', auth.orgId)
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ ok: true })
+  } catch (error) {
+    console.error('Delete stock location error:', error)
+    return c.json({ error: 'Failed to delete stock location' }, 500)
   }
 })
 

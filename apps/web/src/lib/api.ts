@@ -633,6 +633,11 @@ export interface RepairPart {
   notes: string | null
   allocationType: 'shared' | 'direct'
   createdAt?: string
+  // Simple-mode purchase recognition (GMS/PARTS.md §6): when set, the part's cost has
+  // been posted to the P&L at purchase ("Mark purchased"). purchaseRecognisedAt is the
+  // journal timestamp; both null until marked.
+  purchasedAt?: string | null
+  purchaseRecognisedAt?: string | null
 }
 
 export interface RepairOption {
@@ -742,6 +747,12 @@ export interface NewRepairItem {
 export interface PricingSettings {
   defaultMarginPercent: number
   vatRate: number
+  // Parts module (GMS/PARTS.md). 'simple' = costs expensed at purchase via "Mark
+  // purchased"; 'full' = perpetual stock (purchases recognised via goods-in instead).
+  // partsModeLocked is true when the parts_stock module is off (mode forced to simple).
+  partsMode?: 'simple' | 'full'
+  partsModeLocked?: boolean
+  booksLockedThrough?: string | null
 }
 
 export interface PricingCalculation {

@@ -157,6 +157,26 @@ const navCards: NavCard[] = [
     ),
   },
   {
+    to: '/reports/parts-to-return',
+    title: 'Parts to Return',
+    description: 'Unused or declined order-in parts to send back',
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+      </svg>
+    ),
+  },
+  {
+    to: '/reports/orphan-parts',
+    title: 'Orphan Parts',
+    description: 'Ordered or received but never on a job card',
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+      </svg>
+    ),
+  },
+  {
     to: '/reports/technicians',
     title: 'Technicians',
     description: 'KPIs, inspection times, quality',

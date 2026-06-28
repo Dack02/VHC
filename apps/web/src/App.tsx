@@ -107,6 +107,8 @@ const LowStock = lazy(() => import('./pages/Reports/LowStock'))
 const StockMovements = lazy(() => import('./pages/Reports/StockMovements'))
 const PartsOnOrder = lazy(() => import('./pages/Reports/PartsOnOrder'))
 const NegativeStock = lazy(() => import('./pages/Reports/NegativeStock'))
+const PartsToReturn = lazy(() => import('./pages/Reports/PartsToReturn'))
+const OrphanParts = lazy(() => import('./pages/Reports/OrphanParts'))
 const TechnicianPerformance = lazy(() => import('./pages/Reports/TechnicianPerformance'))
 const AdvisorPerformance = lazy(() => import('./pages/Reports/AdvisorPerformance'))
 const CustomerInsights = lazy(() => import('./pages/Reports/CustomerInsights'))
@@ -240,6 +242,8 @@ function App() {
                         <Route path="/reports/stock-movements" element={<StockMovements />} />
                         <Route path="/reports/parts-on-order" element={<PartsOnOrder />} />
                         <Route path="/reports/negative-stock" element={<NegativeStock />} />
+                        <Route path="/reports/parts-to-return" element={<PartsToReturn />} />
+                        <Route path="/reports/orphan-parts" element={<OrphanParts />} />
                         <Route path="/reports/technicians" element={<TechnicianPerformance />} />
                         <Route path="/reports/advisors" element={<AdvisorPerformance />} />
                         <Route path="/reports/customers" element={<CustomerInsights />} />

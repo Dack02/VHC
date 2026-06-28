@@ -171,7 +171,18 @@ interface BillablePart {
   cost_price: number | null
   description: string | null
   part_number: string | null
+  quantity: number | null
+  qty_fitted: number | null
+  stock_item_id: string | null
+  cogs_recognised_at: string | null
+  cogs_snapshot: number | null
+  purchase_order_line_id: string | null
+  supplier_id: string | null
+  supplier_name: string | null
 }
+
+const BILLABLE_PART_COLS =
+  'id, line_total, cost_price, description, part_number, quantity, qty_fitted, stock_item_id, cogs_recognised_at, cogs_snapshot, purchase_order_line_id, supplier_id, supplier_name'
 
 /** Gather the billable parts for a jobsheet (authorised items + their selected option). */
 async function gatherJobsheetParts(jobsheetId: string, _orgId: string): Promise<{
@@ -213,18 +224,35 @@ async function gatherJobsheetParts(jobsheetId: string, _orgId: string): Promise<
   if (itemIdsNoOption.length) {
     const { data } = await supabaseAdmin
       .from('repair_parts')
-      .select('id, line_total, cost_price, description, part_number')
+      .select(BILLABLE_PART_COLS)
       .in('repair_item_id', itemIdsNoOption)
     for (const p of data ?? []) partsMap.set(p.id, p as BillablePart)
   }
   if (selectedOptionIds.length) {
     const { data } = await supabaseAdmin
       .from('repair_parts')
-      .select('id, line_total, cost_price, description, part_number')
+      .select(BILLABLE_PART_COLS)
       .in('repair_option_id', selectedOptionIds)
     for (const p of data ?? []) partsMap.set(p.id, p as BillablePart)
   }
   return { parts: [...partsMap.values()], healthCheckId }
+}
+
+/** is_stocked + current WAVCO per stock item — for COGS valuation + the £0-cost gate. */
+async function fetchStockInfo(stockItemIds: string[]): Promise<Map<string, { isStocked: boolean; averageCost: number }>> {
+  const map = new Map<string, { isStocked: boolean; averageCost: number }>()
+  const ids = [...new Set(stockItemIds.filter(Boolean))]
+  if (!ids.length) return map
+  const { data } = await supabaseAdmin.from('parts_catalog').select('id, is_stocked, average_cost').in('id', ids)
+  for (const r of data ?? []) map.set(r.id as string, { isStocked: Boolean(r.is_stocked), averageCost: Number(r.average_cost) || 0 })
+  return map
+}
+
+/** The unit cost used for COGS + the £0-cost gate: WAVCO for stocked items, else the line cost. */
+function effectiveUnitCost(p: BillablePart, stockInfo: Map<string, { isStocked: boolean; averageCost: number }>): number {
+  const si = p.stock_item_id ? stockInfo.get(p.stock_item_id) : null
+  if (si?.isStocked) return si.averageCost > 0 ? si.averageCost : Number(p.cost_price) || 0
+  return Number(p.cost_price) || 0
 }
 
 export interface InvoiceJobsheetResult {
@@ -260,11 +288,14 @@ export async function invoiceJobsheet(
     return { ok: true, alreadyInvoiced: true, invoiceNumber: js.invoice_number ?? undefined }
   }
 
+  const mode = await getPartsMode(orgId)
   const { parts, healthCheckId } = await gatherJobsheetParts(jobsheetId, orgId)
+  const stockInfo = await fetchStockInfo(parts.map((p) => p.stock_item_id).filter(Boolean) as string[])
 
   // £0-cost gate: a billable part being sold with no recorded cost books 100% margin.
+  // Stocked items value at WAVCO, so the gate uses the effective unit cost, not just cost_price.
   const blockers = parts
-    .filter((p) => Number(p.line_total) > 0 && (p.cost_price == null || Number(p.cost_price) === 0))
+    .filter((p) => Number(p.line_total) > 0 && effectiveUnitCost(p, stockInfo) <= 0)
     .map((p) => ({ id: p.id, label: [p.part_number, p.description].filter(Boolean).join(' — ') || 'Part' }))
   if (blockers.length && !opts.force) {
     return { ok: false, blocked: true, blockers }
@@ -289,12 +320,13 @@ export async function invoiceJobsheet(
     })
     .eq('id', jobsheetId)
 
-  // Post the parts SALE journal (revenue only in Simple mode). No parts → no journal.
+  // The sale leg (Event 3b) — identical in both modes (Dr AR / Cr Sales / Cr VAT Output).
+  // Keyed by invoice number so a reopen→re-invoice posts a fresh journal (§7.7).
   let journalId: string | null = null
   if (partsNet > 0) {
     const res = await postJournal({
       organizationId: orgId,
-      sourceEvent: 'simple_sale',
+      sourceEvent: 'part_sale',
       sourceType: 'jobsheet',
       sourceId: jobsheetId,
       jobsheetId,
@@ -302,7 +334,7 @@ export async function invoiceJobsheet(
       documentDate: taxPointDate,
       invoiceNumber: invoiceNumber ?? undefined,
       taxPointDate,
-      idempotencyKey: `simple_sale:${jobsheetId}`,
+      idempotencyKey: `part_sale:${jobsheetId}:${invoiceNumber ?? ''}`,
       createdBy: userId,
       lines: [
         { account: 'accounts_receivable', debit: gross, description: `Parts on invoice ${invoiceNumber ?? ''}`.trim(), entityType: 'customer', trackingJobId: jobsheetId },
@@ -313,10 +345,77 @@ export async function invoiceJobsheet(
     journalId = res.journalId
   }
 
-  // Surface unpurchased-cost warnings (cost not yet expensed → margin looks 100% until marked purchased).
   const warnings: string[] = []
-  const mode = await getPartsMode(orgId)
-  if (mode === 'simple') {
+
+  if (mode === 'full') {
+    // Full mode: the COST side at the jobsheet invoice. Issue movement + Event 3a (stocked:
+    // Dr COGS / Cr Inventory) or 4A-sale (non-stock: Dr COGS / Cr WIP), atomic with the sale
+    // (§7.2/§13 Q11 simpler-alternative: issue + COGS both fire here, not at booking).
+    let stockedCogs = 0
+    let nonStockCogs = 0
+    for (const p of parts) {
+      if (p.cogs_recognised_at) continue // idempotent (cleared + reversed on reopen, §7.7)
+      const qtyFitted = Number(p.qty_fitted ?? p.quantity ?? 1) || 1
+      const unitCost = effectiveUnitCost(p, stockInfo)
+      if (unitCost <= 0) continue
+      const extCogs = round2(qtyFitted * unitCost)
+      const si = p.stock_item_id ? stockInfo.get(p.stock_item_id) : null
+      const isStocked = Boolean(si?.isStocked)
+      if (isStocked) {
+        stockedCogs += extCogs
+        // Relieve physical stock (SOH↓). The trigger does not re-roll average on an issue.
+        await supabaseAdmin.from('stock_movements').insert({
+          organization_id: orgId,
+          stock_item_id: p.stock_item_id,
+          movement_type: 'issue',
+          qty_delta: -qtyFitted,
+          unit_cost: unitCost,
+          total_cost: round2(-extCogs),
+          reference_type: 'repair_part',
+          reference_id: p.id,
+          repair_part_id: p.id,
+          document_date: taxPointDate,
+          created_by: userId,
+        })
+      } else {
+        nonStockCogs += extCogs
+      }
+      await supabaseAdmin.from('repair_parts').update({
+        cogs_snapshot: unitCost,
+        cogs_recognised_at: new Date().toISOString(),
+        qty_fitted: qtyFitted,
+        line_status: 'invoiced',
+        updated_at: new Date().toISOString(),
+      }).eq('id', p.id)
+      if (p.purchase_order_line_id) {
+        await supabaseAdmin.from('purchase_order_lines')
+          .update({ reconciled: true, line_status: 'invoiced', updated_at: new Date().toISOString() })
+          .eq('id', p.purchase_order_line_id)
+      }
+    }
+    const totalCogs = round2(stockedCogs + nonStockCogs)
+    if (totalCogs > 0) {
+      await postJournal({
+        organizationId: orgId,
+        sourceEvent: 'part_cogs',
+        sourceType: 'jobsheet',
+        sourceId: jobsheetId,
+        jobsheetId,
+        healthCheckId,
+        documentDate: taxPointDate,
+        invoiceNumber: invoiceNumber ?? undefined,
+        taxPointDate,
+        idempotencyKey: `part_cogs:${jobsheetId}:${invoiceNumber ?? ''}`,
+        createdBy: userId,
+        lines: [
+          { account: 'parts_cogs', debit: totalCogs, description: 'Parts COGS' },
+          { account: 'parts_stock', credit: round2(stockedCogs), description: 'Relieve inventory (stocked)' },
+          { account: 'parts_wip', credit: round2(nonStockCogs), description: 'Relieve WIP clearing (non-stock)' },
+        ],
+      })
+    }
+  } else {
+    // Simple mode: cost was taken at purchase. Warn on any sold-but-not-yet-purchased lines.
     const partIds = parts.map((p) => p.id)
     if (partIds.length) {
       const { data: unp } = await supabaseAdmin
@@ -356,6 +455,38 @@ export async function reverseJobsheetInvoice(
     .neq('posting_status', 'voided')
   for (const j of journals ?? []) {
     await reverseJournal(j.id, { createdBy: userId })
+  }
+
+  // Full mode: clear the COGS lock so re-invoicing re-recognises against the final basket,
+  // and put any issued stock back (a reversing adjustment, no average re-roll) — §7.7.
+  const { parts } = await gatherJobsheetParts(jobsheetId, orgId)
+  const recognised = parts.filter((p) => p.cogs_recognised_at)
+  if (recognised.length) {
+    const stockInfo = await fetchStockInfo(recognised.map((p) => p.stock_item_id).filter(Boolean) as string[])
+    for (const p of recognised) {
+      const si = p.stock_item_id ? stockInfo.get(p.stock_item_id) : null
+      if (si?.isStocked) {
+        const qty = Number(p.qty_fitted ?? p.quantity ?? 1) || 1
+        const unit = Number(p.cogs_snapshot) || si.averageCost || 0
+        await supabaseAdmin.from('stock_movements').insert({
+          organization_id: orgId,
+          stock_item_id: p.stock_item_id,
+          movement_type: 'adjustment',
+          qty_delta: qty,
+          unit_cost: unit,
+          total_cost: round2(qty * unit),
+          reference_type: 'repair_part',
+          reference_id: p.id,
+          repair_part_id: p.id,
+          reason_code: 'reopen_reversal',
+          document_date: today(),
+          created_by: userId,
+        })
+      }
+      await supabaseAdmin.from('repair_parts')
+        .update({ cogs_snapshot: null, cogs_recognised_at: null, line_status: 'fitted', updated_at: new Date().toISOString() })
+        .eq('id', p.id)
+    }
   }
 
   await supabaseAdmin

@@ -4264,6 +4264,60 @@ reports.get('/negative-stock', authorize(['super_admin', 'org_admin', 'site_admi
   }
 })
 
+// GET /api/v1/reports/parts-to-return — ordered-in, unused/declined, not a stock item (GMS/PARTS.md §8, P2).
+reports.get('/parts-to-return', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { data, error } = await supabaseAdmin.rpc('report_parts_to_return', { p_org_id: auth.orgId })
+    if (error) throw new Error(error.message)
+    const rows = (data ?? []).map((r: Record<string, unknown>) => ({
+      id: r.id as string,
+      partNumber: (r.part_number as string) ?? '',
+      description: (r.description as string) ?? '',
+      supplierId: (r.supplier_id as string) ?? null,
+      supplierName: (r.supplier_name as string) ?? 'Unknown supplier',
+      quantity: Number(r.quantity) || 0,
+      qtyToReturn: Number(r.qty_to_return) || 0,
+      unitCost: Number(r.unit_cost) || 0,
+      returnValue: Number(r.return_value) || 0,
+      lineStatus: (r.line_status as string) ?? '',
+    }))
+    const returnValue = Math.round(rows.reduce((s: number, r: { returnValue: number }) => s + r.returnValue, 0) * 100) / 100
+    return c.json({ rows, totals: { lineCount: rows.length, returnValue } })
+  } catch (error) {
+    console.error('Parts to return report error:', error)
+    return c.json({ error: 'Failed to build parts-to-return report' }, 500)
+  }
+})
+
+// GET /api/v1/reports/orphan-parts — PO/GRN lines not on a job card, or received-not-fitted (GMS/PARTS.md §8, P2).
+reports.get('/orphan-parts', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { data, error } = await supabaseAdmin.rpc('report_orphan_parts', { p_org_id: auth.orgId })
+    if (error) throw new Error(error.message)
+    const rows = (data ?? []).map((r: Record<string, unknown>) => ({
+      lineId: r.line_id as string,
+      poId: r.po_id as string,
+      poNumber: (r.po_number as string) ?? '',
+      supplierName: (r.supplier_name as string) ?? 'Unknown supplier',
+      partNumber: (r.part_number as string) ?? '',
+      description: (r.description as string) ?? '',
+      qtyOrdered: Number(r.qty_ordered) || 0,
+      qtyReceived: Number(r.qty_received) || 0,
+      unitCost: Number(r.unit_cost) || 0,
+      lineValue: Number(r.line_value) || 0,
+      lineStatus: (r.line_status as string) ?? '',
+      reason: (r.reason as string) ?? '',
+    }))
+    const lineValue = Math.round(rows.reduce((s: number, r: { lineValue: number }) => s + r.lineValue, 0) * 100) / 100
+    return c.json({ rows, totals: { lineCount: rows.length, lineValue } })
+  } catch (error) {
+    console.error('Orphan parts report error:', error)
+    return c.json({ error: 'Failed to build orphan-parts report' }, 500)
+  }
+})
+
 // GET /api/v1/reports/capacity-utilisation — booked vs available hours per day vs
 // the loading target (Resource Manager). Plan-side utilisation; pairs with the
 // diary banding. Aggregated in SQL (diary_day_summary) so it's row-cap safe.

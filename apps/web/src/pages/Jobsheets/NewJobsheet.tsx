@@ -588,7 +588,7 @@ export default function NewJobsheet() {
         {/* Right: priced work built live on the draft jobsheet */}
         {draftId && token ? (
           <WorkDetailsPanel
-            className="lg:col-span-1 lg:sticky lg:top-6"
+            className="lg:col-span-1 lg:sticky lg:top-6 lg:max-h-[calc(100vh_-_3rem)] lg:overflow-y-auto"
             parent={{ type: 'jobsheet', id: draftId }}
             token={token}
             organizationId={user?.organization?.id}

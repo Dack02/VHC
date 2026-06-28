@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../../lib/api'
 import { useToast } from '../../contexts/ToastContext'
 import PackagePickerModal from './components/PackagePickerModal'
@@ -11,6 +11,10 @@ import PackagePickerModal from './components/PackagePickerModal'
  * are added here. Inspection findings (origin 'inspection') from a linked VHC are shown
  * read-only — edit those in the VHC. All pricing/VAT/totals come from the server (the
  * repair pricing engine), so this panel just renders + sums.
+ *
+ * Layout: an invoice-style line-item grid. Each work line is a group header with its
+ * labour + parts as column-aligned sub-rows; entry happens in roomy panels under the
+ * expanded group, and a stacked summary sits bottom-right.
  */
 
 interface LabourCode { id: string; code: string; description: string; hourlyRate: number; isDefault?: boolean }
@@ -30,6 +34,21 @@ interface Totals { labourTotal: number; partsTotal: number; subtotal: number; va
 
 const ZERO: Totals = { labourTotal: 0, partsTotal: 0, subtotal: 0, vatAmount: 0, totalIncVat: 0 }
 const money = (n: number) => `£${(n || 0).toFixed(2)}`
+
+// Invoice grid: Description (flex, min 110px) · Type · Qty/Hr · Rate · Total · action.
+// The 110px floor keeps the description readable in the narrow live-build sidebar
+// (panel ≈ half-width at the lg breakpoint); cells clip rather than overlap.
+const GRID_COLS = 'minmax(110px,1fr) 44px 42px 54px 64px 20px'
+
+// Shared field/button styling — follows docs/form-design-guidelines.md (dark focus ring,
+// 10px radius, neutral-dark primary action), sized a touch tighter for inline entry.
+const fieldCls =
+  'h-[38px] w-full box-border rounded-lg border border-[#e4e7ec] bg-white px-3 text-sm text-[#16191f] ' +
+  'placeholder:text-[#aeb4be] focus:outline-none focus:border-[#16191f] focus:shadow-[0_0_0_3px_rgba(22,25,31,0.08)]'
+const labelMini = 'block text-[11px] font-medium text-gray-500 mb-1'
+const btnPrimary = 'h-[38px] inline-flex items-center justify-center rounded-lg bg-[#16191f] px-4 text-sm font-medium text-white hover:bg-black disabled:opacity-50'
+const btnSecondary = 'h-[38px] inline-flex items-center gap-1.5 rounded-lg border border-[#d7dbe0] bg-white px-3.5 text-sm font-medium text-[#3a3f4a] hover:bg-[#f6f7f9] disabled:opacity-50'
+const btnGhost = 'h-[38px] inline-flex items-center rounded-lg px-3 text-sm font-medium text-gray-500 hover:text-gray-700'
 
 export interface WorkDetailsParent { type: 'jobsheet' | 'estimate'; id: string }
 
@@ -61,12 +80,16 @@ export default function WorkDetailsPanel({
   const [addingLine, setAddingLine] = useState(false)
   const [showPackages, setShowPackages] = useState(false)
   const [busy, setBusy] = useState(false)
+  const didInitExpand = useRef(false)
 
   const load = useCallback(async () => {
     try {
       const data = await api<{ workLines: WorkLine[]; totals: Totals }>(`${basePath}/work-lines`, { token })
-      setLines(data.workLines || [])
+      const wl = data.workLines || []
+      setLines(wl)
       setTotals(data.totals || ZERO)
+      // Default to a fully-expanded invoice on first load; respect the user's collapses after that.
+      if (!didInitExpand.current) { setExpanded(new Set(wl.map(l => l.id))); didInitExpand.current = true }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load work details')
     } finally {
@@ -164,14 +187,27 @@ export default function WorkDetailsPanel({
   const inspection = lines.filter(l => l.origin === 'inspection')
   const sectionLabel = primaryLabel ?? (parent.type === 'estimate' ? 'Quote lines' : 'Booked work')
   const emptyLabel = parent.type === 'estimate' ? 'No quote lines yet.' : 'No booked work yet.'
+  const hasRows = editableLines.length > 0 || inspection.length > 0
 
   return (
     <div className={`bg-white border border-gray-200 rounded-xl shadow-sm p-5 ${className}`}>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-semibold text-gray-900">Work Details</h2>
-        <div className="text-right">
-          <div className="text-xs text-gray-400">Total inc VAT</div>
-          <div className="text-lg font-semibold text-gray-900 leading-tight">{money(totals.totalIncVat)}</div>
+      <div className="flex items-start justify-between gap-3 mb-4">
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">Work details</h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {editableLines.length > 0
+              ? `${editableLines.length} ${editableLines.length === 1 ? 'line' : 'lines'}`
+              : 'Add labour, parts and packages'}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={() => setAddingLine(true)} disabled={addingLine} className={btnSecondary}>
+            <span className="text-base leading-none">+</span> Add line
+          </button>
+          <button onClick={() => setShowPackages(true)} disabled={busy}
+            className="h-[38px] inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3.5 text-sm font-medium text-primary hover:bg-indigo-50 disabled:opacity-50">
+            <span className="text-base leading-none">+</span> Add from package
+          </button>
         </div>
       </div>
 
@@ -185,65 +221,49 @@ export default function WorkDetailsPanel({
             onBlur={saveNotes}
             rows={2}
             placeholder="Overview of the job / customer concern…"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            className="w-full border border-[#e4e7ec] rounded-lg px-3 py-2 text-sm text-[#16191f] focus:outline-none focus:border-[#16191f] focus:shadow-[0_0_0_3px_rgba(22,25,31,0.08)]"
           />
         </div>
       )}
 
       {loading ? (
         <div className="flex justify-center py-8"><div className="animate-spin h-6 w-6 border-4 border-primary border-t-transparent rounded-full" /></div>
+      ) : !hasRows && !addingLine ? (
+        <div className="text-center py-10 border border-dashed border-gray-200 rounded-xl">
+          <p className="text-sm text-gray-500">{emptyLabel}</p>
+          <button onClick={() => setAddingLine(true)} className={`${btnPrimary} mt-3`}>Add your first line</button>
+        </div>
       ) : (
         <div className="space-y-4">
-          {/* Editable work (booked / quote lines) */}
-          <div>
-            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">{sectionLabel}</p>
-            <div className="space-y-2">
-              {editableLines.length === 0 && <p className="text-sm text-gray-400 py-1">{emptyLabel}</p>}
-              {editableLines.map(line => (
-                <WorkLineCard key={line.id} line={line} editable expanded={expanded.has(line.id)}
-                  labourCodes={labourCodes} repairTypes={repairTypes} suppliers={suppliers}
-                  onToggle={() => toggle(line.id)} onDeleteLine={() => deleteLine(line.id)} onSetRepairType={setLineRepairType}
-                  onAddLabour={addLabour} onDeleteLabour={deleteLabour} onAddPart={addPart} onDeletePart={deletePart} />
-              ))}
-            </div>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-gray-400">{sectionLabel}</p>
 
-            {/* Add controls */}
-            <div className="flex flex-wrap items-center gap-2 mt-3">
-              {addingLine ? (
-                <div className="flex items-center gap-2">
-                  <input autoFocus value={newLineName} onChange={e => setNewLineName(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') addLine(); if (e.key === 'Escape') { setAddingLine(false); setNewLineName('') } }}
-                    placeholder="Work line name (e.g. Full Service)"
-                    className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-                  <button onClick={addLine} disabled={busy || !newLineName.trim()} className="px-3 py-1.5 bg-primary text-white text-sm rounded-lg disabled:opacity-50">Add</button>
-                  <button onClick={() => { setAddingLine(false); setNewLineName('') }} className="px-2 py-1.5 text-sm text-gray-500 hover:text-gray-700">Cancel</button>
-                </div>
-              ) : (
-                <button onClick={() => setAddingLine(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">
-                  <span className="text-base leading-none">+</span> Add work line
-                </button>
-              )}
-              <button onClick={() => setShowPackages(true)} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary border border-indigo-200 rounded-lg hover:bg-indigo-50 disabled:opacity-50">
-                <span className="text-base leading-none">+</span> Add from package
-              </button>
-              {showPackages && (
-                <PackagePickerModal
-                  packages={packages}
-                  selectedIds={[]}
-                  onClose={() => setShowPackages(false)}
-                  onConfirm={addPackages}
-                />
-              )}
-            </div>
-          </div>
+          {hasRows && (
+            <div className="border border-gray-200 rounded-xl overflow-hidden">
+              {/* Column header band */}
+              <div className="grid gap-x-2 px-3 py-2 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold uppercase tracking-wide text-gray-400" style={{ gridTemplateColumns: GRID_COLS }}>
+                <span className="truncate">Description</span>
+                <span className="truncate">Type</span>
+                <span className="text-right">Qty/Hr</span>
+                <span className="text-right">Rate</span>
+                <span className="text-right">Total</span>
+                <span aria-hidden="true" />
+              </div>
 
-          {/* Inspection findings (read-only here) */}
-          {inspection.length > 0 && (
-            <div>
-              <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">From inspection (VHC)</p>
-              <div className="space-y-2">
+              <div className="divide-y divide-gray-100">
+                {editableLines.map(line => (
+                  <WorkLineGroup key={line.id} line={line} editable expanded={expanded.has(line.id)}
+                    labourCodes={labourCodes} repairTypes={repairTypes} suppliers={suppliers}
+                    onToggle={() => toggle(line.id)} onDeleteLine={() => deleteLine(line.id)} onSetRepairType={setLineRepairType}
+                    onAddLabour={addLabour} onDeleteLabour={deleteLabour} onAddPart={addPart} onDeletePart={deletePart} />
+                ))}
+
+                {inspection.length > 0 && (
+                  <div className="px-3 py-2 bg-gray-50/60 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                    From inspection (VHC)
+                  </div>
+                )}
                 {inspection.map(line => (
-                  <WorkLineCard key={line.id} line={line} editable={false} expanded={expanded.has(line.id)}
+                  <WorkLineGroup key={line.id} line={line} editable={false} expanded={expanded.has(line.id)}
                     labourCodes={labourCodes} repairTypes={repairTypes} suppliers={suppliers}
                     onToggle={() => toggle(line.id)} onDeleteLine={() => {}} onSetRepairType={async () => {}}
                     onAddLabour={async () => false} onDeleteLabour={async () => {}} onAddPart={async () => false} onDeletePart={async () => {}} />
@@ -252,15 +272,40 @@ export default function WorkDetailsPanel({
             </div>
           )}
 
-          {/* Document totals */}
-          <div className="border-t border-gray-100 pt-3 flex flex-wrap justify-end gap-x-6 gap-y-1 text-sm">
-            <span className="text-gray-500">Labour <span className="text-gray-900 font-medium ml-1">{money(totals.labourTotal)}</span></span>
-            <span className="text-gray-500">Parts <span className="text-gray-900 font-medium ml-1">{money(totals.partsTotal)}</span></span>
-            <span className="text-gray-500">Net <span className="text-gray-900 font-medium ml-1">{money(totals.subtotal)}</span></span>
-            <span className="text-gray-500">VAT <span className="text-gray-900 font-medium ml-1">{money(totals.vatAmount)}</span></span>
-            <span className="text-gray-900 font-semibold">Total inc VAT {money(totals.totalIncVat)}</span>
+          {/* Add work line */}
+          {addingLine && (
+            <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50/70 p-3">
+              <label className={labelMini}>Work line name</label>
+              <div className="flex flex-wrap items-center gap-2">
+                <input autoFocus value={newLineName} onChange={e => setNewLineName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') addLine(); if (e.key === 'Escape') { setAddingLine(false); setNewLineName('') } }}
+                  placeholder="e.g. Full service" className={`${fieldCls} flex-1 min-w-[14rem]`} />
+                <button onClick={addLine} disabled={busy || !newLineName.trim()} className={btnPrimary}>Add line</button>
+                <button onClick={() => { setAddingLine(false); setNewLineName('') }} className={btnGhost}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {/* Document totals — invoice-style summary */}
+          <div className="flex justify-end">
+            <div className="w-full sm:w-64 text-sm">
+              <div className="flex justify-between py-1 text-gray-500"><span>Labour</span><span className="text-gray-900">{money(totals.labourTotal)}</span></div>
+              <div className="flex justify-between py-1 text-gray-500"><span>Parts</span><span className="text-gray-900">{money(totals.partsTotal)}</span></div>
+              <div className="flex justify-between py-1 text-gray-500"><span>Net</span><span className="text-gray-900">{money(totals.subtotal)}</span></div>
+              <div className="flex justify-between py-1 pb-2 text-gray-500 border-b border-gray-100"><span>VAT</span><span className="text-gray-900">{money(totals.vatAmount)}</span></div>
+              <div className="flex justify-between pt-2 text-base font-semibold text-gray-900"><span>Total inc VAT</span><span>{money(totals.totalIncVat)}</span></div>
+            </div>
           </div>
         </div>
+      )}
+
+      {showPackages && (
+        <PackagePickerModal
+          packages={packages}
+          selectedIds={[]}
+          onClose={() => setShowPackages(false)}
+          onConfirm={addPackages}
+        />
       )}
     </div>
   )
@@ -268,7 +313,7 @@ export default function WorkDetailsPanel({
 
 // ---------------------------------------------------------------------------
 
-function WorkLineCard({
+function WorkLineGroup({
   line, editable, expanded, labourCodes, repairTypes, suppliers,
   onToggle, onDeleteLine, onSetRepairType, onAddLabour, onDeleteLabour, onAddPart, onDeletePart
 }: {
@@ -323,101 +368,135 @@ function WorkLineCard({
     if (ok) setPart({ description: '', quantity: '1', costPrice: '', sellPrice: '', supplierId: '' })
   }
 
-  const inputCls = 'border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary'
+  const compactSelect = 'h-9 rounded-lg border border-[#e4e7ec] bg-white px-2.5 text-sm text-[#16191f] focus:outline-none focus:border-[#16191f] focus:shadow-[0_0_0_3px_rgba(22,25,31,0.08)]'
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <button onClick={onToggle} className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-gray-50 text-left">
-        <div className="flex items-center gap-2 min-w-0">
+    <div>
+      {/* Group header row */}
+      <div className="grid items-center gap-x-2 px-3 py-2.5 hover:bg-gray-50/60" style={{ gridTemplateColumns: GRID_COLS }}>
+        <button onClick={onToggle} className="flex items-center gap-2 min-w-0 overflow-hidden text-left">
           <svg className={`w-4 h-4 text-gray-400 transition-transform shrink-0 ${expanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
           <span className="font-medium text-gray-900 truncate">{line.name}</span>
           {line.origin === 'booking' && <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium shrink-0 bg-indigo-100 text-indigo-700">Booked</span>}
           {line.origin === 'inspection' && <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium shrink-0 bg-gray-100 text-gray-600">Inspection</span>}
-          {line.outcomeStatus === 'authorised' && <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-700 shrink-0">Authorised</span>}
-        </div>
-        <span className="text-sm font-semibold text-gray-900 shrink-0 ml-2">{money(line.totalIncVat)}</span>
-      </button>
+          {line.outcomeStatus === 'authorised' && <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium shrink-0 bg-green-100 text-green-700">Authorised</span>}
+        </button>
+        <span className="text-xs text-gray-400 truncate">{repairType?.code || '—'}</span>
+        <span aria-hidden="true" />
+        <span aria-hidden="true" />
+        <span className="text-right text-sm font-semibold text-gray-900">{money(line.totalIncVat)}</span>
+        <span className="text-right">
+          {editable && <button onClick={onDeleteLine} className="text-gray-300 hover:text-red-600" title="Remove line">✕</button>}
+        </span>
+      </div>
 
       {expanded && (
-        <div className="px-3 pb-3 pt-1 border-t border-gray-100 space-y-3">
+        <div className="pb-3">
           {/* Repair Type — drives the labour rate (locked) */}
-          <div className="flex items-center flex-wrap gap-2 text-sm">
-            <span className="text-xs font-medium text-gray-500">Repair Type</span>
+          <div className="flex items-center flex-wrap gap-2 mx-3 mb-2 px-3 py-2 rounded-lg bg-gray-50/70">
+            <span className="text-xs font-medium text-gray-500">Repair type</span>
             {editable ? (
-              <select value={line.repairTypeId || ''} onChange={e => onSetRepairType(line.id, e.target.value)} className={inputCls}>
+              <select value={line.repairTypeId || ''} onChange={e => onSetRepairType(line.id, e.target.value)} className={compactSelect}>
                 <option value="">— Select —</option>
                 {repairTypes.map(rt => <option key={rt.id} value={rt.id}>{rt.code}</option>)}
               </select>
             ) : (
-              <span className="text-gray-700">{repairType?.code || '—'}</span>
+              <span className="text-sm text-gray-700">{repairType?.code || '—'}</span>
             )}
             {repairType && (lockedCode
               ? <span className="text-xs text-gray-400">Labour @ {money(lockedCode.hourlyRate)}/hr</span>
               : <span className="text-xs text-amber-600">No labour code on this type</span>)}
           </div>
 
-          {/* Labour */}
-          <div>
-            <div className="flex justify-between text-xs font-medium text-gray-500 mb-1"><span>Labour</span><span>{money(line.labourTotal)}</span></div>
-            {line.labour.length === 0 && <p className="text-xs text-gray-400">No labour.</p>}
-            {line.labour.map(l => (
-              <div key={l.id} className="flex items-center justify-between text-sm py-0.5">
-                <span className="text-gray-700 truncate">{l.labourCode?.code || 'Labour'}{l.notes ? ` · ${l.notes}` : ''} · {l.hours}h @ {money(l.rate)}{l.isVatExempt ? ' · VAT exempt' : ''}</span>
-                <span className="flex items-center gap-2 shrink-0">
-                  <span className="text-gray-900">{money(l.total)}</span>
-                  {editable && <button onClick={() => onDeleteLabour(l.id)} className="text-gray-400 hover:text-red-600" title="Delete">✕</button>}
-                </span>
-              </div>
-            ))}
-            {editable && (canAddLabour ? (
-              <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                <span className="text-xs text-gray-500 px-2 py-1 bg-gray-50 rounded shrink-0">{lockedCode!.code} @ {money(lockedCode!.hourlyRate)}/hr</span>
-                <input value={labDesc} onChange={e => setLabDesc(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') submitLabour() }} placeholder="Description" className={`${inputCls} flex-1 min-w-[8rem]`} />
-                <input type="number" step="0.1" min="0" value={labHours} onChange={e => setLabHours(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') submitLabour() }} placeholder="hrs" className={`${inputCls} w-20 text-right`} />
-                <button onClick={submitLabour} disabled={savingLab || !labDesc.trim() || !labHours} className="px-2.5 py-1 bg-gray-100 text-gray-700 text-sm rounded hover:bg-gray-200 disabled:opacity-50">Add labour</button>
-              </div>
-            ) : (
-              <p className="text-xs text-amber-600 mt-1.5">Pick a Repair Type {repairType && !lockedCode ? 'with a default labour code ' : ''}above to add labour.</p>
-            ))}
-          </div>
+          {/* Labour + parts as column-aligned line items */}
+          {line.labour.length === 0 && line.parts.length === 0 && (
+            <p className="px-3 pl-9 py-1 text-xs text-gray-400">No labour or parts yet.</p>
+          )}
+          {line.labour.map(l => (
+            <div key={l.id} className="grid items-center gap-x-2 px-3 py-1.5 text-sm" style={{ gridTemplateColumns: GRID_COLS }}>
+              <span className="truncate pl-6 text-gray-700">{l.notes || l.labourCode?.description || 'Labour'}{l.isVatExempt ? ' · VAT exempt' : ''}</span>
+              <span className="text-xs text-gray-500">Labour</span>
+              <span className="text-right text-gray-600">{l.hours}h</span>
+              <span className="text-right text-gray-600">{money(l.rate)}</span>
+              <span className="text-right text-gray-900">{money(l.total)}</span>
+              <span className="text-right">{editable && <button onClick={() => onDeleteLabour(l.id)} className="text-gray-300 hover:text-red-600" title="Delete">✕</button>}</span>
+            </div>
+          ))}
+          {line.parts.map(p => (
+            <div key={p.id} className="grid items-center gap-x-2 px-3 py-1.5 text-sm" style={{ gridTemplateColumns: GRID_COLS }}>
+              <span className="truncate pl-6 text-gray-700">{p.description}{p.supplierName ? ` · ${p.supplierName}` : ''}</span>
+              <span className="text-xs text-gray-500">Part</span>
+              <span className="text-right text-gray-600">{p.quantity}</span>
+              <span className="text-right text-gray-600">{money(p.sellPrice)}</span>
+              <span className="text-right text-gray-900">{money(p.lineTotal)}</span>
+              <span className="text-right">{editable && <button onClick={() => onDeletePart(p.id)} className="text-gray-300 hover:text-red-600" title="Delete">✕</button>}</span>
+            </div>
+          ))}
 
-          {/* Parts */}
-          <div>
-            <div className="flex justify-between text-xs font-medium text-gray-500 mb-1"><span>Parts</span><span>{money(line.partsTotal)}</span></div>
-            {line.parts.length === 0 && <p className="text-xs text-gray-400">No parts.</p>}
-            {line.parts.map(p => (
-              <div key={p.id} className="flex items-center justify-between text-sm py-0.5">
-                <span className="text-gray-700 truncate">{p.quantity} × {p.description}{p.supplierName ? ` · ${p.supplierName}` : ''}</span>
-                <span className="flex items-center gap-2 shrink-0">
-                  <span className="text-gray-900">{money(p.lineTotal)}</span>
-                  {editable && <button onClick={() => onDeletePart(p.id)} className="text-gray-400 hover:text-red-600" title="Delete">✕</button>}
-                </span>
-              </div>
-            ))}
-            {editable && (
-              <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                <input value={part.description} onChange={e => setPart({ ...part, description: e.target.value })} placeholder="Part description" className={`${inputCls} flex-1 min-w-[8rem]`} />
-                <input type="number" step="1" min="0" value={part.quantity} onChange={e => setPart({ ...part, quantity: e.target.value })} placeholder="qty" className={`${inputCls} w-16 text-right`} />
-                <input type="number" step="0.01" min="0" value={part.costPrice} onChange={e => setPart({ ...part, costPrice: e.target.value })} placeholder="cost" className={`${inputCls} w-20 text-right`} />
-                <input type="number" step="0.01" min="0" value={part.sellPrice} onChange={e => setPart({ ...part, sellPrice: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') submitPart() }} placeholder="sell" className={`${inputCls} w-20 text-right`} />
-                <select value={part.supplierId} onChange={e => setPart({ ...part, supplierId: e.target.value })} className={inputCls}>
-                  <option value="">Supplier…</option>
-                  {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-                {margin != null && <span className="text-xs text-gray-400">{margin.toFixed(0)}% margin</span>}
-                <button onClick={submitPart} disabled={savingPart || !part.description.trim() || part.sellPrice === ''} className="px-2.5 py-1 bg-gray-100 text-gray-700 text-sm rounded hover:bg-gray-200 disabled:opacity-50">Add part</button>
-              </div>
-            )}
-          </div>
+          {/* Entry panels — roomy, labelled fields */}
+          {editable && (
+            <div className="mx-3 mt-2 space-y-2">
+              {/* Add labour */}
+              {canAddLabour ? (
+                <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/60 p-3">
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="flex-1 min-w-[12rem]">
+                      <label className={labelMini}>Labour · {lockedCode!.code} @ {money(lockedCode!.hourlyRate)}/hr</label>
+                      <input value={labDesc} onChange={e => setLabDesc(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') submitLabour() }} placeholder="Description" className={fieldCls} />
+                    </div>
+                    <div className="w-24">
+                      <label className={labelMini}>Hours</label>
+                      <input type="number" step="0.1" min="0" value={labHours} onChange={e => setLabHours(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') submitLabour() }} placeholder="0.0" className={`${fieldCls} text-right`} />
+                    </div>
+                    <button onClick={submitLabour} disabled={savingLab || !labDesc.trim() || !labHours} className={btnPrimary}>Add labour</button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-amber-600 px-1">Pick a repair type {repairType && !lockedCode ? 'with a default labour code ' : ''}above to add labour.</p>
+              )}
 
-          {/* Line totals + remove */}
-          <div className="flex items-center justify-between border-t border-gray-100 pt-2">
-            <div className="text-xs text-gray-500">Net {money(line.subtotal)} · VAT {money(line.vatAmount)}</div>
-            {editable
-              ? <button onClick={onDeleteLine} className="text-xs text-red-600 hover:underline">Remove line</button>
-              : <span className="text-xs text-gray-400">Edit in VHC</span>}
+              {/* Add part */}
+              <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/60 p-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-2 gap-y-2 items-end">
+                  <div className="col-span-2">
+                    <label className={labelMini}>Part description</label>
+                    <input value={part.description} onChange={e => setPart({ ...part, description: e.target.value })} placeholder="Part description" className={fieldCls} />
+                  </div>
+                  <div>
+                    <label className={labelMini}>Qty</label>
+                    <input type="number" step="1" min="0" value={part.quantity} onChange={e => setPart({ ...part, quantity: e.target.value })} className={`${fieldCls} text-right`} />
+                  </div>
+                  <div>
+                    <label className={labelMini}>Supplier</label>
+                    <select value={part.supplierId} onChange={e => setPart({ ...part, supplierId: e.target.value })} className={fieldCls}>
+                      <option value="">—</option>
+                      {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelMini}>Cost £</label>
+                    <input type="number" step="0.01" min="0" value={part.costPrice} onChange={e => setPart({ ...part, costPrice: e.target.value })} placeholder="0.00" className={`${fieldCls} text-right`} />
+                  </div>
+                  <div>
+                    <label className={labelMini}>Sell £{margin != null ? ` · ${margin.toFixed(0)}%` : ''}</label>
+                    <input type="number" step="0.01" min="0" value={part.sellPrice} onChange={e => setPart({ ...part, sellPrice: e.target.value })}
+                      onKeyDown={e => { if (e.key === 'Enter') submitPart() }} placeholder="0.00" className={`${fieldCls} text-right`} />
+                  </div>
+                  <div className="col-span-2 flex items-end justify-end">
+                    <button onClick={submitPart} disabled={savingPart || !part.description.trim() || part.sellPrice === ''} className={btnPrimary}>Add part</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Line subtotal */}
+          <div className="flex items-center justify-end gap-3 px-3 pt-2 mt-1 text-xs text-gray-500">
+            <span>Net {money(line.subtotal)}</span>
+            <span>VAT {money(line.vatAmount)}</span>
+            {!editable && <span className="text-gray-400">Edit in VHC</span>}
           </div>
         </div>
       )}

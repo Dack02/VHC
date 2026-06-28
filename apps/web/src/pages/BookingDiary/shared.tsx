@@ -1,15 +1,75 @@
 // Shared presentation pieces for the Booking Diary views (Week / Agenda /
 // Grouped / Table). Kept in one place so every view renders bookings, badges,
 // load bars and capacity figures identically.
-import { useState, type ReactNode } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { jobPath } from '../../lib/jobLink'
+import { useAuth } from '../../contexts/AuthContext'
+import { api } from '../../lib/api'
 import DmsBookingModal from './DmsBookingModal'
 import { useDiaryDay } from './useDiaryData'
 import {
   formatTime, loadTone, barClassFor, bandTextClass, statusStripeClass,
   type DiaryBooking, type CapacityBand
 } from './types'
+
+// Per-category capacity for a day (Resource Manager). Counter chips show booked
+// vs the category's job cap (or hours), so a day filling with one job type shows.
+interface DayCatChip {
+  repairTypeId: string
+  label: string
+  colour: string
+  bookedHours: number
+  bookedJobs: number
+  hoursCeiling: number
+  jobCeiling: number | null
+  hardCapJobs: number | null
+}
+
+function chipTone(ratio: number): string {
+  if (ratio >= 1) return 'bg-rag-red/10 text-rag-red'
+  if (ratio >= 0.85) return 'bg-rag-amber/10 text-rag-amber'
+  return 'bg-gray-100 text-gray-600'
+}
+
+// Category counter chips for a day's drill-in (e.g. "MOT 4/16 · Diag 9/15").
+function CategoryCounters({ date }: { date: string }) {
+  const { session, user } = useAuth()
+  const [cats, setCats] = useState<DayCatChip[] | null>(null)
+
+  useEffect(() => {
+    const token = session?.accessToken
+    if (!token) return
+    let cancelled = false
+    const params = new URLSearchParams({ date })
+    if (user?.site?.id) params.set('siteId', user.site.id)
+    api<{ capacity: { categories: DayCatChip[] } }>(`/api/v1/resource-manager/capacity/day?${params}`, { token })
+      .then(r => { if (!cancelled) setCats(r.capacity.categories) })
+      .catch(() => { if (!cancelled) setCats([]) })
+    return () => { cancelled = true }
+  }, [date, session?.accessToken, user?.site?.id])
+
+  if (!cats) return null
+  const shown = cats.filter(c => c.bookedJobs > 0 || c.jobCeiling != null || c.hardCapJobs != null)
+  if (!shown.length) return null
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {shown.map(c => {
+        const cap = c.hardCapJobs ?? c.jobCeiling
+        const label = cap != null
+          ? `${c.label} ${c.bookedJobs}/${cap}`
+          : c.hoursCeiling > 0 ? `${c.label} ${c.bookedHours}/${c.hoursCeiling}h` : `${c.label} ${c.bookedHours}h`
+        const ratio = cap != null ? (cap > 0 ? c.bookedJobs / cap : 0) : (c.hoursCeiling > 0 ? c.bookedHours / c.hoursCeiling : 0)
+        return (
+          <span key={c.repairTypeId} className={`px-1.5 py-0.5 rounded-full text-[11px] font-medium ${chipTone(ratio)}`}>
+            {label}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
 
 export type Density = 'normal' | 'compact'
 
@@ -223,7 +283,7 @@ export function DayDetail({ date, density }: { date: string; density: Density })
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
         <h2 className="text-base font-semibold text-gray-900">{heading}</h2>
         {detail && (
           <CapacityFigures
@@ -235,6 +295,7 @@ export function DayDetail({ date, density }: { date: string; density: Density })
           />
         )}
       </div>
+      <div className="mb-4"><CategoryCounters date={date} /></div>
 
       {loading && !detail ? (
         <Spinner />

@@ -152,7 +152,10 @@ export interface DayCategory {
   repairTypeId: string
   primarySupplyHours: number
   eligibleSupplyHours: number
+  hoursCeiling: number        // eligible hours × target loading (the category's bookable hours)
   jobCeiling: number | null   // summed per-tech daily_job_cap (null = uncapped)
+  hardCapJobs: number | null  // site/physical hard cap (e.g. MOT bay)
+  enforcement: 'soft' | 'hard'
   bookedHours: number
   bookedJobs: number
   hold: number                // protected hours for this pool right now
@@ -216,7 +219,10 @@ export async function getDayCapacity(orgId: string, siteId: string, date: string
       repairTypeId: rtId,
       primarySupplyHours: round2(primaryHours),
       eligibleSupplyHours: round2(eligibleHours),
+      hoursCeiling: round2(eligibleHours * config.targetLoadingPct),
       jobCeiling,
+      hardCapJobs: q.hardCapJobs,
+      enforcement: q.enforcement,
       bookedHours: round2(b.hours),
       bookedJobs: b.jobs,
       hold: round2(hold)

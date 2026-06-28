@@ -704,6 +704,23 @@ repairItemsRouter.patch('/repair-items/:id', authorize(['super_admin', 'org_admi
     // new type's rate so a reclassified group bills consistently (the lock's core invariant).
     if (setRepairType) {
       await reRateLabourForRepairItem(id, auth.orgId)
+      // Stamp the parent booking's dominant category for capacity/quota counting
+      // (Resource Manager). First category wins — don't clobber an existing value.
+      // Best-effort: never fail pricing if the column isn't deployed yet.
+      if (repairTypeId) {
+        const parentTable = item.health_check_id ? 'health_checks' : item.jobsheet_id ? 'jobsheets' : null
+        const parentId = item.health_check_id || item.jobsheet_id
+        if (parentTable && parentId) {
+          try {
+            await supabaseAdmin
+              .from(parentTable)
+              .update({ primary_repair_type_id: repairTypeId })
+              .eq('id', parentId)
+              .eq('organization_id', auth.orgId)
+              .is('primary_repair_type_id', null)
+          } catch { /* primary_repair_type_id stamping is best-effort */ }
+        }
+      }
       const { data: refreshed } = await supabaseAdmin
         .from('repair_items')
         .select()

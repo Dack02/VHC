@@ -509,8 +509,16 @@ resourceManager.get('/capacity/day', authorize([...ADVISOR_ROLES]), async (c) =>
   const date = c.req.query('date')
   if (!date || !DATE_RE.test(date)) return c.json({ error: 'date (YYYY-MM-DD) is required' }, 400)
 
-  const capacity = await getDayCapacity(auth.orgId, siteId, date)
-  return c.json({ siteId, capacity })
+  const [capacity, { data: rts }] = await Promise.all([
+    getDayCapacity(auth.orgId, siteId, date),
+    supabaseAdmin.from('repair_types').select('id, code, label, colour').eq('organization_id', auth.orgId)
+  ])
+  const meta = new Map((rts || []).map((r: any) => [r.id, { code: r.code, label: r.label ?? r.code, colour: r.colour }]))
+  const categories = capacity.categories.map(cat => {
+    const m = meta.get(cat.repairTypeId)
+    return { ...cat, code: m?.code ?? null, label: m?.label ?? 'Other', colour: m?.colour ?? '#9ca3af' }
+  })
+  return c.json({ siteId, capacity: { ...capacity, categories } })
 })
 
 // POST /can-book?siteId=...  body {repairTypeId, hours, date} → verdict

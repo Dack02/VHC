@@ -3,6 +3,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
 import SettingsBackLink from '../../components/SettingsBackLink'
+import { Tooltip } from '../../components/ui/Tooltip'
 
 // Mirrors services/resource-config.ts (camelCase). P0 wires `targetLoadingPct`
 // into the Booking Diary's RAG banding; the lead-time + drop-off fields are saved
@@ -41,9 +42,18 @@ interface QuotaRow {
   staffed: { primaryHours: number; eligibleHours: number; jobCeiling: number | null }
 }
 
-const FieldLabel = ({ children, hint }: { children: React.ReactNode; hint?: string }) => (
+const FieldLabel = ({ children, hint, tip }: { children: React.ReactNode; hint?: string; tip?: string }) => (
   <label className="block text-sm font-medium text-gray-700 mb-1">
-    {children}
+    <span className="inline-flex items-center gap-1">
+      {children}
+      {tip && (
+        <Tooltip content={tip} className="cursor-help inline-flex" tabIndex={0}>
+          <svg className="w-3.5 h-3.5 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9 9a1 1 0 011-1h.01a1 1 0 01.99 1v4a1 1 0 11-2 0V9zm1-4a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd" />
+          </svg>
+        </Tooltip>
+      )}
+    </span>
     {hint && <span className="block text-xs font-normal text-gray-500 mt-0.5">{hint}</span>}
   </label>
 )
@@ -233,7 +243,10 @@ export default function ResourceManager() {
                 className={inputCls} />
             </div>
             <div>
-              <FieldLabel hint="Days over which category protection decays.">Release window (days)</FieldLabel>
+              <FieldLabel
+                hint="Days over which category protection decays."
+                tip={"How long before a day a category stops guarding its spare hours.\n\nFar out, each lane's unbooked hours are reserved for its own work (e.g. MOT slots kept free for MOTs). As the day gets closer and those hours stay unbooked, that protection winds down to zero across this window — so any job can fill the bay instead of leaving it empty.\n\nLower = release sooner (protect less). 0 = never hold capacity back."}
+              >Release window (days)</FieldLabel>
               <input type="number" min={0} max={60} value={config.releaseWindowDays}
                 onChange={e => set('releaseWindowDays', Math.max(0, Math.round(Number(e.target.value) || 0)))}
                 className={inputCls} />

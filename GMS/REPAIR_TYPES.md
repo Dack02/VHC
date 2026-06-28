@@ -1,12 +1,12 @@
 # GMS — Repair Types + Main Booking Requirement (Plan)
 
-> Branch: work on `dev` · Status: **P1 + P2 DONE & VERIFIED (uncommitted, 2026-06-26)** — P1 foundation;
-> P2 labour-lock complete across the server (resolveLockedRate + 400 gate + PATCH snapshot + re-rate on
-> type change), the shared jobsheet/estimate `WorkDetailsPanel`, AND the VHC `LabourTab` (group-header +
-> single-item Repair Type selectors, read-only locked code on child/group-labour rows, AddOtherLabour
-> modal converted). API `tsc` + web `vite build` both green (0 errors). Migration
-> `20260628130000_repair_types.sql` pending pipeline deploy. P2.5 (packages) + P3 (VHC defaults) + P4
-> (reporting) not started. Audit gaps closed in §14. · Author: Leo + Claude
+> Branch: work on `dev` · Status: **P1 + P2 + P2.5 DONE & VERIFIED (uncommitted, 2026-06-26)** — P1
+> foundation; P2 labour-lock across server (resolveLockedRate + 400 gate + PATCH snapshot + re-rate),
+> shared jobsheet/estimate `WorkDetailsPanel`, AND VHC `LabourTab`; P2.5 packages (one type per package,
+> apply stamps type + bills at the locked rate, builder retypes from a Repair Type selector, labour code
+> retired). API `tsc` + web `vite build` both green (0 errors). Migrations
+> `20260628130000_repair_types.sql` + `20260628150000_repair_types_packages.sql` pending pipeline deploy.
+> P3 (VHC defaults) + P4 (reporting) not started. Audit gaps closed in §14. · Author: Leo + Claude
 > Companion to [`JOBSHEET.md`](./JOBSHEET.md), [`WORK_DETAILS.md`](./WORK_DETAILS.md), [`ESTIMATES.md`](./ESTIMATES.md).
 
 ## 0. TL;DR
@@ -378,9 +378,14 @@ the Parts module, §4.4/§12.) Deploy via the pipeline (`supabase db push`), **n
     `saveRowLabour` drops `labour_code_id` (server resolves); `setItemRepairType` PATCH; the **AddOtherLabour
     modal** now picks a Repair Type (not a code). `api.ts` `NewRepairItem`/`RepairItemChild` carry
     `repairTypeId`. (CreateRepairGroupModal default-type pre-fill is P3.)
-- **P2.5 — Packages:** `service_packages.default_repair_type_id` (+ CRUD/builder) + **stamp-before-apply** in
-  all four wrappers + apply-path rate-from-type + retire per-line labour-code column + legacy backfill/flag
-  (§5.2).
+- **P2.5 — Packages:** ✅ DONE & VERIFIED (2026-06-26 — API `tsc` + web build green). Migration
+  `20260628150000_repair_types_packages.sql` (labour_code_id → nullable + dominant-code backfill of
+  `default_repair_type_id`, single-VAT only). `applyServicePackageToRepairItem` **stamps the package's type
+  onto the group (if untyped) then bills all package labour at the resolved locked rate** — so all four
+  callers (jobsheet/estimate wrappers, manual apply, MRI) get it via the one service. `service-packages`
+  CRUD accepts/returns `defaultRepairTypeId`, labour code now optional. Builder (`ServicePackages.tsx`) gains
+  a package-level **Repair Type** selector, retires the per-line labour-code + rate inputs (rate shown
+  read-only from the type), validates a type when labour exists. Combined "Service & MOT" = two packages.
 - **P3 — VHC defaults + auto-create:** `template_items.repair_type_id` in TemplateBuilder + clone/seed; derive
   in `CreateRepairGroupModal.tsx`; **stamp a type in ALL server-side creation paths** — `autoGenerate`,
   generate route, MRI (from package), MOT-failure (MOT type) (§6).

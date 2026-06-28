@@ -8,6 +8,13 @@ interface LabourCode {
   code: string
   description: string
   hourlyRate: number
+  isVatExempt: boolean
+}
+
+interface RepairTypeOpt {
+  id: string
+  code: string
+  defaultLabourCodeId: string | null
 }
 
 interface Supplier {
@@ -46,6 +53,7 @@ interface ServicePackage {
   id: string
   name: string
   description: string | null
+  defaultRepairTypeId: string | null
   labour: Array<{
     id: string
     labourCodeId: string
@@ -305,6 +313,7 @@ export default function ServicePackages() {
   const toast = useToast()
   const [packages, setPackages] = useState<ServicePackage[]>([])
   const [labourCodes, setLabourCodes] = useState<LabourCode[]>([])
+  const [repairTypes, setRepairTypes] = useState<RepairTypeOpt[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [catalogEntries, setCatalogEntries] = useState<CatalogEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -316,6 +325,7 @@ export default function ServicePackages() {
   // Form state
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [selectedRepairTypeId, setSelectedRepairTypeId] = useState('')
   const [labourEntries, setLabourEntries] = useState<PackageLabour[]>([])
   const [partsEntries, setPartsEntries] = useState<PackagePart[]>([])
   const [formError, setFormError] = useState('')
@@ -326,6 +336,7 @@ export default function ServicePackages() {
     if (organizationId) {
       fetchPackages()
       fetchLabourCodes()
+      fetchRepairTypes()
       fetchSuppliers()
       fetchPartsCatalog()
       fetchPricingSettings()
@@ -358,6 +369,19 @@ export default function ServicePackages() {
       setLabourCodes(data.labourCodes || [])
     } catch {
       // Silently fail - labour codes are optional
+    }
+  }
+
+  const fetchRepairTypes = async () => {
+    if (!session?.accessToken) return
+    try {
+      const data = await api<{ repairTypes: RepairTypeOpt[] }>(
+        `/api/v1/repair-types?active_only=true`,
+        { token: session.accessToken }
+      )
+      setRepairTypes(data.repairTypes || [])
+    } catch {
+      // Silently fail
     }
   }
 
@@ -405,6 +429,7 @@ export default function ServicePackages() {
       setEditingPackage(pkg)
       setName(pkg.name)
       setDescription(pkg.description || '')
+      setSelectedRepairTypeId(pkg.defaultRepairTypeId || '')
       setLabourEntries(
         pkg.labour.map(l => ({
           labourCodeId: l.labourCodeId,
@@ -431,6 +456,7 @@ export default function ServicePackages() {
       setEditingPackage(null)
       setName('')
       setDescription('')
+      setSelectedRepairTypeId('')
       setLabourEntries([])
       setPartsEntries([])
     }
@@ -453,12 +479,10 @@ export default function ServicePackages() {
       return
     }
 
-    // Validate labour entries
-    for (const l of labourEntries) {
-      if (!l.labourCodeId) {
-        setFormError('All labour entries must have a labour code selected')
-        return
-      }
+    // Labour is locked to the package's Repair Type — require one if there's any labour.
+    if (labourEntries.length > 0 && !selectedRepairTypeId) {
+      setFormError('Pick a Repair Type for this package — it sets the labour rate')
+      return
     }
 
     // Validate parts entries
@@ -476,12 +500,13 @@ export default function ServicePackages() {
       const payload = {
         name: name.trim(),
         description: description.trim() || null,
+        defaultRepairTypeId: selectedRepairTypeId || null,
         labour: labourEntries.map(l => ({
-          labour_code_id: l.labourCodeId,
-          rate: l.rate !== '' ? parseFloat(l.rate) || null : null,
+          labour_code_id: null,
+          rate: null,
           hours: isNaN(parseFloat(l.hours)) ? 1 : parseFloat(l.hours),
           discount_percent: parseFloat(l.discountPercent) || 0,
-          is_vat_exempt: l.isVatExempt,
+          is_vat_exempt: false,
           notes: l.notes.trim() || null
         })),
         parts: partsEntries.map(p => ({
@@ -544,17 +569,24 @@ export default function ServicePackages() {
 
   const vatRate = pricingSettings?.vatRate ?? 20
 
+  // Labour rate is locked to the package's Repair Type → its default labour code (rate + VAT).
+  const lockedCodeFor = (repairTypeId: string | null) => {
+    const rt = repairTypes.find(t => t.id === repairTypeId)
+    return rt?.defaultLabourCodeId ? (labourCodes.find(c => c.id === rt.defaultLabourCodeId) || null) : null
+  }
+  const lockedCode = lockedCodeFor(selectedRepairTypeId || null)
+
   // Package total calculations
   const packageTotals = useMemo(() => {
     let labourTotal = 0
     let labourVat = 0
     labourEntries.forEach(l => {
-      const rate = parseFloat(l.rate) || 0
+      const rate = lockedCode?.hourlyRate || 0
       const hours = parseFloat(l.hours) || 0
       const discountPct = parseFloat(l.discountPercent) || 0
       const lineTotal = rate * hours * (1 - discountPct / 100)
       labourTotal += lineTotal
-      if (!l.isVatExempt) labourVat += lineTotal * (vatRate / 100)
+      if (!lockedCode?.isVatExempt) labourVat += lineTotal * (vatRate / 100)
     })
     const partsTotal = partsEntries.reduce((sum, p) => {
       const qty = parseFloat(p.quantity) || 0
@@ -566,7 +598,7 @@ export default function ServicePackages() {
     const totalVat = labourVat + partsVat
     const totalIncVat = subtotal + totalVat
     return { labourTotal, partsTotal, subtotal, totalVat, totalIncVat }
-  }, [labourEntries, partsEntries, vatRate])
+  }, [labourEntries, partsEntries, vatRate, lockedCode])
 
   // Parts entry helpers
   const addPart = () => setPartsEntries([...partsEntries, emptyPart()])
@@ -576,13 +608,15 @@ export default function ServicePackages() {
   }
 
   const calcPackageTotalIncVat = (pkg: ServicePackage) => {
+    const code = lockedCodeFor(pkg.defaultRepairTypeId)
     let labourExVat = 0
     let labourVat = 0
     pkg.labour.forEach(l => {
-      const rate = l.rate ?? l.labourCode?.hourlyRate ?? 0
+      const rate = code?.hourlyRate ?? l.rate ?? l.labourCode?.hourlyRate ?? 0
       const lineTotal = rate * l.hours * (1 - l.discountPercent / 100)
       labourExVat += lineTotal
-      if (!l.isVatExempt) labourVat += lineTotal * (vatRate / 100)
+      const exempt = code ? code.isVatExempt : l.isVatExempt
+      if (!exempt) labourVat += lineTotal * (vatRate / 100)
     })
     const partsExVat = pkg.parts.reduce((sum, p) => sum + p.quantity * p.sellPrice, 0)
     const partsVat = partsExVat * (vatRate / 100)
@@ -727,6 +761,24 @@ export default function ServicePackages() {
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Repair Type <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={selectedRepairTypeId}
+                      onChange={e => setSelectedRepairTypeId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+                    >
+                      <option value="">Select a repair type…</option>
+                      {repairTypes.map(rt => <option key={rt.id} value={rt.id}>{rt.code}</option>)}
+                    </select>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {lockedCode
+                        ? `Labour bills at ${'£'}${lockedCode.hourlyRate.toFixed(2)}/hr (${lockedCode.code}). Manage codes under Settings → Labour Codes.`
+                        : 'Sets the labour rate for every line in this package.'}
+                    </p>
+                  </div>
                 </div>
 
                 {/* Labour Section */}
@@ -751,39 +803,11 @@ export default function ServicePackages() {
                       {labourEntries.map((entry, i) => (
                         <div key={i} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                           <div className="grid grid-cols-12 gap-2 items-end">
-                            <div className="col-span-4">
-                              <label className="block text-xs text-gray-500 mb-1">Labour Code</label>
-                              <select
-                                value={entry.labourCodeId}
-                                onChange={e => {
-                                  const selectedId = e.target.value
-                                  const lc = labourCodes.find(c => c.id === selectedId)
-                                  setLabourEntries(labourEntries.map((l, idx) => idx === i
-                                    ? { ...l, labourCodeId: selectedId, rate: lc ? lc.hourlyRate.toString() : l.rate }
-                                    : l
-                                  ))
-                                }}
-                                className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                              >
-                                <option value="">Select...</option>
-                                {labourCodes.map(lc => (
-                                  <option key={lc.id} value={lc.id}>
-                                    {lc.code} - {lc.description} ({'\u00A3'}{lc.hourlyRate.toFixed(2)}/hr)
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="col-span-2">
-                              <label className="block text-xs text-gray-500 mb-1">Rate ({'\u00A3'}/hr)</label>
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                value={entry.rate}
-                                onChange={e => updateLabour(i, 'rate', e.target.value)}
-                                placeholder="0.00"
-                                className="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                              />
+                            <div className="col-span-6">
+                              <label className="block text-xs text-gray-500 mb-1">Rate (from Repair Type)</label>
+                              <div className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-gray-100 text-gray-600">
+                                {lockedCode ? `${lockedCode.code} \u00B7 ${'\u00A3'}${lockedCode.hourlyRate.toFixed(2)}/hr` : 'Pick a Repair Type above'}
+                              </div>
                             </div>
                             <div className="col-span-1">
                               <label className="block text-xs text-gray-500 mb-1">Hours</label>

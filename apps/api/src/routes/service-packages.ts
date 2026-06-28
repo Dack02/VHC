@@ -43,6 +43,7 @@ servicePackages.get('/', async (c) => {
         id: pkg.id,
         name: pkg.name,
         description: pkg.description,
+        defaultRepairTypeId: pkg.default_repair_type_id ?? null,
         isActive: pkg.is_active,
         sortOrder: pkg.sort_order,
         createdAt: pkg.created_at,
@@ -98,6 +99,7 @@ servicePackages.post('/', authorize(['super_admin', 'org_admin']), async (c) => 
     }
 
     const { name, description, labour, parts } = body
+    const defaultRepairTypeId = body.defaultRepairTypeId ?? body.default_repair_type_id ?? null
 
     if (!name?.trim()) {
       return c.json({ error: 'Name is required' }, 400)
@@ -121,6 +123,7 @@ servicePackages.post('/', authorize(['super_admin', 'org_admin']), async (c) => 
         organization_id: orgId,
         name: name.trim(),
         description: description?.trim() || null,
+        default_repair_type_id: defaultRepairTypeId || null,
         sort_order: nextSortOrder,
         created_by: auth.user.id
       })
@@ -139,7 +142,7 @@ servicePackages.post('/', authorize(['super_admin', 'org_admin']), async (c) => 
     if (labour && Array.isArray(labour) && labour.length > 0) {
       const labourRows = labour.map((l: Record<string, unknown>, i: number) => ({
         service_package_id: pkg.id,
-        labour_code_id: l.labour_code_id,
+        labour_code_id: l.labour_code_id ?? null,
         hours: isNaN(parseFloat(l.hours as string)) ? 1 : parseFloat(l.hours as string),
         discount_percent: parseFloat(l.discount_percent as string) || 0,
         is_vat_exempt: l.is_vat_exempt || false,
@@ -213,11 +216,13 @@ servicePackages.patch('/:id', authorize(['super_admin', 'org_admin']), async (c)
     }
 
     const { name, description, labour, parts } = body
+    const defaultRepairTypeId = body.defaultRepairTypeId ?? body.default_repair_type_id
 
     // Update package fields
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() }
     if (name !== undefined) updateData.name = name.trim()
     if (description !== undefined) updateData.description = description?.trim() || null
+    if (defaultRepairTypeId !== undefined) updateData.default_repair_type_id = defaultRepairTypeId || null
 
     const { error: updateError } = await supabaseAdmin
       .from('service_packages')
@@ -242,7 +247,7 @@ servicePackages.patch('/:id', authorize(['super_admin', 'org_admin']), async (c)
       if (labour.length > 0) {
         const labourRows = labour.map((l: Record<string, unknown>, i: number) => ({
           service_package_id: packageId,
-          labour_code_id: l.labour_code_id,
+          labour_code_id: l.labour_code_id ?? null,
           hours: isNaN(parseFloat(l.hours as string)) ? 1 : parseFloat(l.hours as string),
           discount_percent: parseFloat(l.discount_percent as string) || 0,
           is_vat_exempt: l.is_vat_exempt || false,

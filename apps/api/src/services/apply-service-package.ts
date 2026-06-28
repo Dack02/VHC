@@ -4,6 +4,7 @@
  */
 
 import { supabaseAdmin } from '../lib/supabase.js'
+import { resolveLockedRate } from '../routes/repair-items/helpers.js'
 
 interface ApplyResult {
   labourInserted: number
@@ -26,7 +27,7 @@ export async function applyServicePackageToRepairItem(
   const { data: pkg, error: pkgError } = await supabaseAdmin
     .from('service_packages')
     .select(`
-      id, name, organization_id,
+      id, name, organization_id, default_repair_type_id,
       labour:service_package_labour(
         labour_code_id, hours, discount_percent, is_vat_exempt, notes, rate
       ),
@@ -43,47 +44,48 @@ export async function applyServicePackageToRepairItem(
     return null
   }
 
+  // Lock model: stamp the package's Repair Type onto the group (only if untyped — respects an advisor's
+  // existing choice / manual-apply-to-an-already-typed item), then resolve the locked rate from the group's
+  // type. ALL package labour bills at that rate; the package's per-line labour codes are legacy/ignored.
+  if (pkg.default_repair_type_id) {
+    await supabaseAdmin
+      .from('repair_items')
+      .update({ repair_type_id: pkg.default_repair_type_id })
+      .eq('id', repairItemId)
+      .eq('organization_id', organizationId)
+      .is('repair_type_id', null)
+  }
+  const lockedRate = await resolveLockedRate({ itemId: repairItemId }, organizationId)
+
   let labourInserted = 0
   let partsInserted = 0
 
-  // Insert labour entries — use stored rate from package, fall back to labour_codes rate
-  if (pkg.labour && Array.isArray(pkg.labour) && pkg.labour.length > 0) {
+  // Insert labour entries — rate/VAT/code come from the group's Repair Type (the lock), not the package.
+  if (lockedRate && pkg.labour && Array.isArray(pkg.labour) && pkg.labour.length > 0) {
     for (const l of pkg.labour as Array<Record<string, unknown>>) {
-      const { data: labourCode } = await supabaseAdmin
-        .from('labour_codes')
-        .select('id, hourly_rate, is_vat_exempt')
-        .eq('id', l.labour_code_id as string)
-        .eq('organization_id', organizationId)
-        .single()
-
-      if (!labourCode) continue // skip if labour code no longer exists
-
-      // Prefer stored package rate; fall back to current labour code rate for legacy packages
-      const storedRate = l.rate != null ? parseFloat(l.rate as string) : null
-      const rate = storedRate != null && !isNaN(storedRate) && storedRate > 0
-        ? storedRate
-        : parseFloat(labourCode.hourly_rate)
       const hours = isNaN(parseFloat(l.hours as string)) ? 1 : parseFloat(l.hours as string)
       const discountPct = parseFloat(l.discount_percent as string) || 0
-      const subtotal = rate * hours
+      const subtotal = lockedRate.rate * hours
       const total = subtotal * (1 - discountPct / 100)
 
       const { error: insertError } = await supabaseAdmin
         .from('repair_labour')
         .insert({
           repair_item_id: repairItemId,
-          labour_code_id: l.labour_code_id,
+          labour_code_id: lockedRate.labourCodeId,
           hours,
-          rate,
+          rate: lockedRate.rate,
           discount_percent: discountPct,
           total,
-          is_vat_exempt: labourCode.is_vat_exempt,
+          is_vat_exempt: lockedRate.isVatExempt,
           notes: (l.notes as string)?.trim() || null,
           created_by: createdByUserId
         })
 
       if (!insertError) labourInserted++
     }
+  } else if (pkg.labour && Array.isArray(pkg.labour) && pkg.labour.length > 0) {
+    console.warn(`Service package "${pkg.name}" has labour but the target group has no resolvable Repair Type — labour skipped (set a default Repair Type on the package or the group).`)
   }
 
   // Insert parts entries

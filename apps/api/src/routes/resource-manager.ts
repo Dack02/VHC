@@ -17,7 +17,7 @@ import { loadSiteConfig, type ResourceSiteConfig } from '../services/resource-co
 import {
   loadCategoryQuotas, defaultQuota, getSkillCapacity,
   getDayCapacity, canBook,
-  resolveBookingJobForParent, resolveBookingJobByType, getAvailabilityStrip,
+  resolveBookingJobForParent, resolveBookingJobByType, getAvailabilityStrip, getCapacityStrip,
   type BookingJob, type ParentRef
 } from '../services/resource-capacity.js'
 
@@ -548,26 +548,50 @@ resourceManager.post('/availability', authorize([...ADVISOR_ROLES]), async (c) =
   let body: any
   try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
   const fromDate = (typeof body.fromDate === 'string' && DATE_RE.test(body.fromDate)) ? body.fromDate : undefined
-  const siteHint = await resolveSiteId(c)
+  // Only treat ?siteId as an explicit override; without it, a parent (estimate/HC) keeps
+  // its own site rather than defaulting to the caller's. The repair-type path uses the
+  // caller's site.
+  const explicitSite = c.req.query('siteId') ? await resolveSiteId(c) : null
 
-  let job: BookingJob | null
+  let job: BookingJob | null = null
   if (body.jobsheetId || body.estimateId || body.healthCheckId) {
     const parent: ParentRef = body.jobsheetId ? { kind: 'jobsheet', id: String(body.jobsheetId) }
       : body.estimateId ? { kind: 'estimate', id: String(body.estimateId) }
       : { kind: 'health_check', id: String(body.healthCheckId) }
-    job = await resolveBookingJobForParent(auth.orgId, parent, siteHint)
-    if (!job) return c.json({ resolved: false, reason: 'Add priced work with a repair type to see availability' })
-  } else {
-    if (!body.repairTypeId) return c.json({ error: 'repairTypeId or a parent id (jobsheetId/estimateId/healthCheckId) is required' }, 400)
-    if (!siteHint) return c.json({ error: 'No site selected' }, 400)
-    job = await resolveBookingJobByType(auth.orgId, siteHint, String(body.repairTypeId), Number(body.hours) || undefined)
+    job = await resolveBookingJobForParent(auth.orgId, parent, explicitSite)
+    // No priced repair-type work yet → fall through to the capacity-only strip below.
+  } else if (body.repairTypeId) {
+    const siteId = explicitSite ?? auth.user.siteId
+    if (!siteId) return c.json({ error: 'No site selected' }, 400)
+    job = await resolveBookingJobByType(auth.orgId, siteId, String(body.repairTypeId), Number(body.hours) || undefined)
     if (!job) return c.json({ error: 'Repair type not found' }, 404)
+  }
+
+  // Capacity-only mode: no job resolves yet, but we can still show the workshop's
+  // day-by-day load + a "soonest day with room" recommendation off the site alone,
+  // so the picker never has to fall back to a bare date field. Category quotas /
+  // skill checks don't apply until there's a job. Needs a known site.
+  if (!job) {
+    const siteId = explicitSite ?? auth.user.siteId
+    if (!siteId) return c.json({ resolved: false, capacityOnly: false, reason: 'Add priced work with a repair type to see availability' })
+    const config = await loadSiteConfig(auth.orgId, siteId)
+    const strip = await getCapacityStrip(auth.orgId, siteId, { fromDate })
+    return c.json({
+      resolved: false,
+      capacityOnly: true,
+      siteId,
+      job: null,
+      dropoffWindow: { start: config.dropoffWindowStart, end: config.dropoffWindowEnd, intervalMinutes: config.dropoffSlotIntervalMinutes },
+      leadTimeDays: config.bookingLeadTimeDays,
+      ...strip
+    })
   }
 
   const config = await loadSiteConfig(auth.orgId, job.siteId)
   const strip = await getAvailabilityStrip(auth.orgId, job.siteId, job.repairTypeId, job.hours, { fromDate })
   return c.json({
     resolved: true,
+    capacityOnly: false,
     siteId: job.siteId,
     job: {
       repairTypeId: job.repairTypeId, label: job.label, colour: job.colour,

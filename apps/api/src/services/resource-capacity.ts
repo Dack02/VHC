@@ -616,3 +616,57 @@ export async function getAvailabilityStrip(
 
   return { days, recommended: ok[0] || warn[0] || null, alternatives: ok.slice(1, 4), softHints: warn.slice(0, 3) }
 }
+
+// Job-independent capacity strip. The per-day load band / booked% / free hours
+// need no job (only the verdict does), so the booking picker can show a fuel
+// gauge + a sensible "soonest day with room" recommendation BEFORE any priced
+// work resolves — instead of falling back to a bare date field. `assumedHours`
+// (optional) lets a nominal job size flag physically-full days; 0 = unknown, so
+// every open day is acceptable and the advisor judges from the load bar.
+export async function getCapacityStrip(
+  orgId: string, siteId: string,
+  opts?: { fromDate?: string; leadFloorDays?: number; stripDays?: number; assumedHours?: number }
+): Promise<AvailabilityStrip> {
+  const config = await loadSiteConfig(orgId, siteId)
+  const today = new Date().toISOString().slice(0, 10)
+  const floor = opts?.leadFloorDays ?? config.bookingLeadTimeDays
+  const stripLen = opts?.stripDays ?? 14
+  const opDays = await operatingDays(orgId, siteId)
+  const start = addDays(opts?.fromDate || today, Math.max(0, floor))
+  const end = addDays(start, config.bookingMaxDays)
+  const { data: sumRows } = await supabaseAdmin.rpc('diary_day_summary', { p_org_id: orgId, p_site_id: siteId, p_from: start, p_to: end })
+  const summary = new Map<string, any>()
+  for (const r of sumRows || []) summary.set(r.day, r)
+  const assumed = opts?.assumedHours && opts.assumedHours > 0 ? opts.assumedHours : 0
+
+  const days: StripDay[] = []
+  for (let i = 0; i <= config.bookingMaxDays && days.length < stripLen; i++) {
+    const d = addDays(start, i)
+    if (!opDays.includes(isoDow(d))) continue
+    const s = summary.get(d) || {}
+    const available = Number(s.available_hours) || 0
+    const bookedH = Number(s.booked_hours) || 0
+    const { ceilingHours, band } = computeBand(bookedH, available, config.targetLoadingPct)
+    const freePool = Math.max(0, ceilingHours - bookedH)
+    const physicalFree = available * config.overbookFactor - bookedH
+
+    let status: BookVerdict, reason: string
+    if (available <= 0) { status = 'DENY_HARD'; reason = 'Closed' }
+    else if (assumed > 0 && assumed > physicalFree) { status = 'DENY_HARD'; reason = 'Day is physically full' }
+    else if (assumed > 0 && assumed > freePool) { status = 'WARN'; reason = 'Over the loading target for this day' }
+    else { status = 'OK'; reason = 'Within capacity' }
+
+    days.push({
+      date: d, status, reason,
+      availableHours: round2(available), bookedHours: round2(bookedH),
+      bookedPct: available > 0 ? round2(bookedH / available) : null,
+      freeHours: round2(freePool), ceilingHours, band
+    })
+  }
+
+  // Recommend the soonest open day with comfortable room; fall back to soonest open.
+  const open = days.filter(d => d.status !== 'DENY_HARD')
+  const roomy = open.filter(d => d.band === 'low' || d.band === 'healthy')
+  const pool = roomy.length ? roomy : open
+  return { days, recommended: pool[0] || null, alternatives: pool.slice(1, 4), softHints: [] }
+}

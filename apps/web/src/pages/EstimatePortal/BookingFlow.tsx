@@ -5,7 +5,8 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5180'
 
 interface Slot { time: string; label: string; available: boolean }
 interface Day { date: string; weekday: string; dayNum: string; monthShort: string; full: boolean; slots: Slot[] }
-interface Availability { enabled: boolean; bookable: boolean; courtesyCar: boolean; slotMinutes: number; days: Day[] }
+type BookingMode = 'drop_off' | 'timed_slot'
+interface Availability { enabled: boolean; bookable: boolean; courtesyCar: boolean; slotMinutes: number; mode?: BookingMode; days: Day[] }
 
 export interface ConfirmedBooking {
   requested_date: string
@@ -16,6 +17,24 @@ export interface ConfirmedBooking {
 
 const longDate = (d: string) =>
   new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+
+// A downloadable .ics for the confirmed booking (floating local time — no TZ surprises).
+function buildBookingIcs(booking: ConfirmedBooking, orgName: string): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const [y, m, d] = booking.requested_date.split('-').map(Number)
+  const [hh, mm] = (booking.requested_time || '08:00').split(':').map(Number)
+  const start = new Date(y, m - 1, d, hh, mm)
+  const end = new Date(start.getTime() + (booking.slot_minutes || 60) * 60000)
+  const fmt = (dt: Date) => `${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}00`
+  const ics = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//VHC//Booking//EN', 'BEGIN:VEVENT',
+    `DTSTART:${fmt(start)}`, `DTEND:${fmt(end)}`,
+    `SUMMARY:Vehicle booking — ${orgName}`,
+    'DESCRIPTION:Your booking. Please arrive at your drop-off time.',
+    'END:VEVENT', 'END:VCALENDAR'
+  ].join('\r\n')
+  return 'data:text/calendar;charset=utf-8,' + encodeURIComponent(ics)
+}
 
 // TEMP PREVIEW DATA — used only when `previewMode` is on (portal `?booking=preview`) so the
 // slot-picker design can be reviewed before the availability API exists. Delete with the flag.
@@ -28,7 +47,7 @@ const SAMPLE_SLOTS: Slot[] = [
   { time: '15:00', label: '15:00', available: true },
 ]
 const PREVIEW_AVAILABILITY: Availability = {
-  enabled: true, bookable: true, courtesyCar: true, slotMinutes: 90,
+  enabled: true, bookable: true, courtesyCar: true, slotMinutes: 90, mode: 'drop_off',
   days: [
     { date: '2026-06-30', weekday: 'Mon', dayNum: '30', monthShort: 'Jun', full: false, slots: SAMPLE_SLOTS },
     { date: '2026-07-01', weekday: 'Tue', dayNum: '1', monthShort: 'Jul', full: false, slots: SAMPLE_SLOTS },
@@ -93,6 +112,28 @@ export default function BookingFlow({
 
   const day = avail?.days.find((d) => d.date === selDate) || null
   const tint = `color-mix(in srgb, ${brand} 9%, #ffffff)`
+  const mode: BookingMode = avail?.mode ?? 'timed_slot'
+  const isDropOff = mode === 'drop_off'
+  const firstOpenDate = avail?.days.find((d) => !d.full && d.slots.some((s) => s.available))?.date ?? null
+
+  const renderSlot = (s: Slot) => {
+    const active = s.time === selTime
+    return (
+      <button
+        key={s.time}
+        disabled={!s.available}
+        onClick={() => setSelTime(s.time)}
+        className="rounded-xl py-2.5 text-center text-[13.5px] font-semibold border transition-colors"
+        style={active
+          ? { background: brand, borderColor: brand, color: '#fff' }
+          : s.available
+          ? { background: '#fff', borderColor: '#e6e7e3', color: '#3a3f4a' }
+          : { background: '#fff', borderColor: '#eceeec', color: '#c2c6cc', textDecoration: 'line-through' }}
+      >
+        {s.label}
+      </button>
+    )
+  }
 
   const confirm = async () => {
     if (!selDate || !selTime) return
@@ -156,38 +197,37 @@ export default function BookingFlow({
               >
                 <div className="text-[11px] font-semibold opacity-80">{d.weekday}</div>
                 <div className="text-[18px] font-extrabold leading-tight mt-0.5">{d.dayNum}</div>
-                <div className="text-[10px] opacity-80">{d.full ? 'Full' : d.monthShort}</div>
+                <div className="text-[10px] opacity-80">{d.full ? 'Full' : (d.date === firstOpenDate ? 'Soonest' : d.monthShort)}</div>
               </button>
             )
           })}
         </div>
 
-        {/* Time grid */}
+        {/* Time / drop-off */}
         {day && (
           <>
-            <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mt-5 mb-2.5">
-              Choose a time · {day.weekday} {day.dayNum} {day.monthShort}
+            <div className="text-[11px] font-bold uppercase tracking-wide text-gray-400 mt-5 mb-1">
+              {isDropOff ? 'When will you drop off?' : 'Choose a time'} · {day.weekday} {day.dayNum} {day.monthShort}
             </div>
-            <div className="grid grid-cols-3 gap-2">
-              {day.slots.map((s) => {
-                const active = s.time === selTime
+            {isDropOff && (
+              <div className="text-[11.5px] text-gray-500 mb-2.5">Leave it with us for the day — we’ll have it ready by close.</div>
+            )}
+            {isDropOff ? (
+              <div className="grid grid-cols-3 gap-2">{day.slots.map(renderSlot)}</div>
+            ) : (
+              ['Morning', 'Afternoon'].map((label) => {
+                const list = day.slots.filter((s) => (label === 'Morning' ? s.time < '12:00' : s.time >= '12:00'))
+                if (list.length === 0) return null
                 return (
-                  <button
-                    key={s.time}
-                    disabled={!s.available}
-                    onClick={() => setSelTime(s.time)}
-                    className="rounded-xl py-2.5 text-center text-[13.5px] font-semibold border transition-colors"
-                    style={active
-                      ? { background: brand, borderColor: brand, color: '#fff' }
-                      : s.available
-                      ? { background: '#fff', borderColor: '#e6e7e3', color: '#3a3f4a' }
-                      : { background: '#fff', borderColor: '#eceeec', color: '#c2c6cc', textDecoration: 'line-through' }}
-                  >
-                    {s.label}
-                  </button>
+                  <div key={label} className="mb-3">
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-1.5">
+                      {label} · {list.filter((s) => s.available).length} free
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">{list.map(renderSlot)}</div>
+                  </div>
                 )
-              })}
-            </div>
+              })
+            )}
           </>
         )}
 
@@ -217,7 +257,9 @@ export default function BookingFlow({
           style={{ backgroundColor: brand }}
           className="w-full h-13 mt-4 py-3.5 text-white font-bold rounded-2xl disabled:opacity-50"
         >
-          {selDate && selTime ? `Confirm booking · ${day?.weekday} ${day?.dayNum} ${day?.monthShort}, ${selTime}` : 'Choose a day and time'}
+          {selDate && selTime
+            ? `${isDropOff ? 'Confirm drop-off' : 'Confirm booking'} · ${day?.weekday} ${day?.dayNum} ${day?.monthShort}, ${selTime}`
+            : (isDropOff ? 'Choose a day and drop-off time' : 'Choose a day and time')}
         </button>
       </div>
     </div>
@@ -271,6 +313,15 @@ export function BookingConfirmation({
             </div>
           )}
         </div>
+        <a
+          href={buildBookingIcs(booking, orgName)}
+          download="booking.ics"
+          className="mt-4 w-full inline-flex items-center justify-center gap-2 h-11 rounded-2xl border text-[13.5px] font-bold"
+          style={{ borderColor: brand, color: brand }}
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
+          Add to calendar
+        </a>
         {phone && <p className="text-center text-[11.5px] text-gray-400 mt-4">Need to change it? Call {phone}</p>}
       </div>
     </div>

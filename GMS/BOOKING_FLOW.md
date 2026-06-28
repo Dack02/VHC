@@ -278,6 +278,64 @@ diary surfaces any over-target day. True prevention needs a lock / per-slot ledg
 - `Settings/EstimateSettings.tsx` — a **"How online bookings work"** info modal (5-step explainer +
   Jobsheets-module-required note) beside the online-booking toggle.
 
+## 10. P2 — commit-time guard + override capture — ✅ BUILT 2026-06-29 (uncommitted; tsc green; no migration)
+
+The picker was advisory only; P2 makes the server enforce the loading target at commit.
+
+- `routes/jobsheets.ts` `POST /:id/commit` — before committing, resolves the draft's job
+  (`resolveBookingJobForParent`) and runs `canBook` for the due-in date:
+  `OK` → proceed; `WARN`/`DENY_SOFT` → require `capacityOverride` + a non-empty
+  `capacityOverrideReason` (else `409 CAPACITY_OVERRIDE_REQUIRED`); `DENY_HARD` → `409 CAPACITY_BLOCKED`
+  (pick another day). On override it stamps `jobsheets.capacity_override` + reason and mirrors them onto
+  the linked VHC. Skipped when no category resolves (nothing to gate). Uses the existing
+  `capacity_override` columns (Resource Manager P2 migration) — no new migration.
+- `components/booking/BookingDatePicker.tsx` — surfaces the selected day's verdict
+  (`onVerdictChange`) and captures the override reason inline in the amber WARN banner
+  (`overrideReason`/`onOverrideReasonChange`); `DENY_HARD` shows a red "pick another day" block with a
+  jump to the recommended day.
+- `pages/Jobsheets/NewJobsheet.tsx` — tracks the verdict + reason, disables submit when a tight day has
+  no reason (or a hard-blocked day is selected) with an inline hint, and passes
+  `capacityOverride`/`capacityOverrideReason` to commit. The server `409`s are a race backstop (their
+  user-facing `error` messages surface via the existing toast/error path).
+
+## 11. P3 — customer flow polish — ✅ BUILT 2026-06-29 (uncommitted; tsc + build green; no migration)
+
+`pages/EstimatePortal/BookingFlow.tsx`:
+- **Mode-adaptive** to the API's `mode`: drop-off shows "When will you drop off?" + "leave it with us
+  for the day" copy and a single drop-off-time grid; timed-slot groups times into **Morning / Afternoon**
+  with free-slot counts.
+- **Soonest day** is tagged on the day strip; full days stay disabled-but-visible.
+- **Confirmation** gains an **Add to calendar** (.ics) action.
+- 409 race handling already re-fetches availability; preview/debug path left intact (inert in prod).
+
+*Deferred (noted):* per-day live courtesy-car caps in the availability payload (the `/book` 409 already
+guards it); waitlist/notify-me on full.
+
+## 12. Make-Jobsheet convert modal — capacity-aware — ✅ BUILT 2026-06-29 (uncommitted; tsc + build green; no migration)
+
+The advisor's manual "Make jobsheet" conversion (`EstimateDetail`) is a new booking too, so it now
+uses the picker + the same guard.
+
+- `BookingDatePicker` gained a `bare` prop (drops the card chrome) for embedding in the modal.
+- `pages/Estimates/EstimateDetail.tsx` — the Make-Jobsheet modal's plain date/time inputs replaced by
+  `<BookingDatePicker bare estimateId={est.id} …>` (resolves the estimate's category + hours + site
+  server-side); override reason captured inline; the "Create jobsheet" button is gated (blocked day /
+  missing reason) and sends `capacityOverride`/`capacityOverrideReason`.
+- `routes/estimates.ts` `POST /:id/make-jobsheet` — adds the same capacity guard as the jobsheet commit
+  (resolve estimate job → `canBook` → OK / 409 `CAPACITY_OVERRIDE_REQUIRED` / 409 `CAPACITY_BLOCKED`),
+  passes the override + `primaryRepairTypeId` into `convertEstimateToJobsheet`, which now persists
+  `capacity_override` + reason on the jobsheet.
+- `routes/resource-manager.ts` `POST /availability` — site precedence fixed: a parent id
+  (estimate/HC) now keeps its **own** site unless an explicit `?siteId` is given (New Jobsheet still
+  passes the form's site), so the estimate convert books against the estimate's site.
+
+## 13. "+ New Jobsheet" on the Booking Diary — ✅ BUILT 2026-06-29 (uncommitted; tsc + build green; web-only)
+
+`pages/BookingDiary/BookingDiaryPage.tsx` — a `+ New Jobsheet` button in the header (gated by the
+`jobsheets` module) linking to `/jobsheets/new?date=<selectedDate>` (the diary's drill-in day).
+`pages/Jobsheets/NewJobsheet.tsx` reads `?date=` and pre-fills the due-in date, so booking from a day
+the advisor is viewing carries that day into the capacity-aware picker.
+
 - Backend: generic `resolveBookingJobForParent(orgId, {jobsheetId|estimateId|healthCheckId})` in
   `resource-capacity.ts` (lift from `public-estimate.ts`); `getAvailabilityStrip(...)` returns the
   contiguous day strip + recommended/alternatives/softHints in one call (loads config/quotas/assets

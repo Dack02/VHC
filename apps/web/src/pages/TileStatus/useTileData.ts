@@ -11,8 +11,12 @@ const POLL_FALLBACK_MS = 60000
  * Loads the Tile Status aggregate for the user's site and keeps it live: any
  * board mutation / status change / clock event triggers a debounced refetch,
  * with a slow polling fallback when sockets are quiet. Mirrors useBoardData.
+ *
+ * `advisorId` (optional) scopes every count to one advisor — the /tiles endpoint
+ * accepts it natively; passing null/undefined means "all advisors". Changing it
+ * refetches automatically.
  */
-export function useTileData() {
+export function useTileData(advisorId?: string | null) {
   const { session, user } = useAuth()
   const { socket } = useSocket()
   const [tiles, setTiles] = useState<Tile[] | null>(null)
@@ -32,6 +36,7 @@ export function useTileData() {
     try {
       const params = new URLSearchParams()
       if (siteId) params.set('siteId', siteId)
+      if (advisorId) params.set('advisorId', advisorId)
       const qs = params.toString()
       const data = await api<TilesResponse>(
         `/api/v1/workshop-board/tiles${qs ? `?${qs}` : ''}`,
@@ -44,7 +49,7 @@ export function useTileData() {
       inFlightRef.current = false
       setLoading(false)
     }
-  }, [session?.accessToken, siteId])
+  }, [session?.accessToken, siteId, advisorId])
 
   useEffect(() => {
     fetchTiles()

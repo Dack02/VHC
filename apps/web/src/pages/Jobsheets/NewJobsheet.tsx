@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useModules } from '../../contexts/ModulesContext'
 import { api, Vehicle, Customer, User, Site } from '../../lib/api'
@@ -33,9 +33,15 @@ interface LookupOption { id: string; code: string; colour: string }
 export default function NewJobsheet() {
   const { session, user } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { isEnabled } = useModules()
   const lookupEnabled = isEnabled('vehicle_lookup')
   const token = session?.accessToken
+  // Pre-fill the due-in date when arriving from a Booking Diary day (?date=YYYY-MM-DD).
+  const initialDueInDate = (() => {
+    const d = searchParams.get('date')
+    return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : ''
+  })()
 
   const [sites, setSites] = useState<Site[]>([])
   const [advisors, setAdvisors] = useState<User[]>([])
@@ -67,7 +73,7 @@ export default function NewJobsheet() {
 
   // jobsheet fields
   const [form, setForm] = useState({
-    siteId: '', serviceTypeId: '', advisorId: '', mileage: '', dueInDate: '', dueInTime: '', requestedDeliveryAt: '',
+    siteId: '', serviceTypeId: '', advisorId: '', mileage: '', dueInDate: initialDueInDate, dueInTime: '', requestedDeliveryAt: '',
     courtesyVehicleRequired: false, collectionAndDelivery: false, vehicleOnSite: false, customerContactNotes: ''
   })
   const [bookingCodeIds, setBookingCodeIds] = useState<string[]>([])
@@ -78,6 +84,13 @@ export default function NewJobsheet() {
   // Bumped whenever the Work Details panel mutates lines, so the BookingDatePicker
   // re-checks availability against the draft's current category + hours.
   const [workVersion, setWorkVersion] = useState(0)
+
+  // Capacity guard: the selected day's verdict + an override reason for a tight day.
+  const [capacityReason, setCapacityReason] = useState('')
+  const [capacityVerdict, setCapacityVerdict] = useState<'OK' | 'WARN' | 'DENY_SOFT' | 'DENY_HARD' | null>(null)
+  const needsOverride = capacityVerdict === 'WARN' || capacityVerdict === 'DENY_SOFT'
+  const capacityBlocked = capacityVerdict === 'DENY_HARD'
+  const overrideMissing = needsOverride && !capacityReason.trim()
 
   // Draft jobsheet — created once a vehicle + customer exist so the Work Details
   // panel can attach priced work lines on this same screen. Committed on submit,
@@ -331,7 +344,10 @@ export default function NewJobsheet() {
           vehicleOnSite: form.vehicleOnSite,
           customerContactNotes: form.customerContactNotes || undefined,
           bookingCodeIds,
-          vhcRequired: requiresVhc
+          vhcRequired: requiresVhc,
+          // Capacity override: only sent when the chosen day is over the loading target.
+          capacityOverride: needsOverride || undefined,
+          capacityOverrideReason: needsOverride ? capacityReason.trim() : undefined
           // bookingNotes is owned by the Work Details panel (saved on the draft as you type)
         }
       })
@@ -476,17 +492,6 @@ export default function NewJobsheet() {
           </div>
         )}
 
-        {/* Booking date — capacity-aware picker (Resource Manager) */}
-        <BookingDatePicker
-          token={token!}
-          siteId={form.siteId || undefined}
-          jobsheetId={draftId || undefined}
-          refreshKey={workVersion}
-          value={{ date: form.dueInDate, time: form.dueInTime }}
-          onChange={({ date, time }) => setForm(f => ({ ...f, dueInDate: date, dueInTime: time }))}
-          required
-        />
-
         {/* Booking details */}
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
@@ -584,30 +589,52 @@ export default function NewJobsheet() {
           <p className="text-xs text-gray-400">A health check is created with the booking by default. Untick if this job doesn’t need an inspection — booked work stays on the jobsheet either way. Add labour, parts and packages under <span className="font-medium text-gray-500">Work Details</span> →</p>
         </div>
 
+        {capacityBlocked && (
+          <p className="text-xs text-rag-red">This day is full — pick another day in Booking date before creating the jobsheet.</p>
+        )}
+        {overrideMissing && (
+          <p className="text-xs text-rag-amber">This day is over your loading target — add a reason in Booking date to book it.</p>
+        )}
         <div className="flex gap-3">
-          <button type="submit" disabled={submitting || !selectedVehicle?.customer_id || !form.dueInDate} className="px-6 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50">
+          <button type="submit" disabled={submitting || !selectedVehicle?.customer_id || !form.dueInDate || capacityBlocked || overrideMissing} className="px-6 py-2 bg-primary text-white font-medium rounded-lg hover:bg-primary-dark disabled:opacity-50">
             {submitting ? 'Creating…' : 'Create Jobsheet'}
           </button>
           <button type="button" onClick={handleCancel} className="px-6 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50">Cancel</button>
         </div>
         </form>
 
-        {/* Right: priced work built live on the draft jobsheet */}
-        {draftId && token ? (
-          <WorkDetailsPanel
-            className="lg:col-span-1 lg:sticky lg:top-6 lg:max-h-[calc(100vh_-_3rem)] lg:overflow-y-auto"
-            parent={{ type: 'jobsheet', id: draftId }}
-            token={token}
-            organizationId={user?.organization?.id}
-            onChange={() => setWorkVersion(v => v + 1)}
-            notes={{ label: 'Booking Notes', value: null, onSave: (v) => api(`/api/v1/jobsheets/${draftId}`, { method: 'PATCH', token, body: { bookingNotes: v } }).then(() => {}) }}
+        {/* Right: booking date (capacity-aware) on top, then priced work on the draft jobsheet */}
+        <div className="lg:col-span-1 space-y-4">
+          {/* Booking date — capacity-aware picker (Resource Manager). Leads the right
+              column so the week strip + recommendation are prominent while you build work. */}
+          <BookingDatePicker
+            token={token!}
+            siteId={form.siteId || undefined}
+            jobsheetId={draftId || undefined}
+            refreshKey={workVersion}
+            value={{ date: form.dueInDate, time: form.dueInTime }}
+            onChange={({ date, time }) => setForm(f => ({ ...f, dueInDate: date, dueInTime: time }))}
+            overrideReason={capacityReason}
+            onOverrideReasonChange={setCapacityReason}
+            onVerdictChange={setCapacityVerdict}
+            required
           />
-        ) : (
-          <div className="lg:col-span-1 lg:sticky lg:top-6 bg-white border border-gray-200 rounded-xl shadow-sm p-6">
-            <h2 className="text-sm font-semibold text-gray-900 mb-2">Work Details</h2>
-            <p className="text-sm text-gray-400">Select a vehicle and customer to start adding labour, parts and packages — they’ll be saved to this booking as you go.</p>
-          </div>
-        )}
+
+          {draftId && token ? (
+            <WorkDetailsPanel
+              parent={{ type: 'jobsheet', id: draftId }}
+              token={token}
+              organizationId={user?.organization?.id}
+              onChange={() => setWorkVersion(v => v + 1)}
+              notes={{ label: 'Booking Notes', value: null, onSave: (v) => api(`/api/v1/jobsheets/${draftId}`, { method: 'PATCH', token, body: { bookingNotes: v } }).then(() => {}) }}
+            />
+          ) : (
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+              <h2 className="text-sm font-semibold text-gray-900 mb-2">Work Details</h2>
+              <p className="text-sm text-gray-400">Select a vehicle and customer to start adding labour, parts and packages — they’ll be saved to this booking as you go.</p>
+            </div>
+          )}
+        </div>
       </div>
 
       {showCustomerCard && selectedVehicle?.customer?.id && (

@@ -50,6 +50,22 @@ export const vehicleStatusLabels: Record<string, string> = {
   collected: 'Collected'
 }
 
+// Vehicle Status accent colours — drive the tile distribution bar + the status
+// dots on the drill-in rows. Greys for the not-here-yet / gone states, blues for
+// in-the-building, green for done.
+export const vehicleStatusColours: Record<string, string> = {
+  due_in: '#c4c8cf',
+  arrived: '#8390f0',
+  in_workshop: '#2f6bdf',
+  work_complete: '#2c9367',
+  collected: '#d3d6db'
+}
+
+const VEHICLE_STATUS_FALLBACK = '#c4c8cf'
+export function vehicleStatusColour(key: string): string {
+  return vehicleStatusColours[key] || VEHICLE_STATUS_FALLBACK
+}
+
 // Friendly short labels for the VHC pipeline status (mirrors the board chips).
 export const vhcStateLabels: Record<string, string> = {
   awaiting_arrival: 'Due in',
@@ -81,6 +97,42 @@ export function daysLabel(days: number | null): string | null {
   if (days <= 0) return 'Today'
   if (days === 1) return '1 day'
   return `${days} days`
+}
+
+// ---- Ageing pill (threshold colours) -------------------------------------
+// The pill colour escalates with the day count: green/neutral while fresh,
+// amber once it's been waiting `warnDays`, red at `critDays`. Defaults are
+// fine for v1; the natural follow-up is to read them from per-org settings.
+export const AGE_WARN_DAYS = 3 // ≥ this → amber
+export const AGE_CRIT_DAYS = 8 // ≥ this → red
+
+export type AgeLevel = 'ok' | 'warn' | 'crit'
+
+export interface AgePill {
+  text: string
+  level: AgeLevel
+  color: string
+  bg: string
+}
+
+const AGE_COLOURS: Record<AgeLevel, { color: string; bg: string }> = {
+  ok: { color: '#7b7f88', bg: '#f0f0ee' },
+  warn: { color: '#a9760f', bg: '#f6ead0' },
+  crit: { color: '#c0403b', bg: '#f7e4e2' }
+}
+
+// Build the ageing-pill descriptor for a day count. Null mirrors `daysLabel`'s
+// "untracked" return so callers can skip rendering. Same pill + thresholds are
+// reused on tiles, the drill-in header, and the "Waiting" column.
+export function agePill(
+  days: number | null,
+  opts: { warnDays?: number; critDays?: number } = {}
+): AgePill | null {
+  if (days == null) return null
+  const warn = opts.warnDays ?? AGE_WARN_DAYS
+  const crit = opts.critDays ?? AGE_CRIT_DAYS
+  const level: AgeLevel = days >= crit ? 'crit' : days >= warn ? 'warn' : 'ok'
+  return { text: daysLabel(days) ?? 'Today', level, ...AGE_COLOURS[level] }
 }
 
 // Relative countdown to a not-yet-arrived booking's due date, compared by calendar

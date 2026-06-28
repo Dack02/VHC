@@ -4,6 +4,7 @@ import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
 import { applyServicePackageToRepairItem } from '../services/apply-service-package.js'
 import { invoiceJobsheet, reverseJobsheetInvoice } from '../services/parts-accounting-service.js'
+import { resolveBookingJobForParent, canBook } from '../services/resource-capacity.js'
 import { formatRepairItem } from './repair-items/helpers.js'
 import { buildHealthCheckTimeline, extractUser, type TimelineEvent } from './health-checks/timeline.js'
 
@@ -627,6 +628,34 @@ jobsheets.post('/:id/commit', authorize(['super_admin', 'org_admin', 'site_admin
     const resolvedSite = siteId || draft.site_id || auth.user.siteId || null
     const resolvedAdvisor = advisorId || draft.advisor_id || auth.user.id
 
+    // Capacity guard (Resource Manager): new bookings book to the workshop loading target.
+    // Resolve this booking's category + hours from the draft's priced lines and check the
+    // chosen due-in date. OK → proceed; over-target (WARN / soft) → require an override +
+    // reason (recorded); physically full / hard-capped (DENY_HARD) → block (pick another
+    // day). Skipped when the job can't be categorised yet (nothing to gate).
+    let capacityOverride = false
+    let capacityOverrideReason: string | null = null
+    {
+      const job = await resolveBookingJobForParent(auth.orgId, { kind: 'jobsheet', id }, resolvedSite)
+      if (job) {
+        const verdict = await canBook(auth.orgId, job.siteId, dueInDate, job.repairTypeId, job.hours)
+        if (verdict.status === 'DENY_HARD') {
+          return c.json({ error: verdict.reason, code: 'CAPACITY_BLOCKED' }, 409)
+        }
+        if (verdict.status === 'WARN' || verdict.status === 'DENY_SOFT') {
+          const reason = typeof body.capacityOverrideReason === 'string' ? body.capacityOverrideReason.trim() : ''
+          if (!body.capacityOverride || !reason) {
+            return c.json(
+              { error: 'This day is over your loading target — add an override reason to book anyway.', code: 'CAPACITY_OVERRIDE_REQUIRED', details: { reason: verdict.reason } },
+              409
+            )
+          }
+          capacityOverride = true
+          capacityOverrideReason = reason
+        }
+      }
+    }
+
     // Resolve the VHC template up front so we fail before committing if none exists.
     let templateIdResolved: string | null = null
     if (wantVhc) {
@@ -652,6 +681,8 @@ jobsheets.post('/:id/commit', authorize(['super_admin', 'org_admin', 'site_admin
       vehicle_on_site: !!vehicleOnSite,
       customer_contact_notes: customerContactNotes || null,
       vhc_required: wantVhc,
+      capacity_override: capacityOverride,
+      capacity_override_reason: capacityOverrideReason,
       is_draft: false
     }
     if (bookingNotes !== undefined) updateData.booking_notes = bookingNotes || null
@@ -689,6 +720,15 @@ jobsheets.post('/:id/commit', authorize(['super_admin', 'org_admin', 'site_admin
         )
       }
       hc = hcRow
+    }
+
+    // Mirror the capacity override onto the linked VHC so the booking's record agrees.
+    if (capacityOverride && hc) {
+      await supabaseAdmin
+        .from('health_checks')
+        .update({ capacity_override: true, capacity_override_reason: capacityOverrideReason })
+        .eq('id', hc.id)
+        .eq('organization_id', auth.orgId)
     }
 
     return c.json(

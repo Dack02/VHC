@@ -1,5 +1,7 @@
 import { useState, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { useModules } from '../../contexts/ModulesContext'
 import { useDiarySummary } from './useDiaryData'
 import {
   Spinner, ErrorNote, LoadBar, CountPills, RefreshButton, DayDetail, type Density
@@ -131,6 +133,7 @@ function WeekView({ today, weekOffset, onWeek, selectedDate, onSelectDate, densi
 
 export default function BookingDiaryPage() {
   const { user } = useAuth()
+  const { isEnabled } = useModules()
   const today = todayStr()
 
   const [view, setView] = useState<ViewMode>(() => loadPref(VIEW_KEY, ['month', 'agenda', 'grouped', 'table', 'week'] as const, 'month'))
@@ -168,18 +171,28 @@ export default function BookingDiaryPage() {
             Jobs, workshop loading &amp; job types per day{user?.site?.name ? ` · ${user.site.name}` : ''}
           </p>
         </div>
-        <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-          {VIEWS.map(v => (
-            <button
-              key={v.key}
-              onClick={() => changeView(v.key)}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md ${
-                view === v.key ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'
-              }`}
+        <div className="flex items-center gap-3">
+          {isEnabled('jobsheets') && (
+            <Link
+              to={`/jobsheets/new?date=${selectedDate}`}
+              className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary-dark whitespace-nowrap"
             >
-              {v.label}
-            </button>
-          ))}
+              + New Jobsheet
+            </Link>
+          )}
+          <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+            {VIEWS.map(v => (
+              <button
+                key={v.key}
+                onClick={() => changeView(v.key)}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md ${
+                  view === v.key ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'
+                }`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

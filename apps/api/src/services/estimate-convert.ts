@@ -87,6 +87,9 @@ export interface ConvertEstimateOptions {
   primaryRepairTypeId?: string | null
   /** Persisted provenance marker on the jobsheet (e.g. 'online_estimate'). NULL = manual/advisor. */
   bookingSource?: string | null
+  /** Capacity override (advisor booked over the loading target) — recorded on the jobsheet. */
+  capacityOverride?: boolean
+  capacityOverrideReason?: string | null
   /** Provenance, for logging (e.g. 'advisor' | 'online'). */
   source?: string
 }
@@ -142,6 +145,8 @@ export async function convertEstimateToJobsheet(opts: ConvertEstimateOptions): P
       vhc_required: false,
       primary_repair_type_id: opts.primaryRepairTypeId || null,
       booking_source: opts.bookingSource || null,
+      capacity_override: opts.capacityOverride ?? false,
+      capacity_override_reason: opts.capacityOverrideReason ?? null,
       booking_notes: (typeof opts.bookingNotes === 'string' && opts.bookingNotes.trim()) ? opts.bookingNotes.trim() : (est.customer_notes || null),
       is_draft: false,
       created_by: userId

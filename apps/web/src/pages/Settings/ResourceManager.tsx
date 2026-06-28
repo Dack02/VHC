@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
@@ -170,8 +170,8 @@ function QuotaHelpModal({ onClose }: { onClose: () => void }) {
           </dl>
 
           <p className="text-xs text-gray-500 bg-amber-50 border border-amber-100 rounded-lg p-3">
-            Nothing is throttled until <strong>Enforce category quotas</strong> is ticked and saved at the
-            top of this card. With it off, the diary still colours days by your loading target — it just
+            Nothing is throttled until <strong>Enforce category quotas</strong> is ticked — it saves the
+            moment you toggle it. With it off, the diary still colours days by your loading target — it just
             won't hold anything back.
           </p>
         </div>
@@ -198,18 +198,29 @@ export default function ResourceManager() {
   const [savingQuotas, setSavingQuotas] = useState(false)
   const [assets, setAssets] = useState<AssetItem[] | null>(null)
   const [savingAssets, setSavingAssets] = useState(false)
+  const [savingEnforce, setSavingEnforce] = useState(false)
   const [showQuotaHelp, setShowQuotaHelp] = useState(false)
+  // Tracks which site's config we've already loaded. Guards against `fetchConfig`
+  // re-running (when the auth token/user object re-hydrates a few seconds after mount)
+  // and overwriting the user's unsaved edits — most visibly the "Enforce quotas" toggle.
+  const loadedConfigSite = useRef<string | null>(null)
 
   const token = session?.accessToken
 
   const fetchConfig = useCallback(async () => {
     if (!token) return
+    const siteKey = user?.site?.id || '__default__'
+    // Only load a given site's config once. Without this, the callback's identity changes
+    // when the auth token/user re-hydrates, the effect re-runs, and setConfig() wipes out
+    // any unsaved edits (e.g. a just-ticked "Enforce quotas" toggle reverting on its own).
+    if (loadedConfigSite.current === siteKey) { setLoading(false); return }
     try {
       const params = new URLSearchParams()
       if (user?.site?.id) params.set('siteId', user.site.id)
       const data = await api<ConfigResponse>(`/api/v1/resource-manager/config?${params}`, { token })
       setSiteId(data.siteId)
       setConfig(data.config)
+      loadedConfigSite.current = siteKey
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load capacity settings')
     } finally {
@@ -268,6 +279,27 @@ export default function ResourceManager() {
 
   const set = <K extends keyof ResourceConfig>(key: K, value: ResourceConfig[K]) =>
     setConfig(prev => (prev ? { ...prev, [key]: value } : prev))
+
+  // Enforce-quotas is a live switch, not a draft field: persist it the moment it's toggled
+  // (partial PUT — the server merges, other unsaved fields are untouched), so it no longer
+  // depends on the user finding the right Save button and can't silently revert.
+  const toggleEnforceQuotas = async (next: boolean) => {
+    if (!token || !siteId || !config) return
+    const prev = config.enableCategoryQuotas
+    set('enableCategoryQuotas', next)
+    setSavingEnforce(true)
+    try {
+      await api(`/api/v1/resource-manager/config?siteId=${siteId}`, {
+        method: 'PUT', token, body: { enableCategoryQuotas: next }
+      })
+      toast.success(next ? 'Category quotas now enforced' : 'Category quotas turned off')
+    } catch (err) {
+      set('enableCategoryQuotas', prev)
+      toast.error(err instanceof Error ? err.message : 'Failed to update category quotas')
+    } finally {
+      setSavingEnforce(false)
+    }
+  }
 
   const editQuota = (repairTypeId: string, patch: Partial<QuotaRow>) =>
     setQuotas(prev => prev ? prev.map(q => q.repairTypeId === repairTypeId ? { ...q, ...patch } : q) : prev)
@@ -457,11 +489,11 @@ export default function ResourceManager() {
           </button>
           <label className="flex items-center justify-between mb-4">
             <span className="text-sm text-gray-700">Enforce category quotas</span>
-            <input type="checkbox" checked={config.enableCategoryQuotas}
-              onChange={e => set('enableCategoryQuotas', e.target.checked)} />
+            <input type="checkbox" checked={config.enableCategoryQuotas} disabled={savingEnforce}
+              onChange={e => toggleEnforceQuotas(e.target.checked)} />
           </label>
           {!config.enableCategoryQuotas && (
-            <p className="text-xs text-gray-500 mb-3">Quotas are off — the diary still bands by loading target, but nothing is throttled. Turn on and save (top) to enforce.</p>
+            <p className="text-xs text-gray-500 mb-3">Quotas are off — the diary still bands by loading target, but nothing is throttled. Turn on to enforce — it saves straight away.</p>
           )}
 
           {!quotas ? (

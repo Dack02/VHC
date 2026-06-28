@@ -7,6 +7,7 @@ import { formatRepairItem } from './repair-items/helpers.js'
 import { getEstimateSettings } from '../services/estimate-settings.js'
 import { sendEstimateToCustomer } from '../services/estimate-send.js'
 import { convertEstimateToJobsheet } from '../services/estimate-convert.js'
+import { resolveBookingJobForParent, canBook } from '../services/resource-capacity.js'
 
 /**
  * Estimates (GMS) — a standalone, pre-booking priced quote. Mirrors the jobsheet
@@ -453,10 +454,37 @@ estimates.post('/:id/make-jobsheet', requireModule('jobsheets'), authorize(['sup
     const { dueInDate, dueInTime, serviceTypeId, advisorId, bookingNotes, lineSelection } = body
     if (!dueInDate) return c.json({ error: 'Due-in date is required' }, 400)
 
+    // Capacity guard — a manual conversion is a new booking too, so book to the loading
+    // target. Resolve the estimate's category + hours and check the due-in date: OK →
+    // proceed; over-target (WARN/soft) → require an override + reason; physically full /
+    // hard-capped (DENY_HARD) → block. Skipped when no category resolves.
+    let capacityOverride = false
+    let capacityOverrideReason: string | null = null
+    const job = await resolveBookingJobForParent(auth.orgId, { kind: 'estimate', id })
+    if (job) {
+      const verdict = await canBook(auth.orgId, job.siteId, dueInDate, job.repairTypeId, job.hours)
+      if (verdict.status === 'DENY_HARD') {
+        return c.json({ error: verdict.reason, code: 'CAPACITY_BLOCKED' }, 409)
+      }
+      if (verdict.status === 'WARN' || verdict.status === 'DENY_SOFT') {
+        const reason = typeof body.capacityOverrideReason === 'string' ? body.capacityOverrideReason.trim() : ''
+        if (!body.capacityOverride || !reason) {
+          return c.json(
+            { error: 'This day is over your loading target — add an override reason to book anyway.', code: 'CAPACITY_OVERRIDE_REQUIRED', details: { reason: verdict.reason } },
+            409
+          )
+        }
+        capacityOverride = true
+        capacityOverrideReason = reason
+      }
+    }
+
     const res = await convertEstimateToJobsheet({
       orgId: auth.orgId, estimateId: id, userId: auth.user.id,
       dueInDate, dueInTime, serviceTypeId, advisorId, bookingNotes,
-      approvedOnly: lineSelection !== 'all', source: 'advisor'
+      approvedOnly: lineSelection !== 'all', source: 'advisor',
+      primaryRepairTypeId: job?.repairTypeId ?? null,
+      capacityOverride, capacityOverrideReason
     })
     if (!res.ok) {
       return c.json(res.jobsheetId ? { error: res.error, jobsheetId: res.jobsheetId } : { error: res.error }, res.status as 400 | 404 | 500)

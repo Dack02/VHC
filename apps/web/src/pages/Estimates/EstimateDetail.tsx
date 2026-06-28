@@ -7,6 +7,7 @@ import { useToast } from '../../contexts/ToastContext'
 import WorkDetailsPanel from '../Jobsheets/WorkDetailsPanel'
 import CustomerCardModal from '../Jobsheets/components/CustomerCardModal'
 import CustomerInsightsBanner from '../../components/CustomerInsightsBanner'
+import BookingDatePicker from '../../components/booking/BookingDatePicker'
 import { TimelineTab } from '../HealthChecks/tabs/TimelineTab'
 
 interface Estimate {
@@ -178,6 +179,12 @@ export default function EstimateDetail() {
   const [converting, setConverting] = useState(false)
   const [serviceTypes, setServiceTypes] = useState<{ id: string; code: string }[]>([])
   const [convertOpts, setConvertOpts] = useState({ lineSelection: 'approved' as 'approved' | 'all', dueInDate: '', dueInTime: '', serviceTypeId: '', advisorId: '', bookingNotes: '' })
+  // Capacity guard for the manual conversion (mirrors New Jobsheet).
+  const [capacityReason, setCapacityReason] = useState('')
+  const [capacityVerdict, setCapacityVerdict] = useState<'OK' | 'WARN' | 'DENY_SOFT' | 'DENY_HARD' | null>(null)
+  const needsOverride = capacityVerdict === 'WARN' || capacityVerdict === 'DENY_SOFT'
+  const capacityBlocked = capacityVerdict === 'DENY_HARD'
+  const overrideMissing = needsOverride && !capacityReason.trim()
 
   const load = useCallback(async () => {
     if (!token || !id) return
@@ -276,6 +283,7 @@ export default function EstimateDetail() {
       advisorId: est.advisor?.id || '',
       bookingNotes: ''
     })
+    setCapacityReason(''); setCapacityVerdict(null)
     setShowConvert(true)
     api<{ serviceTypes: { id: string; code: string }[] }>('/api/v1/service-types?active_only=true', { token })
       .then(d => setServiceTypes(d.serviceTypes || [])).catch(() => {})
@@ -298,7 +306,9 @@ export default function EstimateDetail() {
           serviceTypeId: convertOpts.serviceTypeId || undefined,
           advisorId: convertOpts.advisorId || undefined,
           bookingNotes: convertOpts.bookingNotes || undefined,
-          lineSelection: convertOpts.lineSelection
+          lineSelection: convertOpts.lineSelection,
+          capacityOverride: needsOverride || undefined,
+          capacityOverrideReason: needsOverride ? capacityReason.trim() : undefined
         }
       })
       toast.success('Jobsheet created from estimate')
@@ -509,7 +519,7 @@ export default function EstimateDetail() {
       {/* Make Jobsheet modal */}
       {showConvert && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => !converting && setShowConvert(false)}>
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg font-semibold text-gray-900 mb-1">Make jobsheet from {est.reference}</h2>
             <p className="text-sm text-gray-500 mb-4">Copies the chosen lines onto a new jobsheet as pre-authorised booked work.</p>
             <div className="space-y-3">
@@ -524,17 +534,19 @@ export default function EstimateDetail() {
                   ))}
                 </div>
               </div>
+              {/* Capacity-aware booking date (resolves the estimate's category + hours) */}
+              <BookingDatePicker
+                bare
+                token={token!}
+                estimateId={est.id}
+                value={{ date: convertOpts.dueInDate, time: convertOpts.dueInTime }}
+                onChange={({ date, time }) => setConvertOpts(o => ({ ...o, dueInDate: date, dueInTime: time }))}
+                overrideReason={capacityReason}
+                onOverrideReasonChange={setCapacityReason}
+                onVerdictChange={setCapacityVerdict}
+                required
+              />
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Due in date *</label>
-                  <input type="date" value={convertOpts.dueInDate} onChange={e => setConvertOpts(o => ({ ...o, dueInDate: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Time</label>
-                  <input type="time" value={convertOpts.dueInTime} onChange={e => setConvertOpts(o => ({ ...o, dueInTime: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-                </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">Main Booking Requirement</label>
                   <select value={convertOpts.serviceTypeId} onChange={e => setConvertOpts(o => ({ ...o, serviceTypeId: e.target.value }))}
@@ -559,9 +571,15 @@ export default function EstimateDetail() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
               </div>
             </div>
+            {capacityBlocked && (
+              <p className="text-xs text-rag-red mt-3">This day is full — pick another day above before converting.</p>
+            )}
+            {overrideMissing && (
+              <p className="text-xs text-rag-amber mt-3">This day is over your loading target — add a reason above to book it.</p>
+            )}
             <div className="flex justify-end gap-2 mt-5">
               <button onClick={() => setShowConvert(false)} disabled={converting} className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
-              <button onClick={handleMakeJobsheet} disabled={converting || !convertOpts.dueInDate} className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-dark disabled:opacity-50">
+              <button onClick={handleMakeJobsheet} disabled={converting || !convertOpts.dueInDate || capacityBlocked || overrideMissing} className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-dark disabled:opacity-50">
                 {converting ? 'Creating…' : 'Create jobsheet'}
               </button>
             </div>

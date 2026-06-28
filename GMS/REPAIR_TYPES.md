@@ -1,12 +1,12 @@
 # GMS — Repair Types + Main Booking Requirement (Plan)
 
-> Branch: work on `dev` · Status: **P1 + P2 + P2.5 + P3 DONE & VERIFIED (uncommitted, 2026-06-28)** — P1
+> Branch: work on `dev` · Status: **COMPLETE — P1–P4 ALL DONE & VERIFIED (uncommitted, 2026-06-28)** — P1
 > foundation; P2 labour-lock (server + `WorkDetailsPanel` + VHC `LabourTab`); P2.5 packages; P3 VHC
-> defaults (`template_items.repair_type_id` editable in TemplateBuilder + clone/seed; **all server-side
-> auto-create paths stamp a type** — autoGenerate, generate route, MOT-failure; CreateRepairGroupModal
-> pre-fills + sends the type). API `tsc` + web `vite build` both green (0 errors). Migrations
-> `20260628130000` + `20260628150000` (DEPLOYED) + `20260628160000_starter_template_repair_type.sql`
-> (pending deploy). **Only P4 (reporting) remains.** Audit gaps closed in §14. · Author: Leo + Claude
+> defaults + auto-create stamping; **P4 reporting** (Repair Types report — revenue/conversion/work-mix per
+> type + vehicle brand/fuel slice, reusing `calcItemTotal` so it agrees with the other reports). API `tsc`
+> + web `vite build` both green (0 errors). Migrations `20260628130000` + `20260628155000` (DEPLOYED) +
+> `20260628160000_starter_template_repair_type.sql` (pending deploy). Only the deferred **Parts-module
+> margin** work remains (out of this initiative — §4.4/§12). Audit gaps closed in §14. · Author: Leo + Claude
 > Companion to [`JOBSHEET.md`](./JOBSHEET.md), [`WORK_DETAILS.md`](./WORK_DETAILS.md), [`ESTIMATES.md`](./ESTIMATES.md).
 
 ## 0. TL;DR
@@ -380,7 +380,7 @@ the Parts module, §4.4/§12.) Deploy via the pipeline (`supabase db push`), **n
     modal** now picks a Repair Type (not a code). `api.ts` `NewRepairItem`/`RepairItemChild` carry
     `repairTypeId`. (CreateRepairGroupModal default-type pre-fill is P3.)
 - **P2.5 — Packages:** ✅ DONE & VERIFIED (2026-06-26 — API `tsc` + web build green). Migration
-  `20260628150000_repair_types_packages.sql` (labour_code_id → nullable + dominant-code backfill of
+  `20260628155000_repair_types_packages.sql` (labour_code_id → nullable + dominant-code backfill of
   `default_repair_type_id`, single-VAT only). `applyServicePackageToRepairItem` **stamps the package's type
   onto the group (if untyped) then bills all package labour at the resolved locked rate** — so all four
   callers (jobsheet/estimate wrappers, manual apply, MRI) get it via the one service. `service-packages`
@@ -399,7 +399,15 @@ the Parts module, §4.4/§12.) Deploy via the pipeline (`supabase db push`), **n
   (most-frequent; tie → first) + a selector + sends `repairTypeId`. Cross-org starter-template copy maps
   `repair_type_id` **by code** (migration `20260628160000`). `crud.ts` results fetch + `api.ts`
   `CheckResult.template_item` now surface `repair_type_id`.
-- **P4 — Reporting:** repair-type RPC + report page + brand/fuel slicing (revenue/conversion only).
+- **P4 — Reporting:** ✅ DONE & VERIFIED (2026-06-28 — API `tsc` + web build green). Built as a **Node
+  aggregation** (`services/repair-type-report-service.ts`), NOT a SQL RPC — it reuses `fetchPeriodHcSet` +
+  `calcItemTotal` (selected-option substitution + labour/parts fallback) so the numbers **agree with the
+  dashboard / Item Performance** and the existing chunked fetch dodges the 1000-row cap. Top-level,
+  non-deleted items only (children roll up via the group total); NULL type → "Unassigned" bucket. Per-type
+  identified/sold/declined/deferred + conversion % + work-mix %, plus `byMake`/`byFuel` slices (free-text
+  make/fuel collapsed case-insensitively). Endpoint `GET /api/v1/reports/repair-types`; web
+  `pages/Reports/RepairTypes.tsx` + ReportsHub card + route. (Chose Node over the RPC for cross-report
+  consistency; the §8 note allowed either.) Revenue-side only — margin deferred (§4.4/§12).
 - **(Later, with Parts module) — Margin:** cost capture + margin reporting (§4.4/§12). Not in this initiative.
 
 ## 12. Open / future

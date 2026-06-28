@@ -22,6 +22,7 @@ export interface RepairItemLike {
   is_group?: boolean | null
   parent_repair_item_id?: string | null
   selected_option_id?: string | null
+  repair_type_id?: string | null
   deleted_at?: string | null
   /** Direct RAG column — the source for MRI-sourced and manually-added items (inspection items use check_results) */
   rag_status?: string | null

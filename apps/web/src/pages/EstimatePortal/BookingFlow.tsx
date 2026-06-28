@@ -17,6 +17,27 @@ export interface ConfirmedBooking {
 const longDate = (d: string) =>
   new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
 
+// TEMP PREVIEW DATA — used only when `previewMode` is on (portal `?booking=preview`) so the
+// slot-picker design can be reviewed before the availability API exists. Delete with the flag.
+const SAMPLE_SLOTS: Slot[] = [
+  { time: '08:30', label: '08:30', available: true },
+  { time: '09:00', label: '09:00', available: true },
+  { time: '10:30', label: '10:30', available: true },
+  { time: '11:00', label: '11:00', available: false },
+  { time: '13:30', label: '13:30', available: true },
+  { time: '15:00', label: '15:00', available: true },
+]
+const PREVIEW_AVAILABILITY: Availability = {
+  enabled: true, bookable: true, courtesyCar: true, slotMinutes: 90,
+  days: [
+    { date: '2026-06-30', weekday: 'Mon', dayNum: '30', monthShort: 'Jun', full: false, slots: SAMPLE_SLOTS },
+    { date: '2026-07-01', weekday: 'Tue', dayNum: '1', monthShort: 'Jul', full: false, slots: SAMPLE_SLOTS },
+    { date: '2026-07-02', weekday: 'Wed', dayNum: '2', monthShort: 'Jul', full: true, slots: [] },
+    { date: '2026-07-03', weekday: 'Thu', dayNum: '3', monthShort: 'Jul', full: false, slots: SAMPLE_SLOTS },
+    { date: '2026-07-04', weekday: 'Fri', dayNum: '4', monthShort: 'Jul', full: false, slots: SAMPLE_SLOTS },
+  ],
+}
+
 /**
  * Slot picker the customer reaches after approving. Availability comes from the API
  * (Booking Diary capacity) — this component never invents slots. On confirm it POSTs the
@@ -27,11 +48,14 @@ export default function BookingFlow({
   brand,
   approvedSummary,
   onBooked,
+  previewMode = false,
 }: {
   token: string
   brand: string
   approvedSummary?: string
   onBooked: (b: ConfirmedBooking) => void
+  // TEMP: render mock slots + fake the confirm POST so the design is reviewable offline.
+  previewMode?: boolean
 }) {
   const [avail, setAvail] = useState<Availability | null>(null)
   const [loading, setLoading] = useState(true)
@@ -43,6 +67,12 @@ export default function BookingFlow({
 
   const load = useCallback(async () => {
     setLoading(true)
+    if (previewMode) {
+      setAvail(PREVIEW_AVAILABILITY)
+      setSelDate(PREVIEW_AVAILABILITY.days.find((d) => !d.full && d.slots.some((s) => s.available))?.date ?? null)
+      setLoading(false)
+      return
+    }
     try {
       const res = await fetch(`${API_URL}/api/public/estimate/${token}/availability`)
       if (!res.ok) { setError('Could not load available slots.'); return }
@@ -57,7 +87,7 @@ export default function BookingFlow({
     } finally {
       setLoading(false)
     }
-  }, [token])
+  }, [token, previewMode])
 
   useEffect(() => { load() }, [load])
 
@@ -66,6 +96,10 @@ export default function BookingFlow({
 
   const confirm = async () => {
     if (!selDate || !selTime) return
+    if (previewMode) {
+      onBooked({ requested_date: selDate, requested_time: selTime, slot_minutes: avail?.slotMinutes ?? 90, courtesy_car_requested: courtesy })
+      return
+    }
     setBusy(true); setError(null)
     try {
       const res = await fetch(`${API_URL}/api/public/estimate/${token}/book`, {

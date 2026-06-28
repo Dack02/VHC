@@ -135,6 +135,7 @@ export async function resolveLockedRate(
       .from('repair_items')
       .select('repair_type_id')
       .eq('id', item.parent_repair_item_id as string)
+      .eq('organization_id', orgId)
       .single()
     repairTypeId = (parent?.repair_type_id as string | null) ?? null
   }

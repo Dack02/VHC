@@ -98,6 +98,7 @@ const TechnicianWorkload = lazy(() => import('./pages/Dashboard/TechnicianWorklo
 const ReportsHub = lazy(() => import('./pages/Reports/ReportsHub'))
 const FinancialReports = lazy(() => import('./pages/Reports/FinancialReports'))
 const ItemPerformance = lazy(() => import('./pages/Reports/ItemPerformance'))
+const RepairTypesReport = lazy(() => import('./pages/Reports/RepairTypes'))
 const TechnicianPerformance = lazy(() => import('./pages/Reports/TechnicianPerformance'))
 const AdvisorPerformance = lazy(() => import('./pages/Reports/AdvisorPerformance'))
 const CustomerInsights = lazy(() => import('./pages/Reports/CustomerInsights'))
@@ -218,6 +219,7 @@ function App() {
                         <Route path="/reports" element={<RequireModule module="reports"><ReportsHub /></RequireModule>} />
                         <Route path="/reports/financial" element={<FinancialReports />} />
                         <Route path="/reports/items" element={<ItemPerformance />} />
+                        <Route path="/reports/repair-types" element={<RepairTypesReport />} />
                         <Route path="/reports/technicians" element={<TechnicianPerformance />} />
                         <Route path="/reports/advisors" element={<AdvisorPerformance />} />
                         <Route path="/reports/customers" element={<CustomerInsights />} />

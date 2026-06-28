@@ -204,9 +204,14 @@ export default function EstimatePortal() {
   // Online booking is offered only once the customer has finalised an approval (accepted /
   // partial). `booking.enabled` comes from the GET payload — undefined until the availability
   // API is wired, so this whole branch stays dormant by default.
-  const bookingEnabled = !!data.booking?.enabled
+  // TEMP PREVIEW (remove when booking goes live):
+  //   ?booking=preview → shows the PRE-APPROVAL design (the up-front "what happens next" tracker).
+  //   ?booking=slots   → jumps straight to the post-approval slot picker (mock slots).
+  const bookingParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('booking') : null
+  const bookingPreview = bookingParam === 'preview' || bookingParam === 'slots'
+  const bookingEnabled = !!data.booking?.enabled || bookingPreview
   const finalisedApproved = estimate.responseFinalised && (estimate.status === 'accepted' || estimate.status === 'partial')
-  const showBooking = bookingEnabled && finalisedApproved && approvedCount > 0
+  const showBooking = bookingParam === 'slots' ? true : (bookingEnabled && finalisedApproved && approvedCount > 0)
 
   return (
     <div className="min-h-screen bg-gray-50 pb-16 font-sans" style={{ ['--est-brand' as string]: brand } as CSSProperties}>
@@ -267,6 +272,12 @@ export default function EstimatePortal() {
       <div className="max-w-2xl lg:max-w-6xl mx-auto px-4 lg:px-8 lg:grid lg:grid-cols-[minmax(0,1fr)_370px] lg:gap-8 lg:items-start">
         {/* ── Main column: the detail ──────────────────────────────── */}
         <div className="min-w-0">
+        {/* ── "What happens next" — signposted UP-FRONT (directly under the hero) so the
+             booking step is never missed; on mobile the sidebar stacks too low for it. ── */}
+        {!responded && bookingEnabled && !showBooking && (
+          <div className="mt-5"><NextStepTracker current="approve" brand={brand} /></div>
+        )}
+
         {/* ── Why choose us (USP trust strip) ──────────────────────── */}
         {usps.length > 0 && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5 lg:p-6 mt-5">
@@ -375,9 +386,6 @@ export default function EstimatePortal() {
             </div>
           </div>
 
-        {/* ── "What happens next" — sets booking as the step after approval ── */}
-        {!responded && bookingEnabled && <NextStepTracker current="approve" brand={brand} />}
-
         {/* ── Action: signature flow ───────────────────────────────── */}
         {!responded && requireSig && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-5">
@@ -455,7 +463,8 @@ export default function EstimatePortal() {
             <BookingFlow
               token={token!}
               brand={brand}
-              approvedSummary={`${approvedCount} item${approvedCount > 1 ? 's' : ''} approved · ${money(approvedTotal)}`}
+              previewMode={bookingPreview}
+              approvedSummary={approvedCount > 0 ? `${approvedCount} item${approvedCount > 1 ? 's' : ''} approved · ${money(approvedTotal)}` : undefined}
               onBooked={(b) => { setConfirmedBooking(b); if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' }) }}
             />
             <button onClick={() => setSkipBooking(true)}

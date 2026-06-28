@@ -553,6 +553,7 @@ crud.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'service_a
           description: r.template_item.description,
           item_type: r.template_item.item_type,
           config: r.template_item.config,
+          repair_type_id: r.template_item.repair_type_id ?? null,
           section: r.template_item.section ? {
             id: r.template_item.section.id,
             name: r.template_item.section.name,

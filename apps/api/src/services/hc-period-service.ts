@@ -150,6 +150,7 @@ export async function fetchRepairItemsForHcs(
       is_group,
       parent_repair_item_id,
       selected_option_id,
+      repair_type_id,
       deleted_at${ragSelect}
     `
 

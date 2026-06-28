@@ -11,9 +11,9 @@
     {
       "name": "web-preview",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["vite", "--port", "5188"],
+      "runtimeArgs": ["vite", "--port", "5184"],
       "cwd": "apps/web",
-      "port": 5188
+      "port": 5184
     },
     {
       "name": "mobile",

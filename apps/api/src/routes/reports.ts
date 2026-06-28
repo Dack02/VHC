@@ -4,6 +4,7 @@ import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
 import { aggregateRepairItemsByHc, computeHcConversion, isHcPresented, soldPct } from '../lib/metrics.js'
 import { buildItemList, buildItemDetail } from '../services/item-report-service.js'
+import { buildRepairTypeReport } from '../services/repair-type-report-service.js'
 import { chunkIds, type GroupBy } from '../services/hc-period-service.js'
 import { logAudit, getRequestContext } from '../services/audit.js'
 
@@ -4082,6 +4083,25 @@ reports.get('/items/detail', authorize(['super_admin', 'org_admin', 'site_admin'
   } catch (error) {
     console.error('Item detail report error:', error)
     return c.json({ error: 'Failed to build item detail' }, 500)
+  }
+})
+
+// GET /api/v1/reports/repair-types - Revenue / conversion / mix by Repair Type (+ vehicle make/fuel slice)
+reports.get('/repair-types', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id } = c.req.query()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    const data = await buildRepairTypeReport({ orgId: auth.orgId, siteId: site_id }, startDate, endDate)
+    return c.json(data)
+  } catch (error) {
+    console.error('Repair type report error:', error)
+    return c.json({ error: 'Failed to build repair type report' }, 500)
   }
 })
 

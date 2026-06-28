@@ -83,6 +83,7 @@ import postcodeLookup from './routes/postcode-lookup.js'
 import jobsheetsRoute from './routes/jobsheets.js'
 import partsAccountingRoute from './routes/parts-accounting.js'
 import partsStockRoute from './routes/parts-stock.js'
+import purchaseOrdersRoute from './routes/purchase-orders.js'
 import estimatesRoute from './routes/estimates.js'
 import estimateSettings from './routes/estimate-settings.js'
 import publicEstimateRoutes from './routes/public-estimate.js'
@@ -201,6 +202,8 @@ app.route('/api/v1/jobsheets', jobsheetsRoute)
 app.route('/api/v1/parts-accounting', partsAccountingRoute)
 // Parts & Stock — Full-mode stock management (gated by parts_stock module)
 app.route('/api/v1/parts-stock', partsStockRoute)
+// Purchase Orders + goods-in/GRN — Full-mode order-in (gated by parts_stock module)
+app.route('/api/v1/purchase-orders', purchaseOrdersRoute)
 app.route('/api/v1/estimates', estimatesRoute)
 app.route('/api/v1/booking-codes', bookingCodes)
 // Unified arrivals queue (DMS + jobsheet bookings) — feeds the Arrivals hub + dashboard widget

@@ -4209,6 +4209,60 @@ reports.get('/stock-movements', authorize(['super_admin', 'org_admin', 'site_adm
   }
 })
 
+// GET /api/v1/reports/parts-on-order — open PO lines (not fully received), by supplier (GMS/PARTS.md §8, P1).
+reports.get('/parts-on-order', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { data, error } = await supabaseAdmin.rpc('report_parts_on_order', { p_org_id: auth.orgId })
+    if (error) throw new Error(error.message)
+    const rows = (data ?? []).map((r: Record<string, unknown>) => ({
+      poId: r.po_id as string,
+      poNumber: (r.po_number as string) ?? '',
+      supplierId: (r.supplier_id as string) ?? null,
+      supplierName: (r.supplier_name as string) ?? 'Unknown supplier',
+      orderedAt: (r.ordered_at as string) ?? null,
+      poStatus: (r.po_status as string) ?? '',
+      lineId: r.line_id as string,
+      partNumber: (r.part_number as string) ?? '',
+      description: (r.description as string) ?? '',
+      qtyOrdered: Number(r.qty_ordered) || 0,
+      qtyReceived: Number(r.qty_received) || 0,
+      qtyOutstanding: Number(r.qty_outstanding) || 0,
+      unitCost: Number(r.unit_cost) || 0,
+      outstandingValue: Number(r.outstanding_value) || 0,
+      daysOpen: r.days_open != null ? Number(r.days_open) : null,
+    }))
+    const outstandingValue = Math.round(rows.reduce((s: number, r: { outstandingValue: number }) => s + r.outstandingValue, 0) * 100) / 100
+    return c.json({ rows, totals: { lineCount: rows.length, outstandingValue } })
+  } catch (error) {
+    console.error('Parts on order report error:', error)
+    return c.json({ error: 'Failed to build parts-on-order report' }, 500)
+  }
+})
+
+// GET /api/v1/reports/negative-stock — stocked items with qty_on_hand < 0 to reconcile (GMS/PARTS.md §8, P1).
+reports.get('/negative-stock', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { data, error } = await supabaseAdmin.rpc('report_negative_stock', { p_org_id: auth.orgId })
+    if (error) throw new Error(error.message)
+    const rows = (data ?? []).map((r: Record<string, unknown>) => ({
+      id: r.id as string,
+      partNumber: (r.part_number as string) ?? '',
+      description: (r.description as string) ?? '',
+      categoryName: (r.category_name as string) ?? 'Uncategorised',
+      qtyOnHand: Number(r.qty_on_hand) || 0,
+      averageCost: Number(r.average_cost) || 0,
+      binLocation: (r.bin_location as string) ?? null,
+      preferredSupplierId: (r.preferred_supplier_id as string) ?? null,
+    }))
+    return c.json({ rows, totals: { itemCount: rows.length } })
+  } catch (error) {
+    console.error('Negative stock report error:', error)
+    return c.json({ error: 'Failed to build negative-stock report' }, 500)
+  }
+})
+
 // GET /api/v1/reports/capacity-utilisation — booked vs available hours per day vs
 // the loading target (Resource Manager). Plan-side utilisation; pairs with the
 // diary banding. Aggregated in SQL (diary_day_summary) so it's row-cap safe.

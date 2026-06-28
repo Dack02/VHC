@@ -105,6 +105,8 @@ const PartsGrossProfit = lazy(() => import('./pages/Reports/PartsGrossProfit'))
 const StockValuation = lazy(() => import('./pages/Reports/StockValuation'))
 const LowStock = lazy(() => import('./pages/Reports/LowStock'))
 const StockMovements = lazy(() => import('./pages/Reports/StockMovements'))
+const PartsOnOrder = lazy(() => import('./pages/Reports/PartsOnOrder'))
+const NegativeStock = lazy(() => import('./pages/Reports/NegativeStock'))
 const TechnicianPerformance = lazy(() => import('./pages/Reports/TechnicianPerformance'))
 const AdvisorPerformance = lazy(() => import('./pages/Reports/AdvisorPerformance'))
 const CustomerInsights = lazy(() => import('./pages/Reports/CustomerInsights'))
@@ -120,6 +122,8 @@ const DeletedHealthChecks = lazy(() => import('./pages/Reports/DeletedHealthChec
 const Today = lazy(() => import('./pages/Today'))
 const PartsCatalog = lazy(() => import('./pages/Parts/PartsCatalog'))
 const StockList = lazy(() => import('./pages/Parts/StockList'))
+const PurchaseOrders = lazy(() => import('./pages/Parts/PurchaseOrders'))
+const PurchaseOrderDetail = lazy(() => import('./pages/Parts/PurchaseOrderDetail'))
 const Messages = lazy(() => import('./pages/Messages/Messages'))
 const NotesPage = lazy(() => import('./pages/Notes/NotesPage'))
 const ServicePackages = lazy(() => import('./pages/ServicePackages/ServicePackages'))
@@ -234,6 +238,8 @@ function App() {
                         <Route path="/reports/stock-valuation" element={<StockValuation />} />
                         <Route path="/reports/low-stock" element={<LowStock />} />
                         <Route path="/reports/stock-movements" element={<StockMovements />} />
+                        <Route path="/reports/parts-on-order" element={<PartsOnOrder />} />
+                        <Route path="/reports/negative-stock" element={<NegativeStock />} />
                         <Route path="/reports/technicians" element={<TechnicianPerformance />} />
                         <Route path="/reports/advisors" element={<AdvisorPerformance />} />
                         <Route path="/reports/customers" element={<CustomerInsights />} />
@@ -269,6 +275,8 @@ function App() {
                         <Route path="/notes" element={<NotesPage />} />
                         <Route path="/parts" element={<PartsCatalog />} />
                         <Route path="/parts/stock" element={<RequireModule module="parts_stock"><StockList /></RequireModule>} />
+                        <Route path="/parts/purchase-orders" element={<RequireModule module="parts_stock"><PurchaseOrders /></RequireModule>} />
+                        <Route path="/parts/purchase-orders/:id" element={<RequireModule module="parts_stock"><PurchaseOrderDetail /></RequireModule>} />
                         <Route path="/templates" element={<TemplateList />} />
                         <Route path="/templates/:id" element={<TemplateBuilder />} />
                         <Route path="/service-packages" element={<ServicePackages />} />

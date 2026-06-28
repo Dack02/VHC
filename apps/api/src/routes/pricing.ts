@@ -1,10 +1,35 @@
 import { Hono } from 'hono'
 import { authMiddleware } from '../middleware/auth.js'
+import { resolveSellPrice } from '../services/pricing-matrix-service.js'
 
 const pricing = new Hono()
 
 // Apply auth middleware to all routes
 pricing.use('*', authMiddleware)
+
+/**
+ * POST /api/v1/pricing/suggest — resolve a suggested sell price for a cost via the org's
+ * banded pricing matrix (GMS/PARTS.md §5.12), falling back to the flat default-margin
+ * markup. Returns { sellPrice, source: 'matrix' | 'flat', marginPercent, markupPercent }.
+ * The matrix engine is inert (always 'flat') until the org enables it in settings.
+ *
+ * Body: { cost_price, category_id? }
+ */
+pricing.post('/suggest', async (c) => {
+  try {
+    const auth = c.get('auth')
+    const body = await c.req.json()
+    const costPrice = parseFloat(body.cost_price)
+    if (!Number.isFinite(costPrice) || costPrice < 0) {
+      return c.json({ error: 'cost_price must be a positive number' }, 400)
+    }
+    const result = await resolveSellPrice(auth.orgId, costPrice, body.category_id ?? null)
+    return c.json(result)
+  } catch (error) {
+    console.error('Pricing suggest error:', error)
+    return c.json({ error: 'Failed to suggest pricing' }, 500)
+  }
+})
 
 /**
  * POST /api/v1/pricing/calculate - Calculate sell price from cost and margin/markup

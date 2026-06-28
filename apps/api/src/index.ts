@@ -85,6 +85,8 @@ import partsAccountingRoute from './routes/parts-accounting.js'
 import partsStockRoute from './routes/parts-stock.js'
 import purchaseOrdersRoute from './routes/purchase-orders.js'
 import supplierReturnsRoute from './routes/supplier-returns.js'
+import stocktakeRoute from './routes/stocktake.js'
+import pricingMatrixRoute from './routes/pricing-matrix.js'
 import estimatesRoute from './routes/estimates.js'
 import estimateSettings from './routes/estimate-settings.js'
 import publicEstimateRoutes from './routes/public-estimate.js'
@@ -207,6 +209,10 @@ app.route('/api/v1/parts-stock', partsStockRoute)
 app.route('/api/v1/purchase-orders', purchaseOrdersRoute)
 // Supplier returns / credit loop — Full-mode (gated by parts_stock module)
 app.route('/api/v1/supplier-returns', supplierReturnsRoute)
+// Structured stocktake sessions — Full-mode (gated by parts_stock module)
+app.route('/api/v1/stocktake', stocktakeRoute)
+// Banded pricing matrix config — pricing feature for ALL orgs (role-gated, not parts_stock)
+app.route('/api/v1/pricing-matrix', pricingMatrixRoute)
 app.route('/api/v1/estimates', estimatesRoute)
 app.route('/api/v1/booking-codes', bookingCodes)
 // Unified arrivals queue (DMS + jobsheet bookings) — feeds the Arrivals hub + dashboard widget

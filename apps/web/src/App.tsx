@@ -68,6 +68,7 @@ const SupplierTypes = lazy(() => import('./pages/Settings/SupplierTypes'))
 const PartCategories = lazy(() => import('./pages/Settings/PartCategories'))
 const StockLocations = lazy(() => import('./pages/Settings/StockLocations'))
 const PricingSettings = lazy(() => import('./pages/Settings/PricingSettings'))
+const PricingMatrix = lazy(() => import('./pages/Settings/PricingMatrix'))
 const DeclinedReasons = lazy(() => import('./pages/Settings/DeclinedReasons'))
 const UnableToSendReasons = lazy(() => import('./pages/Settings/UnableToSendReasons'))
 const DeletedReasons = lazy(() => import('./pages/Settings/DeletedReasons'))
@@ -109,6 +110,8 @@ const PartsOnOrder = lazy(() => import('./pages/Reports/PartsOnOrder'))
 const NegativeStock = lazy(() => import('./pages/Reports/NegativeStock'))
 const PartsToReturn = lazy(() => import('./pages/Reports/PartsToReturn'))
 const OrphanParts = lazy(() => import('./pages/Reports/OrphanParts'))
+const SlowMovingStock = lazy(() => import('./pages/Reports/SlowMovingStock'))
+const ReceivedNotInvoiced = lazy(() => import('./pages/Reports/ReceivedNotInvoiced'))
 const TechnicianPerformance = lazy(() => import('./pages/Reports/TechnicianPerformance'))
 const AdvisorPerformance = lazy(() => import('./pages/Reports/AdvisorPerformance'))
 const CustomerInsights = lazy(() => import('./pages/Reports/CustomerInsights'))
@@ -127,6 +130,8 @@ const StockList = lazy(() => import('./pages/Parts/StockList'))
 const PurchaseOrders = lazy(() => import('./pages/Parts/PurchaseOrders'))
 const PurchaseOrderDetail = lazy(() => import('./pages/Parts/PurchaseOrderDetail'))
 const SupplierReturns = lazy(() => import('./pages/Parts/SupplierReturns'))
+const Stocktake = lazy(() => import('./pages/Parts/Stocktake'))
+const StocktakeDetail = lazy(() => import('./pages/Parts/StocktakeDetail'))
 const Messages = lazy(() => import('./pages/Messages/Messages'))
 const NotesPage = lazy(() => import('./pages/Notes/NotesPage'))
 const ServicePackages = lazy(() => import('./pages/ServicePackages/ServicePackages'))
@@ -245,6 +250,8 @@ function App() {
                         <Route path="/reports/negative-stock" element={<NegativeStock />} />
                         <Route path="/reports/parts-to-return" element={<PartsToReturn />} />
                         <Route path="/reports/orphan-parts" element={<OrphanParts />} />
+                        <Route path="/reports/slow-moving" element={<SlowMovingStock />} />
+                        <Route path="/reports/received-not-invoiced" element={<ReceivedNotInvoiced />} />
                         <Route path="/reports/technicians" element={<TechnicianPerformance />} />
                         <Route path="/reports/advisors" element={<AdvisorPerformance />} />
                         <Route path="/reports/customers" element={<CustomerInsights />} />
@@ -283,6 +290,8 @@ function App() {
                         <Route path="/parts/purchase-orders" element={<RequireModule module="parts_stock"><PurchaseOrders /></RequireModule>} />
                         <Route path="/parts/purchase-orders/:id" element={<RequireModule module="parts_stock"><PurchaseOrderDetail /></RequireModule>} />
                         <Route path="/parts/returns" element={<RequireModule module="parts_stock"><SupplierReturns /></RequireModule>} />
+                        <Route path="/parts/stocktake" element={<RequireModule module="parts_stock"><Stocktake /></RequireModule>} />
+                        <Route path="/parts/stocktake/:id" element={<RequireModule module="parts_stock"><StocktakeDetail /></RequireModule>} />
                         <Route path="/templates" element={<TemplateList />} />
                         <Route path="/templates/:id" element={<TemplateBuilder />} />
                         <Route path="/service-packages" element={<ServicePackages />} />
@@ -310,6 +319,7 @@ function App() {
                         <Route path="/settings/part-categories" element={<RequireModule module="parts_stock"><PartCategories /></RequireModule>} />
                         <Route path="/settings/stock-locations" element={<RequireModule module="parts_stock"><StockLocations /></RequireModule>} />
                         <Route path="/settings/pricing" element={<PricingSettings />} />
+                        <Route path="/settings/pricing-matrix" element={<PricingMatrix />} />
                         <Route path="/settings/declined-reasons" element={<DeclinedReasons />} />
                         <Route path="/settings/follow-up-settings" element={<FollowUpSettings />} />
                         <Route path="/settings/follow-up-outcomes" element={<FollowUpOutcomes />} />

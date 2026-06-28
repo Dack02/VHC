@@ -177,6 +177,26 @@ const navCards: NavCard[] = [
     ),
   },
   {
+    to: '/reports/slow-moving',
+    title: 'Slow-Moving Stock',
+    description: 'Dead stock with capital tied up and no recent movement',
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+    ),
+  },
+  {
+    to: '/reports/received-not-invoiced',
+    title: 'Received, Not Invoiced',
+    description: 'Stock in from factors with no supplier invoice yet',
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+      </svg>
+    ),
+  },
+  {
     to: '/reports/technicians',
     title: 'Technicians',
     description: 'KPIs, inspection times, quality',
@@ -290,6 +310,52 @@ const navCards: NavCard[] = [
   },
 ]
 
+// Ordered sub-sections for the Detailed Reports area. Cards are matched by
+// route, so the card definitions above stay untouched; any report not listed
+// here falls into a trailing "Other" group so nothing disappears when new
+// reports are added.
+const reportGroups: { title: string; routes: string[] }[] = [
+  {
+    title: 'Overview & Financial',
+    routes: ['/reports/daily-overview', '/reports/financial'],
+  },
+  {
+    title: 'Sales & Conversion',
+    routes: ['/reports/items', '/reports/repair-types', '/reports/mri-performance'],
+  },
+  {
+    title: 'Parts & Stock',
+    routes: [
+      '/reports/parts-gp',
+      '/reports/stock-valuation',
+      '/reports/low-stock',
+      '/reports/stock-movements',
+      '/reports/parts-on-order',
+      '/reports/negative-stock',
+      '/reports/parts-to-return',
+      '/reports/orphan-parts',
+      '/reports/slow-moving',
+      '/reports/received-not-invoiced',
+    ],
+  },
+  {
+    title: 'Team & Customers',
+    routes: ['/reports/technicians', '/reports/advisors', '/reports/customers'],
+  },
+  {
+    title: 'Operations & Compliance',
+    routes: ['/reports/operations', '/reports/capacity-utilisation', '/reports/compliance'],
+  },
+  {
+    title: 'Follow-Up & Recovery',
+    routes: ['/reports/deferred', '/reports/follow-up-recovery', '/reports/outreach-bookings'],
+  },
+  {
+    title: 'Audit',
+    routes: ['/reports/deleted-health-checks'],
+  },
+]
+
 export default function ReportsHub() {
   const {
     filters, queryString,
@@ -328,6 +394,43 @@ export default function ReportsHub() {
   const captureRate = s && s.totalValueIdentified > 0
     ? (s.totalValueAuthorized / s.totalValueIdentified) * 100
     : 0
+
+  // Bucket the report cards into their configured sub-sections (cards keep the
+  // order in which routes are listed), then append any unassigned reports under
+  // "Other" so newly added reports always show up somewhere.
+  const reportSections = reportGroups
+    .map(group => ({
+      title: group.title,
+      cards: group.routes
+        .map(route => navCards.find(card => card.to === route))
+        .filter((card): card is NavCard => card !== undefined),
+    }))
+    .filter(group => group.cards.length > 0)
+
+  const groupedRoutes = new Set(reportGroups.flatMap(g => g.routes))
+  const ungroupedReports = navCards.filter(card => !groupedRoutes.has(card.to))
+  if (ungroupedReports.length > 0) {
+    reportSections.push({ title: 'Other', cards: ungroupedReports })
+  }
+
+  const renderReportCard = (card: NavCard) => (
+    <Link
+      key={card.to}
+      to={card.to}
+      className="block bg-white border border-gray-200 rounded-xl p-5 hover:border-primary hover:shadow-sm transition-all"
+    >
+      <div className="flex items-start space-x-4">
+        <div className="flex-shrink-0 text-gray-400">{card.icon}</div>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-semibold text-gray-900">{card.title}</h3>
+          <p className="text-xs text-gray-500 mt-1">{card.description}</p>
+        </div>
+        <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      </div>
+    </Link>
+  )
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -463,29 +566,17 @@ export default function ReportsHub() {
             </ChartCard>
           )}
 
-          {/* Navigation Grid */}
+          {/* Navigation — grouped into sections */}
           <div>
             <h2 className="text-lg font-semibold text-gray-800 mb-4">Detailed Reports</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {navCards.map(card => (
-                <Link
-                  key={card.to}
-                  to={card.to}
-                  className="block bg-white border border-gray-200 rounded-xl p-5 hover:border-primary hover:shadow-sm transition-all"
-                >
-                  <div className="flex items-start space-x-4">
-                    <div className="flex-shrink-0 text-gray-400">{card.icon}</div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-semibold text-gray-900">{card.title}</h3>
-                      <p className="text-xs text-gray-500 mt-1">{card.description}</p>
-                    </div>
-                    <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  </div>
-                </Link>
-              ))}
-            </div>
+            {reportSections.map(section => (
+              <div key={section.title} className="mb-8 last:mb-0">
+                <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-4">{section.title}</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {section.cards.map(renderReportCard)}
+                </div>
+              </div>
+            ))}
           </div>
         </>
       )}

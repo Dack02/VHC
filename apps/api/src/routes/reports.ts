@@ -4318,6 +4318,63 @@ reports.get('/orphan-parts', authorize(['super_admin', 'org_admin', 'site_admin'
   }
 })
 
+// GET /api/v1/reports/slow-moving?days= — stocked items with on-hand value but no
+// movement in N days (default 90). Capital tied up in dead stock (GMS/PARTS.md §8, P3).
+reports.get('/slow-moving', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const daysRaw = parseInt(c.req.query('days') || '90', 10)
+    const days = Number.isFinite(daysRaw) ? Math.min(Math.max(daysRaw, 0), 3650) : 90
+    const { data, error } = await supabaseAdmin.rpc('report_slob', { p_org_id: auth.orgId, p_days: days })
+    if (error) throw new Error(error.message)
+    const rows = (data ?? []).map((r: Record<string, unknown>) => ({
+      stockItemId: r.stock_item_id as string,
+      partNumber: (r.part_number as string) ?? '',
+      description: (r.description as string) ?? '',
+      categoryName: (r.category_name as string) ?? 'Uncategorised',
+      qtyOnHand: Number(r.qty_on_hand) || 0,
+      averageCost: Number(r.average_cost) || 0,
+      stockValue: Number(r.stock_value) || 0,
+      lastMovementAt: (r.last_movement_at as string) ?? null,
+      daysIdle: Number(r.days_idle) || 0,
+    }))
+    const stockValue = Math.round(rows.reduce((s: number, r: { stockValue: number }) => s + r.stockValue, 0) * 100) / 100
+    return c.json({ rows, totals: { lineCount: rows.length, stockValue }, params: { days } })
+  } catch (error) {
+    console.error('Slow-moving stock report error:', error)
+    return c.json({ error: 'Failed to build slow-moving report' }, 500)
+  }
+})
+
+// GET /api/v1/reports/received-not-invoiced — stocked PO lines received but with no
+// supplier invoice yet; the period-end accrual control (GMS/PARTS.md §8, P3).
+reports.get('/received-not-invoiced', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { data, error } = await supabaseAdmin.rpc('report_received_not_invoiced', { p_org_id: auth.orgId })
+    if (error) throw new Error(error.message)
+    const rows = (data ?? []).map((r: Record<string, unknown>) => ({
+      lineId: r.line_id as string,
+      poId: r.po_id as string,
+      poNumber: (r.po_number as string) ?? '',
+      supplierId: (r.supplier_id as string) ?? null,
+      supplierName: (r.supplier_name as string) ?? 'Unknown supplier',
+      partNumber: (r.part_number as string) ?? '',
+      description: (r.description as string) ?? '',
+      qtyReceived: Number(r.qty_received) || 0,
+      unitCost: Number(r.unit_cost) || 0,
+      uninvoicedValue: Number(r.uninvoiced_value) || 0,
+      receivedAt: (r.received_at as string) ?? null,
+      daysWaiting: Number(r.days_waiting) || 0,
+    }))
+    const uninvoicedValue = Math.round(rows.reduce((s: number, r: { uninvoicedValue: number }) => s + r.uninvoicedValue, 0) * 100) / 100
+    return c.json({ rows, totals: { lineCount: rows.length, uninvoicedValue } })
+  } catch (error) {
+    console.error('Received-not-invoiced report error:', error)
+    return c.json({ error: 'Failed to build received-not-invoiced report' }, 500)
+  }
+})
+
 // GET /api/v1/reports/capacity-utilisation — booked vs available hours per day vs
 // the loading target (Resource Manager). Plan-side utilisation; pairs with the
 // diary banding. Aggregated in SQL (diary_day_summary) so it's row-cap safe.

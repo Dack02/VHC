@@ -323,6 +323,17 @@ export default function SettingsHub() {
       roles: ['super_admin', 'org_admin', 'site_admin']
     },
     {
+      to: '/settings/pricing-matrix',
+      title: 'Pricing Matrix',
+      description: 'Banded markup: higher margin on cheaper parts',
+      icon: (
+        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 6v12M4 6l4 4m12-4v12m0-12l-4 4M4 18h16M9 10h6m-6 4h6" />
+        </svg>
+      ),
+      roles: ['super_admin', 'org_admin', 'site_admin']
+    },
+    {
       to: '/settings/part-categories',
       title: 'Part Categories',
       description: 'Group parts for stock reporting and valuation',
@@ -650,6 +661,7 @@ export default function SettingsHub() {
       title: 'Pricing & Parts',
       routes: [
         '/settings/pricing',
+        '/settings/pricing-matrix',
         '/settings/labour-codes',
         '/settings/repair-types',
         '/settings/suppliers',

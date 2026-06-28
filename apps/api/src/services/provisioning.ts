@@ -403,6 +403,16 @@ async function seedDefaultLibraries(orgId: string): Promise<boolean> {
     console.error('Failed to seed default tax code map:', err)
   }
 
+  // Banded pricing matrix (P3) — seed the default bands; the engine stays off until the
+  // org enables it (organization_settings.pricing_matrix_enabled), so this changes no pricing.
+  try {
+    const { error } = await supabaseAdmin.rpc('seed_default_pricing_matrix_for_org', p)
+    if (error) { allOk = false; console.error('Failed to seed default pricing matrix:', error.message) }
+  } catch (err) {
+    allOk = false
+    console.error('Failed to seed default pricing matrix:', err)
+  }
+
   return allOk
 }
 

@@ -43,14 +43,14 @@ AS $$
   )
   SELECT
     p.repair_type_id,
-    COALESCE(rt.name, 'Unassigned')::text AS repair_type_name,
+    COALESCE(rt.label, 'Unassigned')::text AS repair_type_name,
     count(*)::bigint AS part_count,
     COALESCE(sum(p.sell), 0) AS total_sell,
     COALESCE(sum(p.cost), 0) AS total_cost,
     COALESCE(sum(p.sell - p.cost), 0) AS total_margin
   FROM parts p
   LEFT JOIN repair_types rt ON rt.id = p.repair_type_id
-  GROUP BY p.repair_type_id, rt.name
+  GROUP BY p.repair_type_id, rt.label
   ORDER BY total_margin DESC;
 $$;
 

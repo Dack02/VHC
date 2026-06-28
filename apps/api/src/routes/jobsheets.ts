@@ -51,6 +51,8 @@ function shapeJobsheet(row: any) {
     jobsheetComplete: row.jobsheet_complete,
     vhcRequired: row.vhc_required,
     bookingNotes: row.booking_notes,
+    bookingSource: row.booking_source ?? null, // 'online_estimate' = customer self-booked
+
     // Vehicle Status (Option 2): the jobsheet owns its workshop position. When a VHC
     // exists its live job_state is the effective value; otherwise the jobsheet's own.
     vehicleStatus: hc ? hc.job_state : row.job_state,

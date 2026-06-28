@@ -4126,6 +4126,53 @@ reports.get('/parts-gp', authorize(['super_admin', 'org_admin', 'site_admin', 's
   }
 })
 
+// GET /api/v1/reports/stock-valuation — current inventory asset by category (GMS/PARTS.md §8)
+reports.get('/stock-valuation', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { data, error } = await supabaseAdmin.rpc('report_stock_valuation', { p_org_id: auth.orgId })
+    if (error) throw new Error(error.message)
+    const rows: Array<{ categoryId: string | null; categoryName: string; itemCount: number; totalQty: number; totalValue: number }> =
+      (data ?? []).map((r: Record<string, unknown>) => ({
+        categoryId: (r.category_id as string) ?? null,
+        categoryName: (r.category_name as string) ?? 'Uncategorised',
+        itemCount: Number(r.item_count) || 0,
+        totalQty: Number(r.total_qty) || 0,
+        totalValue: Number(r.total_value) || 0,
+      }))
+    const totalValue = Math.round(rows.reduce((s, r) => s + r.totalValue, 0) * 100) / 100
+    const itemCount = rows.reduce((s, r) => s + r.itemCount, 0)
+    return c.json({ rows, totals: { itemCount, totalValue } })
+  } catch (error) {
+    console.error('Stock valuation report error:', error)
+    return c.json({ error: 'Failed to build stock valuation report' }, 500)
+  }
+})
+
+// GET /api/v1/reports/low-stock — stocked items at/under reorder point (GMS/PARTS.md §8)
+reports.get('/low-stock', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { data, error } = await supabaseAdmin.rpc('report_low_stock', { p_org_id: auth.orgId })
+    if (error) throw new Error(error.message)
+    const rows = (data ?? []).map((r: Record<string, unknown>) => ({
+      id: r.id as string,
+      partNumber: (r.part_number as string) ?? '',
+      description: (r.description as string) ?? '',
+      categoryName: (r.category_name as string) ?? 'Uncategorised',
+      qtyOnHand: Number(r.qty_on_hand) || 0,
+      minQty: Number(r.min_qty) || 0,
+      maxQty: r.max_qty != null ? Number(r.max_qty) : null,
+      suggestedOrder: Number(r.suggested_order) || 0,
+      averageCost: Number(r.average_cost) || 0,
+    }))
+    return c.json({ rows, totals: { itemCount: rows.length } })
+  } catch (error) {
+    console.error('Low stock report error:', error)
+    return c.json({ error: 'Failed to build low stock report' }, 500)
+  }
+})
+
 // GET /api/v1/reports/capacity-utilisation — booked vs available hours per day vs
 // the loading target (Resource Manager). Plan-side utilisation; pairs with the
 // diary banding. Aggregated in SQL (diary_day_summary) so it's row-cap safe.

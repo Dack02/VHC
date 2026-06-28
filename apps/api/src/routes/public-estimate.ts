@@ -11,6 +11,8 @@ import { getOrganizationBranding } from '../services/email.js'
 import { getEstimateSettings } from '../services/estimate-settings.js'
 import { loadSiteConfig } from '../services/resource-config.js'
 import { canBook, loanCarAvailableOn } from '../services/resource-capacity.js'
+import { convertEstimateToJobsheet } from '../services/estimate-convert.js'
+import { getEffectiveModules } from '../services/modules.js'
 
 const publicEstimate = new Hono()
 
@@ -522,13 +524,35 @@ publicEstimate.post('/estimate/:token/book', async (c) => {
 
   await trackEstimateActivity(est.id, 'online_booked', null, c, { date, time }).catch(() => {})
 
+  // Class the online acceptance as a real new booking: convert the approved estimate into
+  // a jobsheet so it consumes workshop capacity (counted in vw_diary_bookings) like any
+  // other new booking — so stacked online bookings can't jointly exceed the target loading.
+  // The slot was already gated to a canBook-OK (≤ target) day above. Best-effort: needs the
+  // jobsheets module; otherwise the slot stays stamped on the estimate for manual conversion.
+  let jobsheetId: string | null = null
+  try {
+    const mods = await getEffectiveModules(est.organization_id)
+    if (mods.jobsheets) {
+      const res = await convertEstimateToJobsheet({
+        orgId: est.organization_id, estimateId: est.id, userId: null,
+        dueInDate: date, dueInTime: time, approvedOnly: true,
+        primaryRepairTypeId: job.repairTypeId, bookingSource: 'online_estimate', source: 'online'
+      })
+      if (res.ok) jobsheetId = res.jobsheetId
+      else console.error('online estimate auto-convert skipped:', res.error)
+    }
+  } catch (e) {
+    console.error('online estimate auto-convert error:', e)
+  }
+
   return c.json({
     booking: {
       requested_date: date,
       requested_time: time,
       slot_minutes: job.slotMinutes,
       courtesy_car_requested: !!body.courtesyCar
-    }
+    },
+    jobsheetId
   })
 })
 

@@ -38,6 +38,7 @@ export default function EstimateSettings() {
 
   const [settings, setSettings] = useState<SettingsData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [showBookingInfo, setShowBookingInfo] = useState(false)
   const [expiryInput, setExpiryInput] = useState('7')
   const [termsInput, setTermsInput] = useState('')
   // Editable USP rows (may include a trailing empty row mid-edit; empties are dropped on save).
@@ -238,6 +239,10 @@ export default function EstimateSettings() {
           <div className="pr-4">
             <div className="text-sm font-medium text-gray-900">Let customers book a slot online</div>
             <p className="text-sm text-gray-500 mt-0.5">After approving, the customer picks a slot. Availability respects your workshop loading and category limits (Capacity &amp; Resource Manager).</p>
+            <button type="button" onClick={() => setShowBookingInfo(true)} className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              How online bookings work
+            </button>
           </div>
           <Toggle on={settings.onlineBookingEnabled} onClick={() => patchSettings({ onlineBookingEnabled: !settings.onlineBookingEnabled })} />
         </div>
@@ -253,6 +258,45 @@ export default function EstimateSettings() {
           />
         </div>
       </div>
+
+      {showBookingInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowBookingInfo(false)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between p-5 border-b border-gray-100">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">How online bookings work</h2>
+                <p className="text-xs text-gray-500 mt-0.5">When a customer accepts an estimate online</p>
+              </div>
+              <button onClick={() => setShowBookingInfo(false)} className="text-gray-400 hover:text-gray-600" aria-label="Close">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <ol className="p-5 space-y-3.5">
+              {[
+                ['Customer approves online', 'They review the estimate, approve the work, and (if you require it) sign.'],
+                ['They pick a slot', 'Only days within your workshop loading target are offered — busy or full days are hidden, and your online lead-time, drop-off window and category limits all apply. Set these in Settings → Resource Manager.'],
+                ['It becomes a real booking', 'Picking a slot auto-creates a jobsheet from the approved work (pre-authorised) on that day, so it counts towards workshop capacity like any booking. Stacked online bookings can never push a day past your target.'],
+                ['Courtesy car, if free', 'A courtesy car is offered only when one is still available on the chosen day.'],
+                ['You see it flagged', 'The new jobsheet carries an "Online estimate" badge in your Jobsheets list and Booking Diary — handy for confirming the exact time on MOT or timed-slot work.'],
+              ].map(([title, body], i) => (
+                <li key={i} className="flex gap-3">
+                  <span className="shrink-0 w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center">{i + 1}</span>
+                  <div>
+                    <div className="text-sm font-medium text-gray-900">{title}</div>
+                    <p className="text-sm text-gray-500 mt-0.5">{body}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+            <div className="p-5 pt-0">
+              <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2.5 text-xs text-amber-800">
+                Needs the Jobsheets module enabled. If it's off, the chosen slot is recorded on the estimate for you to convert manually.
+              </div>
+              <button onClick={() => setShowBookingInfo(false)} className="mt-4 w-full h-10 rounded-lg bg-[#16191f] text-white text-sm font-medium hover:bg-black">Got it</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -57,6 +57,7 @@ interface Jobsheet {
   work?: { itemCount: number; totalIncVat: number; vat: number; net: number }
   // Originating estimate when this jobsheet was converted from one (reverse lookup).
   sourceEstimate?: { id: string; reference: string | null; convertedAt: string | null } | null
+  bookingSource?: string | null // 'online_estimate' = customer self-booked online
 }
 
 const VEHICLE_STATUS_LABELS: Record<string, string> = {
@@ -340,6 +341,12 @@ export default function JobsheetDetail() {
               )}
               {!realVhc && (
                 <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">No VHC</span>
+              )}
+              {js.bookingSource === 'online_estimate' && (
+                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 inline-flex items-center gap-1" title="The customer booked this slot online from their estimate. Confirm the time if needed.">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M3.6 9h16.8 M3.6 15h16.8 M12 3a15 15 0 010 18 M12 3a15 15 0 000 18" /></svg>
+                  Online estimate
+                </span>
               )}
               {js.sourceEstimate && (
                 <Link to={`/estimates/${js.sourceEstimate.id}`}

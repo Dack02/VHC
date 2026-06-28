@@ -6,6 +6,7 @@ import { applyServicePackageToRepairItem } from '../services/apply-service-packa
 import { formatRepairItem } from './repair-items/helpers.js'
 import { getEstimateSettings } from '../services/estimate-settings.js'
 import { sendEstimateToCustomer } from '../services/estimate-send.js'
+import { convertEstimateToJobsheet } from '../services/estimate-convert.js'
 
 /**
  * Estimates (GMS) — a standalone, pre-booking priced quote. Mirrors the jobsheet
@@ -439,137 +440,28 @@ estimates.post('/:id/send', authorize(['super_admin', 'org_admin', 'site_admin',
 // Deep-copy an estimate quote line (repair_item + its labour + parts) onto a jobsheet as
 // a pre-authorised BOOKED work line. The pricing triggers recompute the new item's totals
 // from the copied labour/parts inputs. Returns the new repair_item id (or null).
-async function copyLineToJobsheet(srcLineId: string, jobsheetId: string, orgId: string, userId: string): Promise<string | null> {
-  const { data: src } = await supabaseAdmin
-    .from('repair_items')
-    .select('name, description, repair_type_id')
-    .eq('id', srcLineId)
-    .eq('organization_id', orgId)
-    .maybeSingle()
-  if (!src) return null
-
-  const now = new Date().toISOString()
-  const { data: item, error } = await supabaseAdmin
-    .from('repair_items')
-    .insert({
-      jobsheet_id: jobsheetId,
-      organization_id: orgId,
-      name: src.name,
-      description: src.description,
-      // Carry the Repair Type so the won job keeps its classification for reporting (copy-time:
-      // do NOT re-derive — the snapshotted labour rate below preserves the approved price).
-      repair_type_id: src.repair_type_id ?? null,
-      source: 'booking',
-      // Booked off an estimate the customer already priced/approved → pre-authorised.
-      outcome_status: 'authorised',
-      outcome_source: 'manual',
-      outcome_set_by: userId,
-      outcome_set_at: now,
-      customer_approved: true,
-      customer_approved_at: now,
-      created_by: userId
-    })
-    .select('id')
-    .single()
-  if (error || !item) return null
-
-  const { data: labour } = await supabaseAdmin
-    .from('repair_labour')
-    .select('labour_code_id, hours, rate, discount_percent, is_vat_exempt, notes')
-    .eq('repair_item_id', srcLineId)
-  if (labour && labour.length) {
-    await supabaseAdmin.from('repair_labour').insert(labour.map((l) => ({ ...l, repair_item_id: item.id })))
-  }
-
-  const { data: parts } = await supabaseAdmin
-    .from('repair_parts')
-    .select('part_number, description, quantity, supplier_id, supplier_name, cost_price, sell_price, notes')
-    .eq('repair_item_id', srcLineId)
-  if (parts && parts.length) {
-    await supabaseAdmin.from('repair_parts').insert(parts.map((p) => ({ ...p, repair_item_id: item.id })))
-  }
-
-  return item.id
-}
-
 // POST /:id/make-jobsheet - convert an estimate into a new jobsheet (Garage-Hive style).
 // Copies the approved lines (or all lines) onto a new jobsheet as pre-authorised booked
 // work, links the estimate to the jobsheet, and marks it converted. Requires the jobsheets
-// module too (you can't convert into a document you can't open).
+// module too (you can't convert into a document you can't open). Shared logic lives in
+// services/estimate-convert (the customer online-booking path converts the same way).
 estimates.post('/:id/make-jobsheet', requireModule('jobsheets'), authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
   try {
     const auth = c.get('auth')
     const { id } = c.req.param()
     const body = await c.req.json()
     const { dueInDate, dueInTime, serviceTypeId, advisorId, bookingNotes, lineSelection } = body
-
     if (!dueInDate) return c.json({ error: 'Due-in date is required' }, 400)
 
-    const { data: est } = await supabaseAdmin
-      .from('estimates')
-      .select('id, site_id, customer_id, vehicle_id, advisor_id, reference, status, is_draft, customer_notes, converted_to_jobsheet_id')
-      .eq('id', id)
-      .eq('organization_id', auth.orgId)
-      .is('deleted_at', null)
-      .single()
-    if (!est) return c.json({ error: 'Estimate not found' }, 404)
-    if (est.is_draft) return c.json({ error: 'Finish creating the estimate before converting it' }, 400)
-    if (est.converted_to_jobsheet_id) return c.json({ error: 'This estimate has already been converted', jobsheetId: est.converted_to_jobsheet_id }, 400)
-    if (est.status === 'cancelled') return c.json({ error: 'Cannot convert a cancelled estimate' }, 400)
-    if (!est.customer_id || !est.vehicle_id) return c.json({ error: 'Estimate needs a customer and vehicle to convert' }, 400)
-
-    // Which lines? Approved-only (default) or all top-level quote lines.
-    const approvedOnly = lineSelection !== 'all'
-    let q = supabaseAdmin
-      .from('repair_items')
-      .select('id')
-      .eq('estimate_id', id)
-      .eq('organization_id', auth.orgId)
-      .is('parent_repair_item_id', null)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: true })
-    if (approvedOnly) q = q.eq('customer_approved', true)
-    const { data: lines } = await q
-    if (!lines || lines.length === 0) {
-      return c.json({ error: approvedOnly ? 'No approved lines to copy. Approve lines first, or choose "all lines".' : 'This estimate has no lines to copy.' }, 400)
+    const res = await convertEstimateToJobsheet({
+      orgId: auth.orgId, estimateId: id, userId: auth.user.id,
+      dueInDate, dueInTime, serviceTypeId, advisorId, bookingNotes,
+      approvedOnly: lineSelection !== 'all', source: 'advisor'
+    })
+    if (!res.ok) {
+      return c.json(res.jobsheetId ? { error: res.error, jobsheetId: res.jobsheetId } : { error: res.error }, res.status as 400 | 404 | 500)
     }
-
-    // 1. Create the jobsheet (no VHC — the work is already quoted/agreed; reference auto-assigned).
-    const { data: js, error: jsErr } = await supabaseAdmin
-      .from('jobsheets')
-      .insert({
-        organization_id: auth.orgId,
-        site_id: est.site_id,
-        customer_id: est.customer_id,
-        vehicle_id: est.vehicle_id,
-        service_type_id: serviceTypeId || null,
-        advisor_id: advisorId || est.advisor_id || auth.user.id,
-        due_in_date: dueInDate,
-        due_in_time: (typeof dueInTime === 'string' && dueInTime.trim()) ? dueInTime.trim() : null,
-        vhc_required: false,
-        booking_notes: (typeof bookingNotes === 'string' && bookingNotes.trim()) ? bookingNotes.trim() : (est.customer_notes || null),
-        is_draft: false,
-        created_by: auth.user.id
-      })
-      .select('id, reference')
-      .single()
-    if (jsErr || !js) return c.json({ error: jsErr?.message || 'Failed to create jobsheet' }, 500)
-
-    // 2. Copy the selected lines onto the jobsheet as pre-authorised booked work.
-    let copied = 0
-    for (const l of lines) {
-      const newId = await copyLineToJobsheet(l.id, js.id, auth.orgId, auth.user.id)
-      if (newId) copied++
-    }
-
-    // 3. Link + mark the estimate converted.
-    await supabaseAdmin
-      .from('estimates')
-      .update({ status: 'converted', converted_to_jobsheet_id: js.id, converted_at: new Date().toISOString() })
-      .eq('id', id)
-      .eq('organization_id', auth.orgId)
-
-    return c.json({ jobsheetId: js.id, jobsheetReference: js.reference, linesCopied: copied }, 201)
+    return c.json({ jobsheetId: res.jobsheetId, jobsheetReference: res.reference, linesCopied: res.linesCopied }, 201)
   } catch (error) {
     console.error('Make jobsheet from estimate error:', error)
     return c.json({ error: 'Failed to convert estimate' }, 500)

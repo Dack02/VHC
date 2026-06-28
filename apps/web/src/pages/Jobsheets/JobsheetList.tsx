@@ -32,6 +32,7 @@ interface JobsheetRow {
   advisor: { firstName: string; lastName: string } | null
   healthCheck: { id: string; vehicleStatus: string; vhcReference: string | null } | null
   bookingCodes: { id: string; code: string; colour: string }[]
+  bookingSource?: string | null
 }
 
 const VEHICLE_STATUS_LABELS: Record<string, string> = {
@@ -184,6 +185,11 @@ export default function JobsheetList() {
                 </div>
               </div>
               <div className="hidden sm:flex flex-wrap gap-1 max-w-[220px] justify-end">
+                {row.bookingSource === 'online_estimate' && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700" title="Customer booked this online from an estimate">
+                    Online estimate
+                  </span>
+                )}
                 {row.serviceType && (
                   <span className="px-2 py-0.5 rounded-full text-xs font-medium text-white" style={{ backgroundColor: row.serviceType.colour }}>
                     {row.serviceType.code}

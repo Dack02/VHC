@@ -195,9 +195,16 @@ guard rail; P4+ are differentiators.
 
 1. **Online reserve buffer** — ❌ **No separate online target.** Online self-serve and staff bookings
    share the same `target_loading_pct`. No `online_target_loading_pct` knob to build.
-2. **Bookings-to-review vs instant-confirm** — ✅ **Review queue (interim)** for online timed slots
-   (P4). Accept the day-level limitation; advisor confirms online bookings into firm jobsheets. No
-   per-time-slot ledger for now.
+2. **Bookings-to-review vs instant-confirm** — refined 2026-06-29: online estimate acceptance now
+   **auto-creates a real jobsheet** (so it counts toward capacity immediately, see §9), rather than
+   sitting as an uncounted slot on the estimate. The "review" is then only confirming the exact
+   **time** for timed-slot types (MOT/AC), where day-level availability can't prevent two customers
+   picking the same time — a later advisor surface. No per-time-slot ledger for now.
+
+   > **Why estimate bookings must convert:** `vw_diary_bookings` unions jobsheets + health_checks
+   > only. A slot merely stamped on the estimate is invisible to capacity, so stacked online bookings
+   > could jointly exceed the target loading. Converting makes each online acceptance a counted new
+   > booking, bounded by the same target as every channel.
 3. **Build order** — ✅ **Start P1: the advisor `BookingDatePicker` (read-only availability), wired
    into New Jobsheet first.** Then extend to New Health Check + Make-Jobsheet. Commit guard (P2) and
    customer polish (P3) follow.
@@ -231,10 +238,45 @@ physical caps; advisor-only why-line; deferred-work recapture + waitlist deferre
   `<BookingDatePicker>` (driven by the draft `jobsheetId`); `WorkDetailsPanel onChange` bumps a
   `workVersion` so availability re-checks as priced work is added.
 
-**Not yet done (next):** wire into `NewHealthCheck.tsx` + the Make-Jobsheet convert modal; P2 commit
-guard + override capture; P3 customer-flow polish. **Live browser verify** needs the dev stack +
-`jobsheets` module enabled for the org + a draft with a priced repair-type line (standard GMS
-dev-deploy path; resource-manager P0–P3 tables already on cloud dev).
+**Not yet done (next):** New Health Check **deliberately excluded** (it's the upsell vehicle, not a
+new booking — owner steer 2026-06-29); P2 commit guard + override capture; P3 customer-flow UI polish.
+**Live browser verify** needs the dev stack + `jobsheets` module enabled for the org + a draft with a
+priced repair-type line (standard GMS dev-deploy path; resource-manager P0–P3 tables already on cloud
+dev).
+
+## 9. Estimate online acceptance → counted new booking — ✅ BUILT 2026-06-29 (uncommitted; API tsc green; no migration)
+
+The customer online-estimate booking already gates to `canBook` OK days (≤ `target_loading_pct`) — it
+only *offers* days within the target. The gap was that an accepted+booked estimate didn't **count**
+toward capacity until an advisor manually converted it, so stacked online bookings could jointly
+exceed the target. Closed by auto-converting on acceptance:
+
+- New `services/estimate-convert.ts` — `convertEstimateToJobsheet(opts)` (shared logic lifted from the
+  make-jobsheet route, incl. `copyLineToJobsheet`): copies approved (or all) lines onto a new VHC-less
+  jobsheet as pre-authorised work, stamps `primary_repair_type_id`, links + marks the estimate
+  `converted`. Returns a discriminated result.
+- `routes/estimates.ts` `POST /:id/make-jobsheet` refactored to call the service (behaviour unchanged).
+- `routes/public-estimate.ts` `POST /estimate/:token/book` — after stamping the slot + re-validating
+  `canBook`, **auto-converts** to a jobsheet (best-effort; only when the `jobsheets` module is enabled,
+  else the slot stays on the estimate for manual conversion), dated to the chosen slot. The jobsheet
+  enters `vw_diary_bookings` so the next booking (any channel) sees the consumed capacity. Response now
+  returns `jobsheetId`.
+
+**Known limitation:** two simultaneous online bookings can each pass `canBook` before the other's
+jobsheet exists (classic check-then-act race) — at the day level, low-concurrency for a garage; the
+diary surfaces any over-target day. True prevention needs a lock / per-slot ledger (deferred).
+
+### 9.1 "Online estimate" marker + settings explainer — ✅ BUILT 2026-06-29 (uncommitted; tsc + web build green)
+
+- Migration `20260630120000_jobsheet_booking_source.sql` — `jobsheets.booking_source VARCHAR(20)`
+  (NULL = manual/advisor; `'online_estimate'` = customer self-booked). `convertEstimateToJobsheet`
+  takes a `bookingSource` opt; the public `/book` path passes `'online_estimate'`; advisor
+  make-jobsheet leaves it NULL. Shape exposes `bookingSource` (SELECT is already `*`).
+- Web: an **"Online estimate"** badge (emerald) on `JobsheetList` rows + the `JobsheetDetail` header —
+  so advisors can spot customer self-booked jobs and confirm exact times on timed-slot work (the
+  review surface, lightweight).
+- `Settings/EstimateSettings.tsx` — a **"How online bookings work"** info modal (5-step explainer +
+  Jobsheets-module-required note) beside the online-booking toggle.
 
 - Backend: generic `resolveBookingJobForParent(orgId, {jobsheetId|estimateId|healthCheckId})` in
   `resource-capacity.ts` (lift from `public-estimate.ts`); `getAvailabilityStrip(...)` returns the

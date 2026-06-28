@@ -2,7 +2,9 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
+import { getEffectiveModulesCached } from '../services/modules.js'
 import { lookupVehicleByRegistration, persistMotHistory } from '../services/mot-history.js'
+import { lookupVehicleDetailsByRegistration, persistVehicleDetails } from '../services/vehicle-details.js'
 
 const vehicles = new Hono()
 
@@ -199,6 +201,54 @@ vehicles.post('/:id/mot-sync', requireModule('vehicle_lookup'), authorize(['supe
   }
 })
 
+// POST /api/v1/vehicles/:id/vehicle-details-refresh - On-demand paid DVLA spec
+// enrichment + persist for an existing vehicle. Also runs "customer sold the
+// vehicle" detection (keeper change vs the baseline captured at first enrich).
+vehicles.post('/:id/vehicle-details-refresh', requireModule('vehicle_details'), authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+
+    const { data: vehicle, error: vehicleError } = await supabaseAdmin
+      .from('vehicles')
+      .select('id, registration')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .single()
+
+    if (vehicleError || !vehicle) {
+      return c.json({ error: 'Vehicle not found' }, 404)
+    }
+
+    const result = await lookupVehicleDetailsByRegistration(vehicle.registration)
+    if (!result.success) {
+      const status =
+        result.errorCode === 'RATE_LIMITED' ? 429 :
+        result.errorCode === 'AUTH_FAILED' || result.errorCode === 'API_ERROR' || result.errorCode === 'EXCEPTION' ? 502 :
+        503 // NOT_CONFIGURED / DISABLED / INVALID
+      return c.json({ error: result.error || 'Vehicle details lookup failed', code: result.errorCode }, status)
+    }
+
+    if (!result.found) {
+      return c.json({ success: true, found: false, message: 'No vehicle details held for that registration' })
+    }
+
+    const { lifecycleStatus } = await persistVehicleDetails(auth.orgId, vehicle.id, result, { overwriteIdentity: true })
+
+    return c.json({
+      success: true,
+      found: true,
+      lifecycleStatus,
+      derivative: result.derivative,
+      keeperStartDate: result.keeperStartDate,
+      numberOfPreviousKeepers: result.numberOfPreviousKeepers
+    })
+  } catch (error) {
+    console.error('Vehicle details refresh error:', error)
+    return c.json({ error: 'Failed to refresh vehicle details' }, 500)
+  }
+})
+
 // POST /api/v1/vehicles - Create vehicle
 vehicles.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
   try {
@@ -206,7 +256,7 @@ vehicles.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
     const body = await c.req.json()
     const {
       customerId, registration, vin, make, model, year,
-      color, fuelType, engineSize, syncMotHistory
+      color, fuelType, engineSize, syncMotHistory, enrichVehicleDetails
     } = body
 
     if (!registration) {
@@ -266,6 +316,24 @@ vehicles.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
       }
     }
 
+    // Best-effort paid DVLA spec enrichment. Gated by the per-org vehicle_details
+    // module so an org without the (paid) module never incurs a lookup; the
+    // service also no-ops when no key is configured. Identity fields (make/model/
+    // colour/fuel) are overwritten — DVLA is the authoritative source.
+    if (enrichVehicleDetails && vehicle) {
+      try {
+        const mods = await getEffectiveModulesCached(c, auth.orgId)
+        if (mods.vehicle_details) {
+          const detailsResult = await lookupVehicleDetailsByRegistration(vehicle.registration)
+          if (detailsResult.success && detailsResult.found) {
+            await persistVehicleDetails(auth.orgId, vehicle.id, detailsResult, { overwriteIdentity: true })
+          }
+        }
+      } catch (detailsErr) {
+        console.error('Vehicle details enrichment on create failed:', detailsErr)
+      }
+    }
+
     return c.json({
       id: vehicle.id,
       customer_id: vehicle.customer_id,
@@ -321,6 +389,25 @@ vehicles.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'servi
       color: vehicle.color,
       fuel_type: vehicle.fuel_type,
       engine_size: vehicle.engine_size,
+      // DVLA spec/provenance enrichment (Vehicle Data Global)
+      derivative: vehicle.derivative,
+      body_type: vehicle.body_type,
+      transmission: vehicle.transmission,
+      drive_type: vehicle.drive_type,
+      power_bhp: vehicle.power_bhp,
+      co2_gkm: vehicle.co2_gkm,
+      euro_status: vehicle.euro_status,
+      powertrain_type: vehicle.powertrain_type,
+      taxation_class: vehicle.taxation_class,
+      vehicle_class: vehicle.vehicle_class,
+      date_first_registered: vehicle.date_first_registered,
+      lifecycle_status: vehicle.lifecycle_status,
+      lifecycle_changed_at: vehicle.lifecycle_changed_at,
+      keeper_start_date: vehicle.keeper_start_date,
+      number_of_previous_keepers: vehicle.number_of_previous_keepers,
+      previous_keeper_disposal_date: vehicle.previous_keeper_disposal_date,
+      latest_v5c_issue_date: vehicle.latest_v5c_issue_date,
+      vehicle_data_synced_at: vehicle.vehicle_data_synced_at,
       created_at: vehicle.created_at,
       updated_at: vehicle.updated_at
     })

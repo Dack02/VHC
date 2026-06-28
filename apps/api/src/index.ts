@@ -77,6 +77,7 @@ import followUpTimelines from './routes/follow-up-timelines.js'
 import followUpSettings from './routes/follow-up-settings.js'
 import modulesRoute from './routes/modules.js'
 import vehicleLookup from './routes/vehicle-lookup.js'
+import vehicleDetails from './routes/vehicle-details.js'
 import postcodeLookup from './routes/postcode-lookup.js'
 import jobsheetsRoute from './routes/jobsheets.js'
 import estimatesRoute from './routes/estimates.js'
@@ -182,6 +183,7 @@ app.route('/api/v1/modules', modulesRoute)
 
 // Vehicle data lookup (DVSA MOT History) — registration -> vehicle details + MOT
 app.route('/api/v1/vehicle-lookup', vehicleLookup)
+app.route('/api/v1/vehicle-details', vehicleDetails)
 
 // Postcode -> address lookup (provider-agnostic) — powers the customer modal
 app.route('/api/v1/postcode-lookup', postcodeLookup)

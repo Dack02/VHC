@@ -10,6 +10,7 @@ import { encrypt, decrypt, maskString, isEncryptionConfigured } from '../../lib/
 import { testSmsWithCredentials } from '../../services/sms.js'
 import { testEmailWithCredentials } from '../../services/email.js'
 import { testMotConnection, isMotManagedByEnv } from '../../services/mot-history.js'
+import { testVehicleDetailsConnection, isVehicleDetailsManagedByEnv } from '../../services/vehicle-details.js'
 import {
   getPlatformSmsCredentials,
   getPlatformEmailCredentials,
@@ -29,6 +30,7 @@ platformRoutes.use('*', superAdminMiddleware)
 platformRoutes.get('/settings', async (c) => {
   try {
     const motManagedByEnv = isMotManagedByEnv()
+    const vehicleDetailsManagedByEnv = isVehicleDetailsManagedByEnv()
     const smsManagedByEnv = isPlatformSmsManagedByEnv()
     const emailManagedByEnv = isPlatformEmailManagedByEnv()
     // Fetch all platform settings
@@ -82,6 +84,12 @@ platformRoutes.get('/settings', async (c) => {
         motTenantId: '',
         motClientSecret: '',
         motApiKey: ''
+      },
+      vehicleDetails: {
+        enabled: vehicleDetailsManagedByEnv,
+        managedByEnv: vehicleDetailsManagedByEnv,
+        baseUrl: '',
+        apiKey: ''
       },
       billing: {
         smsUnitCost: 0.04,
@@ -152,6 +160,20 @@ platformRoutes.get('/settings', async (c) => {
               vl.motApiKey = maskString(decrypt(settings.mot_api_key_encrypted as string))
             } catch {
               vl.motApiKey = '••••••••'
+            }
+          }
+        }
+      } else if (row.id === 'vehicle_details') {
+        // When the env var supplies the key it wins — don't surface the DB row.
+        if (!vehicleDetailsManagedByEnv) {
+          const vdg = combined.vehicleDetails as Record<string, unknown>
+          vdg.enabled = settings.enabled === true
+          if (settings.base_url) vdg.baseUrl = settings.base_url
+          if (settings.api_key_encrypted) {
+            try {
+              vdg.apiKey = maskString(decrypt(settings.api_key_encrypted as string))
+            } catch {
+              vdg.apiKey = '••••••••'
             }
           }
         }
@@ -329,6 +351,35 @@ platformRoutes.patch('/settings', async (c) => {
         .upsert({
           id: 'vehicle_lookup',
           settings: vlSettings,
+          updated_at: new Date().toISOString(),
+          updated_by: superAdmin.id
+        })
+    }
+
+    // Update vehicle details (Vehicle Data Global) credentials
+    if (body.vehicleDetails) {
+      const { data: existingVdg } = await supabaseAdmin
+        .from('platform_settings')
+        .select('settings')
+        .eq('id', 'vehicle_details')
+        .single()
+
+      const vdgSettings: Record<string, unknown> =
+        (existingVdg?.settings as Record<string, unknown>) || { provider: 'vehicledataglobal' }
+
+      const vdg = body.vehicleDetails
+      if (vdg.enabled !== undefined) vdgSettings.enabled = !!vdg.enabled
+      if (vdg.baseUrl !== undefined) vdgSettings.base_url = vdg.baseUrl
+      // Only update the key when a new (non-masked) value is provided
+      if (vdg.apiKey && !String(vdg.apiKey).includes('•') && isEncryptionConfigured()) {
+        vdgSettings.api_key_encrypted = encrypt(vdg.apiKey)
+      }
+
+      await supabaseAdmin
+        .from('platform_settings')
+        .upsert({
+          id: 'vehicle_details',
+          settings: vdgSettings,
           updated_at: new Date().toISOString(),
           updated_by: superAdmin.id
         })

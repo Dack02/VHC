@@ -97,26 +97,46 @@ ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS power_bhp             INTEGER;
 ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS co2_gkm               INTEGER;
 ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS euro_status           VARCHAR(20);
 ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS date_first_registered DATE;
-ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS is_scrapped           BOOLEAN;
-ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS is_imported           BOOLEAN;
 ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS vehicle_spec          JSONB;     -- full results payload
 ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS vehicle_data_synced_at TIMESTAMPTZ;
+
+-- Powertrain (cleanly separates EV/hybrid — fuel_type alone doesn't)
+ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS powertrain_type       VARCHAR(10); -- ICE | BEV | PHEV | REEV
+
+-- Vehicle classification (org segments car vs van/commercial for pricing/reporting)
+ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS taxation_class        VARCHAR(10); -- Car | PVC | LCV | HCV | Quad
+ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS vehicle_class         VARCHAR(40); -- e.g. Car
+
+-- Raw lifecycle facts from DVLA (also drive lifecycle_status below)
+ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS is_scrapped           BOOLEAN;
+ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS is_exported           BOOLEAN;
+ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS is_imported           BOOLEAN;
+ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS certificate_of_destruction_issued BOOLEAN;
 
 -- Keeper / V5 reporting (promoted to columns — drives "customer sold vehicle" detection)
 ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS keeper_start_date            DATE;
 ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS number_of_previous_keepers   INTEGER;
 ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS previous_keeper_disposal_date DATE;
 ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS latest_v5c_issue_date        DATE;
--- Derived ownership signal
-ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS ownership_status             VARCHAR(20) DEFAULT 'owned'; -- owned | likely_sold
-ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS ownership_changed_at         TIMESTAMPTZ; -- when we detected the change
--- Baseline captured at first enrichment, to compare against on refresh
+
+-- Unified lifecycle status — single field the reminder/Follow-Up suppression reads.
+-- active = serviceable; sold = keeper changed (derived); scrapped/exported/destroyed = DVLA fact.
+ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS lifecycle_status      VARCHAR(12) DEFAULT 'active'; -- active | sold | scrapped | exported | destroyed
+ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS lifecycle_changed_at  TIMESTAMPTZ; -- when we detected the change
+
+-- Baseline captured at first enrichment, to compare against on refresh (sold detection)
 ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS keeper_baseline_start_date   DATE;
 ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS keeper_baseline_count        INTEGER;
 
-CREATE INDEX IF NOT EXISTS idx_vehicles_ownership_status ON vehicles(organization_id, ownership_status);
+CREATE INDEX IF NOT EXISTS idx_vehicles_lifecycle_status ON vehicles(organization_id, lifecycle_status);
+CREATE INDEX IF NOT EXISTS idx_vehicles_powertrain_type ON vehicles(organization_id, powertrain_type);
+CREATE INDEX IF NOT EXISTS idx_vehicles_taxation_class ON vehicles(organization_id, taxation_class);
 CREATE INDEX IF NOT EXISTS idx_vehicles_keeper_start ON vehicles(organization_id, keeper_start_date);
 ```
+
+> `lifecycle_status` precedence when set: `destroyed` > `scrapped` > `exported` > `sold` >
+> `active`. The hard DVLA facts (scrapped/exported/CoD) take priority over the derived
+> `sold` inference. Raw booleans are kept alongside for audit/reporting.
 
 (`make`, `model`, `year`, `color`, `fuel_type`, `engine_size`, `mileage` already exist.)
 
@@ -144,8 +164,13 @@ CREATE INDEX IF NOT EXISTS idx_vehicles_keeper_start ON vehicles(organization_id
 | co2_gkm | `vehicleExciseDutyDetails.dvlaCo2` ?? `emissions.manufacturerCo2` |
 | euro_status | `emissions.euroStatus` |
 | date_first_registered | `vehicleIdentification.dateFirstRegisteredInUk` |
+| powertrain_type | `modelDetails.powertrain.powertrainType` |
+| taxation_class | `modelDetails.modelClassification.taxationClass` |
+| vehicle_class | `modelDetails.modelClassification.vehicleClass` |
 | is_scrapped | `vehicleStatus.isScrapped` |
+| is_exported | `vehicleStatus.isExported` |
 | is_imported | `vehicleStatus.isImported` |
+| certificate_of_destruction_issued | `vehicleStatus.certificateOfDestructionIssued` |
 | keeper_start_date | `vehicleHistory.keeperChangeList[latest].keeperStartDate` |
 | number_of_previous_keepers | `vehicleHistory.keeperChangeList[latest].numberOfPreviousKeepers` |
 | previous_keeper_disposal_date | `vehicleHistory.keeperChangeList[latest].previousKeeperDisposalDate` |
@@ -167,19 +192,24 @@ so detection always costs a lookup → it must be triggered deliberately.
 **Baseline:** on the **first** enrichment (while the customer is the known owner), store
 `keeper_baseline_start_date` + `keeper_baseline_count`.
 
-**Detection (on every later refresh):** flag `ownership_status = 'likely_sold'` +
-stamp `ownership_changed_at` when either:
+**Detection (on every later refresh):** set `lifecycle_status = 'sold'` +
+stamp `lifecycle_changed_at` when either:
 - `keeper_start_date` advances **past** the baseline (a new keeper started), **or**
 - `number_of_previous_keepers` increases beyond the baseline.
 
-Optional corroboration: the new `keeper_start_date` is **after** the customer's last
-job/visit date (reduces false positives where the customer themselves just re-registered).
+The hard DVLA facts set `lifecycle_status` directly regardless of keeper data:
+`certificateOfDestructionIssued → destroyed`, `isScrapped → scrapped`,
+`isExported → exported` (precedence: destroyed > scrapped > exported > sold > active).
 
-**Consumers of the flag:**
-- **Suppress** MOT reminders / Follow-Up / marketing for `likely_sold` vehicles.
-- **Report:** "vehicles sold in last N days" / lost-customer list (queryable via the new
-  columns + indexes).
-- UI badge on the vehicle/customer ("Likely sold — keeper changed {date}").
+Optional corroboration for `sold`: the new `keeper_start_date` is **after** the customer's
+last job/visit date (reduces false positives where the customer themselves just
+re-registered).
+
+**Consumers of `lifecycle_status` (single field, not 4 booleans):**
+- **Suppress** MOT reminders / Follow-Up / marketing for any non-`active` vehicle.
+- **Report:** "vehicles sold/scrapped/exported in last N days" / lost-customer list
+  (queryable via the indexed column).
+- UI badge on the vehicle/customer ("Sold — keeper changed {date}", "Scrapped", etc.).
 
 **Open decision — DEFERRED.** When the paid re-check fires (just-in-time before outbound
 reminders / scheduled sweep / manual-only / combo) is to be decided later. For now the

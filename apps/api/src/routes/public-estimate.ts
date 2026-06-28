@@ -156,7 +156,8 @@ publicEstimate.get('/estimate/:token', async (c) => {
       name: branding.organizationName,
       logoUrl: branding.logoUrl,
       primaryColor: branding.primaryColor,
-      phone: branding.phone
+      phone: branding.phone,
+      usps: settings.usps
     },
     customer: customer ? { firstName: customer.first_name, lastName: customer.last_name } : null,
     vehicle: vehicle ? { registration: vehicle.registration, make: vehicle.make, model: vehicle.model, year: vehicle.year } : null,

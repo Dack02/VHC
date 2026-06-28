@@ -14,6 +14,7 @@ export type ModuleKey =
   | 'reports'
   | 'ai_generation'
   | 'vehicle_lookup'
+  | 'vehicle_details'
   | 'jobsheets'
   | 'estimates'
   | 'booking_diary'
@@ -37,6 +38,7 @@ export const MODULES: ModuleDefinition[] = [
   { key: 'reports',            label: 'Reports',            description: 'Reporting & analytics dashboards', defaultOn: true },
   { key: 'ai_generation',      label: 'AI Generation',      description: 'AI-assisted reason & note generation', defaultOn: true },
   { key: 'vehicle_lookup',     label: 'Vehicle Data Lookup', description: 'DVSA MOT history & vehicle lookup by registration', defaultOn: true },
+  { key: 'vehicle_details',    label: 'Vehicle Data (DVLA spec)', description: 'Paid DVLA spec, provenance & keeper/V5 enrichment (Vehicle Data Global)', defaultOn: false },
   { key: 'jobsheets',          label: 'Jobsheets (GMS)',    description: 'Top-level booking document with attached health checks', defaultOn: false },
   { key: 'estimates',          label: 'Estimates (GMS)',    description: 'Standalone pre-booking priced quotes that convert into jobsheets', defaultOn: true },
   { key: 'booking_diary',      label: 'Booking Diary',      description: 'Daily/weekly booking diary with workshop capacity and job-type counts', defaultOn: true }

@@ -82,6 +82,9 @@ export default function NewJobsheet() {
 
   // work required
   const [requiresVhc, setRequiresVhc] = useState(true)
+  // Name of the service package auto-added as a work line when a VHC is created
+  // (Settings → Workflow). null = none nominated → no line, so no hint shown.
+  const [vhcPackageName, setVhcPackageName] = useState<string | null>(null)
 
   // Bumped whenever the Work Details panel mutates lines, so the BookingDatePicker
   // re-checks availability against the draft's current category + hours.
@@ -123,6 +126,18 @@ export default function NewJobsheet() {
         setAdvisors((userData.users || []).filter(u => u.role !== 'technician'))
         setServiceTypes(stData.serviceTypes || [])
         setBookingCodeOptions(bcData.bookingCodes || [])
+        // Nominated VHC work-line package (best-effort — never blocks the form).
+        const orgId = user?.organization?.id
+        if (orgId) {
+          try {
+            const vhcLine = await api<{ settings: { vhcServicePackageName: string | null } }>(
+              `/api/v1/organizations/${orgId}/vhc-line-settings/settings`, { token }
+            )
+            setVhcPackageName(vhcLine.settings?.vhcServicePackageName ?? null)
+          } catch {
+            // ignore — no hint shown
+          }
+        }
         const me = user?.id
         setForm(f => ({
           ...f,
@@ -593,6 +608,11 @@ export default function NewJobsheet() {
             Requires VHC (health check)
           </label>
           <p className="text-xs text-gray-400">A health check is created with the booking by default. Untick if this job doesn’t need an inspection — booked work stays on the jobsheet either way. Add labour, parts and packages under <span className="font-medium text-gray-500">Work Details</span> →</p>
+          {requiresVhc && vhcPackageName && (
+            <p className="text-xs text-gray-600 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+              A <span className="font-semibold text-gray-900">“{vhcPackageName}”</span> work line is added to the job card so the technician knows to do the health check.
+            </p>
+          )}
         </div>
 
         {/* Workshop schedule — full width, capacity-aware picker (Resource Manager) */}

@@ -18,7 +18,9 @@ vhcLineSettings.use('*', authMiddleware)
 
 const WRITE_ROLES = ['super_admin', 'org_admin', 'site_admin'] as const
 
-// GET /settings — the currently nominated VHC service package (or null).
+// GET /settings — the currently nominated VHC service package (id + name, or null).
+// The name is resolved only for an active package, so callers (e.g. the new-jobsheet
+// hint) never name a package that wouldn't actually produce a work line.
 vhcLineSettings.get('/settings', async (c) => {
   const auth = c.get('auth')
   const orgId = c.req.param('orgId')
@@ -30,7 +32,20 @@ vhcLineSettings.get('/settings', async (c) => {
     .eq('organization_id', orgId)
     .maybeSingle()
 
-  return c.json({ settings: { vhcServicePackageId: data?.vhc_service_package_id ?? null } })
+  const packageId = data?.vhc_service_package_id ?? null
+  let packageName: string | null = null
+  if (packageId) {
+    const { data: pkg } = await supabaseAdmin
+      .from('service_packages')
+      .select('name')
+      .eq('id', packageId)
+      .eq('organization_id', orgId)
+      .eq('is_active', true)
+      .maybeSingle()
+    packageName = pkg?.name ?? null
+  }
+
+  return c.json({ settings: { vhcServicePackageId: packageId, vhcServicePackageName: packageName } })
 })
 
 // PATCH /settings — nominate a package (or pass null/'' to turn the feature off).

@@ -8,6 +8,7 @@ import { getEstimateSettings } from '../services/estimate-settings.js'
 import { sendEstimateToCustomer } from '../services/estimate-send.js'
 import { convertEstimateToJobsheet } from '../services/estimate-convert.js'
 import { resolveBookingJobForParent, canBook } from '../services/resource-capacity.js'
+import { buildDocumentSearchOr } from '../lib/list-search.js'
 
 /**
  * Estimates (GMS) — a standalone, pre-booking priced quote. Mirrors the jobsheet
@@ -87,6 +88,32 @@ function shapeEstimate(row: any) {
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+/**
+ * Batched quote value for the list. Sums top-level non-deleted repair_items
+ * (price_override wins) per estimate in one query — far cheaper than the per-row
+ * /work-lines call, and well under the PostgREST 1000-row cap at a 50-row page.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+async function attachEstimateTotals(orgId: string, shaped: any[]) {
+  const ids = shaped.map((r) => r.id)
+  if (!ids.length) return
+  const { data } = await supabaseAdmin
+    .from('repair_items')
+    .select('estimate_id, total_inc_vat, price_override, outcome_status')
+    .eq('organization_id', orgId)
+    .in('estimate_id', ids)
+    .is('parent_repair_item_id', null)
+    .is('deleted_at', null)
+  const totals = new Map<string, number>()
+  for (const ri of (data || []) as any[]) {
+    if (ri.outcome_status === 'deleted' || !ri.estimate_id) continue
+    const v = Number(ri.price_override ?? ri.total_inc_vat ?? 0)
+    totals.set(ri.estimate_id, (totals.get(ri.estimate_id) || 0) + v)
+  }
+  for (const r of shaped) r.total = totals.get(r.id) || 0
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 // GET / - list estimates
 estimates.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {
@@ -103,14 +130,25 @@ estimates.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
       .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1)
 
     if (site_id) query = query.eq('site_id', site_id)
-    if (status) query = query.eq('status', status)
-    if (q) query = query.ilike('reference', `%${q}%`)
+    // status accepts a single value or a comma list (drives the status tabs).
+    if (status) {
+      const statuses = status.split(',').map((s) => s.trim()).filter(Boolean)
+      query = statuses.length > 1 ? query.in('status', statuses) : query.eq('status', statuses[0])
+    }
+    // Universal search: reference + customer name + vehicle reg.
+    if (q && q.trim()) {
+      const orFilter = await buildDocumentSearchOr(auth.orgId, q)
+      if (orFilter) query = query.or(orFilter)
+    }
 
     const { data, error, count } = await query
     if (error) return c.json({ error: error.message }, 500)
 
+    const shaped = (data || []).map(shapeEstimate)
+    await attachEstimateTotals(auth.orgId, shaped)
+
     return c.json({
-      estimates: (data || []).map(shapeEstimate),
+      estimates: shaped,
       total: count,
       limit: parseInt(limit),
       offset: parseInt(offset)
@@ -118,6 +156,55 @@ estimates.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
   } catch (error) {
     console.error('List estimates error:', error)
     return c.json({ error: 'Failed to list estimates' }, 500)
+  }
+})
+
+// GET /stats - status counts for the estimate tabs/tiles (org-scoped, non-draft, live)
+estimates.get('/stats', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { site_id } = c.req.query()
+    const base = () => {
+      let qb = supabaseAdmin
+        .from('estimates')
+        .select('id', { count: 'exact', head: true })
+        .eq('organization_id', auth.orgId)
+        .eq('is_draft', false)
+        .is('deleted_at', null)
+      if (site_id) qb = qb.eq('site_id', site_id)
+      return qb
+    }
+    const countOf = async (statuses: string[] | null) => {
+      let qb = base()
+      if (statuses) qb = qb.in('status', statuses)
+      const { count } = await qb
+      return count || 0
+    }
+    // "Expiring soon" = still-open quotes whose valid_until lands within the next 7 days.
+    const today = new Date()
+    const iso = (d: Date) => d.toISOString().slice(0, 10)
+    const soon = new Date(today.getTime() + 7 * 86400000)
+    const expiringSoonQuery = base()
+      .in('status', ['sent', 'opened', 'partial'])
+      .gte('valid_until', iso(today))
+      .lte('valid_until', iso(soon))
+
+    // Tab groups mirror the customer-response lifecycle.
+    const OPEN = ['draft', 'sent', 'opened', 'partial']
+    const [all, open, sent, opened, accepted, declined, draft, expiringSoonRes] = await Promise.all([
+      countOf(null),
+      countOf(OPEN),
+      countOf(['sent']),
+      countOf(['opened', 'partial']),
+      countOf(['accepted', 'converted']),
+      countOf(['declined']),
+      countOf(['draft']),
+      expiringSoonQuery
+    ])
+    return c.json({ all, open, sent, opened, accepted, declined, draft, expiringSoon: expiringSoonRes.count || 0 })
+  } catch (error) {
+    console.error('Estimate stats error:', error)
+    return c.json({ error: 'Failed to load estimate stats' }, 500)
   }
 })
 

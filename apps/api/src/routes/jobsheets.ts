@@ -7,6 +7,7 @@ import { invoiceJobsheet, reverseJobsheetInvoice } from '../services/parts-accou
 import { resolveBookingJobForParent, canBook } from '../services/resource-capacity.js'
 import { formatRepairItem } from './repair-items/helpers.js'
 import { buildHealthCheckTimeline, extractUser, type TimelineEvent } from './health-checks/timeline.js'
+import { buildDocumentSearchOr } from '../lib/list-search.js'
 
 /**
  * Jobsheets (GMS) — the top-level booking document. A jobsheet is the parent; a
@@ -262,6 +263,43 @@ async function loadJobsheetExtras(orgId: string, shaped: any) {
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+/**
+ * Batched quoted value for the list. A jobsheet's work lines are repair_items
+ * hanging off jobsheet_id (booked) ∪ the linked VHC's health_check_id (findings) —
+ * mirrors loadJobsheetExtras' pricing sum, but for the whole page in one query.
+ * price_override wins for the inc-VAT headline; deleted lines are skipped.
+ */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+async function attachJobsheetTotals(orgId: string, shaped: any[]) {
+  if (!shaped.length) return
+  const jsIds = shaped.map((r) => r.id)
+  const hcToJs = new Map<string, string>()
+  for (const r of shaped) if (r.healthCheck?.id) hcToJs.set(r.healthCheck.id, r.id)
+  const hcIds = [...hcToJs.keys()]
+
+  const orParts = [`jobsheet_id.in.(${jsIds.join(',')})`]
+  if (hcIds.length) orParts.push(`health_check_id.in.(${hcIds.join(',')})`)
+
+  const { data } = await supabaseAdmin
+    .from('repair_items')
+    .select('jobsheet_id, health_check_id, total_inc_vat, price_override, outcome_status')
+    .eq('organization_id', orgId)
+    .is('parent_repair_item_id', null)
+    .is('deleted_at', null)
+    .or(orParts.join(','))
+
+  const totals = new Map<string, number>()
+  for (const ri of (data || []) as any[]) {
+    if (ri.outcome_status === 'deleted') continue
+    const jsId = ri.jobsheet_id || (ri.health_check_id ? hcToJs.get(ri.health_check_id) : null)
+    if (!jsId) continue
+    const v = Number(ri.price_override ?? ri.total_inc_vat ?? 0)
+    totals.set(jsId, (totals.get(jsId) || 0) + v)
+  }
+  for (const r of shaped) r.total = totals.get(r.id) || 0
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 // GET / - list jobsheets (forward calendar)
 jobsheets.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {
@@ -282,13 +320,20 @@ jobsheets.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
     if (complete === 'false') query = query.eq('jobsheet_complete', false)
     if (date_from) query = query.gte('created_at', date_from)
     if (date_to) query = query.lte('created_at', date_to)
-    if (q) query = query.ilike('reference', `%${q}%`)
+    // Universal search: reference + customer name + vehicle reg.
+    if (q && q.trim()) {
+      const orFilter = await buildDocumentSearchOr(auth.orgId, q)
+      if (orFilter) query = query.or(orFilter)
+    }
 
     const { data, error, count } = await query
     if (error) return c.json({ error: error.message }, 500)
 
+    const shaped = (data || []).map(shapeJobsheet)
+    await attachJobsheetTotals(auth.orgId, shaped)
+
     return c.json({
-      jobsheets: (data || []).map(shapeJobsheet),
+      jobsheets: shaped,
       total: count,
       limit: parseInt(limit),
       offset: parseInt(offset)
@@ -296,6 +341,63 @@ jobsheets.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
   } catch (error) {
     console.error('List jobsheets error:', error)
     return c.json({ error: 'Failed to list jobsheets' }, 500)
+  }
+})
+
+// GET /stats - tab + tile counts for the jobsheet list. Active/Completed/All come from
+// jobsheet_complete; the tiles (on-site, awaiting parts, ready to invoice, overdue, due
+// today) are derived from the live jobs' effective Vehicle Status / VHC status in JS.
+jobsheets.get('/stats', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { site_id } = c.req.query()
+    const today = new Date().toISOString().slice(0, 10)
+
+    const countQ = (complete: boolean | null) => {
+      let qb = supabaseAdmin
+        .from('jobsheets')
+        .select('id', { count: 'exact', head: true })
+        .eq('organization_id', auth.orgId)
+        .eq('is_draft', false)
+        .is('deleted_at', null)
+      if (site_id) qb = qb.eq('site_id', site_id)
+      if (complete !== null) qb = qb.eq('jobsheet_complete', complete)
+      return qb
+    }
+
+    // One lightweight pass over the active jobs for the status-derived tiles.
+    let activeQ = supabaseAdmin
+      .from('jobsheets')
+      .select('id, job_state, due_in_date, linked_checks:health_checks!health_checks_jobsheet_id_fkey(status, job_state, deleted_at)')
+      .eq('organization_id', auth.orgId)
+      .eq('is_draft', false)
+      .is('deleted_at', null)
+      .eq('jobsheet_complete', false)
+      .limit(1000)
+    if (site_id) activeQ = activeQ.eq('site_id', site_id)
+
+    const [allRes, completedRes, activeRes] = await Promise.all([countQ(null), countQ(true), activeQ])
+
+    const tiles = { onSite: 0, awaitingParts: 0, readyToInvoice: 0, overdue: 0, dueToday: 0 }
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    for (const j of (activeRes.data || []) as any[]) {
+      const hc = Array.isArray(j.linked_checks) ? j.linked_checks.find((h: any) => !h.deleted_at) : null
+      const vStatus = hc ? hc.job_state : j.job_state
+      const vhcStatus = hc ? hc.status : null
+      if (vStatus === 'arrived' || vStatus === 'in_workshop') tiles.onSite++
+      if (vhcStatus === 'awaiting_parts') tiles.awaitingParts++
+      if (vStatus === 'work_complete' || vhcStatus === 'authorized') tiles.readyToInvoice++
+      if (j.due_in_date && j.due_in_date < today) tiles.overdue++
+      else if (j.due_in_date === today) tiles.dueToday++
+    }
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+
+    const all = allRes.count || 0
+    const completed = completedRes.count || 0
+    return c.json({ all, active: all - completed, completed, tiles })
+  } catch (error) {
+    console.error('Jobsheet stats error:', error)
+    return c.json({ error: 'Failed to load jobsheet stats' }, 500)
   }
 })
 

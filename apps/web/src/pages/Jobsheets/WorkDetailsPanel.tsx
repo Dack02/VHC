@@ -336,6 +336,8 @@ function WorkLineGroup({
   const [savingLab, setSavingLab] = useState(false)
   const [part, setPart] = useState({ description: '', quantity: '1', costPrice: '', sellPrice: '', supplierId: '' })
   const [savingPart, setSavingPart] = useState(false)
+  // Which inline editor is open in this line: none, labour, or part. One at a time.
+  const [editor, setEditor] = useState<null | 'labour' | 'part'>(null)
 
   // Labour is locked to the line's Repair Type → its default labour code → rate.
   const repairType = repairTypes.find(rt => rt.id === line.repairTypeId) || null
@@ -352,7 +354,7 @@ function WorkLineGroup({
     setSavingLab(true)
     const ok = await onAddLabour(line.id, h, labDesc.trim())
     setSavingLab(false)
-    if (ok) { setLabHours(''); setLabDesc('') }
+    if (ok) { setLabHours(''); setLabDesc(''); setEditor(null) }
   }
   const submitPart = async () => {
     if (!part.description.trim() || part.sellPrice === '' || isNaN(parseFloat(part.sellPrice))) return
@@ -365,10 +367,13 @@ function WorkLineGroup({
       supplier_id: part.supplierId || undefined
     })
     setSavingPart(false)
-    if (ok) setPart({ description: '', quantity: '1', costPrice: '', sellPrice: '', supplierId: '' })
+    if (ok) { setPart({ description: '', quantity: '1', costPrice: '', sellPrice: '', supplierId: '' }); setEditor(null) }
   }
 
   const compactSelect = 'h-9 rounded-lg border border-[#e4e7ec] bg-white px-2.5 text-sm text-[#16191f] focus:outline-none focus:border-[#16191f] focus:shadow-[0_0_0_3px_rgba(22,25,31,0.08)]'
+  const btnSave = 'h-9 px-4 rounded-lg bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-50'
+  const btnCancel = 'h-9 px-4 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50'
+  const cellInput = 'h-9 w-full rounded-lg border border-[#e4e7ec] bg-white px-2.5 text-sm text-[#16191f] focus:outline-none focus:border-[#16191f] focus:shadow-[0_0_0_3px_rgba(22,25,31,0.08)]'
 
   return (
     <div>
@@ -433,63 +438,74 @@ function WorkLineGroup({
             </div>
           ))}
 
-          {/* Entry panels — roomy, labelled fields */}
+          {/* Inline entry — one editor at a time, aligned to the line-item grid */}
           {editable && (
-            <div className="mx-3 mt-2 space-y-2">
-              {/* Add labour */}
-              {canAddLabour ? (
-                <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/60 p-3">
-                  <div className="flex flex-wrap items-end gap-2">
-                    <div className="flex-1 min-w-[12rem]">
-                      <label className={labelMini}>Labour · {lockedCode!.code} @ {money(lockedCode!.hourlyRate)}/hr</label>
-                      <input value={labDesc} onChange={e => setLabDesc(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') submitLabour() }} placeholder="Description" className={fieldCls} />
-                    </div>
-                    <div className="w-24">
-                      <label className={labelMini}>Hours</label>
+            <>
+              {/* LABOUR editor */}
+              {editor === 'labour' && (
+                canAddLabour ? (
+                  <>
+                    <div className="grid items-center gap-x-2 px-3 py-2 bg-green-50 border-y border-green-200" style={{ gridTemplateColumns: GRID_COLS }}>
+                      <input autoFocus value={labDesc} onChange={e => setLabDesc(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') submitLabour(); if (e.key === 'Escape') setEditor(null) }}
+                        placeholder="Labour description" className={`${cellInput} ml-6`} style={{ width: 'calc(100% - 1.5rem)' }} />
+                      <span className="text-xs font-medium text-green-700">Labour</span>
                       <input type="number" step="0.1" min="0" value={labHours} onChange={e => setLabHours(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') submitLabour() }} placeholder="0.0" className={`${fieldCls} text-right`} />
+                        onKeyDown={e => { if (e.key === 'Enter') submitLabour() }} placeholder="0.0" className={`${cellInput} text-right`} />
+                      <span className="text-right text-sm text-gray-500">{money(lockedCode!.hourlyRate)}</span>
+                      <span className="text-right text-sm font-semibold text-gray-900">{money((parseFloat(labHours) || 0) * lockedCode!.hourlyRate)}</span>
+                      <span />
                     </div>
-                    <button onClick={submitLabour} disabled={savingLab || !labDesc.trim() || !labHours} className={btnPrimary}>Add labour</button>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-xs text-amber-600 px-1">Pick a repair type {repairType && !lockedCode ? 'with a default labour code ' : ''}above to add labour.</p>
+                    <div className="flex items-center gap-2 px-3 py-2 pl-9 bg-green-50 border-b border-green-200">
+                      <span className="text-xs text-gray-500">{lockedCode!.code} @ {money(lockedCode!.hourlyRate)}/hr</span>
+                      <div className="ml-auto flex gap-2">
+                        <button onClick={() => setEditor(null)} className={btnCancel}>Cancel</button>
+                        <button onClick={submitLabour} disabled={savingLab || !labDesc.trim() || !labHours} className={btnSave}>Save labour</button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="px-3 pl-9 py-2 text-xs text-amber-600">Pick a repair type {repairType && !lockedCode ? 'with a default labour code ' : ''}above to add labour.</p>
+                )
               )}
 
-              {/* Add part */}
-              <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/60 p-3">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-2 gap-y-2 items-end">
-                  <div className="col-span-2">
-                    <label className={labelMini}>Part description</label>
-                    <input value={part.description} onChange={e => setPart({ ...part, description: e.target.value })} placeholder="Part description" className={fieldCls} />
+              {/* PART editor */}
+              {editor === 'part' && (
+                <>
+                  <div className="grid items-center gap-x-2 px-3 py-2 bg-green-50 border-y border-green-200" style={{ gridTemplateColumns: GRID_COLS }}>
+                    <input autoFocus value={part.description} onChange={e => setPart({ ...part, description: e.target.value })}
+                      onKeyDown={e => { if (e.key === 'Escape') setEditor(null) }}
+                      placeholder="Part description" className={`${cellInput} ml-6`} style={{ width: 'calc(100% - 1.5rem)' }} />
+                    <span className="text-xs font-medium text-green-700">Part</span>
+                    <input type="number" step="1" min="0" value={part.quantity} onChange={e => setPart({ ...part, quantity: e.target.value })} className={`${cellInput} text-right`} />
+                    <input type="number" step="0.01" min="0" value={part.sellPrice} onChange={e => setPart({ ...part, sellPrice: e.target.value })}
+                      onKeyDown={e => { if (e.key === 'Enter') submitPart() }} placeholder="Sell £" className={`${cellInput} text-right`} />
+                    <span className="text-right text-sm font-semibold text-gray-900">{money((parseFloat(part.quantity) || 0) * (parseFloat(part.sellPrice) || 0))}</span>
+                    <span />
                   </div>
-                  <div>
-                    <label className={labelMini}>Qty</label>
-                    <input type="number" step="1" min="0" value={part.quantity} onChange={e => setPart({ ...part, quantity: e.target.value })} className={`${fieldCls} text-right`} />
-                  </div>
-                  <div>
-                    <label className={labelMini}>Supplier</label>
-                    <select value={part.supplierId} onChange={e => setPart({ ...part, supplierId: e.target.value })} className={fieldCls}>
-                      <option value="">—</option>
+                  <div className="flex items-center gap-2 px-3 py-2 pl-9 bg-green-50 border-b border-green-200">
+                    <select value={part.supplierId} onChange={e => setPart({ ...part, supplierId: e.target.value })} className={compactSelect}>
+                      <option value="">Supplier —</option>
                       {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
+                    <input type="number" step="0.01" min="0" value={part.costPrice} onChange={e => setPart({ ...part, costPrice: e.target.value })} placeholder="Cost £" className={`${cellInput} w-28`} />
+                    {margin != null && <span className="text-xs text-gray-500">Margin <strong className="text-green-700">{margin.toFixed(0)}%</strong></span>}
+                    <div className="ml-auto flex gap-2">
+                      <button onClick={() => setEditor(null)} className={btnCancel}>Cancel</button>
+                      <button onClick={submitPart} disabled={savingPart || !part.description.trim() || part.sellPrice === ''} className={btnSave}>Save part</button>
+                    </div>
                   </div>
-                  <div>
-                    <label className={labelMini}>Cost £</label>
-                    <input type="number" step="0.01" min="0" value={part.costPrice} onChange={e => setPart({ ...part, costPrice: e.target.value })} placeholder="0.00" className={`${fieldCls} text-right`} />
-                  </div>
-                  <div>
-                    <label className={labelMini}>Sell £{margin != null ? ` · ${margin.toFixed(0)}%` : ''}</label>
-                    <input type="number" step="0.01" min="0" value={part.sellPrice} onChange={e => setPart({ ...part, sellPrice: e.target.value })}
-                      onKeyDown={e => { if (e.key === 'Enter') submitPart() }} placeholder="0.00" className={`${fieldCls} text-right`} />
-                  </div>
-                  <div className="col-span-2 flex items-end justify-end">
-                    <button onClick={submitPart} disabled={savingPart || !part.description.trim() || part.sellPrice === ''} className={btnPrimary}>Add part</button>
-                  </div>
+                </>
+              )}
+
+              {/* Resting action row */}
+              {editor === null && (
+                <div className="flex gap-5 px-3 py-2 pl-12">
+                  <button onClick={() => setEditor('labour')} className="text-sm font-semibold text-green-700 hover:text-green-800">+ Labour</button>
+                  <button onClick={() => setEditor('part')} className="text-sm font-semibold text-green-700 hover:text-green-800">+ Part</button>
                 </div>
-              </div>
-            </div>
+              )}
+            </>
           )}
 
           {/* Line subtotal */}

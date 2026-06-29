@@ -67,6 +67,9 @@ purchaseOrders.get('/', authorize([...WRITE_ROLES]), async (c) => {
       .from('purchase_orders')
       .select('id, po_number, status, supplier_id, supplier:suppliers(name), ordered_at, received_at, created_at, lines:purchase_order_lines(id, qty_ordered, qty_received, unit_cost)')
       .eq('organization_id', auth.orgId)
+      // Invoice-in-hand entries are POs under the hood (origin='direct_invoice'); they belong on
+      // the Purchase Invoices ledger, not the open-orders list.
+      .eq('origin', 'order')
       .order('created_at', { ascending: false })
       .limit(500)
     if (status) q = q.eq('status', status)

@@ -84,6 +84,7 @@ import jobsheetsRoute from './routes/jobsheets.js'
 import partsAccountingRoute from './routes/parts-accounting.js'
 import partsStockRoute from './routes/parts-stock.js'
 import purchaseOrdersRoute from './routes/purchase-orders.js'
+import purchaseInvoicesRoute from './routes/purchase-invoices.js'
 import supplierReturnsRoute from './routes/supplier-returns.js'
 import stocktakeRoute from './routes/stocktake.js'
 import pricingMatrixRoute from './routes/pricing-matrix.js'
@@ -216,6 +217,8 @@ app.route('/api/v1/parts-accounting', partsAccountingRoute)
 app.route('/api/v1/parts-stock', partsStockRoute)
 // Purchase Orders + goods-in/GRN — Full-mode order-in (gated by parts_stock module)
 app.route('/api/v1/purchase-orders', purchaseOrdersRoute)
+// Purchase Invoice entry (invoice-in-hand) + purchase ledger — Full-mode (gated by parts_stock)
+app.route('/api/v1/purchase-invoices', purchaseInvoicesRoute)
 // Supplier returns / credit loop — Full-mode (gated by parts_stock module)
 app.route('/api/v1/supplier-returns', supplierReturnsRoute)
 // Structured stocktake sessions — Full-mode (gated by parts_stock module)

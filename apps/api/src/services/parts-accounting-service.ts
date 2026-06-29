@@ -279,11 +279,14 @@ export async function invoiceJobsheet(
 ): Promise<InvoiceJobsheetResult> {
   const { data: js, error } = await supabaseAdmin
     .from('jobsheets')
-    .select('id, organization_id, closed_at, invoice_number')
+    .select('id, organization_id, closed_at, invoice_number, is_shell')
     .eq('id', jobsheetId)
     .maybeSingle()
   if (error || !js) return { ok: false, error: error?.message ?? 'Jobsheet not found' }
   if (js.organization_id !== orgId) return { ok: false, error: 'Jobsheet not found' }
+  // Shells are operational plumbing for standalone VHCs, never commercial documents
+  // (TECH_JOB_MODEL.md §11). They must never be invoiced.
+  if (js.is_shell) return { ok: false, error: 'Shell jobsheets cannot be invoiced' }
   if (js.closed_at) {
     return { ok: true, alreadyInvoiced: true, invoiceNumber: js.invoice_number ?? undefined }
   }
@@ -507,7 +510,15 @@ export async function recordSupplierInvoice(
   poId: string,
   orgId: string,
   userId: string | null,
-  opts: { invoiceRef?: string | null; taxPointDate?: string | null; lines: Array<{ poLineId: string; qty: number; unitCost: number }> }
+  opts: {
+    invoiceRef?: string | null
+    taxPointDate?: string | null
+    // When the supplier invoice is in hand (e.g. the direct-invoice entry screen), pass the
+    // actual VAT printed on it instead of deriving net×rate — handles mixed/zero-rated lines
+    // and supplier rounding. Omitted by the PO-invoice path → VAT computed at the org rate.
+    vatOverride?: number | null
+    lines: Array<{ poLineId: string; qty: number; unitCost: number }>
+  }
 ): Promise<{ ok: boolean; journalId?: string | null; error?: string }> {
   const { data: po } = await supabaseAdmin
     .from('purchase_orders').select('id, organization_id').eq('id', poId).maybeSingle()
@@ -531,7 +542,10 @@ export async function recordSupplierInvoice(
   const net = round2(inventoryNet + wipNet)
   if (net <= 0) return { ok: false, error: 'Invoice total must be positive' }
   const vatRate = await getVatRate(orgId)
-  const vat = round2(net * (vatRate / 100))
+  const vat =
+    opts.vatOverride != null && Number.isFinite(Number(opts.vatOverride))
+      ? round2(Math.max(0, Number(opts.vatOverride)))
+      : round2(net * (vatRate / 100))
   const gross = round2(net + vat)
   const documentDate = opts.taxPointDate || today()
 
@@ -554,7 +568,7 @@ export async function recordSupplierInvoice(
   if (error) return { ok: false, error }
 
   await supabaseAdmin.from('purchase_orders')
-    .update({ status: 'invoiced', supplier_invoice_ref: opts.invoiceRef ?? null, updated_at: new Date().toISOString() })
+    .update({ status: 'invoiced', supplier_invoice_ref: opts.invoiceRef ?? null, supplier_invoice_date: documentDate, updated_at: new Date().toISOString() })
     .eq('id', poId)
 
   return { ok: true, journalId }

@@ -123,6 +123,7 @@ const FollowUpRecovery = lazy(() => import('./pages/Reports/FollowUpRecovery'))
 const OutreachBookings = lazy(() => import('./pages/Reports/OutreachBookings'))
 const MriPerformance = lazy(() => import('./pages/Reports/MriPerformance'))
 const DailyOverview = lazy(() => import('./pages/Reports/DailyOverview'))
+const OnlineVhcPerformance = lazy(() => import('./pages/Reports/OnlineVhcPerformance'))
 const DeletedHealthChecks = lazy(() => import('./pages/Reports/DeletedHealthChecks'))
 const Today = lazy(() => import('./pages/Today'))
 const PartsLayout = lazy(() => import('./pages/Parts/PartsLayout'))
@@ -130,6 +131,8 @@ const PartsCatalog = lazy(() => import('./pages/Parts/PartsCatalog'))
 const PartDetail = lazy(() => import('./pages/Parts/PartDetail'))
 const PurchaseOrders = lazy(() => import('./pages/Parts/PurchaseOrders'))
 const PurchaseOrderDetail = lazy(() => import('./pages/Parts/PurchaseOrderDetail'))
+const PurchaseInvoices = lazy(() => import('./pages/Parts/PurchaseInvoices'))
+const PurchaseInvoiceEntry = lazy(() => import('./pages/Parts/PurchaseInvoiceEntry'))
 const SupplierReturns = lazy(() => import('./pages/Parts/SupplierReturns'))
 const Stocktake = lazy(() => import('./pages/Parts/Stocktake'))
 const StocktakeDetail = lazy(() => import('./pages/Parts/StocktakeDetail'))
@@ -264,6 +267,7 @@ function App() {
                         <Route path="/reports/outreach-bookings" element={<OutreachBookings />} />
                         <Route path="/reports/mri-performance" element={<MriPerformance />} />
                         <Route path="/reports/daily-overview" element={<DailyOverview />} />
+                        <Route path="/reports/online-vhc" element={<OnlineVhcPerformance />} />
                         <Route path="/reports/deleted-health-checks" element={<DeletedHealthChecks />} />
                         <Route path="/users" element={<Users />} />
                         <Route path="/workshop-board" element={<RequireModule module="workshop_board"><WorkshopBoard /></RequireModule>} />
@@ -293,6 +297,8 @@ function App() {
                           <Route path=":id" element={<PartDetail />} />
                           <Route path="purchase-orders" element={<RequireModule module="parts_stock"><PurchaseOrders /></RequireModule>} />
                           <Route path="purchase-orders/:id" element={<RequireModule module="parts_stock"><PurchaseOrderDetail /></RequireModule>} />
+                          <Route path="purchase-invoices" element={<RequireModule module="parts_stock"><PurchaseInvoices /></RequireModule>} />
+                          <Route path="purchase-invoices/new" element={<RequireModule module="parts_stock"><PurchaseInvoiceEntry /></RequireModule>} />
                           <Route path="returns" element={<RequireModule module="parts_stock"><SupplierReturns /></RequireModule>} />
                           <Route path="stocktake" element={<RequireModule module="parts_stock"><Stocktake /></RequireModule>} />
                           <Route path="stocktake/:id" element={<RequireModule module="parts_stock"><StocktakeDetail /></RequireModule>} />

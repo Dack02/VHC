@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { api } from '../../lib/api'
+import CapacityCalendar from './CapacityCalendar'
 
 /**
  * Capacity-aware booking date picker (Resource Manager).
@@ -126,6 +127,8 @@ export default function BookingDatePicker({
   const [data, setData] = useState<AvailResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [manualVerdict, setManualVerdict] = useState<{ status: Verdict; reason: string } | null>(null)
+  // The capacity calendar (replaces the raw "pick any date" input) is opened on demand.
+  const [calOpen, setCalOpen] = useState(false)
 
   const setDate = (date: string) => onChange({ date, time: value.time })
   const setTime = (time: string) => onChange({ date: value.date, time })
@@ -271,18 +274,21 @@ export default function BookingDatePicker({
             </div>
           )}
 
-          {/* Manual date + time — secondary once availability resolves */}
+          {/* Pick any date (capacity calendar) + time — secondary once availability resolves */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className={labelCls.replace(' mb-1.5', '')}>Or pick any date</label>
                 {recommended && value.date !== recommended.date && (
-                  <button type="button" onClick={() => setDate(recommended.date)} className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+                  <button type="button" onClick={() => { setDate(recommended.date); setCalOpen(false) }} className="text-xs text-primary hover:underline inline-flex items-center gap-1">
                     Jump to first available
                   </button>
                 )}
               </div>
-              <input type="date" value={value.date} onChange={e => setDate(e.target.value)} className={inputCls} required={required} />
+              <button type="button" onClick={() => setCalOpen(o => !o)} className={`${inputCls} flex items-center justify-between text-left`}>
+                <span className={value.date ? 'text-gray-900' : 'text-gray-400'}>{value.date ? longDate(value.date) : 'Pick a date'}</span>
+                <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+              </button>
             </div>
             <div>
               <label className={labelCls}>
@@ -315,8 +321,11 @@ export default function BookingDatePicker({
 
           <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">Or set a date manually</label>
-              <input type="date" value={value.date} onChange={e => setDate(e.target.value)} className={inputCls} required={required} />
+              <label className="block text-xs font-medium text-gray-500 mb-1">Pick a date</label>
+              <button type="button" onClick={() => setCalOpen(o => !o)} className={`${inputCls} flex items-center justify-between text-left`}>
+                <span className={value.date ? 'text-gray-900' : 'text-gray-400'}>{value.date ? longDate(value.date) : 'Pick a date'}</span>
+                <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+              </button>
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Drop-off time <span className="text-gray-400 font-normal">(optional)</span></label>
@@ -324,6 +333,20 @@ export default function BookingDatePicker({
             </div>
           </div>
         </>
+      )}
+
+      {/* Capacity calendar — pick any date through the load surface (not a raw input) */}
+      {calOpen && (
+        <CapacityCalendar
+          token={token}
+          siteId={siteId || data?.siteId}
+          jobsheetId={jobsheetId}
+          estimateId={estimateId}
+          healthCheckId={healthCheckId}
+          value={value.date}
+          refreshKey={refreshKey}
+          onSelect={(d) => { setDate(d); setCalOpen(false) }}
+        />
       )}
 
       {/* Advisor-only: drop-off date when the car comes in EARLIER than the workshop date */}

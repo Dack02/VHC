@@ -89,6 +89,7 @@ import stocktakeRoute from './routes/stocktake.js'
 import pricingMatrixRoute from './routes/pricing-matrix.js'
 import estimatesRoute from './routes/estimates.js'
 import estimateSettings from './routes/estimate-settings.js'
+import vhcLineSettings from './routes/vhc-line-settings.js'
 import publicEstimateRoutes from './routes/public-estimate.js'
 import arrivalsRoute from './routes/arrivals.js'
 import bookingCodes from './routes/booking-codes.js'
@@ -123,8 +124,16 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 // Middleware
 app.use('*', requestContext)  // Add request ID and timing
 app.use('*', errorHandler)    // Global error handler
+// In development, accept any localhost/127.0.0.1 origin (any port) so frontend
+// dev servers / previews on arbitrary ports work without editing ALLOWED_ORIGINS.
+// Production is unaffected: it falls back to the explicit allow-list.
+const isDevEnv = process.env.NODE_ENV !== 'production'
 app.use('*', cors({
-  origin: allowedOrigins,
+  origin: (origin) => {
+    if (!origin) return origin
+    if (isDevEnv && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin
+    return allowedOrigins.includes(origin) ? origin : null
+  },
   credentials: true
 }))
 
@@ -280,6 +289,7 @@ app.route('/api/v1/organizations/:orgId/follow-up-dispositions', followUpDisposi
 app.route('/api/v1/organizations/:orgId/follow-up-timelines', followUpTimelines)
 app.route('/api/v1/organizations/:orgId/follow-up-settings', followUpSettings)
 app.route('/api/v1/organizations/:orgId/estimate-settings', estimateSettings)
+app.route('/api/v1/organizations/:orgId/vhc-line-settings', vhcLineSettings)
 
 // Unable to send reasons routes (nested under organizations)
 app.route('/api/v1/organizations/:orgId/unable-to-send-reasons', unableToSendReasons)

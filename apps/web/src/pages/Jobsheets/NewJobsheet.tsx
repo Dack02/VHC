@@ -5,6 +5,7 @@ import { useModules } from '../../contexts/ModulesContext'
 import { api, Vehicle, Customer, User, Site } from '../../lib/api'
 import WorkDetailsPanel from './WorkDetailsPanel'
 import CustomerCardModal from './components/CustomerCardModal'
+import VehicleCardModal from './components/VehicleCardModal'
 import CustomerFormModal, { SavedCustomer } from '../../components/customers/CustomerFormModal'
 import BookingDatePicker from '../../components/booking/BookingDatePicker'
 
@@ -68,6 +69,7 @@ export default function NewJobsheet() {
   const [showNewCustomer, setShowNewCustomer] = useState(false)
   const [changingCustomer, setChangingCustomer] = useState(false)
   const [showCustomerCard, setShowCustomerCard] = useState(false)
+  const [showVehicleCard, setShowVehicleCard] = useState(false)
   const [linkingCustomer, setLinkingCustomer] = useState(false)
   const [customerError, setCustomerError] = useState<string | null>(null)
 
@@ -374,7 +376,7 @@ export default function NewJobsheet() {
   const labelCls = 'block text-sm font-medium text-gray-700 mb-1.5'
 
   return (
-    <div className="max-w-7xl">
+    <div className="w-full">
       <div className="flex items-center gap-3 mb-6">
         <Link to="/jobsheets" className="text-gray-500 hover:text-gray-700">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
@@ -384,21 +386,23 @@ export default function NewJobsheet() {
 
       {error && <div className="bg-red-50 text-red-700 p-4 mb-6 rounded-lg text-sm">{error}</div>}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-        <form onSubmit={handleSubmit} className="lg:col-span-1 space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Vehicle + Customer — compact band, side by side on wide screens.
+            items-stretch keeps both cards the same height once a customer is linked. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-stretch">
         {/* Vehicle */}
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
           <label className={labelCls}>Vehicle Registration No. *</label>
           {selectedVehicle ? (
             <div className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-lg">
-              <div>
-                <div className="font-medium">{selectedVehicle.registration}</div>
-                <div className="text-sm text-gray-500">
+              <button type="button" onClick={() => setShowVehicleCard(true)} className="text-left group min-w-0" title="View vehicle card">
+                <div className="font-medium text-gray-900 group-hover:text-primary group-hover:underline">{selectedVehicle.registration}</div>
+                <div className="text-sm text-gray-500 truncate">
                   {selectedVehicle.make} {selectedVehicle.model}
                   {selectedVehicle.customer && <span> · {selectedVehicle.customer.first_name} {selectedVehicle.customer.last_name}</span>}
                 </div>
-              </div>
-              <button type="button" onClick={clearVehicle} className="text-gray-400 hover:text-gray-600">
+              </button>
+              <button type="button" onClick={clearVehicle} className="text-gray-400 hover:text-gray-600 shrink-0 ml-3" title="Remove vehicle">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
@@ -492,6 +496,7 @@ export default function NewJobsheet() {
             )}
           </div>
         )}
+        </div>{/* /Vehicle+Customer band */}
 
         {/* Booking details */}
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -590,6 +595,43 @@ export default function NewJobsheet() {
           <p className="text-xs text-gray-400">A health check is created with the booking by default. Untick if this job doesn’t need an inspection — booked work stays on the jobsheet either way. Add labour, parts and packages under <span className="font-medium text-gray-500">Work Details</span> →</p>
         </div>
 
+        {/* Workshop schedule — full width, capacity-aware picker (Resource Manager) */}
+        <BookingDatePicker
+          token={token!}
+          siteId={form.siteId || undefined}
+          jobsheetId={draftId || undefined}
+          refreshKey={workVersion}
+          value={{ date: form.dueInDate, time: form.dueInTime }}
+          onChange={({ date, time }) => setForm(f => ({
+            ...f, dueInDate: date, dueInTime: time,
+            // Keep drop-off strictly before the schedule date; clear it if the new date invalidates it.
+            dropOffDate: f.dropOffDate && date && f.dropOffDate >= date ? '' : f.dropOffDate
+          }))}
+          overrideReason={capacityReason}
+          onOverrideReasonChange={setCapacityReason}
+          onVerdictChange={setCapacityVerdict}
+          enableDropOff
+          dropOffDate={form.dropOffDate}
+          onDropOffDateChange={(d) => setForm(f => ({ ...f, dropOffDate: d }))}
+          required
+        />
+
+        {draftId && token ? (
+          <WorkDetailsPanel
+            className=""
+            parent={{ type: 'jobsheet', id: draftId }}
+            token={token}
+            organizationId={user?.organization?.id}
+            onChange={() => setWorkVersion(v => v + 1)}
+            notes={{ label: 'Booking Notes', value: null, onSave: (v) => api(`/api/v1/jobsheets/${draftId}`, { method: 'PATCH', token, body: { bookingNotes: v } }).then(() => {}) }}
+          />
+        ) : (
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+            <h2 className="text-sm font-semibold text-gray-900 mb-2">Work Details</h2>
+            <p className="text-sm text-gray-400">Select a vehicle and customer to start adding labour, parts and packages — they’ll be saved to this booking as you go.</p>
+          </div>
+        )}
+
         {capacityBlocked && (
           <p className="text-xs text-rag-red">This day is full — pick another day in Workshop schedule date before creating the jobsheet.</p>
         )}
@@ -602,48 +644,7 @@ export default function NewJobsheet() {
           </button>
           <button type="button" onClick={handleCancel} className="px-6 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50">Cancel</button>
         </div>
-        </form>
-
-        {/* Right: booking date (capacity-aware) on top, then priced work on the draft jobsheet */}
-        <div className="lg:col-span-1 space-y-4">
-          {/* Booking date — capacity-aware picker (Resource Manager). Leads the right
-              column so the week strip + recommendation are prominent while you build work. */}
-          <BookingDatePicker
-            token={token!}
-            siteId={form.siteId || undefined}
-            jobsheetId={draftId || undefined}
-            refreshKey={workVersion}
-            value={{ date: form.dueInDate, time: form.dueInTime }}
-            onChange={({ date, time }) => setForm(f => ({
-              ...f, dueInDate: date, dueInTime: time,
-              // Keep drop-off strictly before the schedule date; clear it if the new date invalidates it.
-              dropOffDate: f.dropOffDate && date && f.dropOffDate >= date ? '' : f.dropOffDate
-            }))}
-            overrideReason={capacityReason}
-            onOverrideReasonChange={setCapacityReason}
-            onVerdictChange={setCapacityVerdict}
-            enableDropOff
-            dropOffDate={form.dropOffDate}
-            onDropOffDateChange={(d) => setForm(f => ({ ...f, dropOffDate: d }))}
-            required
-          />
-
-          {draftId && token ? (
-            <WorkDetailsPanel
-              parent={{ type: 'jobsheet', id: draftId }}
-              token={token}
-              organizationId={user?.organization?.id}
-              onChange={() => setWorkVersion(v => v + 1)}
-              notes={{ label: 'Booking Notes', value: null, onSave: (v) => api(`/api/v1/jobsheets/${draftId}`, { method: 'PATCH', token, body: { bookingNotes: v } }).then(() => {}) }}
-            />
-          ) : (
-            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
-              <h2 className="text-sm font-semibold text-gray-900 mb-2">Work Details</h2>
-              <p className="text-sm text-gray-400">Select a vehicle and customer to start adding labour, parts and packages — they’ll be saved to this booking as you go.</p>
-            </div>
-          )}
-        </div>
-      </div>
+      </form>
 
       {showCustomerCard && selectedVehicle?.customer?.id && (
         <CustomerCardModal
@@ -653,6 +654,10 @@ export default function NewJobsheet() {
             ? { ...v, customer: { ...v.customer, first_name: c.firstName, last_name: c.lastName, mobile: c.mobile, email: c.email } }
             : v)}
         />
+      )}
+
+      {showVehicleCard && selectedVehicle?.id && (
+        <VehicleCardModal vehicleId={selectedVehicle.id} onClose={() => setShowVehicleCard(false)} />
       )}
 
       {showNewCustomer && (

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
+import { jobPath } from '../lib/jobLink'
 import { useAuth } from '../contexts/AuthContext'
 import { useSocket, WS_EVENTS } from '../contexts/SocketContext'
 import { api } from '../lib/api'
@@ -278,17 +279,26 @@ export default function Today() {
             </h3>
             <ul className="divide-y divide-gray-100">
               {arrivals!.dropOffArrivals!.map(a => (
-                <li key={a.jobsheetId} className="flex items-center justify-between py-2 gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-gray-900 truncate">
-                      {a.registration || '—'}
-                      {a.customerName && <span className="text-gray-500 font-normal"> · {a.customerName}</span>}
+                <li key={a.jobsheetId}>
+                  <Link
+                    to={jobPath({ jobsheetId: a.jobsheetId }, { tab: 'checkin' })}
+                    title="Open the job card to check this vehicle in"
+                    className="flex items-center justify-between py-2 gap-3 -mx-2 px-2 rounded-lg hover:bg-gray-50"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-gray-900 truncate">
+                        {a.registration || '—'}
+                        {a.customerName && <span className="text-gray-500 font-normal"> · {a.customerName}</span>}
+                      </div>
+                      <div className="text-xs text-gray-500 truncate">
+                        {a.serviceTypeLabel || 'Booking'} · work {new Date(`${a.scheduledDate}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-500 truncate">
-                      {a.serviceTypeLabel || 'Booking'} · work {new Date(`${a.scheduledDate}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    <div className="flex items-center gap-1.5 text-xs text-gray-500 shrink-0">
+                      {a.dropOffTime || 'Any time'}
+                      <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
                     </div>
-                  </div>
-                  <div className="text-xs text-gray-500 shrink-0">{a.dropOffTime || 'Any time'}</div>
+                  </Link>
                 </li>
               ))}
             </ul>

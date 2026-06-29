@@ -54,7 +54,7 @@ status.post('/:id/status', authorize(['super_admin', 'org_admin', 'site_admin', 
     const { data: current } = await supabaseAdmin
       .from('health_checks')
       .select(`
-        status, technician_id, site_id,
+        status, technician_id, site_id, tech_completed_at,
         vehicle:vehicles(registration)
       `)
       .eq('id', id)
@@ -75,9 +75,18 @@ status.post('/:id/status', authorize(['super_admin', 'org_admin', 'site_admin', 
       return c.json({ error: 'Not authorized to change this health check status' }, 403)
     }
 
+    const now = new Date().toISOString()
+    const updatePayload: Record<string, unknown> = { status: newStatus, updated_at: now }
+    // When a check reaches tech_completed via this generic endpoint (e.g. an advisor/admin
+    // manually completing a stuck inspection that the tech never tapped "Complete" on), stamp
+    // the completion time so the timeline isn't left with a gap. Preserve any existing stamp.
+    if (newStatus === 'tech_completed' && !current.tech_completed_at) {
+      updatePayload.tech_completed_at = now
+    }
+
     const { data: healthCheck, error } = await supabaseAdmin
       .from('health_checks')
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .update(updatePayload)
       .eq('id', id)
       .eq('organization_id', auth.orgId)
       .select()

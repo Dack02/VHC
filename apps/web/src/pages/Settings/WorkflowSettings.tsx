@@ -33,6 +33,12 @@ export default function WorkflowSettings() {
   const [hasChanges, setHasChanges] = useState(false)
   const [originalSettings, setOriginalSettings] = useState<CheckinSettings | null>(null)
 
+  // Automatic VHC work line — which service package is added to a jobsheet's job
+  // card when it's created with a VHC (so the technician sees the inspection to do).
+  const [servicePackages, setServicePackages] = useState<{ id: string; name: string }[]>([])
+  const [vhcPackageId, setVhcPackageId] = useState<string | null>(null)
+  const [vhcSaving, setVhcSaving] = useState(false)
+
   const organizationId = user?.organization?.id
 
   const fetchSettings = useCallback(async () => {
@@ -59,6 +65,56 @@ export default function WorkflowSettings() {
       fetchSettings()
     }
   }, [organizationId, fetchSettings])
+
+  // Load the active service packages + the currently nominated VHC package.
+  const fetchVhcLine = useCallback(async () => {
+    if (!organizationId || !session?.accessToken) return
+    try {
+      const [pkgRes, settingRes] = await Promise.all([
+        api<{ servicePackages: { id: string; name: string }[] }>(
+          `/api/v1/organizations/${organizationId}/service-packages`,
+          { token: session.accessToken }
+        ),
+        api<{ settings: { vhcServicePackageId: string | null } }>(
+          `/api/v1/organizations/${organizationId}/vhc-line-settings/settings`,
+          { token: session.accessToken }
+        )
+      ])
+      setServicePackages(pkgRes.servicePackages || [])
+      setVhcPackageId(settingRes.settings?.vhcServicePackageId ?? null)
+    } catch (err) {
+      console.error('Failed to load VHC work-line settings:', err)
+    }
+  }, [organizationId, session?.accessToken])
+
+  useEffect(() => {
+    if (organizationId) {
+      fetchVhcLine()
+    }
+  }, [organizationId, fetchVhcLine])
+
+  const handleVhcPackageChange = async (next: string | null) => {
+    if (!organizationId || !session?.accessToken) return
+    const prev = vhcPackageId
+    setVhcPackageId(next) // optimistic
+    setVhcSaving(true)
+    try {
+      await api(
+        `/api/v1/organizations/${organizationId}/vhc-line-settings/settings`,
+        {
+          method: 'PATCH',
+          body: { vhcServicePackageId: next },
+          token: session.accessToken
+        }
+      )
+      toast.success(next ? 'VHC work line saved' : 'Automatic VHC work line turned off')
+    } catch (err) {
+      setVhcPackageId(prev) // revert
+      toast.error(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setVhcSaving(false)
+    }
+  }
 
   useEffect(() => {
     if (originalSettings) {
@@ -117,6 +173,51 @@ export default function WorkflowSettings() {
       </div>
 
       <div className="max-w-2xl space-y-6">
+        {/* Automatic VHC Work Line */}
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">Automatic VHC work line</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              When a jobsheet is created with a vehicle health check, add this service
+              package to the job card as a work line — so the technician knows to do the inspection.
+            </p>
+          </div>
+          <div className="p-6">
+            <label htmlFor="vhc-package" className="block text-sm font-medium text-gray-900 mb-1.5">
+              Service package
+            </label>
+            <select
+              id="vhc-package"
+              value={vhcPackageId ?? ''}
+              disabled={vhcSaving}
+              onChange={(e) => handleVhcPackageChange(e.target.value || null)}
+              className="w-full max-w-md border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
+            >
+              <option value="">None — don't add a work line</option>
+              {servicePackages.map((pkg) => (
+                <option key={pkg.id} value={pkg.id}>{pkg.name}</option>
+              ))}
+            </select>
+            {servicePackages.length === 0 ? (
+              <p className="text-xs text-gray-500 mt-2">
+                No service packages yet.{' '}
+                <Link to="/service-packages" className="text-primary hover:text-primary-dark font-medium">
+                  Create a VHC package
+                </Link>{' '}
+                first, then select it here.
+              </p>
+            ) : (
+              <p className="text-xs text-gray-500 mt-2">
+                The package's labour and parts are copied onto a pre-authorised work line each time a
+                jobsheet is created with a VHC.{' '}
+                <Link to="/service-packages" className="text-primary hover:text-primary-dark font-medium">
+                  Manage packages
+                </Link>
+              </p>
+            )}
+          </div>
+        </div>
+
         {/* Check-In Procedure Toggle */}
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
           <div className="px-6 py-4 border-b border-gray-200">

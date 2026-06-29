@@ -17,7 +17,7 @@ import { loadSiteConfig, type ResourceSiteConfig } from '../services/resource-co
 import {
   loadCategoryQuotas, defaultQuota, getSkillCapacity,
   getDayCapacity, canBook,
-  resolveBookingJobForParent, resolveBookingJobByType, getAvailabilityStrip, getCapacityStrip,
+  resolveBookingJobForParent, resolveBookingJobByType, getAvailabilityStrip, getCapacityStrip, getCalendarDays,
   type BookingJob, type ParentRef
 } from '../services/resource-capacity.js'
 
@@ -605,6 +605,32 @@ resourceManager.post('/availability', authorize([...ADVISOR_ROLES]), async (c) =
     leadTimeDays: config.bookingLeadTimeDays,
     ...strip
   })
+})
+
+// POST /calendar?siteId=  body { from, to, jobsheetId?|estimateId?|healthCheckId? }
+// → per-day load bands for an arbitrary range (the booking calendar, unbounded by the
+// booking window). Site from ?siteId, else a parent doc's site, else the caller's site.
+resourceManager.post('/calendar', authorize([...ADVISOR_ROLES]), async (c) => {
+  const auth = c.get('auth')
+  let body: any
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
+  if (!DATE_RE.test(body?.from || '') || !DATE_RE.test(body?.to || '')) {
+    return c.json({ error: 'from and to (YYYY-MM-DD) are required' }, 400)
+  }
+  if (body.to < body.from) return c.json({ error: 'to must be on or after from' }, 400)
+
+  const explicitSite = c.req.query('siteId') ? await resolveSiteId(c) : null
+  let siteId = explicitSite ?? auth.user.siteId
+  if (!siteId && (body.jobsheetId || body.estimateId || body.healthCheckId)) {
+    const table = body.jobsheetId ? 'jobsheets' : body.estimateId ? 'estimates' : 'health_checks'
+    const id = body.jobsheetId || body.estimateId || body.healthCheckId
+    const { data } = await supabaseAdmin.from(table).select('site_id').eq('id', id).eq('organization_id', auth.orgId).maybeSingle()
+    siteId = (data as any)?.site_id ?? null
+  }
+  if (!siteId) return c.json({ error: 'No site selected' }, 400)
+
+  const result = await getCalendarDays(auth.orgId, siteId, body.from, body.to)
+  return c.json({ siteId, ...result })
 })
 
 // ---------------------------------------------------------------------------

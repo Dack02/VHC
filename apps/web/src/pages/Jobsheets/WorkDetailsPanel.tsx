@@ -35,10 +35,10 @@ interface Totals { labourTotal: number; partsTotal: number; subtotal: number; va
 const ZERO: Totals = { labourTotal: 0, partsTotal: 0, subtotal: 0, vatAmount: 0, totalIncVat: 0 }
 const money = (n: number) => `£${(n || 0).toFixed(2)}`
 
-// Invoice grid: Description (flex, min 110px) · Type · Qty/Hr · Rate · Total · action.
-// The 110px floor keeps the description readable in the narrow live-build sidebar
-// (panel ≈ half-width at the lg breakpoint); cells clip rather than overlap.
-const GRID_COLS = 'minmax(110px,1fr) 44px 42px 54px 64px 20px'
+// Invoice grid: Description (flex) · Type · Qty/Hr · Rate · Total · action.
+// Full-width layout — the panel now spans the whole page, so the description gets
+// real room and the numeric columns are comfortably readable / right-aligned.
+const GRID_COLS = 'minmax(280px,1fr) 130px 100px 120px 130px 36px'
 
 // Shared field/button styling — follows docs/form-design-guidelines.md (dark focus ring,
 // 10px radius, neutral-dark primary action), sized a touch tighter for inline entry.
@@ -288,7 +288,7 @@ export default function WorkDetailsPanel({
 
           {/* Document totals — invoice-style summary */}
           <div className="flex justify-end">
-            <div className="w-full sm:w-64 text-sm">
+            <div className="w-full sm:w-80 text-sm">
               <div className="flex justify-between py-1 text-gray-500"><span>Labour</span><span className="text-gray-900">{money(totals.labourTotal)}</span></div>
               <div className="flex justify-between py-1 text-gray-500"><span>Parts</span><span className="text-gray-900">{money(totals.partsTotal)}</span></div>
               <div className="flex justify-between py-1 text-gray-500"><span>Net</span><span className="text-gray-900">{money(totals.subtotal)}</span></div>

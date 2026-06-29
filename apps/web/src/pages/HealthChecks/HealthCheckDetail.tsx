@@ -502,6 +502,25 @@ export default function HealthCheckDetail() {
     }
   }
 
+  // Manual completion override: when a technician finished the inspection but never tapped
+  // "Complete" on the mobile app, the check stalls in in_progress/paused. This pushes it to
+  // tech_completed (server stamps tech_completed_at) so the advisor workflow can continue.
+  const handleForceComplete = async () => {
+    if (!session?.accessToken || !id) return
+    if (!window.confirm("Mark this inspection complete on the technician's behalf? Use this when the tech finished the check but didn't tap Complete. You can still Reopen / Reset afterwards.")) return
+    try {
+      await api(`/api/v1/health-checks/${id}/status`, {
+        method: 'POST',
+        token: session.accessToken,
+        body: { status: 'tech_completed', notes: 'Inspection manually marked complete by advisor/admin' }
+      })
+      toast.success('Inspection marked complete')
+      await fetchData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to mark inspection complete')
+    }
+  }
+
   const handlePrintPDF = async () => {
     if (!session?.accessToken || !id) return
 
@@ -647,6 +666,11 @@ export default function HealthCheckDetail() {
   const canReopen = canEditQuote
     && ['assigned', 'in_progress', 'paused', 'tech_completed', 'awaiting_review', 'awaiting_pricing', 'awaiting_parts', 'ready_to_send'].includes(healthCheck.status)
     && !healthCheck.closed_at && !healthCheck.deleted_at
+  // Manual completion override: a check stuck in_progress/paused (tech finished but never
+  // tapped "Complete") can be pushed to tech_completed by advisors+ so the workflow continues.
+  const canForceComplete = canEditQuote
+    && ['in_progress', 'paused'].includes(healthCheck.status)
+    && !healthCheck.closed_at && !healthCheck.deleted_at
   // Quote edit-lock: once the quote has been sent, editing is locked (mirrors the server's
   // SENT_LOCK_STATUSES). An org/site admin can toggle an override to make a correction.
   const isSentLocked = ['sent', 'delivered', 'opened', 'partial_response', 'authorized', 'declined', 'expired', 'completed', 'cancelled'].includes(healthCheck.status)
@@ -760,6 +784,16 @@ export default function HealthCheckDetail() {
               >
                 <span className="hidden md:inline">Record Authorisation</span>
                 <span className="md:hidden">Auth</span>
+              </button>
+            )}
+            {canForceComplete && (
+              <button
+                onClick={handleForceComplete}
+                title="Mark the inspection complete on the technician's behalf — use when the tech finished but didn't tap Complete"
+                className="px-3 md:px-4 py-2 bg-green-600 text-white text-sm font-medium hover:bg-green-700 rounded whitespace-nowrap"
+              >
+                <span className="hidden md:inline">Mark Inspection Complete</span>
+                <span className="md:hidden">Complete</span>
               </button>
             )}
             <button

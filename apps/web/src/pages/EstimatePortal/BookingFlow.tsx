@@ -24,7 +24,8 @@ function buildBookingIcs(booking: ConfirmedBooking, orgName: string): string {
   const [y, m, d] = booking.requested_date.split('-').map(Number)
   const [hh, mm] = (booking.requested_time || '08:00').split(':').map(Number)
   const start = new Date(y, m - 1, d, hh, mm)
-  const end = new Date(start.getTime() + (booking.slot_minutes || 60) * 60000)
+  // Drop-off marker only — never use the labour estimate (slot_minutes) here, it must not be exposed to the customer.
+  const end = new Date(start.getTime() + 30 * 60000)
   const fmt = (dt: Date) => `${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}00`
   const ics = [
     'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//VHC//Booking//EN', 'BEGIN:VEVENT',
@@ -297,7 +298,7 @@ export function BookingConfirmation({
             </div>
             <div className="leading-tight">
               <div className="text-[15px] font-bold text-gray-900">{longDate(booking.requested_date)}</div>
-              <div className="text-[12.5px] text-gray-500">Drop off from {booking.requested_time} · approx. {Math.round((booking.slot_minutes / 60) * 10) / 10} hrs</div>
+              <div className="text-[12.5px] text-gray-500">Drop off from {booking.requested_time}</div>
             </div>
           </div>
           {address && (

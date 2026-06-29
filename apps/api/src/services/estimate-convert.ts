@@ -54,7 +54,9 @@ async function copyLineToJobsheet(srcLineId: string, jobsheetId: string, orgId: 
 
   const { data: labour } = await supabaseAdmin
     .from('repair_labour')
-    .select('labour_code_id, hours, rate, discount_percent, is_vat_exempt, notes')
+    // `total` is computed + stored by the pricing engine at entry time (no DB trigger recomputes
+    // it) — it MUST be carried, or the copied line lands with a NULL total and shows £0 on the job.
+    .select('labour_code_id, hours, rate, total, discount_percent, is_vat_exempt, notes')
     .eq('repair_item_id', srcLineId)
   if (labour && labour.length) {
     await supabaseAdmin.from('repair_labour').insert(labour.map((l) => ({ ...l, repair_item_id: item.id })))
@@ -62,7 +64,9 @@ async function copyLineToJobsheet(srcLineId: string, jobsheetId: string, orgId: 
 
   const { data: parts } = await supabaseAdmin
     .from('repair_parts')
-    .select('part_number, description, quantity, supplier_id, supplier_name, cost_price, sell_price, notes')
+    // Same as labour: `line_total` (and margin/markup) are stored at entry time, not trigger-computed.
+    // Carry them, or copied parts land NULL-priced (£0) and margin reporting breaks on won work.
+    .select('part_number, description, quantity, supplier_id, supplier_name, cost_price, sell_price, line_total, margin_percent, markup_percent, notes')
     .eq('repair_item_id', srcLineId)
   if (parts && parts.length) {
     await supabaseAdmin.from('repair_parts').insert(parts.map((p) => ({ ...p, repair_item_id: item.id })))

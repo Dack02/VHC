@@ -714,3 +714,54 @@ export async function getCapacityStrip(
   const pool = roomy.length ? roomy : open
   return { days, recommended: pool[0] || null, alternatives: pool.slice(1, 4), softHints: [] }
 }
+
+export interface CalendarDay {
+  date: string
+  band: CapacityBand
+  bookedPct: number | null
+  availableHours: number
+  freeHours: number
+  // Selectable as a workshop day (open + has capacity). Closed days render disabled.
+  isOpen: boolean
+}
+
+// Per-day load bands for an ARBITRARY date range — the booking calendar's data.
+// Unlike the strip it isn't capped by the booking window or lead time, so far-future
+// dates can be picked through the capacity surface. Colouring is job-independent (the
+// day's load), so it's cheap (one range summary); the precise per-job verdict on the
+// chosen day still comes from /can-book. `configured` is false when the site has no
+// technician shifts set up — the picker then shows a plain calendar + a setup nudge.
+export async function getCalendarDays(
+  orgId: string, siteId: string, from: string, to: string
+): Promise<{ configured: boolean; days: CalendarDay[] }> {
+  const config = await loadSiteConfig(orgId, siteId)
+  const [opDays, sumRes, shiftRes] = await Promise.all([
+    operatingDays(orgId, siteId),
+    supabaseAdmin.rpc('diary_day_summary', { p_org_id: orgId, p_site_id: siteId, p_from: from, p_to: to }),
+    supabaseAdmin.from('workshop_tech_shifts').select('id').eq('organization_id', orgId).eq('site_id', siteId).limit(1)
+  ])
+  const summary = new Map<string, any>()
+  for (const r of sumRes.data || []) summary.set(r.day, r)
+  const configured = (shiftRes.data?.length || 0) > 0
+
+  const days: CalendarDay[] = []
+  // Bounded loop so a bad range can't run away (calendar fetches a ~6-week grid).
+  let d = from
+  for (let i = 0; i < 100 && d <= to; i++, d = addDays(d, 1)) {
+    const open = opDays.includes(isoDow(d))
+    const s = summary.get(d) || {}
+    const available = Number(s.available_hours) || 0
+    const booked = Number(s.booked_hours) || 0
+    const { ceilingHours, band } = computeBand(booked, available, config.targetLoadingPct)
+    const isOpen = open && available > 0
+    days.push({
+      date: d,
+      band: isOpen ? band : 'closed',
+      bookedPct: available > 0 ? round2(booked / available) : null,
+      availableHours: round2(available),
+      freeHours: round2(Math.max(0, ceilingHours - booked)),
+      isOpen
+    })
+  }
+  return { configured, days }
+}

@@ -210,7 +210,7 @@ export function BookingListHeader() {
  * modal, GMS jobsheets navigate to the job card. Returns the click handler plus
  * the modal node to drop once into the view.
  */
-export function useBookingOpener(): { open: (b: DiaryBooking) => void; modal: ReactNode } {
+export function useBookingOpener(): { open: (b: DiaryBooking) => void; openJob: (jobsheetId: string, tab?: string) => void; modal: ReactNode } {
   const navigate = useNavigate()
   const location = useLocation()
   const [modalHcId, setModalHcId] = useState<string | null>(null)
@@ -230,6 +230,9 @@ export function useBookingOpener(): { open: (b: DiaryBooking) => void; modal: Re
     }
   }
 
+  // Open a jobsheet directly (used by drop-off arrivals) — defaults to the check-in tab.
+  const openJob = (jobsheetId: string, tab: string = 'checkin') => go(jobPath({ jobsheetId }, { tab }))
+
   const modal = modalHcId ? (
     <DmsBookingModal
       healthCheckId={modalHcId}
@@ -238,7 +241,7 @@ export function useBookingOpener(): { open: (b: DiaryBooking) => void; modal: Re
     />
   ) : null
 
-  return { open, modal }
+  return { open, openJob, modal }
 }
 
 // A small outline pill button used in the view sub-toolbars.
@@ -275,7 +278,7 @@ export function RefreshButton({ onClick }: { onClick: () => void }) {
 // The selected day's bookings + capacity header. Shared by the Week and Month views.
 export function DayDetail({ date, density }: { date: string; density: Density }) {
   const { detail, loading, error } = useDiaryDay(date)
-  const { open, modal } = useBookingOpener()
+  const { open, openJob, modal } = useBookingOpener()
 
   const heading = new Date(`${date}T12:00:00`).toLocaleDateString('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long'
@@ -313,7 +316,13 @@ export function DayDetail({ date, density }: { date: string; density: Density })
               </h3>
               <div className="flex flex-col gap-1">
                 {detail.arrivals.map(a => (
-                  <div key={a.jobsheetId} className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 bg-white/60">
+                  <button
+                    key={a.jobsheetId}
+                    type="button"
+                    onClick={() => openJob(a.jobsheetId)}
+                    title="Open the job card to check this vehicle in"
+                    className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 bg-white/60 text-left hover:bg-white hover:ring-1 hover:ring-blue-200 transition"
+                  >
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-gray-900 truncate">
                         {a.registration || '—'}
@@ -323,8 +332,11 @@ export function DayDetail({ date, density }: { date: string; density: Density })
                         {a.serviceTypeLabel || 'Booking'} · work {new Date(`${a.scheduledDate}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
                       </div>
                     </div>
-                    <div className="text-xs text-gray-500 shrink-0">{a.dropOffTime || 'Any time'}</div>
-                  </div>
+                    <div className="flex items-center gap-1.5 text-xs text-gray-500 shrink-0">
+                      {a.dropOffTime || 'Any time'}
+                      <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                    </div>
+                  </button>
                 ))}
               </div>
             </div>

@@ -803,13 +803,13 @@ export default function ServicePackages() {
                       {labourEntries.map((entry, i) => (
                         <div key={i} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                           <div className="grid grid-cols-12 gap-2 items-end">
-                            <div className="col-span-6">
+                            <div className="col-span-5">
                               <label className="block text-xs text-gray-500 mb-1">Rate (from Repair Type)</label>
                               <div className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-gray-100 text-gray-600">
                                 {lockedCode ? `${lockedCode.code} \u00B7 ${'\u00A3'}${lockedCode.hourlyRate.toFixed(2)}/hr` : 'Pick a Repair Type above'}
                               </div>
                             </div>
-                            <div className="col-span-1">
+                            <div className="col-span-2">
                               <label className="block text-xs text-gray-500 mb-1">Hours</label>
                               <input
                                 type="number"

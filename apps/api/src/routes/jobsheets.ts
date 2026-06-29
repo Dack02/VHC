@@ -752,6 +752,26 @@ jobsheets.post('/:id/commit', authorize(['super_admin', 'org_admin', 'site_admin
         .eq('organization_id', auth.orgId)
     }
 
+    // 4. Auto-add the nominated "VHC work line" so the technician sees on the job
+    //    card that a health check is to be performed. Only when a VHC was created
+    //    and the org has nominated a service package (Settings → Workflow). Best-
+    //    effort: a missing/deleted package must never fail the commit.
+    if (wantVhc && hc) {
+      try {
+        const { data: orgSettings } = await supabaseAdmin
+          .from('organization_settings')
+          .select('vhc_service_package_id')
+          .eq('organization_id', auth.orgId)
+          .maybeSingle()
+        const vhcPackageId = orgSettings?.vhc_service_package_id
+        if (vhcPackageId) {
+          await createBookedLineFromPackage(id, auth.orgId, auth.user.id, vhcPackageId)
+        }
+      } catch (lineErr) {
+        console.error('Auto VHC work line failed (jobsheet committed regardless):', lineErr)
+      }
+    }
+
     return c.json(
       {
         id: js.id,

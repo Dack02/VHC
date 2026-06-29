@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useReportFilters } from './hooks/useReportFilters'
 import type { GroupBy } from './hooks/useReportFilters'
@@ -61,6 +62,27 @@ function conversionColor(rate: number): string {
   return 'text-red-600'
 }
 
+type SortKey = keyof DailyOverviewDay
+type SortDir = 'asc' | 'desc'
+
+function SortIndicator({ active, dir }: { active: boolean; dir: SortDir }) {
+  return (
+    <svg
+      className={`w-3 h-3 shrink-0 ${active ? 'text-gray-900' : 'text-gray-300'}`}
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {!active || dir === 'asc' ? <path d="M3.5 5L6 2.5 8.5 5" /> : null}
+      {!active || dir === 'desc' ? <path d="M3.5 7L6 9.5 8.5 7" /> : null}
+    </svg>
+  )
+}
+
 export default function DailyOverview() {
   const {
     filters, queryString,
@@ -73,6 +95,50 @@ export default function DailyOverview() {
   })
 
   const t = data?.totals
+
+  // Newest period first by default; click any header to re-sort.
+  const [sortKey, setSortKey] = useState<SortKey>('date')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+
+  function toggleSort(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      // Dates default oldest→newest; metrics default highest first.
+      setSortDir(key === 'date' ? 'asc' : 'desc')
+    }
+  }
+
+  const sortedDays = useMemo(() => {
+    const days = data?.days ? [...data.days] : []
+    days.sort((a, b) => {
+      const av = a[sortKey]
+      const bv = b[sortKey]
+      const cmp =
+        typeof av === 'number' && typeof bv === 'number'
+          ? av - bv
+          : String(av).localeCompare(String(bv))
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+    return days
+  }, [data?.days, sortKey, sortDir])
+
+  const columns: { key: SortKey; label: string; align: 'left' | 'right' }[] = [
+    { key: 'date', label: PERIOD_HEADER[filters.groupBy], align: 'left' },
+    { key: 'jobsQty', label: 'Jobs', align: 'right' },
+    { key: 'noShows', label: 'No Show', align: 'right' },
+    { key: 'hcQty', label: 'HCs', align: 'right' },
+    { key: 'conversionRate', label: 'Conv%', align: 'right' },
+    { key: 'sendRate', label: 'Send%', align: 'right' },
+    { key: 'totalIdentified', label: 'Identified', align: 'right' },
+    { key: 'totalSold', label: 'Sold', align: 'right' },
+    { key: 'mriIdentified', label: 'MRI Id.', align: 'right' },
+    { key: 'mriSold', label: 'MRI Sold', align: 'right' },
+    { key: 'mriSoldPercent', label: '% MRI Sold', align: 'right' },
+    { key: 'redSoldPercent', label: '% Red Sold', align: 'right' },
+    { key: 'amberSoldPercent', label: '% Amber Sold', align: 'right' },
+  ]
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
@@ -123,23 +189,27 @@ export default function DailyOverview() {
             <table className="w-full text-xs sm:text-sm">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50">
-                  <th className="sticky left-0 bg-gray-50 z-10 px-3 py-3 text-left font-semibold text-gray-700 whitespace-nowrap">{PERIOD_HEADER[filters.groupBy]}</th>
-                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">Jobs</th>
-                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">No Show</th>
-                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">HCs</th>
-                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">Conv%</th>
-                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">Send%</th>
-                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">Identified</th>
-                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">Sold</th>
-                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">MRI Id.</th>
-                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">MRI Sold</th>
-                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">% MRI Sold</th>
-                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">% Red Sold</th>
-                  <th className="px-3 py-3 text-right font-semibold text-gray-700 whitespace-nowrap">% Amber Sold</th>
+                  {columns.map((col) => {
+                    const active = sortKey === col.key
+                    return (
+                      <th
+                        key={col.key}
+                        onClick={() => toggleSort(col.key)}
+                        aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+                        title="Click to sort"
+                        className={`${col.align === 'left' ? 'sticky left-0 bg-gray-50 z-10 text-left' : 'text-right'} px-3 py-3 font-semibold whitespace-nowrap cursor-pointer select-none hover:bg-gray-100 transition-colors ${active ? 'text-gray-900' : 'text-gray-700'}`}
+                      >
+                        <span className={`inline-flex items-center gap-1 ${col.align === 'right' ? 'flex-row-reverse' : ''}`}>
+                          {col.label}
+                          <SortIndicator active={active} dir={sortDir} />
+                        </span>
+                      </th>
+                    )
+                  })}
                 </tr>
               </thead>
               <tbody>
-                {data?.days.map((day, i) => (
+                {sortedDays.map((day, i) => (
                   <tr key={day.date} className={`border-b border-gray-100 ${i % 2 === 1 ? 'bg-gray-50/50' : ''} hover:bg-gray-50`}>
                     <td className="sticky left-0 bg-white z-10 px-3 py-2.5 font-medium text-gray-900 whitespace-nowrap"
                         style={i % 2 === 1 ? { backgroundColor: 'rgb(249 250 251 / 0.5)' } : undefined}>
@@ -171,15 +241,15 @@ export default function DailyOverview() {
                     </td>
                   </tr>
                 ))}
-                {(!data?.days || data.days.length === 0) && (
+                {sortedDays.length === 0 && (
                   <tr>
-                    <td colSpan={13} className="px-3 py-8 text-center text-gray-400">
+                    <td colSpan={columns.length} className="px-3 py-8 text-center text-gray-400">
                       No data for the selected period
                     </td>
                   </tr>
                 )}
               </tbody>
-              {t && data?.days && data.days.length > 0 && (
+              {t && sortedDays.length > 0 && (
                 <tfoot>
                   <tr className="bg-gray-50 font-bold border-t-2 border-gray-300 sticky bottom-0">
                     <td className="sticky left-0 bg-gray-50 z-10 px-3 py-3 text-gray-900">Totals</td>

@@ -5,6 +5,7 @@ import { useModules } from '../../contexts/ModulesContext'
 import { api, Vehicle, Customer, User, Site } from '../../lib/api'
 import WorkDetailsPanel from '../Jobsheets/WorkDetailsPanel'
 import CustomerCardModal from '../Jobsheets/components/CustomerCardModal'
+import VehicleCardModal from '../Jobsheets/components/VehicleCardModal'
 import CustomerFormModal, { SavedCustomer } from '../../components/customers/CustomerFormModal'
 
 interface VehicleLookupResponse {
@@ -58,6 +59,7 @@ export default function NewEstimate() {
   const [showNewCustomer, setShowNewCustomer] = useState(false)
   const [changingCustomer, setChangingCustomer] = useState(false)
   const [showCustomerCard, setShowCustomerCard] = useState(false)
+  const [showVehicleCard, setShowVehicleCard] = useState(false)
   const [linkingCustomer, setLinkingCustomer] = useState(false)
   const [customerError, setCustomerError] = useState<string | null>(null)
 
@@ -308,14 +310,14 @@ export default function NewEstimate() {
           <label className={labelCls}>Vehicle Registration No. *</label>
           {selectedVehicle ? (
             <div className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-lg">
-              <div>
-                <div className="font-medium">{selectedVehicle.registration}</div>
-                <div className="text-sm text-gray-500">
+              <button type="button" onClick={() => setShowVehicleCard(true)} className="text-left group min-w-0" title="View vehicle card">
+                <div className="font-medium text-gray-900 group-hover:text-primary group-hover:underline">{selectedVehicle.registration}</div>
+                <div className="text-sm text-gray-500 truncate">
                   {selectedVehicle.make} {selectedVehicle.model}
                   {selectedVehicle.customer && <span> · {selectedVehicle.customer.first_name} {selectedVehicle.customer.last_name}</span>}
                 </div>
-              </div>
-              <button type="button" onClick={clearVehicle} className="text-gray-400 hover:text-gray-600">
+              </button>
+              <button type="button" onClick={clearVehicle} className="text-gray-400 hover:text-gray-600 shrink-0 ml-3" title="Remove vehicle">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
@@ -477,6 +479,10 @@ export default function NewEstimate() {
             ? { ...v, customer: { ...v.customer, first_name: c.firstName, last_name: c.lastName, mobile: c.mobile, email: c.email } }
             : v)}
         />
+      )}
+
+      {showVehicleCard && selectedVehicle?.id && (
+        <VehicleCardModal vehicleId={selectedVehicle.id} onClose={() => setShowVehicleCard(false)} />
       )}
 
       {showNewCustomer && (

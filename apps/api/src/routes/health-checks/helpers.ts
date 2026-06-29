@@ -11,7 +11,7 @@ export const validTransitions: Record<string, string[]> = {
   created: ['assigned', 'cancelled'],
   assigned: ['in_progress', 'cancelled'],
   in_progress: ['paused', 'tech_completed', 'cancelled'],
-  paused: ['in_progress', 'cancelled'],
+  paused: ['in_progress', 'tech_completed', 'cancelled'],  // tech_completed = advisor/admin manual completion override
   tech_completed: ['awaiting_review', 'awaiting_pricing', 'ready_to_send', 'authorized', 'declined'],
   awaiting_review: ['awaiting_pricing', 'ready_to_send'],
   awaiting_pricing: ['awaiting_parts', 'ready_to_send'],

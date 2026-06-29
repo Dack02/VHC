@@ -12,10 +12,13 @@ import { supabaseAdmin } from './supabase.js'
 export async function buildDocumentSearchOr(orgId: string, q: string): Promise<string | null> {
   const term = q.trim()
   if (!term) return null
-  const like = `%${term}%`
-  // Also match the reg with spaces stripped, so "LR68 KZT" is found by "LR68" or "LR68 K".
-  const noSpace = term.replace(/\s+/g, '')
-  const regLike = `%${noSpace}%`
+  // PostgREST .or() is comma/paren-delimited, so the ilike VALUE must be wrapped in
+  // double quotes (and embedded quotes/backslashes escaped) — otherwise a term like
+  // "Smith, John" or "(x)" would break the filter parse / inject extra conditions.
+  const esc = (s: string) => s.replace(/[\\"]/g, '\\$&')
+  const like = `"%${esc(term)}%"`
+  // Also match the reg with spaces stripped, so "LR68 KZT" is found by "LR68K".
+  const regLike = `"%${esc(term.replace(/\s+/g, ''))}%"`
 
   const [custRes, vehRes] = await Promise.all([
     supabaseAdmin

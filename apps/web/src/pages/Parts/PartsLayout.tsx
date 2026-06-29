@@ -13,8 +13,8 @@ interface PartsTab {
 }
 
 const TABS: PartsTab[] = [
-  { to: '/parts', label: 'Catalogue', end: true },
-  { to: '/parts/stock', label: 'Stock', module: 'parts_stock' },
+  // Catalogue + Stock are one list now (the "Parts" tab has an All/Stocked filter).
+  { to: '/parts', label: 'Parts', end: true },
   { to: '/parts/purchase-orders', label: 'Purchase Orders', module: 'parts_stock' },
   { to: '/parts/returns', label: 'Returns', module: 'parts_stock' },
   { to: '/parts/stocktake', label: 'Stocktake', module: 'parts_stock' },

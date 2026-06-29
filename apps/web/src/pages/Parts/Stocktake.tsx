@@ -27,7 +27,8 @@ const STATUS_BADGE: Record<string, string> = {
 const STATUS_LABEL: Record<string, string> = { counting: 'Counting', committed: 'Committed', cancelled: 'Cancelled' }
 
 export default function Stocktake() {
-  const { session } = useAuth()
+  const { session, user } = useAuth()
+  const orgId = user?.organization?.id
   const toast = useToast()
   const navigate = useNavigate()
   const [sessions, setSessions] = useState<SessionRow[]>([])
@@ -60,7 +61,7 @@ export default function Stocktake() {
     try {
       const [cats, sups] = await Promise.all([
         api<{ categories: Category[] }>('/api/v1/parts-stock/part-categories', { token: session?.accessToken }),
-        api<{ suppliers: Supplier[] }>('/api/v1/suppliers', { token: session?.accessToken }),
+        api<{ suppliers: Supplier[] }>(`/api/v1/organizations/${orgId}/suppliers`, { token: session?.accessToken }),
       ])
       setCategories(cats.categories || [])
       setSuppliers(sups.suppliers || [])

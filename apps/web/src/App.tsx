@@ -127,7 +127,7 @@ const DeletedHealthChecks = lazy(() => import('./pages/Reports/DeletedHealthChec
 const Today = lazy(() => import('./pages/Today'))
 const PartsLayout = lazy(() => import('./pages/Parts/PartsLayout'))
 const PartsCatalog = lazy(() => import('./pages/Parts/PartsCatalog'))
-const StockList = lazy(() => import('./pages/Parts/StockList'))
+const PartDetail = lazy(() => import('./pages/Parts/PartDetail'))
 const PurchaseOrders = lazy(() => import('./pages/Parts/PurchaseOrders'))
 const PurchaseOrderDetail = lazy(() => import('./pages/Parts/PurchaseOrderDetail'))
 const SupplierReturns = lazy(() => import('./pages/Parts/SupplierReturns'))
@@ -288,7 +288,9 @@ function App() {
                         <Route path="/notes" element={<NotesPage />} />
                         <Route path="/parts" element={<PartsLayout />}>
                           <Route index element={<PartsCatalog />} />
-                          <Route path="stock" element={<RequireModule module="parts_stock"><StockList /></RequireModule>} />
+                          {/* Stock merged into the unified Parts list (All/Stocked filter) — keep the old path working */}
+                          <Route path="stock" element={<Navigate to="/parts?view=stocked" replace />} />
+                          <Route path=":id" element={<PartDetail />} />
                           <Route path="purchase-orders" element={<RequireModule module="parts_stock"><PurchaseOrders /></RequireModule>} />
                           <Route path="purchase-orders/:id" element={<RequireModule module="parts_stock"><PurchaseOrderDetail /></RequireModule>} />
                           <Route path="returns" element={<RequireModule module="parts_stock"><SupplierReturns /></RequireModule>} />

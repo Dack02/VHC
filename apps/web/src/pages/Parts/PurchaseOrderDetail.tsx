@@ -45,16 +45,21 @@ const LABEL: Record<string, string> = {
 
 interface ReceiveDraft { qty: string; cost: string; condition: 'ok' | 'damaged' }
 
+interface PartHit { id: string; partNumber: string; description: string; costPrice: number }
+
 export default function PurchaseOrderDetail() {
   const { id } = useParams<{ id: string }>()
-  const { session } = useAuth()
+  const { session, user } = useAuth()
+  const orgId = user?.organization?.id
   const toast = useToast()
   const [po, setPo] = useState<PurchaseOrder | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [showReceive, setShowReceive] = useState(false)
   const [receiveDraft, setReceiveDraft] = useState<Record<string, ReceiveDraft>>({})
-  const [newLine, setNewLine] = useState<{ description: string; partNumber: string; qty: string; cost: string } | null>(null)
+  const [newLine, setNewLine] = useState<{ description: string; partNumber: string; qty: string; cost: string; stockItemId: string | null } | null>(null)
+  const [partHits, setPartHits] = useState<PartHit[]>([])
+  const [showHits, setShowHits] = useState(false)
   const [showInvoice, setShowInvoice] = useState(false)
   const [invoiceRef, setInvoiceRef] = useState('')
   const [invoiceDraft, setInvoiceDraft] = useState<Record<string, { qty: string; cost: string }>>({})
@@ -85,15 +90,35 @@ export default function PurchaseOrderDetail() {
     } finally { setBusy(false) }
   }
 
+  // Catalogue typeahead for the new line: pick an existing part (links stock_item_id, so
+  // it stocks against that item) or keep typing to create a fresh part on receipt.
+  useEffect(() => {
+    const q = newLine?.description.trim()
+    if (!orgId || !q || q.length < 2 || !showHits) { setPartHits([]); return }
+    let cancelled = false
+    const t = setTimeout(async () => {
+      try {
+        const d = await api<{ parts: PartHit[] }>(`/api/v1/organizations/${orgId}/parts-catalog/search?q=${encodeURIComponent(q)}`, { token: session?.accessToken })
+        if (!cancelled) setPartHits(d.parts || [])
+      } catch { if (!cancelled) setPartHits([]) }
+    }, 250)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [newLine?.description, orgId, session?.accessToken, showHits])
+
+  const pickPart = (p: PartHit) => {
+    setNewLine(nl => nl ? { ...nl, description: p.description, partNumber: p.partNumber, cost: String(p.costPrice ?? ''), stockItemId: p.id } : nl)
+    setShowHits(false); setPartHits([])
+  }
+
   const addLine = async () => {
     if (!id || !newLine?.description.trim()) return
     setBusy(true)
     try {
       await api(`/api/v1/purchase-orders/${id}/lines`, {
         method: 'POST', token: session?.accessToken,
-        body: { description: newLine.description.trim(), partNumber: newLine.partNumber.trim() || null, qtyOrdered: parseFloat(newLine.qty) || 1, unitCost: parseFloat(newLine.cost) || 0 },
+        body: { description: newLine.description.trim(), partNumber: newLine.partNumber.trim() || null, qtyOrdered: parseFloat(newLine.qty) || 1, unitCost: parseFloat(newLine.cost) || 0, stockItemId: newLine.stockItemId },
       })
-      setNewLine(null)
+      setNewLine(null); setShowHits(false)
       await fetchPo()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to add line')
@@ -235,7 +260,30 @@ export default function PurchaseOrderDetail() {
             ))}
             {newLine && (
               <tr className="bg-indigo-50/40">
-                <td className="px-4 py-2"><input autoFocus value={newLine.description} onChange={e => setNewLine({ ...newLine, description: e.target.value })} placeholder="Description *" className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" /></td>
+                <td className="px-4 py-2">
+                  <div className="relative">
+                    <input autoFocus value={newLine.description}
+                      onChange={e => { setNewLine({ ...newLine, description: e.target.value, stockItemId: null }); setShowHits(true) }}
+                      onFocus={() => setShowHits(true)}
+                      onBlur={() => setTimeout(() => setShowHits(false), 150)}
+                      placeholder="Search a part, or type a new one *"
+                      className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" />
+                    {newLine.stockItemId && <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-green-600 font-medium">✓ linked</span>}
+                    {showHits && partHits.length > 0 && (
+                      <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-auto text-sm">
+                        {partHits.map(p => (
+                          <li key={p.id}>
+                            <button type="button" onMouseDown={e => { e.preventDefault(); pickPart(p) }} className="w-full text-left px-3 py-2 hover:bg-gray-50">
+                              <span className="font-medium text-gray-900">{p.partNumber}</span>
+                              <span className="text-gray-500"> · {p.description}</span>
+                              <span className="text-gray-400"> · {GBP.format(p.costPrice)}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </td>
                 <td className="px-4 py-2"><input value={newLine.qty} onChange={e => setNewLine({ ...newLine, qty: e.target.value })} type="number" min="0" className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right" /></td>
                 <td className="px-4 py-2" />
                 <td className="px-4 py-2"><input value={newLine.cost} onChange={e => setNewLine({ ...newLine, cost: e.target.value })} type="number" min="0" step="0.01" className="w-20 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right" /></td>
@@ -259,7 +307,7 @@ export default function PurchaseOrderDetail() {
       </div>
 
       {isDraft && !newLine && (
-        <button onClick={() => setNewLine({ description: '', partNumber: '', qty: '1', cost: '' })} className="text-sm text-primary hover:underline">+ Add a line</button>
+        <button onClick={() => setNewLine({ description: '', partNumber: '', qty: '1', cost: '', stockItemId: null })} className="text-sm text-primary hover:underline">+ Add a line</button>
       )}
 
       {/* Receive modal */}

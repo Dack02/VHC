@@ -23,6 +23,17 @@ const num = (v: unknown, d = 0) => {
 
 const WRITE_ROLES = ['super_admin', 'org_admin', 'site_admin', 'service_advisor'] as const
 
+// Derive a stable part number for an ad-hoc received line that has none, from its
+// part number or description (so the auto-created catalogue item is identifiable). Re-receipt
+// of the same name links to the existing row via the (org, part_number) lookup in receive().
+// Note: distinct inputs that slug to the same value (e.g. "BP 1234" / "BP-1234") intentionally
+// share one catalogue row — acceptable dedup for ad-hoc free-text lines.
+function derivePartNumber(partNumber: string | null, description: string | null): string {
+  const base = (partNumber && partNumber.trim()) || (description && description.trim()) || 'PART'
+  const slug = base.toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
+  return slug || 'PART'
+}
+
 // Recompute a PO's header status from its line receipts (draft/ordered preserved until
 // any receipt arrives; then part_received → received).
 async function recomputePoStatus(poId: string, orgId: string): Promise<void> {
@@ -316,7 +327,16 @@ purchaseOrders.patch('/lines/:lineId', authorize([...WRITE_ROLES]), async (c) =>
     if (b.partNumber !== undefined) update.part_number = b.partNumber
     if (b.qtyOrdered !== undefined) update.qty_ordered = num(b.qtyOrdered, 1)
     if (b.unitCost !== undefined) update.unit_cost = num(b.unitCost, 0)
-    if (b.stockItemId !== undefined) update.stock_item_id = b.stockItemId
+    if (b.stockItemId !== undefined) {
+      // A stock_item_id must belong to this org — never let a crafted id point a PO line
+      // (and a later receipt movement) at another tenant's catalogue item.
+      if (b.stockItemId) {
+        const { data: owned } = await supabaseAdmin
+          .from('parts_catalog').select('id').eq('id', b.stockItemId).eq('organization_id', auth.orgId).maybeSingle()
+        if (!owned) return c.json({ error: 'Invalid stock item' }, 400)
+      }
+      update.stock_item_id = b.stockItemId
+    }
     if (b.lineStatus !== undefined) update.line_status = b.lineStatus
     const { error } = await supabaseAdmin
       .from('purchase_order_lines').update(update).eq('id', lineId).eq('organization_id', auth.orgId)
@@ -376,17 +396,70 @@ purchaseOrders.post('/:id/receive', authorize([...WRITE_ROLES]), async (c) => {
       if (!poLineId || qty <= 0) continue
       const { data: poLine } = await supabaseAdmin
         .from('purchase_order_lines')
-        .select('id, stock_item_id, qty_ordered, qty_received, unit_cost, repair_part_id')
+        .select('id, stock_item_id, qty_ordered, qty_received, unit_cost, repair_part_id, part_number, description')
         .eq('id', poLineId).eq('organization_id', auth.orgId).single()
       if (!poLine) continue
       const unitCost = rl.unitCost !== undefined ? num(rl.unitCost, num(poLine.unit_cost)) : num(poLine.unit_cost)
 
-      // Is this a stocked line? (stock_item_id set + that catalog item is_stocked)
+      // Resolve the catalogue item this line stocks. (May be auto-created below.)
+      let stockItemId = poLine.stock_item_id as string | null
       let isStocked = false
-      if (poLine.stock_item_id) {
+      if (stockItemId) {
+        // Org-scope the lookup: a stale/foreign id must NOT drive a movement against another
+        // tenant's item — if it isn't ours, drop it and fall through to the backstop.
         const { data: item } = await supabaseAdmin
-          .from('parts_catalog').select('is_stocked').eq('id', poLine.stock_item_id).single()
-        isStocked = Boolean(item?.is_stocked)
+          .from('parts_catalog').select('is_stocked').eq('id', stockItemId).eq('organization_id', auth.orgId).maybeSingle()
+        if (item) isStocked = Boolean(item.is_stocked)
+        else stockItemId = null
+      }
+      if (!stockItemId && !poLine.repair_part_id) {
+        // Backstop: a free-text PURCHASE line (not linked to a catalogue item, not bound to a
+        // job) is a stock buy. Link an existing catalogue part by derived number if one exists,
+        // else create a new stocked item — so the part appears in Parts and on-hand builds,
+        // instead of vanishing into the GRN (the reported bug).
+        const partNo = derivePartNumber(poLine.part_number as string | null, poLine.description as string | null)
+        const { data: existing } = await supabaseAdmin
+          .from('parts_catalog')
+          .select('id, is_stocked')
+          .eq('organization_id', auth.orgId)
+          .eq('part_number', partNo)
+          .maybeSingle()
+        if (existing) {
+          stockItemId = existing.id as string
+          isStocked = Boolean(existing.is_stocked)
+          // A stock purchase against a not-yet-stocked catalogue part promotes it to stocked
+          // (without touching its description/cost), so the receipt movement fires and on-hand
+          // builds rather than silently going nowhere.
+          if (!isStocked) {
+            await supabaseAdmin.from('parts_catalog')
+              .update({ is_stocked: true, updated_at: new Date().toISOString() })
+              .eq('id', stockItemId).eq('organization_id', auth.orgId)
+            isStocked = true
+          }
+        } else {
+          const { data: created } = await supabaseAdmin
+            .from('parts_catalog')
+            .insert({
+              organization_id: auth.orgId,
+              part_number: partNo,
+              description: (poLine.description as string) || partNo,
+              cost_price: unitCost,
+              is_stocked: true,
+              created_by: auth.user.id,
+              updated_at: new Date().toISOString(),
+            })
+            .select('id, is_stocked')
+            .single()
+          if (created) {
+            stockItemId = created.id as string
+            isStocked = Boolean(created.is_stocked)
+          }
+        }
+        if (stockItemId) {
+          await supabaseAdmin.from('purchase_order_lines')
+            .update({ stock_item_id: stockItemId, part_number: partNo, updated_at: new Date().toISOString() })
+            .eq('id', poLineId)
+        }
       }
 
       // GRN line.
@@ -394,17 +467,17 @@ purchaseOrders.post('/:id/receive', authorize([...WRITE_ROLES]), async (c) => {
         organization_id: auth.orgId,
         goods_receipt_id: grn.id,
         purchase_order_line_id: poLineId,
-        stock_item_id: poLine.stock_item_id ?? null,
+        stock_item_id: stockItemId,
         qty_received: qty,
         unit_cost: unitCost,
         condition: (rl.condition as string) === 'damaged' ? 'damaged' : 'ok',
       })
 
       // Stocked → receipt movement (trigger maintains SOH + provisional WAVCO). No GL journal.
-      if (isStocked) {
+      if (isStocked && stockItemId) {
         await supabaseAdmin.from('stock_movements').insert({
           organization_id: auth.orgId,
-          stock_item_id: poLine.stock_item_id,
+          stock_item_id: stockItemId,
           location_id: po.location_id ?? null,
           movement_type: 'receipt',
           qty_delta: qty,
@@ -480,17 +553,28 @@ async function nextGrnNumber(orgId: string): Promise<string> {
   return (data as string) ?? 'GRN000000'
 }
 async function insertPoLines(poId: string, orgId: string, lines: Array<Record<string, unknown>>): Promise<string[]> {
-  const rows = lines.map(l => ({
-    organization_id: orgId,
-    purchase_order_id: poId,
-    stock_item_id: (l.stockItemId as string) ?? null,
-    repair_part_id: (l.repairPartId as string) ?? null,
-    part_number: (l.partNumber as string) ?? null,
-    description: (l.description as string) ?? '',
-    qty_ordered: num(l.qtyOrdered, 1),
-    unit_cost: num(l.unitCost, 0),
-    line_status: (l.lineStatus as string) ?? 'ordered',
-  }))
+  // Drop any stock_item_id that isn't this org's — a foreign id must never reach a PO line
+  // (it would later drive a receipt movement against another tenant's catalogue item).
+  const wanted = [...new Set(lines.map(l => l.stockItemId as string).filter(Boolean))]
+  let owned = new Set<string>()
+  if (wanted.length) {
+    const { data } = await supabaseAdmin.from('parts_catalog').select('id').eq('organization_id', orgId).in('id', wanted)
+    owned = new Set((data ?? []).map(r => r.id as string))
+  }
+  const rows = lines.map(l => {
+    const sid = l.stockItemId as string | undefined
+    return {
+      organization_id: orgId,
+      purchase_order_id: poId,
+      stock_item_id: sid && owned.has(sid) ? sid : null,
+      repair_part_id: (l.repairPartId as string) ?? null,
+      part_number: (l.partNumber as string) ?? null,
+      description: (l.description as string) ?? '',
+      qty_ordered: num(l.qtyOrdered, 1),
+      unit_cost: num(l.unitCost, 0),
+      line_status: (l.lineStatus as string) ?? 'ordered',
+    }
+  })
   const { data } = await supabaseAdmin.from('purchase_order_lines').insert(rows).select('id')
   return (data ?? []).map(r => r.id as string)
 }

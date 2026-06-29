@@ -75,8 +75,12 @@ export default function PartDetail() {
     if (!confirm('Start tracking this part in stock? Its on-hand will build from goods-in and adjustments.')) return
     setBusy(true)
     try {
-      await api(`/api/v1/organizations/${orgId}/parts-catalog/${id}`, { method: 'PATCH', token: session?.accessToken, body: { is_stocked: true } })
-      toast.success('Now tracked in stock')
+      const res = await api<{ healedReceipt?: { qty: number; unitCost: number } | null }>(
+        `/api/v1/organizations/${orgId}/parts-catalog/${id}`,
+        { method: 'PATCH', token: session?.accessToken, body: { is_stocked: true } }
+      )
+      const healed = res?.healedReceipt?.qty
+      toast.success(healed ? `Now tracked in stock — recovered ${healed} previously received into on-hand` : 'Now tracked in stock')
       await fetchDetail()
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed') } finally { setBusy(false) }
   }

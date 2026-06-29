@@ -47,6 +47,72 @@ function shapePart(p: Record<string, unknown>): Record<string, unknown> {
   }
 }
 
+/**
+ * Heal path (GMS/PARTS.md §7.1) — when a catalogue item is promoted to stocked
+ * (is_stocked false→true), recover any goods that were RECEIVED while the item was
+ * still un-stocked. Those receipts wrote a `goods_receipt_line` but NO `receipt`
+ * stock_movement (receive() only moves stock for items already flagged stocked), so SOH
+ * never built — the reported "invoiced but never in stock" gap. We post a single catch-up
+ * `receipt` movement for the shortfall: QUANTITY ONLY, no GL journal (the inventory asset
+ * is still booked by the supplier invoice, Event 2 — receipt builds stock, invoice books
+ * the cost; the two stay separate). Idempotent: a later re-promotion finds no shortfall
+ * because this heal movement now counts toward received-into-stock.
+ */
+async function healStrandedReceipts(
+  orgId: string,
+  stockItemId: string,
+  userId: string | null,
+  fallbackCost: number
+): Promise<{ qty: number; unitCost: number } | null> {
+  // Everything received against this item across all GRNs (any condition — matches receive()).
+  const { data: grnLines } = await supabaseAdmin
+    .from('goods_receipt_lines')
+    .select('qty_received, unit_cost, goods_receipt_id')
+    .eq('organization_id', orgId)
+    .eq('stock_item_id', stockItemId)
+  if (!grnLines?.length) return null
+  let grnQty = 0
+  let grnValue = 0
+  let latestGrnId: string | null = null
+  for (const l of grnLines) {
+    const q = Number(l.qty_received) || 0
+    grnQty += q
+    grnValue += q * (Number(l.unit_cost) || 0)
+    if (l.goods_receipt_id) latestGrnId = l.goods_receipt_id as string
+  }
+
+  // Quantity already in stock as `receipt` movements (so we only top up the gap, never double-count).
+  const { data: receiptMoves } = await supabaseAdmin
+    .from('stock_movements')
+    .select('qty_delta')
+    .eq('organization_id', orgId)
+    .eq('stock_item_id', stockItemId)
+    .eq('movement_type', 'receipt')
+  const receiptedQty = (receiptMoves ?? []).reduce((s, m) => s + (Number(m.qty_delta) || 0), 0)
+
+  // qty is DECIMAL(12,3) — preserve 3-dp precision, not round2.
+  const strandedQty = Math.round((grnQty - receiptedQty) * 1000) / 1000
+  if (strandedQty < 0.001) return null
+
+  // Value the catch-up at the qty-weighted GRN cost (what those units actually cost),
+  // falling back to the catalogue cost when the GRN lines carry no cost.
+  const unitCost = grnQty > 0 && grnValue > 0 ? round2(grnValue / grnQty) : (Number(fallbackCost) || 0)
+
+  await supabaseAdmin.from('stock_movements').insert({
+    organization_id: orgId,
+    stock_item_id: stockItemId,
+    movement_type: 'receipt',
+    qty_delta: strandedQty,
+    unit_cost: unitCost,
+    total_cost: round2(strandedQty * unitCost),
+    reference_type: 'goods_receipt',
+    reference_id: latestGrnId,
+    reason_code: 'promotion_opening',
+    created_by: userId,
+  })
+  return { qty: strandedQty, unitCost }
+}
+
 // GET /api/v1/organizations/:orgId/parts-catalog - List all parts (paginated)
 partsCatalog.get('/', async (c) => {
   try {
@@ -236,6 +302,16 @@ partsCatalog.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 
     }
 
     const body = await c.req.json()
+
+    // Prior state — needed to detect a stock promotion (is_stocked false→true) for the heal path.
+    const { data: prior } = await supabaseAdmin
+      .from('parts_catalog')
+      .select('id, is_stocked')
+      .eq('id', id)
+      .eq('organization_id', orgId)
+      .maybeSingle()
+    if (!prior) return c.json({ error: 'Part not found' }, 404)
+
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
 
     if (body.description !== undefined) {
@@ -277,7 +353,25 @@ partsCatalog.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 
       return c.json({ error: 'Part not found' }, 404)
     }
 
-    return c.json(shapePart(data))
+    // Promotion heal: catalogue-only → stocked recovers any received-but-unstocked GRN qty
+    // so already-stranded receipts build on-hand (writes a catch-up `receipt` movement; the
+    // trigger then re-derives qty_on_hand/average_cost, so re-read for a fresh payload).
+    let healedReceipt: { qty: number; unitCost: number } | null = null
+    if (body.is_stocked === true && !prior.is_stocked) {
+      healedReceipt = await healStrandedReceipts(orgId, id, auth.user.id, Number(data.cost_price) || 0)
+    }
+    let shaped = shapePart(data)
+    if (healedReceipt) {
+      const { data: fresh } = await supabaseAdmin
+        .from('parts_catalog')
+        .select('*, category:part_categories(name)')
+        .eq('id', id)
+        .eq('organization_id', orgId)
+        .single()
+      if (fresh) shaped = shapePart(fresh)
+    }
+
+    return c.json({ ...shaped, healedReceipt })
   } catch (error) {
     console.error('Update part error:', error)
     return c.json({ error: 'Failed to update part' }, 500)

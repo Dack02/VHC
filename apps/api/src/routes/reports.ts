@@ -3872,7 +3872,7 @@ reports.get('/online-vhc/export', authorize(['super_admin', 'org_admin', 'site_a
     const healthChecks = await loadOnlineVhcData(auth.orgId, startDate, endDate, site_id)
     const { periods, totals } = buildOnlineVhcReport(healthChecks, groupBy)
 
-    const header = ['Period', 'Sent', 'Opened', 'Open %', 'Responded', 'Response %', 'Avg hrs to open', 'Avg hrs to authorise', 'Online Red Auth £%', 'Online Amber Auth £%']
+    const header = ['Period', 'Sent', 'Opened', 'Open %', 'Responded', 'Response %', 'Avg hrs to open', 'Avg hrs to reply', 'Online Red Auth £%', 'Online Amber Auth £%']
     const rows = periods.map(p => [
       p.date, p.sent, p.opened, p.openRate, p.responded, p.responseRate,
       p.avgHrsToOpen ?? '', p.avgHrsToAuthorise ?? '', p.redAuthPct, p.amberAuthPct,

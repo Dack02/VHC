@@ -92,6 +92,42 @@ export interface User {
   organizationId: string
   siteId: string | null
   isActive: boolean
+  // TECH_JOB_MODEL.md §4: 'gms' unlocks the jobsheet-first technician surfaces;
+  // 'vhc_only' (default) keeps the unchanged health-check-anchored flow.
+  operatingMode?: 'vhc_only' | 'gms'
+}
+
+// Jobsheet as returned by GET /api/v1/jobsheets (shapeJobsheet). Only the fields
+// the technician app needs — the jobsheet-first "My Jobs" + jobsheet work screen.
+export interface Jobsheet {
+  id: string
+  reference: string | null
+  vehicleStatus: string | null
+  jobsheetComplete: boolean
+  dueInDate: string | null
+  dueInTime: string | null
+  vehicle: { registration: string; make: string | null; model: string | null; year: number | null } | null
+  customer: { firstName: string; lastName: string } | null
+  assignedTechnician: { id: string; firstName: string; lastName: string } | null
+  // null when the jobsheet has no linked VHC. inspectionRequired distinguishes a
+  // real VHC (true) from a check-in-only "visit shell" (false) — the latter is not
+  // a VHC and must still surface as a jobsheet card (it never shows as an HC card).
+  healthCheck: { id: string; vhcReference: string | null; inspectionRequired: boolean } | null
+}
+
+// One work line from GET /api/v1/jobsheets/:id/work-lines.
+export interface JobWorkLine {
+  id: string
+  name: string | null
+  description: string | null
+  outcomeStatus: string | null
+  origin: 'booking' | 'inspection'
+  labourTotal: number
+  partsTotal: number
+  totalIncVat: number
+  workCompletedAt: string | null
+  workCompletedBy: string | null
+  assignedTechnicianId: string | null
 }
 
 export interface HealthCheck {

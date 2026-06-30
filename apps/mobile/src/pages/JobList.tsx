@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { api, HealthCheck } from '../lib/api'
+import { api, HealthCheck, Jobsheet } from '../lib/api'
 import { Card } from '../components/Card'
 import { Badge, StatusBadge } from '../components/Badge'
 import { Button } from '../components/Button'
@@ -14,6 +14,11 @@ export function JobList() {
   const { isOnline } = usePWA()
   const navigate = useNavigate()
   const [jobs, setJobs] = useState<HealthCheck[]>([])
+  // GMS mode only (TECH_JOB_MODEL.md §14): jobsheets the tech owns that have no
+  // VHC — VHC-backed jobs already appear above as health-check cards (the P1
+  // technician_id ↔ assigned_technician_id mirror), so showing those jobsheets
+  // too would double-list them. VHC-only orgs never populate this.
+  const [jobsheets, setJobsheets] = useState<Jobsheet[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [filter, setFilter] = useState<FilterType>('mine')
@@ -21,6 +26,8 @@ export function JobList() {
   const [searchQuery, setSearchQuery] = useState('')
   const [indirectEnabled, setIndirectEnabled] = useState(false)
   const [indirectActive, setIndirectActive] = useState(false)
+
+  const isGms = user?.operatingMode === 'gms'
 
   const fetchJobs = useCallback(async (showRefreshing = false) => {
     if (!session) return
@@ -55,13 +62,33 @@ export function JobList() {
         { token: session.access_token }
       )
       setJobs(data.healthChecks || [])
+
+      // Jobsheet-first (GMS only): pull the tech's own active jobsheets and keep
+      // the VHC-less ones (the gap — they have no health-check card). Best-effort;
+      // a failure here must not blank the VHC jobs above.
+      if (isGms && filter === 'mine' && user?.id) {
+        try {
+          const jsRes = await api<{ jobsheets: Jobsheet[] }>(
+            `/api/v1/jobsheets?technician_id=${user.id}&complete=false&limit=100`,
+            { token: session.access_token }
+          )
+          // Keep jobsheets with no real VHC: either no health_check at all, or only a
+          // check-in "visit shell" (inspection_required=false). A real VHC already shows
+          // as a health-check card above, so excluding only those avoids double-listing.
+          setJobsheets((jsRes.jobsheets || []).filter(js => !js.healthCheck || js.healthCheck.inspectionRequired === false))
+        } catch {
+          setJobsheets([])
+        }
+      } else {
+        setJobsheets([])
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load jobs')
     } finally {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [session, user?.id, filter])
+  }, [session, user?.id, filter, isGms])
 
   useEffect(() => {
     fetchJobs()
@@ -108,6 +135,12 @@ export function JobList() {
         return registration.includes(query)
       })
     : jobs
+
+  const filteredJobsheets = searchQuery.trim()
+    ? jobsheets.filter((js) => (js.vehicle?.registration?.toLowerCase() || '').includes(searchQuery.toLowerCase().trim()))
+    : jobsheets
+
+  const nothingToShow = filteredJobs.length === 0 && filteredJobsheets.length === 0
 
   const handleJobClick = async (job: HealthCheck) => {
     if (job.status === 'awaiting_checkin') {
@@ -300,7 +333,7 @@ export function JobList() {
           </div>
         )}
 
-        {filteredJobs.length === 0 ? (
+        {nothingToShow ? (
           <Card variant="default" padding="lg" className="text-center">
             <div className="text-gray-400 mb-2">
               <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -327,9 +360,20 @@ export function JobList() {
             </p>
           </Card>
         ) : (
-          filteredJobs.map((job) => (
-            <JobCard key={job.id} job={job} onClick={() => handleJobClick(job)} />
-          ))
+          <>
+            {filteredJobs.map((job) => (
+              <JobCard key={job.id} job={job} onClick={() => handleJobClick(job)} />
+            ))}
+            {/* Jobsheet-first cards (GMS only): the tech's VHC-less jobsheets. */}
+            {filteredJobsheets.length > 0 && (
+              <>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide pt-2">Job sheets</p>
+                {filteredJobsheets.map((js) => (
+                  <JobsheetCard key={js.id} jobsheet={js} onClick={() => navigate(`/jobsheet/${js.id}`)} />
+                ))}
+              </>
+            )}
+          </>
         )}
       </main>
     </div>
@@ -413,6 +457,59 @@ function JobCard({ job, onClick }: JobCardProps) {
           </span>
         </div>
       )}
+    </Card>
+  )
+}
+
+interface JobsheetCardProps {
+  jobsheet: Jobsheet
+  onClick: () => void
+}
+
+// A VHC-less jobsheet card (GMS mode). Routes to the jobsheet work screen
+// (clock + per-line completion) rather than the VHC inspection flow.
+function JobsheetCard({ jobsheet, onClick }: JobsheetCardProps) {
+  const vehicle = jobsheet.vehicle
+  const customer = jobsheet.customer
+  return (
+    <Card
+      variant="elevated"
+      padding="md"
+      className="cursor-pointer active:bg-gray-50 transition-colors border-l-4 border-primary"
+      onClick={onClick}
+    >
+      <div className="flex items-start justify-between mb-2">
+        <div>
+          {jobsheet.reference && (
+            <p className="text-xs font-medium text-primary mb-0.5">{jobsheet.reference}</p>
+          )}
+          <h3 className="text-lg font-bold text-gray-900">{vehicle?.registration || 'No Reg'}</h3>
+          <p className="text-sm text-gray-600">
+            {vehicle?.make} {vehicle?.model} {vehicle?.year && `(${vehicle.year})`}
+          </p>
+        </div>
+        <Badge variant="primary" size="sm">Job sheet</Badge>
+      </div>
+
+      {customer && (
+        <p className="text-sm text-gray-600 mb-2">
+          {customer.firstName} {customer.lastName}
+        </p>
+      )}
+
+      <div className="flex items-center justify-between text-xs text-gray-500">
+        <span>
+          {jobsheet.dueInDate
+            ? `Due: ${new Date(jobsheet.dueInDate).toLocaleDateString([], { day: 'numeric', month: 'short' })}${jobsheet.dueInTime ? ` ${jobsheet.dueInTime}` : ''}`
+            : 'No deadline'}
+        </span>
+        <span className="flex items-center gap-1">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+          Tap to open
+        </span>
+      </div>
     </Card>
   )
 }

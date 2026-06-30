@@ -307,11 +307,22 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
                     <div className="text-xs text-gray-400 mb-0.5">Technician</div>
                     <div className="font-medium text-gray-800">
                       {card.technician ? `${card.technician.first_name} ${card.technician.last_name}` : 'Unassigned'}
-                      {card.isClockedOn && <span className="ml-1.5 text-green-600 text-xs">● clocked on</span>}
+                      {card.isClockedOn && (
+                        <span className="ml-1.5 text-green-600 text-xs">
+                          ● {(card.clockedOnTechs && card.clockedOnTechs.length > 1)
+                            ? `${card.clockedOnTechs.length} clocked on`
+                            : 'clocked on'}
+                        </span>
+                      )}
                       {!card.isClockedOn && workedMinutes > 0 && (
                         <span className="ml-1.5 text-gray-400 text-xs">{formatWorked(workedMinutes)} worked</span>
                       )}
                     </div>
+                    {card.clockedOnTechs && card.clockedOnTechs.length > 1 && (
+                      <div className="mt-1 text-xs text-green-700">
+                        {card.clockedOnTechs.map(t => t.name).join(', ')}
+                      </div>
+                    )}
                   </div>
                   <div className="bg-gray-50 rounded-lg p-3">
                     <div className="text-xs text-gray-400 mb-0.5">Key location</div>

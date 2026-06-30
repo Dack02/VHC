@@ -65,24 +65,34 @@ function fmtDay(iso: string): string {
  * expandable per-segment history. Internal only — clocking time never appears
  * on the customer report. See docs/technician-job-clocking-spec.md §6.
  *
- * Drop in with just `healthCheckId` (self-contained). Pass
+ * Drop in with either `healthCheckId` (VHC-anchored) or `jobsheetId` (the GMS
+ * jobsheet-first screen) — the two endpoints return the identical payload. Pass
  * `refreshKey` to force a re-fetch after a clock action, and `onData` to let a
  * parent observe the breakdown (e.g. the Repair screen reads `activeClockInAt`
  * to pick its clock-on/off button) without a second fetch of the same endpoint.
  */
 export function JobTimeSummary({
   healthCheckId,
+  jobsheetId,
   refreshKey = 0,
   onData,
   className = ''
 }: {
-  healthCheckId: string
+  healthCheckId?: string
+  jobsheetId?: string
   refreshKey?: number
   onData?: (data: JobTimeData) => void
   className?: string
 }) {
   const { session } = useAuth()
   const token = session?.access_token
+
+  // Exactly one of the two anchors drives the endpoint; jobsheet takes precedence.
+  const timeEntriesPath = jobsheetId
+    ? `/api/v1/jobsheets/${jobsheetId}/time-entries`
+    : healthCheckId
+    ? `/api/v1/health-checks/${healthCheckId}/time-entries`
+    : null
 
   const [data, setData] = useState<JobTimeData | null>(null)
   const [liveSec, setLiveSec] = useState(0)
@@ -94,18 +104,15 @@ export function JobTimeSummary({
   useEffect(() => { onDataRef.current = onData }, [onData])
 
   const load = useCallback(async () => {
-    if (!token) return
+    if (!token || !timeEntriesPath) return
     try {
-      const d = await api<JobTimeData>(
-        `/api/v1/health-checks/${healthCheckId}/time-entries`,
-        { token }
-      )
+      const d = await api<JobTimeData>(timeEntriesPath, { token })
       setData(d)
       onDataRef.current?.(d)
     } catch {
       /* non-critical display — leave the last known data on screen */
     }
-  }, [token, healthCheckId])
+  }, [token, timeEntriesPath])
 
   // Load on mount, when refreshKey changes, and poll while mounted.
   useEffect(() => {

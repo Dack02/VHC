@@ -7,7 +7,9 @@ import { Card } from '../components/Card'
 
 interface BoardStatus { id: string; name: string; colour: string }
 interface BoardCard {
-  healthCheckId: string
+  // null for VHC-less jobsheet cards (TECH_JOB_MODEL.md §7) — filtered out below,
+  // since this read-only day list navigates to the VHC summary by healthCheckId.
+  healthCheckId: string | null
   position: string
   status: string
   workshopStatusId: string | null
@@ -59,7 +61,7 @@ export function MyDay() {
 
   const statusById = new Map((board?.statuses || []).map(s => [s.id, s]))
   const myCards = (board?.cards || [])
-    .filter(c => c.technician?.id === user?.id && c.position !== 'work_complete')
+    .filter(c => c.healthCheckId && c.technician?.id === user?.id && c.position !== 'work_complete')
     .sort((a, b) => (a.plannedStartAt || '~').localeCompare(b.plannedStartAt || '~'))
   const totalHours = myCards.reduce((s, c) => s + (c.estimatedHours ?? 0), 0)
 

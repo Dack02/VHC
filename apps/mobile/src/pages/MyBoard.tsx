@@ -22,7 +22,12 @@ interface BoardColumnDef {
 }
 
 interface BoardCard {
-  healthCheckId: string
+  // null for VHC-less jobsheets (TECH_JOB_MODEL.md §7) — the board now unions those
+  // in. The mobile board's card actions (status/move/notes) are all health-check-keyed,
+  // so VHC-less cards are filtered out below; the tech reaches those jobs via the
+  // jobsheet-first "My Jobs" → /jobsheet/:id screen instead.
+  healthCheckId: string | null
+  jobsheetId?: string | null
   position: 'due_in' | 'checked_in' | 'column' | 'work_complete'
   columnId: string | null
   status: string
@@ -81,7 +86,9 @@ export function MyBoard() {
     return () => clearInterval(interval)
   }, [fetchBoard])
 
-  const myCards = (board?.cards || []).filter(c => c.technician?.id === user?.id)
+  // Require healthCheckId: VHC-less jobsheet cards (null) are handled by the
+  // dedicated /jobsheet/:id screen, and every action here keys off healthCheckId.
+  const myCards = (board?.cards || []).filter(c => c.healthCheckId && c.technician?.id === user?.id)
   const activeCards = myCards.filter(c => c.position !== 'work_complete')
   const completedCards = myCards.filter(c => c.position === 'work_complete')
   const queueColumns = (board?.columns || []).filter(c => c.columnType === 'queue')

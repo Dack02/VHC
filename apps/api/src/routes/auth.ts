@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { supabaseAuth, supabaseAdmin } from '../lib/supabase.js'
 import { buildResetPasswordLink } from '../lib/authLinks.js'
 import { authMiddleware } from '../middleware/auth.js'
+import { getEffectiveModulesCached } from '../services/modules.js'
 import { sendEmail } from '../services/email.js'
 import { provisionOrganization } from '../services/provisioning.js'
 import { notifyNewOrganizationSignup } from '../services/super-admin-alerts.js'
@@ -259,6 +260,30 @@ auth.get('/me', authMiddleware, async (c) => {
       }
     })
 
+    // Operating mode (TECH_JOB_MODEL.md §4) — gated by the jobsheets module. The
+    // mobile app reads this to decide whether to show the jobsheet-first (GMS)
+    // surfaces; VHC-only orgs (the default) get the unchanged HC-anchored flow.
+    // Read-time COALESCE → 'vhc_only' covers orgs with no settings row / column.
+    let operatingMode: 'vhc_only' | 'gms' = 'vhc_only'
+    if (org?.id) {
+      // Best-effort: never let mode resolution break the auth-bootstrap call (it
+      // runs for every org, incl. VHC-only). Run the two reads concurrently.
+      try {
+        const [settingsRes, mods] = await Promise.all([
+          supabaseAdmin
+            .from('organization_settings')
+            .select('operating_mode')
+            .eq('organization_id', org.id)
+            .maybeSingle(),
+          getEffectiveModulesCached(c, org.id)
+        ])
+        const stored = settingsRes.data?.operating_mode === 'gms' ? 'gms' : 'vhc_only'
+        operatingMode = mods.jobsheets ? stored : 'vhc_only'
+      } catch (modeErr) {
+        console.error('operatingMode resolution failed (defaulting to vhc_only):', modeErr)
+      }
+    }
+
     return c.json({
       id: user.id,
       email: user.email,
@@ -269,6 +294,7 @@ auth.get('/me', authMiddleware, async (c) => {
       isOrgAdmin: user.is_org_admin,
       isSiteAdmin: user.is_site_admin,
       isActive: user.is_active,
+      operatingMode,
       organization: org ? {
         id: org.id,
         name: org.name,

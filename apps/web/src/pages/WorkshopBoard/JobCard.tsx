@@ -83,6 +83,20 @@ export default function JobCard({ card, statuses, now, draggable, tvMode, showTe
 
   const smallScale = tvMode ? 'text-sm' : 'text-xs'
 
+  // Multi-tech live indicator (TECH_JOB_MODEL.md §7): a job can have several techs
+  // clocked on at once. Prefer the per-job list; fall back to the single clockedOnBy.
+  const clockedTechs = card.clockedOnTechs && card.clockedOnTechs.length > 0
+    ? card.clockedOnTechs.map(t => t.name)
+    : (card.isClockedOn && card.clockedOnBy ? [card.clockedOnBy] : [])
+  const firstNameOf = (full: string) => full.split(' ')[0] || full
+  const clockedTechLabel = clockedTechs.length === 0
+    ? null
+    : clockedTechs.length === 1
+    ? firstNameOf(clockedTechs[0])
+    : clockedTechs.length === 2
+    ? clockedTechs.map(firstNameOf).join(', ')
+    : `${firstNameOf(clockedTechs[0])} +${clockedTechs.length - 1}`
+
   return (
     <div
       ref={setNodeRef}
@@ -174,6 +188,15 @@ export default function JobCard({ card, statuses, now, draggable, tvMode, showTe
 
       {/* Badges */}
       <div className="flex flex-wrap items-center gap-1 mt-2">
+        {clockedTechLabel && (
+          <span
+            className={`px-1.5 py-0.5 rounded-full ${smallScale} font-medium bg-green-100 text-green-700 flex items-center gap-1`}
+            title={clockedTechs.length > 1 ? `Clocked on: ${clockedTechs.join(', ')}` : `Clocked on: ${clockedTechs[0]}`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+            {clockedTechLabel}
+          </span>
+        )}
         {card.customerWaiting && (
           <span className={`px-1.5 py-0.5 rounded-full ${smallScale} font-bold bg-rag-red text-white`}>
             WAITING

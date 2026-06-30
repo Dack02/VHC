@@ -191,7 +191,7 @@ export default function OnlineVhcPerformance() {
     { key: 'responded', label: 'Responded' },
     { key: 'responseRate', label: 'Resp%' },
     { key: 'avgHrsToOpen', label: 'Avg→Open' },
-    { key: 'avgHrsToAuthorise', label: 'Avg→Auth' },
+    { key: 'avgHrsToAuthorise', label: 'Avg→Reply' },
     { key: 'redAuthPct', label: '% Red Auth' },
     { key: 'amberAuthPct', label: '% Amber Auth' },
   ]
@@ -328,6 +328,10 @@ export default function OnlineVhcPerformance() {
                 )}
               </table>
             </div>
+            <p className="px-4 py-2 text-[11px] text-gray-400 border-t border-gray-100">
+              Avg→Open = send → customer’s first open. Avg→Reply = send → their first response (any decision —
+              authorise or decline). Delivery receipts aren’t tracked, so both run from the send time.
+            </p>
           </div>
 
           {/* By advisor */}
@@ -344,7 +348,7 @@ export default function OnlineVhcPerformance() {
                     <th className="text-right px-3 py-3 font-semibold">Open%</th>
                     <th className="text-right px-3 py-3 font-semibold">Resp%</th>
                     <th className="text-right px-3 py-3 font-semibold">Avg→Open</th>
-                    <th className="text-right px-3 py-3 font-semibold">Avg→Auth</th>
+                    <th className="text-right px-3 py-3 font-semibold">Avg→Reply</th>
                     <th className="text-right px-3 py-3 font-semibold">% Red Auth</th>
                     <th className="text-right px-3 py-3 font-semibold">% Amber Auth</th>
                     <th className="text-right px-3 py-3 font-semibold">Self-serve £</th>

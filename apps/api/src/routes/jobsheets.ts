@@ -309,7 +309,7 @@ async function attachJobsheetTotals(orgId: string, shaped: any[]) {
 jobsheets.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician']), async (c) => {
   try {
     const auth = c.get('auth')
-    const { q, site_id, date_from, date_to, complete, limit = '50', offset = '0' } = c.req.query()
+    const { q, site_id, date_from, date_to, complete, technician_id, limit = '50', offset = '0' } = c.req.query()
 
     let query = supabaseAdmin
       .from('jobsheets')
@@ -322,6 +322,9 @@ jobsheets.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
       .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1)
 
     if (site_id) query = query.eq('site_id', site_id)
+    // Primary-tech filter — the mobile "My Jobs" (jobsheet-first, TECH_JOB_MODEL.md §14)
+    // passes the technician's own id. Shells are already excluded above.
+    if (technician_id) query = query.eq('assigned_technician_id', technician_id)
     if (complete === 'true') query = query.eq('jobsheet_complete', true)
     if (complete === 'false') query = query.eq('jobsheet_complete', false)
     if (date_from) query = query.gte('created_at', date_from)
@@ -1776,6 +1779,19 @@ jobsheets.post('/:id/repair-items/:itemId/claim', authorize([...CLOCK_ROLES]), a
     // A technician may only claim/release an unassigned line or their own.
     if (isTech && item.assigned_technician_id && item.assigned_technician_id !== auth.user.id) {
       return c.json({ error: 'This line is already claimed by another technician' }, 403)
+    }
+
+    // An advisor may assign a specific tech — but only one in THIS org (the FK is
+    // global, so an unvalidated id could point at a foreign-org user). Mirror the
+    // health-checks /assign org check.
+    if (!isTech && !unassign && body?.technicianId) {
+      const { data: tech } = await supabaseAdmin
+        .from('users')
+        .select('id')
+        .eq('id', body.technicianId)
+        .eq('organization_id', auth.orgId)
+        .maybeSingle()
+      if (!tech) return c.json({ error: 'Technician not found in your organisation' }, 404)
     }
 
     let newTech: string | null

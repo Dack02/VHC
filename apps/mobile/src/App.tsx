@@ -14,6 +14,7 @@ const MyDay = lazy(() => import('./pages/MyDay').then(m => ({ default: m.MyDay }
 const Inspection = lazy(() => import('./pages/Inspection').then(m => ({ default: m.Inspection })))
 const Summary = lazy(() => import('./pages/Summary').then(m => ({ default: m.Summary })))
 const Repair = lazy(() => import('./pages/Repair').then(m => ({ default: m.Repair })))
+const JobsheetWork = lazy(() => import('./pages/JobsheetWork').then(m => ({ default: m.JobsheetWork })))
 const IndirectTime = lazy(() => import('./pages/IndirectTime').then(m => ({ default: m.IndirectTime })))
 
 const PageSpinner = () => (
@@ -93,6 +94,12 @@ function AppRoutes() {
           path="/job/:id/repair"
           element={
             session && user ? <Repair /> : <Navigate to="/login" replace />
+          }
+        />
+        <Route
+          path="/jobsheet/:id"
+          element={
+            session && user ? <JobsheetWork /> : <Navigate to="/login" replace />
           }
         />
         <Route

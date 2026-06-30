@@ -1,7 +1,7 @@
 # VHC — Groups, Sites & Per-Site Separation
 
-> Status: **Draft v1 (decision brief).** Author: Principal Eng + Product. Date: 2026-06-30.
-> Owner decisions captured 2026-06-30 (see §2). Build NOT started — this is the plan for reaction.
+> Status: **Draft v2 (build-ready, Phase 1).** Author: Principal Eng + Product. Date: 2026-06-30.
+> Owner decisions captured 2026-06-30 (see §2). All Phase-1 facts verified against the live tree (settings-read pattern, branding resolver + 9 call sites, create paths, nullable `auth.user.siteId`, audience RPC). **Build NOT started** — §4–§5 are now implementation-ready; §6 reporting deferred by owner; §7 group layer is Phase 2.
 > Builds on: the existing `sites` table (`supabase/migrations/20240114000000_initial_schema.sql:47`), multi-org auth (`supabase/migrations/20260130200000_multi_org_support.sql`, `apps/api/src/middleware/auth.ts`), super-admin cross-org reporting, and the org-branding source-of-truth fix (`organization_settings`, see memory `org-branding-source-of-truth`).
 
 ---
@@ -31,6 +31,9 @@ Two gaps block the vision:
 | **C** | Branding | **Site-level (override on org default)** | Logo/colour/from-name/phone/email resolved per site; org provides the fallback. |
 | **D** | Reporting unit | **Site is the comparison unit; org & group are rollup levels** | One report compares sites; rolls up to org, orgs roll up to group. |
 | **E** | Legal entity mapping | **One org per legal/accounting entity; group spans orgs** | Same-Ltd-branches = 1 org / N sites. Separate Ltds = N orgs / 1 group. Org stays the Xero/VAT/billing wall. |
+| **F** | Separation strength for separate Ltds | **Separate orgs (hard RLS wall) — never soft sites** | Separate legal entities = separate data controllers → never share a customer book across a soft site boundary. The DB-enforced org wall is the GDPR boundary. Resolves R2. |
+| **G** | Tenant mix | **Both kinds exist → build the full three-tier model, configured per tenant** | Phase 1 (per-site toggle) and Phase 2 (group layer) are both required; neither is optional. |
+| **H** | Group billing | **Per-org subscription (today's model); group is reporting-only** | No group-billing concept. Each entity invoiced separately. Resolves R5. |
 
 ---
 
@@ -59,49 +62,166 @@ The three-tier model **subsumes** two-tier: a separate-entity tenant is just `gr
 
 ## 4. Workstream 1 — Per-site customer/vehicle separation (Phase 1)
 
-### 4.1 Schema
+### 4.1 Schema — migration `YYYYMMDDHHMMSS_groups_sites_phase1.sql`
+
+> Timestamp must sort **after** the latest applied migration (currently the `2026070114*`/`16*` batch — confirm before naming, per the parts-module gotcha). Use `IF NOT EXISTS` throughout (rules.md).
+
 ```sql
--- vehicles gains a site dimension (customers already have nullable site_id)
+-- 1. vehicles gains a site dimension (customers already have nullable site_id from initial_schema)
 ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS site_id UUID REFERENCES sites(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_vehicles_site ON vehicles(site_id);
 
--- per-tenant toggle (default OFF = separated, per decision A)
+-- 2. per-tenant toggle.
+--    DEFAULT true = SHARED is the SAFE default: any lazily-created settings row, and every
+--    existing org, stays org-wide (today's behaviour) and never silently hides customers.
+--    NEW orgs are flipped to separated in the provisioning path (§4.3), not by the column default.
 ALTER TABLE organization_settings
-  ADD COLUMN IF NOT EXISTS share_customers_across_sites BOOLEAN DEFAULT false;
+  ADD COLUMN IF NOT EXISTS share_customers_across_sites BOOLEAN NOT NULL DEFAULT true;
 ```
 
-### 4.2 The scope helper (the core of the change)
-A single helper decides the filter; every customer/vehicle read goes through it:
+**Why `vehicles.site_id` and not derive-via-customer?** A vehicle can change owner (`vehicle_customer_links`, ownership history) and DMS already *tries* to write `vehicles.site_id` (`dms.ts:211,244` — latent today). A real column is simpler than deriving site through the current-owner link on every read, and makes the scope helper uniform across both tables. Vehicles scope **with** customers (decision B) — one toggle governs both.
+
+### 4.2 The scope helper — `apps/api/src/lib/site-scope.ts` (NEW)
+
+There is **no shared org-settings loader** today (every route reads `organization_settings` inline via `.select(col).eq('organization_id', orgId).maybeSingle()` — e.g. `jobsheets.ts:1614`). Model this helper on `services/follow-up-settings.ts:25` (`getFollowUpSettings`).
+
 ```typescript
-// resolves to {organization_id} when sharing ON, {organization_id, site_id} when OFF
-function customerScope(auth: AuthContext, settings: OrgSettings) {
-  return settings.share_customers_across_sites
-    ? { organization_id: auth.orgId }
-    : { organization_id: auth.orgId, site_id: auth.user.siteId }
+export type ScopeMode = 'shared' | 'separated'
+
+// 'separated' ONLY when the flag is explicitly false. true / null / missing-row → 'shared' (safe).
+export async function getCustomerScopeMode(orgId: string): Promise<ScopeMode> {
+  const { data } = await supabaseAdmin
+    .from('organization_settings')
+    .select('share_customers_across_sites')
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  return data?.share_customers_across_sites === false ? 'separated' : 'shared'
+}
+
+// Apply to any customers/vehicles query builder. Org filter ALWAYS; site filter only when
+// separated AND the caller is a site-bound user.
+export function applyCustomerScope<Q extends { eq(col: string, val: unknown): Q }>(
+  q: Q, auth: AuthContext, mode: ScopeMode,
+): Q {
+  q = q.eq('organization_id', auth.orgId)
+  if (mode === 'separated' && auth.user.siteId) q = q.eq('site_id', auth.user.siteId)
+  return q
 }
 ```
-Apply at every customer/vehicle **read** surface: customer book/search, vehicle lookup, reminders, follow-up case matching, booking pre-check, DMS import dedup. On **create**, stamp `site_id = current site`.
 
-### 4.3 ⚠️ Migration safety (no destructive backfill)
-- The toggle changes **query behaviour only**. No data is moved or deleted.
-- **`organization_settings` rows are created lazily** (a `DEFAULT false` column does **not** reach row-less orgs — same gotcha as `TECH_JOB_MODEL.md` §C3). So the *effective* default must be resolved in code, not relied on from the column.
-- **Existing multi-site orgs currently see customers org-wide.** Flipping them to "separated" would hide records. Resolution: **effective default = `true` (shared) for orgs that predate this migration; `false` (separated) for new orgs.** Implement via a one-row-per-existing-org seed of `share_customers_across_sites = true`, OR a `created_at` cutoff check. New orgs get the column default (`false`).
-- Single-site orgs are unaffected either way.
-- Populate `vehicles.site_id` **lazily/forward** (on next touch, or from the linked customer's / latest health-check's site) — **no bulk UPDATE** that could thrash the table. Never reset.
+**Two rules baked in (both load-bearing):**
+1. **`auth.user.siteId` is nullable** (`middleware/auth.ts:13` — org/site admins often have no site). A separated org's org-admin (no site) therefore reads **org-wide** — correct: oversight roles see all sites; only site-bound users (`technician`/`service_advisor`/`site_admin` with a `site_id`) are confined. State this explicitly in the settings UI so it isn't read as a leak.
+2. **Separated requires an explicit `false`.** Never treat a missing settings row as separated, or lazy-row orgs would hide their own customers.
+
+For hot endpoints (customer search-as-you-type), call `getCustomerScopeMode(orgId)` **once** per request and pass the `mode` into each query; optionally add a small TTL cache keyed by orgId (mirror `services/ai-reasons.ts:53` 5-min cache) to avoid a settings read per keystroke. Invalidate on settings PATCH.
+
+### 4.3 ⚠️ Rollout safety (no destructive backfill)
+- The toggle changes **query behaviour only**. No data is moved or deleted (honours rules.md).
+- **`organization_settings` rows are created lazily** — a column DEFAULT does **not** reach row-less orgs (same gotcha as `TECH_JOB_MODEL.md` §C3). Handled by the **`=== false`** read semantics (§4.2): anything that isn't an explicit `false` is treated as shared.
+- **Existing orgs stay SHARED.** `DEFAULT true` + the `=== false` read means **no existing org changes behaviour** — single-site or multi-site — until someone deliberately turns separation on. This is the whole point of inverting the column default vs decision A's "separated by default."
+- **New orgs default to separated** via the provisioning path (`services/provisioning.ts`, which seeds the org's `organization_settings` row): set `share_customers_across_sites: false` there. New tenants get decision-A behaviour; nobody live gets surprised.
+- **`vehicles.site_id` is populated forward-only.** Stamp on create (§4.5); for existing rows, backfill **lazily** (on next touch) from the current-owner link's `customers.site_id` or the latest `health_checks.site_id`. **No bulk `UPDATE`** that could thrash the table; never reset. Until a vehicle is stamped, a *separated* read won't see it — acceptable because separation is opt-in and the org chooses when to flip it (after backfill has warmed, or accepting lazy warm-up).
+
+### 4.4b Pre-flip readiness (operational gate)
+Before a tenant flips to separated, surface a one-shot **readiness check** (admin action, read-only): count customers/vehicles with `site_id IS NULL` for that org. If non-zero, warn that those records won't appear under separation until stamped, and offer (a) assign-to-site bulk action, or (b) proceed accepting lazy warm-up. This turns the silent-empty-read failure mode into an explicit, owner-controlled step.
+
+---
+
+### 4.4 R1 read-surface checklist (the `customerScope` sweep)
+
+Enumerated against the live tree (2026-06-30). Tenant isolation is enforced **only** by explicit `.eq('organization_id', …)` — RLS is defence-in-depth, so **every** site filter must be added in app code. Three tiers:
+
+- **🔴 MUST-FIX (direct org-only read → leaks across sites when separation ON).** These query `customers`/`vehicles` directly, filtering org only. Route through `customerScope()`.
+- **🟡 INHERITS PARENT** — a PostgREST embed (`customer:customers(...)` / `vehicle:vehicles(...)`) hanging off an already org/site-filtered `health_checks`/`jobsheets`/`estimates`. Safe **iff** the parent is correctly site-scoped — audit the parent, not the embed. Bulk of reports/dashboards fall here.
+- **🟢 NO ACTION** — token-scoped public routes (one record by `public_token`) and pure id-scoped reads from a parent row that already carries the site.
+
+**🔴 MUST-FIX — direct org-only customer/vehicle reads:**
+- [ ] `lib/list-search.ts:24-35` — `buildDocumentSearchOr` resolves customer **and** vehicle ids for jobsheet (`jobsheets.ts:334`) + estimate (`estimates.ts:140`) list search. Highest-traffic surface.
+- [ ] `routes/customers.ts:98` list (+ `:113` reg sub-search), `:207` quick search, `:386` stats vehicle-count (id-only, no org!), `:510` `GET /:id`.
+- [ ] `routes/vehicles.ts` — **entire module is org-only** (vehicles has no `site_id` yet): `:127` list, `:208` `GET /lookup/:registration`, plus every other by-id/by-customer read.
+- [ ] `jobs/dms-import.ts:104-295` — customer dedup by external_id/email/mobile + vehicle dedup by external_id/reg/VIN. **Primary dedup leak**: HC create already carries `siteId` but the dedup above ignores site, so a site-B import can attach a site-A customer/vehicle.
+- [ ] `routes/dms.ts:73-357` — external DMS push API (`/customers`, `/vehicles`, `/batch`) same dedup-by-external_id/reg, org-only.
+- [ ] `services/expiry-reminders.ts:67` → RPC `expiry_campaign_audience` (`20260628140000_vehicles_module.sql:308`) — joins vehicles/customers filtered **org only**. Needs a `p_site` param + `site_id` filter. Reminder audiences are currently org-wide.
+- [ ] `routes/follow-ups.ts:261-273` — case-search customer/vehicle id-resolve (org only; the case list itself honours site but this id-resolve doesn't).
+- [ ] `services/inbound-sms.ts:126-131` `findCustomerMatches` + `routes/messages.ts:362` & `:463` customer-by-phone — org-only phone match; needs site disambiguation when ON. (Inbound SMS is intentionally cross-org for shared-number routing — see [[inbound-sms-tenant-routing-initiative]]; add site as a tiebreaker, don't break that.)
+
+**🟡 INHERITS PARENT — verify the parent is site-scoped (no change to the embed):**
+- [ ] Reports/dashboards: `reports.ts` (`:295, 630, 822, 1935, 2466, 2726, 4069, 4356`), `services/*-report-service.ts`, `dashboard*.ts`, `arrivals.ts`, `workshop-board.ts`, `worker.ts`, `scheduler.ts`, `estimate-send.ts`, `dms-booking-detail.ts`, `pdf-generator/*`.
+- [ ] HC/jobsheet/estimate detail embeds: `health-checks/crud.ts`, `status.ts`, `pdf.ts`, `send-customer.ts`, `reopen.ts`, `jobsheets.ts:29`, `estimates.ts:33`, `sms-conversations.ts:87`.
+- [ ] `services/customer-insights.ts:46-81` — org + customer/vehicle-id scoped (inherits site from the caller's customer).
+
+**🟢 NO ACTION (confirmed safe):**
+- [ ] `routes/public.ts`, `routes/public-estimate.ts` — token-scoped; no public customer/vehicle **search** exists.
+- [ ] Pure id-scoped reads off a site-carrying parent: `messages.ts:134/285`, `inbound-sms.ts:494`, `follow-up-engine.ts:493-496`.
+
+### 4.5 Create-path stamping checklist (every write must set the site)
+
+A separated read returns nothing for a row whose `site_id` is NULL, so **every** customer/vehicle insert must stamp the active site. Current state (verified 2026-06-30):
+
+**Customers — `customers.site_id` exists:**
+- [x] `routes/customers.ts:252` — `site_id: siteId || auth.user.siteId` **already set**. (CustomerFormModal sends `siteId` on create — `CustomerFormModal.tsx:273`.) ✅
+- [x] `routes/dms.ts:108` (single upsert) — sets `site_id: siteId` from `sites.settings->external_id`. ✅
+- [ ] **`jobs/dms-import.ts:179-197`** (`findOrCreateCustomer` insert) — **omits `site_id`**. Add: the import already resolves a site for `createHealthCheck`; thread that `siteId` into the customer insert.
+- [ ] **`routes/dms.ts:318-328`** (bulk-import branch) — **omits `site_id`**. Add `site_id: siteId`.
+
+**Vehicles — `site_id` column added by this migration (§4.1):**
+- [ ] **`routes/vehicles.ts:414-427`** (`vehicles.post('/')`) — add `site_id: auth.user.siteId` (or derive from the linked customer's site when `customerId` given, so vehicle and owner agree).
+- [ ] **`jobs/dms-import.ts:326-340`** (`findOrCreateVehicle`) — add `site_id: siteId`.
+- [x] **`routes/dms.ts:244`** (single upsert) — already writes `site_id: siteId` (latent today; **becomes live** once the column exists — verify it's the *intended* site, not stale). `:211` update branch too.
+- [ ] **`routes/dms.ts:381-394`** (bulk branch) — **omits `site_id`**. Add `site_id: siteId`.
+
+> Decision B (vehicle follows customer): when a vehicle is created against a known `customer_id`, prefer **the customer's `site_id`** over the actor's `auth.user.siteId`, so an owner and their car never split across sites.
+
+### 4.6 The `expiry_campaign_audience` RPC (site-aware)
+The audience function (`20260628140000_vehicles_module.sql:308`) filters `e.organization_id = p_org` only. It **joins `customers c`**, and `customers` has `site_id`, so the site filter rides on the customer:
+```sql
+-- new nullable param, backward-compatible: NULL p_site behaves exactly as today
+CREATE OR REPLACE FUNCTION expiry_campaign_audience(p_org UUID, p_type_code TEXT, p_lead_days INT, p_site UUID DEFAULT NULL)
+... WHERE e.organization_id = p_org
+    AND (p_site IS NULL OR c.site_id = p_site)
+    ...
+```
+Adding a defaulted param keeps the old 3-arg signature callable (Postgres treats the 4-arg as the same callable when the 4th is defaulted — but if a stale 3-arg overload lingers, `DROP FUNCTION expiry_campaign_audience(UUID, TEXT, INT)` first to avoid ambiguity). Caller `services/expiry-reminders.ts:67` passes `p_site` resolved from the campaign's site (campaigns are site-scoped) — only when the org is separated; pass `NULL` when shared.
 
 ---
 
 ## 5. Workstream 2 — Site-level branding (Phase 1)
 
-Branding currently resolves org-wide from `organization_settings` (the `getOrganizationBranding` source-of-truth, memory `org-branding-source-of-truth`). Move to **site override on org default**:
+Branding resolves org-wide today via **`getOrganizationBranding(organizationId)`** (`apps/api/src/services/email.ts:440`) — it reads `organizations.name` + `organization_settings(logo_url, primary_color, phone, email, website)` and has **9 functional call sites, no cache**. The `sites` table has `name`, `address`, `phone`, `email`, `settings` JSONB, `is_active` — **contact fields but no branding columns**. Move to **site override on org default**.
 
-- `sites` already has `phone`, `email`, and a `settings` JSONB — add structured branding to the site (logo URL, primary colour, from-name, reply-to) either as columns or in `settings`.
-- `getOrganizationBranding(orgId, siteId?)` → **resolve site value, fall back to org value, fall back to platform default.** Single resolver, used by: customer-facing VHC report, quotes/estimates, outbound SMS/email from-name & signature, PDF headers.
-- Every outbound comm and customer-facing doc must pass the **site** of the job, not just the org.
+### 5.1 Schema
+```sql
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS logo_url TEXT;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS primary_color VARCHAR(9);
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS website VARCHAR(255);
+-- display name = sites.name (exists); from-phone/email = sites.phone/email (exist)
+```
+
+### 5.2 Signature & resolution
+`getOrganizationBranding(organizationId, siteId?: string | null)` — resolve **field-by-field**: site value → org value → platform default. Keep the existing return shape (`{ logoUrl, primaryColor, organizationName, phone, email, website }`) so callers don't change shape:
+- `organizationName` → `site.name ?? organizations.name`
+- `logoUrl` → `site.logo_url ?? org_settings.logo_url`
+- `primaryColor` → `site.primary_color ?? org_settings.primary_color ?? '#3B82F6'`
+- `phone`/`email`/`website` → site value ?? org value
+- When `siteId` is null/absent, behaviour is **identical to today** (org-only) — zero-regression for single-site orgs.
+
+### 5.3 Call-site checklist (thread the job's site into branding)
+Each caller must pass the `site_id` of the record the comm is about (health_check / estimate / follow-up case all carry `site_id`):
+- [ ] `services/sms.ts:196, 238, 279` — 3 SMS builders. Source site from the HC/estimate being messaged.
+- [ ] `services/email.ts:241, 311, 378, 508, 647` — VHC/response-notification emails.
+- [ ] `services/expiry-reminders.ts:163` — pass the campaign's site.
+- [ ] `services/follow-up-engine.ts:499, 1128` — pass the case's site.
+- [ ] `services/estimate-send.ts:100` — pass the estimate's site.
+- [ ] `routes/public-estimate.ts:130` — pass the estimate's site (public, token-resolved record already has it).
+- [ ] `services/library-gap-report.ts:463` — org-level internal report; **pass `null`** (no site → org branding). Confirm it's not customer-facing.
+
+> Migration note: `getOrganizationBranding` is the `org-branding-source-of-truth` fix ([[org-branding-source-of-truth]]) — it already reads the *correct* `organization_settings` table (not the dead `organizations.settings` JSON). Site-level is a strict superset; don't reintroduce the old dead-column read.
 
 ---
 
-## 6. Workstream 3 — Site-comparison reporting (Phase 1)
+## 6. Workstream 3 — Site-comparison reporting (Phase 1) — ⏸ DEFERRED (owner, 2026-06-30)
+
+> Build the separation + branding core first (§4–§5); return to reporting after. Sketch retained below.
 
 Reports today resolve to **one** site via `resolveSiteId()` (`apps/api/src/routes/workshop-board.ts:83`) — single-site or org-wide. Add a **group-by-site** dimension:
 
@@ -140,10 +260,17 @@ CREATE INDEX IF NOT EXISTS idx_organizations_group ON organizations(group_id);
 
 ## 8. Build order
 
-**Phase 1 — Site separation (most tenants benefit, stays inside the org wall):**
-1. `vehicles.site_id` + `share_customers_across_sites` setting + `customerScope` helper wired through all customer/vehicle reads & creates (§4).
-2. Site-level branding resolver (§5).
-3. Per-site comparison reporting (§6).
+**Phase 1 — Site separation (most tenants benefit, stays inside the org wall).** Order matters — the writes and the safe default must land before any read is allowed to filter by site:
+
+1. **Migration** (§4.1): `vehicles.site_id` + index; `organization_settings.share_customers_across_sites BOOLEAN NOT NULL DEFAULT true`; site branding columns (§5.1); the `expiry_campaign_audience` RPC `p_site` param (§4.6). One migration, `IF NOT EXISTS` throughout, timestamp after the latest applied.
+2. **Create-path stamping** (§4.5): wire `site_id` into the 2 customer + 3 vehicle insert paths that omit it. *Must precede step 4* so newly-created rows are scoped.
+3. **Provisioning default** (§4.3): new-org provisioning sets `share_customers_across_sites = false` (separated for new tenants); existing orgs untouched (stay shared).
+4. **Scope helper + read sweep** (§4.2 + §4.4): add `lib/site-scope.ts`; route every 🔴 read through `applyCustomerScope`; verify the 🟡 parents are site-scoped. Behaviour is a no-op until an org is flipped to separated.
+5. **Settings UI + pre-flip readiness** (§4.4b): the toggle in Settings, the null-`site_id` readiness count, and the org-admin-sees-all-sites note.
+6. **Site-level branding** (§5): signature change + thread site through the 9 call sites.
+7. *(Reporting — §6 — deferred per owner; do after the above.)*
+
+Each step typechecks clean (`npm run build`) before the next. Steps 1–4 are the data-integrity core; 5–6 are the surfacing.
 
 **Phase 2 — Group layer (additive, inert for single-entity tenants):**
 4. `groups` + `organizations.group_id` (§7.1).
@@ -156,8 +283,10 @@ Phase 1 is the bulk of the value and carries the only real migration risk (§4.3
 
 ## 9. Open items / risks
 
-- **R1 — Read-surface sweep is wide.** `customerScope` must reach *every* place customers/vehicles are read (search, reminders, follow-ups, DMS dedup, booking pre-check). A missed surface leaks across sites within an org. Enumerate before building.
-- **R2 — No site-level RLS.** Separation stays app-enforced. If a tenant needs hard customer isolation between sites (e.g. separate GDPR controllers), the only DB-enforced wall is the **org** — which is the argument for modelling those as separate orgs under a group (§E).
+- **R1 — RESOLVED (enumerated, §4.4).** Full read-surface audit done 2026-06-30. ~8 🔴 must-fix direct org-only reads (list-search, customers, vehicles module, DMS dedup ×2, expiry-reminder RPC, follow-up search, inbound-SMS/messages phone match); the rest are 🟡 embeds that inherit a site-scoped parent (verify parent) or 🟢 token/id-scoped. The DMS dedup paths and the `expiry_campaign_audience` RPC are the subtle ones — they silently cross sites today.
+- **R2 — RESOLVED (decision F).** Site separation is intentionally soft (app-enforced) and is used **only between branches of one legal entity**. Separate legal entities are modelled as **separate orgs** under a group, where org-level RLS gives the hard, GDPR-grade wall. The soft toggle never crosses a legal boundary.
 - **R3 — DMS import** writes customers/vehicles; its config is already site-scoped (`20260115000001_dms_integration.sql:59`). Imported rows must stamp `site_id` and dedup within the active scope.
-- **R4 — Effective-default resolution** for `share_customers_across_sites` must be code-resolved (lazy `organization_settings` rows), with existing multi-site orgs defaulting to shared to avoid hiding data (§4.3).
-- **R5 — Subscription/billing for groups.** Out of scope here: do you bill a group as one account or per-org? Org stays the subscription holder for now; group billing is a later question.
+- **R4 — RESOLVED (design, §4.2/§4.3).** Lazy-row hazard handled by inverting the column default: `DEFAULT true` (shared) + read semantics "separated **only** when explicitly `false`." Existing orgs never change behaviour; new orgs are flipped to separated in provisioning. No code path can silently hide a row.
+- **R6 — `auth.user.siteId` is nullable.** Org/site-admin users with no `site_id` read **org-wide** even when separated (oversight). This is intended (§4.2 rule 1) but must be stated in the settings UI so it's not mistaken for a leak. A site-bound user is the only one confined to a site.
+- **R7 — Branding call-site coverage (§5.3).** 9 callers must each source the *job's* site; a missed caller silently falls back to org branding (degraded, not broken). Lower severity than R1 but enumerate-and-tick.
+- **R5 — RESOLVED (decision H).** Billing stays **per-org** — each legal entity keeps its own subscription. The group is **reporting-only** and holds no billing concept. No subscription-model changes required.

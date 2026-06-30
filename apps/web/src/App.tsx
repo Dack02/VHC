@@ -52,6 +52,7 @@ const TyreManufacturers = lazy(() => import('./pages/Admin/TyreManufacturers'))
 const TyreSizes = lazy(() => import('./pages/Admin/TyreSizes'))
 const InspectionThresholds = lazy(() => import('./pages/Admin/InspectionThresholds'))
 const DMSIntegration = lazy(() => import('./pages/Settings/DMSIntegration'))
+const SocialMediaSettings = lazy(() => import('./pages/Settings/SocialMediaSettings'))
 const NotificationSettings = lazy(() => import('./pages/Settings/NotificationSettings'))
 const OrganizationSettings = lazy(() => import('./pages/Settings/OrganizationSettings'))
 const Subscription = lazy(() => import('./pages/Settings/Subscription'))
@@ -124,6 +125,7 @@ const OutreachBookings = lazy(() => import('./pages/Reports/OutreachBookings'))
 const MriPerformance = lazy(() => import('./pages/Reports/MriPerformance'))
 const DailyOverview = lazy(() => import('./pages/Reports/DailyOverview'))
 const OnlineVhcPerformance = lazy(() => import('./pages/Reports/OnlineVhcPerformance'))
+const SocialMediaAnalytics = lazy(() => import('./pages/Reports/SocialMediaAnalytics'))
 const DeletedHealthChecks = lazy(() => import('./pages/Reports/DeletedHealthChecks'))
 const Today = lazy(() => import('./pages/Today'))
 const PartsLayout = lazy(() => import('./pages/Parts/PartsLayout'))
@@ -268,6 +270,7 @@ function App() {
                         <Route path="/reports/mri-performance" element={<MriPerformance />} />
                         <Route path="/reports/daily-overview" element={<DailyOverview />} />
                         <Route path="/reports/online-vhc" element={<OnlineVhcPerformance />} />
+                        <Route path="/reports/social-media" element={<RequireModule module="social_media"><SocialMediaAnalytics /></RequireModule>} />
                         <Route path="/reports/deleted-health-checks" element={<DeletedHealthChecks />} />
                         <Route path="/users" element={<Users />} />
                         <Route path="/workshop-board" element={<RequireModule module="workshop_board"><WorkshopBoard /></RequireModule>} />
@@ -311,6 +314,7 @@ function App() {
                         <Route path="/settings/tyre-sizes" element={<TyreSizes />} />
                         <Route path="/settings/thresholds" element={<InspectionThresholds />} />
                         <Route path="/settings/integrations" element={<DMSIntegration />} />
+                        <Route path="/settings/social-media" element={<RequireModule module="social_media"><SocialMediaSettings /></RequireModule>} />
                         <Route path="/settings/notifications" element={<NotificationSettings />} />
                         <Route path="/settings/message-templates" element={<MessageTemplates />} />
                         <Route path="/settings/organization" element={<OrganizationSettings />} />

@@ -11,6 +11,13 @@ import ReportFiltersBar from './components/ReportFiltersBar'
 import ExportButton from './components/ExportButton'
 import { formatCurrency, formatPercent, formatNumber, formatDate, trendDirection, trendPercent } from './utils/formatters'
 import { CHART_COLORS, FUNNEL_COLORS } from './utils/colors'
+import { useModules } from '../../contexts/ModulesContext'
+import type { ModuleKey } from '../../lib/modules'
+
+// Report cards gated behind a non-default module (hidden until the module is on).
+const REPORT_CARD_MODULE: Record<string, ModuleKey> = {
+  '/reports/social-media': 'social_media',
+}
 
 interface SummaryData {
   period: { from: string; to: string }
@@ -72,6 +79,16 @@ const navCards: NavCard[] = [
     icon: (
       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+      </svg>
+    ),
+  },
+  {
+    to: '/reports/social-media',
+    title: 'Social Media Analytics',
+    description: 'Reach, engagement, follower growth & ad spend across Facebook, Instagram & TikTok',
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
       </svg>
     ),
   },
@@ -334,6 +351,10 @@ const reportGroups: { title: string; routes: string[] }[] = [
     routes: ['/reports/online-vhc', '/reports/items', '/reports/repair-types', '/reports/mri-performance'],
   },
   {
+    title: 'Marketing & Channels',
+    routes: ['/reports/social-media'],
+  },
+  {
     title: 'Parts & Stock',
     routes: [
       '/reports/parts-gp',
@@ -371,6 +392,8 @@ export default function ReportsHub() {
     filters, queryString,
     setDatePreset, setCustomDateRange, setGroupBy, setSiteId,
   } = useReportFilters()
+  const { isEnabled } = useModules()
+  const cardVisible = (route: string) => !REPORT_CARD_MODULE[route] || isEnabled(REPORT_CARD_MODULE[route])
 
   const { data, loading, error } = useReportData<SummaryData>({
     endpoint: '/api/v1/reports',
@@ -412,13 +435,14 @@ export default function ReportsHub() {
     .map(group => ({
       title: group.title,
       cards: group.routes
+        .filter(cardVisible)
         .map(route => navCards.find(card => card.to === route))
         .filter((card): card is NavCard => card !== undefined),
     }))
     .filter(group => group.cards.length > 0)
 
   const groupedRoutes = new Set(reportGroups.flatMap(g => g.routes))
-  const ungroupedReports = navCards.filter(card => !groupedRoutes.has(card.to))
+  const ungroupedReports = navCards.filter(card => !groupedRoutes.has(card.to) && cardVisible(card.to))
   if (ungroupedReports.length > 0) {
     reportSections.push({ title: 'Other', cards: ungroupedReports })
   }

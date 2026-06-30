@@ -223,11 +223,12 @@ Timestamps illustrative; each must clear the latest applied (≈ `20260630160000
 
 | Migration | Adds |
 |---|---|
-| `20260701100000_operating_mode.sql` | `organization_settings.operating_mode` + **UPSERT a settings row per org** + module→mode coercion in the settings route (mirror `organizations.ts` parts pattern); read-time COALESCE→`vhc_only` |
-| `20260701110000_jobsheet_tech.sql` | `jobsheets.assigned_technician_id`, `tech_assigned_at`, index |
-| `20260701120000_jobsheet_shell.sql` | `jobsheets.is_shell`; **teach `trg_generate_jobsheet_reference` to skip `is_shell`**; backfill standalone VHCs → shell jobsheets (guarded `WHERE jobsheet_id IS NULL`); update all `is_draft`-filtered consumers to also exclude `is_shell` |
-| `20260701130000_clock_jobsheet.sql` | `technician_time_entries.jobsheet_id`, index, backfill (incl. open entries); board/efficiency aggregation → `COALESCE` |
-| `20260701140000_line_completion.sql` | `repair_items.assigned_technician_id` (+ optional `line_status`); stamp `jobsheet_id` on inspection lines + backfill |
+| `20260701141000_operating_mode.sql` | `organization_settings.operating_mode` + **UPSERT a settings row per org** + module→mode coercion in the settings route (mirror `organizations.ts` parts pattern); read-time COALESCE→`vhc_only` |
+| `20260701142000_jobsheet_tech.sql` | `jobsheets.assigned_technician_id`, `tech_assigned_at`, index |
+| `20260701143000_jobsheet_shell.sql` | `jobsheets.is_shell`; **teach `trg_generate_jobsheet_reference` to skip `is_shell`**; backfill standalone VHCs → shell jobsheets (guarded `WHERE jobsheet_id IS NULL`); update all `is_draft`-filtered consumers to also exclude `is_shell` |
+| `20260701144000_clock_jobsheet.sql` | `technician_time_entries.jobsheet_id`, index, backfill (incl. open entries); board/efficiency aggregation → `COALESCE` |
+| `20260701145000_tech_efficiency_jobsheet.sql` | jobsheet-level tech efficiency aggregation |
+| `20260701150000_line_completion.sql` | `repair_items.assigned_technician_id` (+ optional `line_status`); stamp `jobsheet_id` on inspection lines + backfill |
 | (code) board / suggest-technician / efficiency **re-anchoring** (§7) — RPC + route changes, no destructive DDL |
 
 No destructive ops (repo rule). Verify target-env columns first (prod schema can lag the repo — MEMORY).

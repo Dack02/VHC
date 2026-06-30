@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
+import PartsLineEditor, { blankPartLine, type PartLine } from '../../components/parts/PartsLineEditor'
 
 interface PoLine {
   id: string
@@ -45,8 +46,6 @@ const LABEL: Record<string, string> = {
 
 interface ReceiveDraft { qty: string; cost: string; condition: 'ok' | 'damaged' }
 
-interface PartHit { id: string; partNumber: string; description: string; costPrice: number }
-
 export default function PurchaseOrderDetail() {
   const { id } = useParams<{ id: string }>()
   const { session, user } = useAuth()
@@ -57,9 +56,7 @@ export default function PurchaseOrderDetail() {
   const [busy, setBusy] = useState(false)
   const [showReceive, setShowReceive] = useState(false)
   const [receiveDraft, setReceiveDraft] = useState<Record<string, ReceiveDraft>>({})
-  const [newLine, setNewLine] = useState<{ description: string; partNumber: string; qty: string; cost: string; stockItemId: string | null } | null>(null)
-  const [partHits, setPartHits] = useState<PartHit[]>([])
-  const [showHits, setShowHits] = useState(false)
+  const [draftLines, setDraftLines] = useState<PartLine[]>([blankPartLine()])
   const [showInvoice, setShowInvoice] = useState(false)
   const [invoiceRef, setInvoiceRef] = useState('')
   const [invoiceDraft, setInvoiceDraft] = useState<Record<string, { qty: string; cost: string }>>({})
@@ -90,38 +87,24 @@ export default function PurchaseOrderDetail() {
     } finally { setBusy(false) }
   }
 
-  // Catalogue typeahead for the new line: pick an existing part (links stock_item_id, so
-  // it stocks against that item) or keep typing to create a fresh part on receipt.
-  useEffect(() => {
-    const q = newLine?.description.trim()
-    if (!orgId || !q || q.length < 2 || !showHits) { setPartHits([]); return }
-    let cancelled = false
-    const t = setTimeout(async () => {
-      try {
-        const d = await api<{ parts: PartHit[] }>(`/api/v1/organizations/${orgId}/parts-catalog/search?q=${encodeURIComponent(q)}`, { token: session?.accessToken })
-        if (!cancelled) setPartHits(d.parts || [])
-      } catch { if (!cancelled) setPartHits([]) }
-    }, 250)
-    return () => { cancelled = true; clearTimeout(t) }
-  }, [newLine?.description, orgId, session?.accessToken, showHits])
-
-  const pickPart = (p: PartHit) => {
-    setNewLine(nl => nl ? { ...nl, description: p.description, partNumber: p.partNumber, cost: String(p.costPrice ?? ''), stockItemId: p.id } : nl)
-    setShowHits(false); setPartHits([])
-  }
-
-  const addLine = async () => {
-    if (!id || !newLine?.description.trim()) return
+  // Persist the draft add-line grid: one POST per line (a stocked catalogue pick links its
+  // stock_item_id; free text creates a fresh part on receipt). Then reset the grid + refetch.
+  const saveDraftLines = async () => {
+    if (!id) return
+    const toAdd = draftLines.filter(l => l.description.trim() && (parseFloat(l.qty) || 0) > 0)
+    if (!toAdd.length) { toast.error('Add at least one line with a description and quantity'); return }
     setBusy(true)
     try {
-      await api(`/api/v1/purchase-orders/${id}/lines`, {
-        method: 'POST', token: session?.accessToken,
-        body: { description: newLine.description.trim(), partNumber: newLine.partNumber.trim() || null, qtyOrdered: parseFloat(newLine.qty) || 1, unitCost: parseFloat(newLine.cost) || 0, stockItemId: newLine.stockItemId },
-      })
-      setNewLine(null); setShowHits(false)
+      for (const l of toAdd) {
+        await api(`/api/v1/purchase-orders/${id}/lines`, {
+          method: 'POST', token: session?.accessToken,
+          body: { description: l.description.trim(), partNumber: l.partNumber.trim() || null, qtyOrdered: parseFloat(l.qty) || 1, unitCost: parseFloat(l.cost) || 0, stockItemId: l.partId },
+        })
+      }
+      setDraftLines([blankPartLine()])
       await fetchPo()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to add line')
+      toast.error(err instanceof Error ? err.message : 'Failed to add lines')
     } finally { setBusy(false) }
   }
 
@@ -270,7 +253,7 @@ export default function PurchaseOrderDetail() {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {po.lines.length === 0 && !newLine ? (
+            {po.lines.length === 0 ? (
               <tr><td colSpan={isDraft ? 7 : 6} className="px-4 py-8 text-center text-gray-500">No lines yet.</td></tr>
             ) : po.lines.map(l => (
               <tr key={l.id} className="hover:bg-gray-50">
@@ -287,43 +270,6 @@ export default function PurchaseOrderDetail() {
                 {isDraft && <td className="px-4 py-3 text-right"><button onClick={() => deleteLine(l.id)} className="text-red-600 hover:text-red-800 text-sm">Remove</button></td>}
               </tr>
             ))}
-            {newLine && (
-              <tr className="bg-indigo-50/40">
-                <td className="px-4 py-2">
-                  <div className="relative">
-                    <input autoFocus value={newLine.description}
-                      onChange={e => { setNewLine({ ...newLine, description: e.target.value, stockItemId: null }); setShowHits(true) }}
-                      onFocus={() => setShowHits(true)}
-                      onBlur={() => setTimeout(() => setShowHits(false), 150)}
-                      placeholder="Search a part, or type a new one *"
-                      className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" />
-                    {newLine.stockItemId && <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-green-600 font-medium">✓ linked</span>}
-                    {showHits && partHits.length > 0 && (
-                      <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-auto text-sm">
-                        {partHits.map(p => (
-                          <li key={p.id}>
-                            <button type="button" onMouseDown={e => { e.preventDefault(); pickPart(p) }} className="w-full text-left px-3 py-2 hover:bg-gray-50">
-                              <span className="font-medium text-gray-900">{p.partNumber}</span>
-                              <span className="text-gray-500"> · {p.description}</span>
-                              <span className="text-gray-400"> · {GBP.format(p.costPrice)}</span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </td>
-                <td className="px-4 py-2"><input value={newLine.qty} onChange={e => setNewLine({ ...newLine, qty: e.target.value })} type="number" min="0" className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right" /></td>
-                <td className="px-4 py-2" />
-                <td className="px-4 py-2"><input value={newLine.cost} onChange={e => setNewLine({ ...newLine, cost: e.target.value })} type="number" min="0" step="0.01" className="w-20 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right" /></td>
-                <td className="px-4 py-2" colSpan={isDraft ? 3 : 2}>
-                  <div className="flex gap-2 justify-end">
-                    <button onClick={addLine} disabled={busy} className="px-3 py-1.5 bg-primary text-white rounded-lg text-sm disabled:opacity-50">Add</button>
-                    <button onClick={() => setNewLine(null)} className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm">Cancel</button>
-                  </div>
-                </td>
-              </tr>
-            )}
           </tbody>
           <tfoot className="bg-gray-50">
             <tr>
@@ -335,8 +281,17 @@ export default function PurchaseOrderDetail() {
         </table>
       </div>
 
-      {isDraft && !newLine && (
-        <button onClick={() => setNewLine({ description: '', partNumber: '', qty: '1', cost: '', stockItemId: null })} className="text-sm text-primary hover:underline">+ Add a line</button>
+      {isDraft && (
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-visible">
+          <div className="px-5 py-3 border-b border-gray-100">
+            <h2 className="text-sm font-semibold text-gray-900">Add lines</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Search the catalogue or type new parts. Press Enter to jump to the next line, then add them to the order.</p>
+          </div>
+          <PartsLineEditor lines={draftLines} onChange={setDraftLines} orgId={orgId} token={session?.accessToken} />
+          <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
+            <button onClick={saveDraftLines} disabled={busy} className="px-4 py-2 bg-[#16191f] text-white rounded-[10px] text-sm font-semibold hover:bg-black disabled:opacity-50">Add to order</button>
+          </div>
+        </div>
       )}
 
       {/* Receive modal */}

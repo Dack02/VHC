@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, type KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
@@ -100,6 +100,25 @@ export default function PurchaseInvoiceEntry() {
   const updateLine = (key: number, patch: Partial<Line>) =>
     setLines(ls => ls.map(l => (l.key === key ? { ...l, ...patch } : l)))
   const removeLine = (key: number) => setLines(ls => (ls.length > 1 ? ls.filter(l => l.key !== key) : ls))
+
+  // Keyboard-driven entry: Enter jumps to the next line's Part no (creating one if on the last
+  // line), so you can key in a whole invoice without reaching for the mouse.
+  const partNoRefs = useRef<Map<number, HTMLInputElement>>(new Map())
+  const [pendingFocus, setPendingFocus] = useState<number | null>(null)
+  const addLine = () => { const nl = blankLine(); setLines(ls => [...ls, nl]); setPendingFocus(nl.key) }
+  useEffect(() => {
+    if (pendingFocus == null) return
+    partNoRefs.current.get(pendingFocus)?.focus()
+    setPendingFocus(null)
+  }, [lines, pendingFocus])
+  const onLineKey = (e: KeyboardEvent<HTMLInputElement>, key: number) => {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    setHitsForKey(null)
+    const idx = lines.findIndex(l => l.key === key)
+    if (idx === lines.length - 1) addLine()
+    else partNoRefs.current.get(lines[idx + 1].key)?.focus()
+  }
 
   // Catalogue search for the active line
   const activeQuery = hitsForKey != null ? lines.find(l => l.key === hitsForKey)?.description.trim() ?? '' : ''
@@ -249,7 +268,8 @@ export default function PurchaseInvoiceEntry() {
         <table className="min-w-full">
           <thead className="bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wider">
             <tr>
-              <th className="px-4 py-2 text-left">Part / description</th>
+              <th className="px-4 py-2 text-left w-44">Part no</th>
+              <th className="px-4 py-2 text-left">Description</th>
               <th className="px-4 py-2 text-right w-20">Qty</th>
               <th className="px-4 py-2 text-right w-28">Unit cost</th>
               <th className="px-4 py-2 text-left w-64">Goes to</th>
@@ -260,11 +280,22 @@ export default function PurchaseInvoiceEntry() {
           <tbody className="divide-y divide-gray-100">
             {lines.map(l => (
               <tr key={l.key} className="align-top">
+                <td className="px-4 py-2">
+                  <input
+                    ref={el => { if (el) partNoRefs.current.set(l.key, el); else partNoRefs.current.delete(l.key) }}
+                    value={l.partNumber}
+                    onChange={e => updateLine(l.key, { partNumber: e.target.value, partId: null })}
+                    onKeyDown={e => onLineKey(e, l.key)}
+                    placeholder="Part no"
+                    className={`${inputCls} w-full`}
+                  />
+                </td>
                 <td className="px-4 py-2 relative">
                   <input
                     value={l.description}
-                    onChange={e => { updateLine(l.key, { description: e.target.value, partId: null, partNumber: '' }); setHitsForKey(l.key) }}
+                    onChange={e => { updateLine(l.key, { description: e.target.value, partId: null }); setHitsForKey(l.key) }}
                     onFocus={() => setHitsForKey(l.key)}
+                    onKeyDown={e => onLineKey(e, l.key)}
                     placeholder="Search the catalogue or type a new part"
                     className={`${inputCls} w-full`}
                   />
@@ -282,8 +313,8 @@ export default function PurchaseInvoiceEntry() {
                     </div>
                   )}
                 </td>
-                <td className="px-4 py-2"><input value={l.qty} onChange={e => updateLine(l.key, { qty: e.target.value })} type="number" min="0" step="1" className={`${inputCls} w-full text-right`} /></td>
-                <td className="px-4 py-2"><input value={l.cost} onChange={e => updateLine(l.key, { cost: e.target.value })} type="number" min="0" step="0.01" className={`${inputCls} w-full text-right`} /></td>
+                <td className="px-4 py-2"><input value={l.qty} onChange={e => updateLine(l.key, { qty: e.target.value })} onKeyDown={e => onLineKey(e, l.key)} type="number" min="0" step="1" className={`${inputCls} w-full text-right`} /></td>
+                <td className="px-4 py-2"><input value={l.cost} onChange={e => updateLine(l.key, { cost: e.target.value })} onKeyDown={e => onLineKey(e, l.key)} type="number" min="0" step="0.01" className={`${inputCls} w-full text-right`} /></td>
                 <td className="px-4 py-2">
                   <select value={l.target} onChange={e => setTarget(l.key, e.target.value as Target)} className={`${inputCls} w-full`}>
                     <option value="stock">To stock</option>
@@ -308,7 +339,7 @@ export default function PurchaseInvoiceEntry() {
           </tbody>
         </table>
         <div className="px-5 py-3 border-t border-gray-100">
-          <button onClick={() => setLines(ls => [...ls, blankLine()])} className="text-sm text-primary hover:underline">+ Add a line</button>
+          <button onClick={addLine} className="text-sm text-primary hover:underline">+ Add a line <span className="text-gray-400">· or press Enter</span></button>
         </div>
       </div>
 

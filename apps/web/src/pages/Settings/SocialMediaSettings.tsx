@@ -41,6 +41,8 @@ export default function SocialMediaSettings() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [zernioProfiles, setZernioProfiles] = useState<{ id: string; name: string; isDefault: boolean; accountCount: number }[] | null>(null)
+  const [selectedProfile, setSelectedProfile] = useState<string>('__new__')
 
   const fetchState = useCallback(async () => {
     if (!token) return
@@ -56,6 +58,27 @@ export default function SocialMediaSettings() {
 
   useEffect(() => { fetchState() }, [fetchState])
 
+  const fetchProfiles = useCallback(async () => {
+    if (!token) return
+    try {
+      const res = await api<{ profiles: { id: string; name: string; isDefault: boolean; accountCount: number }[] }>('/api/v1/social-media/zernio-profiles', { token })
+      setZernioProfiles(res.profiles)
+      const def = res.profiles.find((p) => p.isDefault) || res.profiles[0]
+      if (def) setSelectedProfile(def.id)
+    } catch {
+      setZernioProfiles([])
+    }
+  }, [token])
+
+  // When the key is set but no profile is linked yet, load existing Zernio
+  // workspaces so the user can bind one (e.g. their existing "Dack Group").
+  useEffect(() => {
+    const c = data?.connection
+    if (c?.keyConfigured && !c?.profileLinked && c?.status !== 'disabled' && zernioProfiles === null) {
+      fetchProfiles()
+    }
+  }, [data, zernioProfiles, fetchProfiles])
+
   const conn = data?.connection
   const accounts = data?.accounts || []
   const platforms = data?.platforms || ['facebook', 'instagram', 'tiktok']
@@ -69,8 +92,9 @@ export default function SocialMediaSettings() {
   }
 
   const initConnection = () => run('init', async () => {
-    await api('/api/v1/social-media/connection/init', { method: 'POST', token })
-    setMessage({ type: 'success', text: 'Connection initialised. You can now link accounts.' })
+    const body = selectedProfile && selectedProfile !== '__new__' ? { profileId: selectedProfile } : {}
+    await api('/api/v1/social-media/connection/init', { method: 'POST', body, token })
+    setMessage({ type: 'success', text: 'Connection initialised. You can now sync and link accounts.' })
     await fetchState()
   })
 
@@ -131,7 +155,19 @@ export default function SocialMediaSettings() {
       {conn?.keyConfigured && !conn?.profileLinked && conn?.status !== 'disabled' && (
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
           <h2 className="text-base font-semibold text-gray-900">Get started</h2>
-          <p className="text-sm text-gray-500 mt-1 mb-4">Create this dealership's social workspace, then link accounts.</p>
+          <p className="text-sm text-gray-500 mt-1 mb-4">Link an existing Zernio workspace for this dealership, or create a new one, then connect accounts.</p>
+          {zernioProfiles && zernioProfiles.length > 0 && (
+            <div className="mb-4">
+              <label className="block text-sm text-gray-600 mb-1">Workspace</label>
+              <select value={selectedProfile} onChange={(e) => setSelectedProfile(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full max-w-sm">
+                {zernioProfiles.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}{p.isDefault ? ' (default)' : ''} · {p.accountCount} account{p.accountCount === 1 ? '' : 's'}</option>
+                ))}
+                <option value="__new__">+ Create a new workspace</option>
+              </select>
+            </div>
+          )}
           <button onClick={initConnection} disabled={busy === 'init'}
             className="px-4 py-2 bg-[#16191f] hover:bg-black text-white rounded-[10px] text-sm font-medium disabled:opacity-50">
             {busy === 'init' ? 'Setting up…' : 'Initialise connection'}

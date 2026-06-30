@@ -68,15 +68,39 @@ socialMedia.get('/connection', authorize(['super_admin', 'org_admin', 'site_admi
  * POST /connection/init — provision the org's Zernio profile (idempotent).
  * Requires a Zernio API key (env ZERNIO_API_KEY for v1).
  */
+/** GET /zernio-profiles — existing Zernio profiles, for the "use existing workspace" picker. */
+socialMedia.get('/zernio-profiles', authorizeMinRole('org_admin'), async (c) => {
+  const auth = c.get('auth')
+  const key = await getZernioKeyForOrg(auth.orgId)
+  if (!key) return c.json({ error: 'Zernio API key not configured', code: 'ZERNIO_NOT_CONFIGURED' }, 400)
+  try {
+    const { data } = await zernio.listProfiles(key)
+    const profiles = (Array.isArray((data as any)?.profiles) ? (data as any).profiles : []).map((p: any) => ({
+      id: p._id,
+      name: p.name,
+      isDefault: !!p.isDefault,
+      accountCount: Array.isArray(p.accountUsernames) ? p.accountUsernames.length : 0,
+    }))
+    return c.json({ profiles })
+  } catch (e) {
+    const msg = e instanceof ZernioError ? `Zernio ${e.status}: ${e.message}` : String(e)
+    return c.json({ error: msg }, 502)
+  }
+})
+
 socialMedia.post('/connection/init', authorizeMinRole('org_admin'), async (c) => {
   const auth = c.get('auth')
   const key = await getZernioKeyForOrg(auth.orgId)
   if (!key) return c.json({ error: 'Zernio API key not configured (set ZERNIO_API_KEY).', code: 'ZERNIO_NOT_CONFIGURED' }, 400)
 
+  const body = await c.req.json().catch(() => ({}))
+  const bindProfileId = typeof body.profileId === 'string' && body.profileId ? body.profileId : null
+
   const { data: existing } = await supabaseAdmin
     .from('social_connections').select('id, zernio_profile_id').eq('organization_id', auth.orgId).maybeSingle()
 
-  let profileId = (existing as any)?.zernio_profile_id as string | undefined
+  // Precedence: explicitly-chosen existing profile → already-bound profile → create new.
+  let profileId = bindProfileId || ((existing as any)?.zernio_profile_id as string | undefined)
 
   if (!profileId) {
     // fetch org name for the profile label

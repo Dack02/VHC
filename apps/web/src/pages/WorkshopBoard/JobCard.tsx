@@ -1,7 +1,7 @@
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { BoardCard, BoardStatus } from './types'
-import { pipelineStage } from './types'
+import { pipelineStage, cardKey } from './types'
 
 interface JobCardProps {
   card: BoardCard
@@ -64,7 +64,7 @@ export default function JobCard({ card, statuses, now, draggable, tvMode, showTe
   // Sortable rather than plain draggable: cards can be dropped onto each
   // other to set the tech's top-to-bottom work order, not just onto columns
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: card.healthCheckId,
+    id: cardKey(card),
     disabled: !draggable
   })
 

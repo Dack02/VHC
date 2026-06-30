@@ -19,6 +19,7 @@ import {
   fetchDiaryBookings,
   GeminiBooking
 } from '../services/gemini-osi.js'
+import { spawnShellJobsheetForVhc } from '../services/shell-jobsheet.js'
 
 // ============================================
 // Types
@@ -469,6 +470,19 @@ async function createHealthCheck(
   }
 
   console.log('[DMS Import] Created health check:', data.id)
+
+  // Every VHC gets a (hidden) jobsheet (TECH_JOB_MODEL.md §5 invariant). Best-effort:
+  // a shell failure leaves this imported VHC standalone and never fails the import run.
+  const dueDate = (insertData as Record<string, unknown>).due_date
+  await spawnShellJobsheetForVhc({
+    orgId: organizationId,
+    siteId,
+    customerId,
+    vehicleId,
+    dueDate: typeof dueDate === 'string' ? dueDate : null,
+    healthCheckId: data.id
+  })
+
   return data.id
 }
 

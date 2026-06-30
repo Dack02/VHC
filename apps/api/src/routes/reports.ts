@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
-import { aggregateRepairItemsByHc, computeHcConversion, isHcPresented, soldPct } from '../lib/metrics.js'
+import { aggregateRepairItemsByHc, computeHcConversion, isHcPresented, soldPct, calcItemTotal, deriveRagStatus, isItemAuthorised, isMriItem, buildChildrenByParent } from '../lib/metrics.js'
 import { buildItemList, buildItemDetail } from '../services/item-report-service.js'
 import { buildRepairTypeReport } from '../services/repair-type-report-service.js'
 import { buildPartsGpReport } from '../services/parts-gp-report-service.js'
@@ -3504,6 +3504,391 @@ reports.get('/daily-overview', authorize(['super_admin', 'org_admin', 'site_admi
   } catch (error) {
     console.error('Daily overview error:', error)
     return c.json({ error: 'Failed to fetch daily overview report' }, 500)
+  }
+})
+
+// ============================================================================
+// Online VHC Performance
+// How red/amber inspection work converts when the VHC is sent to the customer
+// online, split by who actually authorised it:
+//   ① online      — customer self-served via the portal (item.outcome_source = 'online')
+//   ② sentOffline — link was sent but the decision came in offline (phone / in-person)
+//   ③ neverSent   — never sent online (pure offline workflow)
+// Auth rate is £-value based, shown as a three-way split (authorised / declined /
+// deferred % of responded value) for red and amber separately. Red/amber are
+// inspection items only (MRI is a separate stream), matching the Overview Report.
+// Bucketed by booking/work date (due_date ?? created_at) like the Overview Report.
+// ============================================================================
+
+type OvCohort = 'online' | 'sentOffline' | 'neverSent'
+
+function ovCohortOf(outcomeSource: string | null | undefined, sentAt: string | null | undefined): OvCohort {
+  if (outcomeSource === 'online') return 'online'
+  if (sentAt) return 'sentOffline'
+  return 'neverSent'
+}
+
+interface OvValueBucket {
+  identified: number
+  authorised: number
+  declined: number
+  deferred: number
+  pending: number
+}
+function emptyOvBucket(): OvValueBucket {
+  return { identified: 0, authorised: 0, declined: 0, deferred: 0, pending: 0 }
+}
+const ovPct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0)
+const ov2 = (n: number): number => Math.round(n * 100) / 100
+function ovBucketOut(b: OvValueBucket) {
+  const responded = b.authorised + b.declined + b.deferred
+  return {
+    identified: ov2(b.identified),
+    authorised: ov2(b.authorised),
+    declined: ov2(b.declined),
+    deferred: ov2(b.deferred),
+    pending: ov2(b.pending),
+    respondedValue: ov2(responded),
+    authPct: ovPct(b.authorised, responded),
+    declinedPct: ovPct(b.declined, responded),
+    deferredPct: ovPct(b.deferred, responded),
+  }
+}
+
+// Per-RAG online-cohort buckets used for the period/advisor headline columns.
+interface OvHeadline { red: OvValueBucket; amber: OvValueBucket }
+function emptyOvHeadline(): OvHeadline {
+  return { red: emptyOvBucket(), amber: emptyOvBucket() }
+}
+
+// Funnel + timing accumulators (sent-online subset only).
+interface OvFunnel {
+  sent: number
+  opened: number
+  responded: number
+  openHrs: number
+  openHrsCount: number
+  respHrs: number
+  respHrsCount: number
+}
+function emptyOvFunnel(): OvFunnel {
+  return { sent: 0, opened: 0, responded: 0, openHrs: 0, openHrsCount: 0, respHrs: 0, respHrsCount: 0 }
+}
+
+const OV_HC_SELECT = `
+  id,
+  status,
+  created_at,
+  due_date,
+  sent_at,
+  first_opened_at,
+  first_response_at,
+  advisor_id,
+  advisor:users!health_checks_advisor_id_fkey(first_name, last_name),
+  repair_items(id, total_inc_vat, labour_total, parts_total, outcome_status, outcome_source, customer_approved, source, deleted_at, rag_status, is_group, parent_repair_item_id, check_results:repair_item_check_results(check_result:check_results(rag_status)))
+`
+
+// Hours between two timestamps, or null when either is missing or clock-skewed.
+function ovHoursBetween(from: string | null | undefined, to: string | null | undefined): number | null {
+  if (!from || !to) return null
+  const ms = new Date(to).getTime() - new Date(from).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return null
+  return ms / 3_600_000
+}
+
+// Shared loader so the report and its CSV export stay identical.
+async function loadOnlineVhcData(orgId: string, startDate: string, endDate: string, siteId?: string) {
+  let dueDateQuery = supabaseAdmin
+    .from('health_checks')
+    .select(OV_HC_SELECT)
+    .eq('organization_id', orgId)
+    .is('deleted_at', null)
+    .gte('due_date', startDate)
+    .lte('due_date', endDate)
+    .order('created_at', { ascending: true })
+
+  let createdAtQuery = supabaseAdmin
+    .from('health_checks')
+    .select(OV_HC_SELECT)
+    .eq('organization_id', orgId)
+    .is('deleted_at', null)
+    .is('due_date', null)
+    .gte('created_at', startDate)
+    .lte('created_at', endDate)
+    .order('created_at', { ascending: true })
+
+  if (siteId) {
+    dueDateQuery = dueDateQuery.eq('site_id', siteId)
+    createdAtQuery = createdAtQuery.eq('site_id', siteId)
+  }
+
+  const [dueDateResult, createdAtResult] = await Promise.all([dueDateQuery, createdAtQuery])
+  if (dueDateResult.error) throw dueDateResult.error
+  if (createdAtResult.error) throw createdAtResult.error
+
+  const map = new Map<string, any>()
+  for (const hc of [...(dueDateResult.data || []), ...(createdAtResult.data || [])]) {
+    if (!map.has(hc.id)) map.set(hc.id, hc)
+  }
+  return Array.from(map.values())
+}
+
+// Core aggregation — turns raw HC rows into the report payload.
+function buildOnlineVhcReport(healthChecks: any[], groupBy: 'day' | 'week' | 'month') {
+  const periodFunnel = new Map<string, OvFunnel>()
+  const periodHead = new Map<string, OvHeadline>()
+  const cohorts = {
+    red: { online: emptyOvBucket(), sentOffline: emptyOvBucket(), neverSent: emptyOvBucket() },
+    amber: { online: emptyOvBucket(), sentOffline: emptyOvBucket(), neverSent: emptyOvBucket() },
+  }
+  const advisorAcc = new Map<string, {
+    id: string
+    name: string
+    funnel: OvFunnel
+    head: OvHeadline
+    onlineAuthValue: number
+    offlineAuthValue: number
+  }>()
+
+  const getPeriodFunnel = (k: string) => { let v = periodFunnel.get(k); if (!v) { v = emptyOvFunnel(); periodFunnel.set(k, v) } return v }
+  const getPeriodHead = (k: string) => { let v = periodHead.get(k); if (!v) { v = emptyOvHeadline(); periodHead.set(k, v) } return v }
+
+  for (const hc of healthChecks) {
+    const dayKey = hc.due_date
+      ? String(hc.due_date).split('T')[0]
+      : new Date(hc.created_at).toISOString().split('T')[0]
+    const periodKey = periodKeyForDay(dayKey, groupBy)
+    const pFunnel = getPeriodFunnel(periodKey)
+    const pHead = getPeriodHead(periodKey)
+
+    let advisor: ReturnType<typeof advisorAcc.get> | undefined
+    if (hc.advisor_id && hc.advisor) {
+      advisor = advisorAcc.get(hc.advisor_id)
+      if (!advisor) {
+        advisor = {
+          id: hc.advisor_id,
+          name: `${hc.advisor.first_name} ${hc.advisor.last_name}`.trim(),
+          funnel: emptyOvFunnel(),
+          head: emptyOvHeadline(),
+          onlineAuthValue: 0,
+          offlineAuthValue: 0,
+        }
+        advisorAcc.set(hc.advisor_id, advisor)
+      }
+    }
+
+    // Funnel + timing: sent-online subset only
+    if (hc.sent_at) {
+      pFunnel.sent++
+      if (advisor) advisor.funnel.sent++
+      if (hc.first_opened_at) {
+        pFunnel.opened++
+        if (advisor) advisor.funnel.opened++
+        const h = ovHoursBetween(hc.sent_at, hc.first_opened_at)
+        if (h !== null) { pFunnel.openHrs += h; pFunnel.openHrsCount++; if (advisor) { advisor.funnel.openHrs += h; advisor.funnel.openHrsCount++ } }
+      }
+      if (hc.first_response_at) {
+        pFunnel.responded++
+        if (advisor) advisor.funnel.responded++
+        const h = ovHoursBetween(hc.sent_at, hc.first_response_at)
+        if (h !== null) { pFunnel.respHrs += h; pFunnel.respHrsCount++; if (advisor) { advisor.funnel.respHrs += h; advisor.funnel.respHrsCount++ } }
+      }
+    }
+
+    // Red/amber inspection items → cohort × outcome × £
+    const items: any[] = (hc.repair_items as any[]) || []
+    const childrenByParent = buildChildrenByParent(items)
+    for (const item of items) {
+      if (item.parent_repair_item_id || item.deleted_at) continue
+      if (isMriItem(item)) continue // inspection-only red/amber, like the Overview Report
+      const rag = deriveRagStatus(item)
+      if (rag !== 'red' && rag !== 'amber') continue
+
+      const value = calcItemTotal(item)
+      // Authorisation: direct, or via approved children for groups
+      let authorised = isItemAuthorised(item)
+      let authValue = value
+      if (item.is_group && !authorised && item.id) {
+        const kids = (childrenByParent.get(item.id) || []).filter((ch: any) => !ch.deleted_at && isItemAuthorised(ch))
+        if (kids.length > 0) {
+          authorised = true
+          authValue = kids.reduce((s: number, ch: any) => s + calcItemTotal(ch), 0)
+        }
+      }
+
+      const cohort = ovCohortOf(item.outcome_source, hc.sent_at)
+      const bucket = cohorts[rag][cohort]
+      bucket.identified += value
+      if (authorised) bucket.authorised += authValue
+      else if (item.outcome_status === 'declined') bucket.declined += value
+      else if (item.outcome_status === 'deferred') bucket.deferred += value
+      else bucket.pending += value
+
+      // Headline columns (period + advisor) follow the ONLINE self-serve cohort
+      if (cohort === 'online') {
+        const ph = pHead[rag]
+        ph.identified += value
+        if (authorised) ph.authorised += authValue
+        else if (item.outcome_status === 'declined') ph.declined += value
+        else if (item.outcome_status === 'deferred') ph.deferred += value
+        else ph.pending += value
+        if (advisor) {
+          const ah = advisor.head[rag]
+          ah.identified += value
+          if (authorised) ah.authorised += authValue
+          else if (item.outcome_status === 'declined') ah.declined += value
+          else if (item.outcome_status === 'deferred') ah.deferred += value
+          else ah.pending += value
+        }
+      }
+
+      // Advisor: self-serve £ vs offline-authorised £ (did the customer authorise themselves, or did we chase?)
+      if (advisor && authorised) {
+        if (cohort === 'online') advisor.onlineAuthValue += authValue
+        else if (cohort === 'sentOffline') advisor.offlineAuthValue += authValue
+      }
+    }
+  }
+
+  const periodRow = (date: string, f: OvFunnel, h: OvHeadline) => {
+    const red = ovBucketOut(h.red)
+    const amber = ovBucketOut(h.amber)
+    return {
+      date,
+      sent: f.sent,
+      opened: f.opened,
+      responded: f.responded,
+      openRate: ovPct(f.opened, f.sent),
+      responseRate: ovPct(f.responded, f.sent),
+      avgHrsToOpen: f.openHrsCount > 0 ? Math.round((f.openHrs / f.openHrsCount) * 10) / 10 : null,
+      avgHrsToAuthorise: f.respHrsCount > 0 ? Math.round((f.respHrs / f.respHrsCount) * 10) / 10 : null,
+      redAuthPct: red.authPct,
+      amberAuthPct: amber.authPct,
+      redAuthValue: red.authorised,
+      amberAuthValue: amber.authorised,
+    }
+  }
+
+  const periods = Array.from(periodFunnel.keys())
+    .sort((a, b) => a.localeCompare(b))
+    .map(k => periodRow(k, getPeriodFunnel(k), getPeriodHead(k)))
+
+  // Totals = single roll-up across every period
+  const totalFunnel = emptyOvFunnel()
+  const totalHead = emptyOvHeadline()
+  for (const f of periodFunnel.values()) {
+    totalFunnel.sent += f.sent; totalFunnel.opened += f.opened; totalFunnel.responded += f.responded
+    totalFunnel.openHrs += f.openHrs; totalFunnel.openHrsCount += f.openHrsCount
+    totalFunnel.respHrs += f.respHrs; totalFunnel.respHrsCount += f.respHrsCount
+  }
+  for (const h of periodHead.values()) {
+    for (const rag of ['red', 'amber'] as const) {
+      totalHead[rag].identified += h[rag].identified
+      totalHead[rag].authorised += h[rag].authorised
+      totalHead[rag].declined += h[rag].declined
+      totalHead[rag].deferred += h[rag].deferred
+      totalHead[rag].pending += h[rag].pending
+    }
+  }
+  const totals = periodRow('totals', totalFunnel, totalHead)
+
+  const advisors = Array.from(advisorAcc.values())
+    .map(a => {
+      const red = ovBucketOut(a.head.red)
+      const amber = ovBucketOut(a.head.amber)
+      const authTotal = a.onlineAuthValue + a.offlineAuthValue
+      return {
+        id: a.id,
+        name: a.name,
+        sent: a.funnel.sent,
+        opened: a.funnel.opened,
+        responded: a.funnel.responded,
+        openRate: ovPct(a.funnel.opened, a.funnel.sent),
+        responseRate: ovPct(a.funnel.responded, a.funnel.sent),
+        avgHrsToOpen: a.funnel.openHrsCount > 0 ? Math.round((a.funnel.openHrs / a.funnel.openHrsCount) * 10) / 10 : null,
+        avgHrsToAuthorise: a.funnel.respHrsCount > 0 ? Math.round((a.funnel.respHrs / a.funnel.respHrsCount) * 10) / 10 : null,
+        redAuthPct: red.authPct,
+        amberAuthPct: amber.authPct,
+        onlineAuthValue: ov2(a.onlineAuthValue),
+        offlineAuthValue: ov2(a.offlineAuthValue),
+        selfServeSharePct: ovPct(a.onlineAuthValue, authTotal),
+      }
+    })
+    .sort((x, y) => y.sent - x.sent || y.onlineAuthValue - x.onlineAuthValue)
+
+  return {
+    periods,
+    totals,
+    cohorts: {
+      red: {
+        online: ovBucketOut(cohorts.red.online),
+        sentOffline: ovBucketOut(cohorts.red.sentOffline),
+        neverSent: ovBucketOut(cohorts.red.neverSent),
+      },
+      amber: {
+        online: ovBucketOut(cohorts.amber.online),
+        sentOffline: ovBucketOut(cohorts.amber.sentOffline),
+        neverSent: ovBucketOut(cohorts.amber.neverSent),
+      },
+    },
+    advisors,
+  }
+}
+
+// GET /api/v1/reports/online-vhc - Online VHC performance (auth rate by cohort, funnel, by advisor)
+reports.get('/online-vhc', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id, group_by = 'day' } = c.req.query()
+    const groupBy = (['day', 'week', 'month'].includes(group_by) ? group_by : 'day') as 'day' | 'week' | 'month'
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    const healthChecks = await loadOnlineVhcData(auth.orgId, startDate, endDate, site_id)
+    const report = buildOnlineVhcReport(healthChecks, groupBy)
+
+    return c.json({ period: { from: startDate, to: endDate }, groupBy, ...report })
+  } catch (error) {
+    console.error('Online VHC report error:', error)
+    return c.json({ error: 'Failed to fetch online VHC report' }, 500)
+  }
+})
+
+// GET /api/v1/reports/online-vhc/export - Export the online VHC period table as CSV
+reports.get('/online-vhc/export', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { date_from, date_to, site_id, group_by = 'day' } = c.req.query()
+    const groupBy = (['day', 'week', 'month'].includes(group_by) ? group_by : 'day') as 'day' | 'week' | 'month'
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    thirtyDaysAgo.setHours(0, 0, 0, 0)
+    const startDate = date_from || thirtyDaysAgo.toISOString()
+    const endDate = date_to || new Date().toISOString()
+
+    const healthChecks = await loadOnlineVhcData(auth.orgId, startDate, endDate, site_id)
+    const { periods, totals } = buildOnlineVhcReport(healthChecks, groupBy)
+
+    const header = ['Period', 'Sent', 'Opened', 'Open %', 'Responded', 'Response %', 'Avg hrs to open', 'Avg hrs to authorise', 'Online Red Auth £%', 'Online Amber Auth £%']
+    const rows = periods.map(p => [
+      p.date, p.sent, p.opened, p.openRate, p.responded, p.responseRate,
+      p.avgHrsToOpen ?? '', p.avgHrsToAuthorise ?? '', p.redAuthPct, p.amberAuthPct,
+    ])
+    rows.push([
+      'Totals', totals.sent, totals.opened, totals.openRate, totals.responded, totals.responseRate,
+      totals.avgHrsToOpen ?? '', totals.avgHrsToAuthorise ?? '', totals.redAuthPct, totals.amberAuthPct,
+    ])
+    const csv = [header, ...rows].map(r => r.join(',')).join('\n')
+
+    c.header('Content-Type', 'text/csv')
+    c.header('Content-Disposition', `attachment; filename="online-vhc-${new Date().toISOString().split('T')[0]}.csv"`)
+    return c.body(csv)
+  } catch (error) {
+    console.error('Online VHC export error:', error)
+    return c.json({ error: 'Failed to export online VHC report' }, 500)
   }
 })
 

@@ -71,7 +71,7 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
   const currentTechColumn = card.technician ? techColumns.find(c => c.technicianId === card.technician!.id) : null
   const inQueueColumn = card.position === 'column' && card.columnId && queueColumns.some(c => c.id === card.columnId)
   const placementValue = inQueueColumn ? card.columnId! : 'auto'
-  const canUnassign = ['created', 'assigned', 'awaiting_checkin'].includes(card.status)
+  const canUnassign = ['created', 'assigned', 'awaiting_checkin'].includes(card.status ?? '')
 
   const workedMinutes = Math.round(actualWorkedMinutes(card, new Date()))
 
@@ -573,7 +573,7 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
 
                 {tab === 'notes' ? (
                   <WorkshopNotesPanel
-                    healthCheckId={card.healthCheckId}
+                    healthCheckId={card.healthCheckId!}
                     onChanged={onChanged}
                     onCountChange={setNotesCount}
                   />
@@ -627,7 +627,7 @@ export default function JobDetailModal({ card, statuses, columns, boardDate, onC
 
       {smsPrompt && (
         <SmsConfirmModal
-          healthCheckId={card.healthCheckId}
+          healthCheckId={card.healthCheckId!}
           customerName={card.customer ? `${card.customer.first_name} ${card.customer.last_name}` : 'the customer'}
           customerMobile={card.customer?.mobile || null}
           initialMessage={smsPrompt.message}

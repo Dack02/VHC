@@ -9,6 +9,8 @@ interface PricingSettingsData {
   vatRate: number
   partsMode: 'simple' | 'full'
   partsModeLocked: boolean
+  operatingMode: 'vhc_only' | 'gms'
+  operatingModeLocked: boolean
 }
 
 export default function PricingSettings() {
@@ -19,6 +21,8 @@ export default function PricingSettings() {
     vatRate: 20.00,
     partsMode: 'simple',
     partsModeLocked: true,
+    operatingMode: 'vhc_only',
+    operatingModeLocked: true,
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -57,6 +61,8 @@ export default function PricingSettings() {
         vatRate: data.settings?.vatRate ?? 20.00,
         partsMode: data.settings?.partsMode === 'full' ? 'full' : 'simple',
         partsModeLocked: data.settings?.partsModeLocked ?? true,
+        operatingMode: data.settings?.operatingMode === 'gms' ? 'gms' : 'vhc_only',
+        operatingModeLocked: data.settings?.operatingModeLocked ?? true,
       }
       setSettings(fetchedSettings)
       setOriginalSettings(fetchedSettings)
@@ -205,6 +211,42 @@ export default function PricingSettings() {
                 Full mode is part of the GMS tier. On a VHC-only plan, parts stay in Simple mode.
               </p>
             )}
+          </div>
+        </div>
+
+        {/* Operating Mode (read-only — set by your platform admin via the Jobsheets module) */}
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">Operating Mode</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Whether this account runs as a VHC-only tool or the full garage management system
+            </p>
+          </div>
+          <div className="p-6 space-y-3">
+            {([
+              { value: 'vhc_only', title: 'VHC-only', desc: 'Vehicle health checks are the top-level record. Job sheets and invoicing are hidden; each check is held in a lightweight job behind the scenes.' },
+              { value: 'gms', title: 'Full GMS', desc: 'The job sheet is the unit of work, with the health check contained inside it. Adds job-level technicians, clocking, work lines and invoicing.' },
+            ] as const).map((opt) => {
+              const active = settings.operatingMode === opt.value
+              return (
+                <div
+                  key={opt.value}
+                  className={`w-full text-left p-4 rounded-[10px] border ${
+                    active ? 'border-gray-900 bg-gray-50' : 'border-gray-200 opacity-60'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${active ? 'border-gray-900 bg-gray-900' : 'border-gray-300'}`} />
+                    <span className="font-semibold text-gray-900">{opt.title}</span>
+                    {active && <span className="text-xs text-gray-400 ml-auto">Current</span>}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1 ml-6">{opt.desc}</p>
+                </div>
+              )
+            })}
+            <p className="text-xs text-gray-400">
+              Set by your platform admin via the Jobsheets (GMS) module — this view is read-only.
+            </p>
           </div>
         </div>
 

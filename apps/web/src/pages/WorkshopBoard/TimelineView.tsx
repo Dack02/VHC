@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, useEffect, useCallback } from 'react'
 import { DndContext, DragOverlay, PointerSensor, TouchSensor, useSensor, useSensors, useDraggable, useDroppable, type DragEndEvent, type DragMoveEvent, type DragStartEvent } from '@dnd-kit/core'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
-import type { BoardCard, BoardData } from './types'
+import type { BoardCardWithHc, BoardData } from './types'
 import { timeToMinutes, actualWorkedMinutes, isClockStale, dayCapacityMinutes } from './types'
 import { moveCard, patchCard as patchCardApi } from './boardActions'
 import {
@@ -25,7 +25,7 @@ const MIN_BLOCK_PX = 44
 
 interface TimelineViewProps {
   board: BoardData
-  cards: BoardCard[] // pre-filtered by the toolbar
+  cards: BoardCardWithHc[] // pre-filtered by the toolbar
   date: string
   now: Date
   canDrag: boolean
@@ -43,7 +43,7 @@ function snapMinToDay(min: number, dayStartMin: number, dayEndMin: number): numb
 }
 
 interface PlacedBlock {
-  card: BoardCard
+  card: BoardCardWithHc
   startMin: number // minutes since midnight
   durationMin: number
   hasEstimate: boolean
@@ -91,7 +91,7 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
   const scrollRef = useRef<HTMLDivElement>(null)
   const laneRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const recentDragRef = useRef(false)
-  const [activeDragCard, setActiveDragCard] = useState<BoardCard | null>(null)
+  const [activeDragCard, setActiveDragCard] = useState<BoardCardWithHc | null>(null)
   // Live snap preview while dragging onto a lane (the dashed ghost block).
   // ok=false means the day is full at/after the drop point (rendered red).
   const [ghost, setGhost] = useState<{ laneId: string; startMin: number; durationMin: number; ok: boolean } | null>(null)
@@ -151,7 +151,7 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
       }
       return true
     })
-    const sortKey = (c: BoardCard) => c.promiseTime || c.dueDate || '9999'
+    const sortKey = (c: BoardCardWithHc) => c.promiseTime || c.dueDate || '9999'
     return {
       unassigned: items.filter(c => !c.technician).sort((a, b) => sortKey(a).localeCompare(sortKey(b))),
       assigned: items.filter(c => !!c.technician).sort((a, b) => sortKey(a).localeCompare(sortKey(b)))
@@ -202,7 +202,7 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
   // dropping, ignoring the dragged card itself (so nudging a block within its own
   // lane doesn't collide with itself). null = won't fit before close. Manual drags
   // avoid other jobs but not lunch (the advisor may deliberately work through it).
-  const resolveDropSlot = useCallback((laneTechId: string, card: BoardCard, desiredMin: number): number | null => {
+  const resolveDropSlot = useCallback((laneTechId: string, card: BoardCardWithHc, desiredMin: number): number | null => {
     const laneBlocks = (lanes.get(laneTechId) || []).filter(b => b.card.healthCheckId !== card.healthCheckId)
     const busy = busyIntervals(laneBlocks.map(b => ({ startMin: b.startMin, durationMin: b.durationMin })))
     return firstFreeSlot(durationMinFor(card), busy, { fromMin: desiredMin, dayStartMin, dayEndMin })
@@ -267,11 +267,11 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
     let scheduled = 0
     for (const e of entries) {
       if (e.card.technician?.id !== e.technicianId) {
-        const moved = await moveToTech(e.card.healthCheckId, e.columnId)
+        const moved = await moveToTech(e.card.healthCheckId!, e.columnId)
         if (!moved) continue
       }
       const plannedStartAt = new Date(`${date}T${fmtMin(e.startMin)}:00`).toISOString()
-      const ok = await patchCard(e.card.healthCheckId, { plannedStartAt })
+      const ok = await patchCard(e.card.healthCheckId!, { plannedStartAt })
       if (ok) scheduled++
     }
     return scheduled
@@ -304,7 +304,7 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tray, techColumns, lanesBusyByTech, applyPlan, refresh, toast, date, dayStartMin, dayEndMin, nowMin, isToday, board.config])
 
-  const handleSuggest = useCallback(async (card: BoardCard) => {
+  const handleSuggest = useCallback(async (card: BoardCardWithHc) => {
     const techs = techTargets()
     if (!techs.length) { toast.error('No technician columns to schedule into'); return }
     const { plan } = autoArrangePlan([card], techs, lanesBusyByTech(), planOpts())
@@ -392,7 +392,7 @@ export default function TimelineView({ board, cards, date, now, canDrag, onOpenC
   }
 
   // ---- Block resize (bottom edge = re-estimate) ---------------------------
-  const startResize = (card: BoardCard, e: React.PointerEvent) => {
+  const startResize = (card: BoardCardWithHc, e: React.PointerEvent) => {
     if (!canDrag) return
     e.stopPropagation()
     e.preventDefault()
@@ -697,7 +697,7 @@ function TrayDropZone({ children }: { children: React.ReactNode }) {
 }
 
 function TrayCard({ card, now, draggable, showTech, onClick, onSuggest }: {
-  card: BoardCard
+  card: BoardCardWithHc
   now: Date
   draggable: boolean
   showTech?: boolean
@@ -778,7 +778,7 @@ function TimelineBlock({ block, board, date, now, dayStartMin, dayEndMin, canDra
   canDrag: boolean
   resizingHours: number | null
   queueNameById: Map<string, string>
-  onResizeStart: (card: BoardCard, e: React.PointerEvent) => void
+  onResizeStart: (card: BoardCardWithHc, e: React.PointerEvent) => void
   onClick: () => void
 }) {
   const { card } = block

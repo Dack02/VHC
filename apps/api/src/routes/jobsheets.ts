@@ -8,6 +8,8 @@ import { resolveBookingJobForParent, canBook } from '../services/resource-capaci
 import { formatRepairItem } from './repair-items/helpers.js'
 import { buildHealthCheckTimeline, extractUser, type TimelineEvent } from './health-checks/timeline.js'
 import { buildDocumentSearchOr } from '../lib/list-search.js'
+import { closeOpenSegmentsForTech, resolveCategoryId, computeTimeBreakdown, type TimeSegmentRow } from '../services/clocking.js'
+import { emitToSite, WS_EVENTS } from '../services/websocket.js'
 
 /**
  * Jobsheets (GMS) — the top-level booking document. A jobsheet is the parent; a
@@ -28,6 +30,7 @@ const SELECT = `
   vehicle:vehicles(id, registration, make, model, year, fuel_type, mot_expiry_date, mot_status, mot_last_synced_at),
   service_type:service_types(id, code, label, colour),
   advisor:users!jobsheets_advisor_id_fkey(id, first_name, last_name),
+  assigned_technician:users!jobsheets_assigned_technician_id_fkey(id, first_name, last_name),
   created_by_user:users!jobsheets_created_by_fkey(id, first_name, last_name),
   linked_checks:health_checks!health_checks_jobsheet_id_fkey(id, status, job_state, inspection_required, vhc_reference, deleted_at, arrived_at, checked_in_at, mileage_in, key_location, time_required, customer_waiting, checkin_notes, red_count, amber_count, green_count, completed_at, checked_in_by_user:users!health_checks_checked_in_by_fkey(id, first_name, last_name)),
   codes:jobsheet_booking_codes(booking_code:booking_codes(id, code, label, colour))
@@ -92,6 +95,8 @@ function shapeJobsheet(row: any) {
       ? { id: row.service_type.id, code: row.service_type.code, label: row.service_type.label ?? row.service_type.code, colour: row.service_type.colour }
       : null,
     advisor: row.advisor ? { id: row.advisor.id, firstName: row.advisor.first_name, lastName: row.advisor.last_name } : null,
+    assignedTechnician: row.assigned_technician ? { id: row.assigned_technician.id, firstName: row.assigned_technician.first_name, lastName: row.assigned_technician.last_name } : null,
+    techAssignedAt: row.tech_assigned_at ?? null,
     createdBy: row.created_by_user ? { id: row.created_by_user.id, firstName: row.created_by_user.first_name, lastName: row.created_by_user.last_name } : null,
     // Vehicle Status ("Work Status Code") is read through from the linked VHC
     // inspectionRequired distinguishes a real VHC (true) from a check-in-only visit shell (false).
@@ -311,6 +316,7 @@ jobsheets.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
       .select(SELECT, { count: 'exact' })
       .eq('organization_id', auth.orgId)
       .eq('is_draft', false)
+      .eq('is_shell', false)
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1)
@@ -359,6 +365,7 @@ jobsheets.get('/stats', authorize(['super_admin', 'org_admin', 'site_admin', 'se
         .select('id', { count: 'exact', head: true })
         .eq('organization_id', auth.orgId)
         .eq('is_draft', false)
+        .eq('is_shell', false)
         .is('deleted_at', null)
       if (site_id) qb = qb.eq('site_id', site_id)
       if (complete !== null) qb = qb.eq('jobsheet_complete', complete)
@@ -371,6 +378,7 @@ jobsheets.get('/stats', authorize(['super_admin', 'org_admin', 'site_admin', 'se
       .select('id, job_state, due_in_date, linked_checks:health_checks!health_checks_jobsheet_id_fkey(status, job_state, deleted_at)')
       .eq('organization_id', auth.orgId)
       .eq('is_draft', false)
+      .eq('is_shell', false)
       .is('deleted_at', null)
       .eq('jobsheet_complete', false)
       .limit(1000)
@@ -1008,6 +1016,12 @@ jobsheets.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     if (body.bookingNotes !== undefined) updateData.booking_notes = body.bookingNotes || null
     if (body.vhcRequired !== undefined) updateData.vhc_required = !!body.vhcRequired
     if (body.jobState !== undefined && typeof body.jobState === 'string' && body.jobState) updateData.job_state = body.jobState
+    // Primary technician on the job (TECH_JOB_MODEL.md §6.1 / §10 — advisor+ assigns the owner;
+    // techs claim individual lines via the dedicated tech endpoints, never this PATCH).
+    if (body.assignedTechnicianId !== undefined) {
+      updateData.assigned_technician_id = body.assignedTechnicianId || null
+      updateData.tech_assigned_at = body.assignedTechnicianId ? new Date().toISOString() : null
+    }
 
     if (Object.keys(updateData).length) {
       const { error } = await supabaseAdmin
@@ -1036,6 +1050,9 @@ jobsheets.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'se
     // Keep the linked VHC's workshop status in step with the jobsheet's Vehicle Status
     // (the workshop board still reads health_checks.job_state until Phase 3).
     if (body.jobState !== undefined && typeof body.jobState === 'string' && body.jobState) hcUpdate.job_state = body.jobState
+    // Mirror the primary tech onto the linked VHC (health_checks.technician_id) through P1-P3 so
+    // existing VHC/board/mobile reads keep working; retired at P5 (TECH_JOB_MODEL.md §6.3).
+    if (body.assignedTechnicianId !== undefined) hcUpdate.technician_id = body.assignedTechnicianId || null
     if (body.dueInDate !== undefined || body.dueInTime !== undefined || body.dropOffDate !== undefined) {
       const effDate = (body.dueInDate !== undefined && body.dueInDate) ? body.dueInDate : existing.due_in_date
       const effTime = body.dueInTime !== undefined ? body.dueInTime : existing.due_in_time
@@ -1130,6 +1147,10 @@ function shapeWorkLine(item: any) {
   return {
     ...base,
     origin: item.jobsheet_id ? 'booking' : 'inspection',
+    // Per-line technician + physical completion (TECH_JOB_MODEL.md §9/§10).
+    workCompletedAt: item.work_completed_at ?? null,
+    workCompletedBy: item.work_completed_by ?? null,
+    assignedTechnicianId: item.assigned_technician_id ?? null,
     labour: (item.labour || []).map((lab: any) => ({
       id: lab.id,
       labourCodeId: lab.labour_code_id,
@@ -1471,6 +1492,309 @@ jobsheets.post('/:id/reopen', authorize(['super_admin', 'org_admin', 'site_admin
   } catch (error) {
     console.error('Reopen jobsheet error:', error)
     return c.json({ error: 'Failed to reopen jobsheet' }, 500)
+  }
+})
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * Technician clocking ON THE JOBSHEET (TECH_JOB_MODEL.md §8).
+ * The jobsheet is the unit of work, so a tech clocks the JOB. These mirror the HC
+ * clock endpoints but key off technician_time_entries.jobsheet_id and drive the
+ * jobsheet's own job_state. Technician-permitted (unlike the advisor-only PATCH /:id).
+ * Multi-tech: any technician in the org may clock a job.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+const CLOCK_ROLES = ['super_admin', 'org_admin', 'site_admin', 'service_advisor', 'technician'] as const
+
+// POST /:id/clock-in — start a productive segment on the jobsheet.
+jobsheets.post('/:id/clock-in', authorize([...CLOCK_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const { data: js } = await supabaseAdmin
+      .from('jobsheets')
+      .select('id, site_id, organization_id, job_state')
+      .eq('id', id)
+      .eq('organization_id', auth.orgId)
+      .is('deleted_at', null)
+      .single()
+    if (!js) return c.json({ error: 'Jobsheet not found' }, 404)
+
+    // §8.3 guard — end any other open segment for this tech first.
+    await closeOpenSegmentsForTech(auth.user.id, auth.orgId)
+
+    let categoryKey: string | null = null
+    try { const body = await c.req.json(); categoryKey = typeof body?.categoryKey === 'string' ? body.categoryKey : null } catch { /* empty body */ }
+    const categoryId = await resolveCategoryId(auth.orgId, categoryKey || 'repair')
+
+    const { data: entry, error } = await supabaseAdmin
+      .from('technician_time_entries')
+      .insert({
+        jobsheet_id: id,
+        technician_id: auth.user.id,
+        clock_in_at: new Date().toISOString(),
+        category_id: categoryId,
+        organization_id: js.organization_id,
+        site_id: js.site_id
+      })
+      .select('id, clock_in_at')
+      .single()
+    if (error) return c.json({ error: error.message }, 500)
+
+    // Advance the job onto the workshop (forward-only) and mirror to the child VHC so the
+    // board (still health_check-keyed for VHC-backed jobs) stays in step.
+    if (js.job_state === 'due_in' || js.job_state === 'arrived') {
+      await supabaseAdmin.from('jobsheets')
+        .update({ job_state: 'in_workshop', vehicle_on_site: true })
+        .eq('id', id).eq('organization_id', auth.orgId).in('job_state', ['due_in', 'arrived'])
+      await supabaseAdmin.from('health_checks')
+        .update({ job_state: 'in_workshop' })
+        .eq('jobsheet_id', id).is('deleted_at', null).in('job_state', ['due_in', 'arrived'])
+    }
+    if (js.site_id) emitToSite(js.site_id, WS_EVENTS.WORKSHOP_BOARD_UPDATED, { reason: 'jobsheet-clock-in', jobsheetId: id, timestamp: new Date().toISOString() })
+
+    return c.json({ id: entry.id, clockIn: entry.clock_in_at, jobState: 'in_workshop' })
+  } catch (error) {
+    console.error('Jobsheet clock-in error:', error)
+    return c.json({ error: 'Failed to clock in' }, 500)
+  }
+})
+
+// POST /:id/clock-out — close this tech's open segment on the jobsheet.
+jobsheets.post('/:id/clock-out', authorize([...CLOCK_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const { data: js } = await supabaseAdmin
+      .from('jobsheets').select('id, site_id').eq('id', id).eq('organization_id', auth.orgId).is('deleted_at', null).single()
+    if (!js) return c.json({ error: 'Jobsheet not found' }, 404)
+
+    const { data: openEntry } = await supabaseAdmin
+      .from('technician_time_entries')
+      .select('id, clock_in_at')
+      .eq('jobsheet_id', id)
+      .eq('technician_id', auth.user.id)
+      .is('clock_out_at', null)
+      .maybeSingle()
+    if (!openEntry) return c.json({ error: 'Not clocked in' }, 400)
+
+    const clockOut = new Date()
+    const durationMinutes = Math.round((clockOut.getTime() - new Date(openEntry.clock_in_at).getTime()) / 60000)
+    const { data: entry, error } = await supabaseAdmin
+      .from('technician_time_entries')
+      .update({ clock_out_at: clockOut.toISOString(), duration_minutes: durationMinutes, closed_reason: 'manual' })
+      .eq('id', openEntry.id)
+      .select('id, clock_in_at, clock_out_at, duration_minutes')
+      .single()
+    if (error) return c.json({ error: error.message }, 500)
+
+    if (js.site_id) emitToSite(js.site_id, WS_EVENTS.WORKSHOP_BOARD_UPDATED, { reason: 'jobsheet-clock-out', jobsheetId: id, timestamp: new Date().toISOString() })
+    return c.json({ id: entry.id, clockIn: entry.clock_in_at, clockOut: entry.clock_out_at, durationMinutes: entry.duration_minutes })
+  } catch (error) {
+    console.error('Jobsheet clock-out error:', error)
+    return c.json({ error: 'Failed to clock out' }, 500)
+  }
+})
+
+// POST /:id/clock-indirect — start a job-linked indirect (break) segment.
+jobsheets.post('/:id/clock-indirect', authorize([...CLOCK_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const body = await c.req.json().catch(() => ({}))
+    const categoryKey = typeof body?.categoryKey === 'string' ? body.categoryKey : null
+    if (!categoryKey) return c.json({ error: 'categoryKey is required' }, 400)
+
+    const { data: js } = await supabaseAdmin
+      .from('jobsheets').select('id, site_id, organization_id').eq('id', id).eq('organization_id', auth.orgId).is('deleted_at', null).single()
+    if (!js) return c.json({ error: 'Jobsheet not found' }, 404)
+
+    const { data: settings } = await supabaseAdmin
+      .from('organization_settings').select('indirect_time_enabled').eq('organization_id', auth.orgId).maybeSingle()
+    if (settings?.indirect_time_enabled !== true) return c.json({ error: 'Indirect time tracking is not enabled for this organization' }, 400)
+
+    const { data: category } = await supabaseAdmin
+      .from('time_entry_categories').select('id, kind, is_active').eq('organization_id', auth.orgId).eq('key', categoryKey).maybeSingle()
+    if (!category || category.is_active === false) return c.json({ error: 'Unknown or inactive category' }, 400)
+    if (category.kind !== 'indirect') return c.json({ error: 'Category is not an indirect category' }, 400)
+
+    // Going on a break ends every open segment for this tech.
+    await closeOpenSegmentsForTech(auth.user.id, auth.orgId)
+
+    const { data: entry, error } = await supabaseAdmin
+      .from('technician_time_entries')
+      .insert({ jobsheet_id: id, technician_id: auth.user.id, organization_id: js.organization_id, site_id: js.site_id, category_id: category.id, clock_in_at: new Date().toISOString() })
+      .select('id, clock_in_at')
+      .single()
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ id: entry.id, clockIn: entry.clock_in_at })
+  } catch (error) {
+    console.error('Jobsheet clock-indirect error:', error)
+    return c.json({ error: 'Failed to start indirect time' }, 500)
+  }
+})
+
+// GET /:id/time-entries — full job time: jobsheet segments ∪ linked-VHC segments.
+jobsheets.get('/:id/time-entries', authorize([...CLOCK_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    const { data: js } = await supabaseAdmin
+      .from('jobsheets').select('id').eq('id', id).eq('organization_id', auth.orgId).is('deleted_at', null).single()
+    if (!js) return c.json({ error: 'Jobsheet not found' }, 404)
+
+    const { data: hcs } = await supabaseAdmin
+      .from('health_checks').select('id').eq('jobsheet_id', id).is('deleted_at', null)
+    const hcIds = (hcs || []).map((h) => h.id)
+
+    let q = supabaseAdmin
+      .from('technician_time_entries')
+      .select(`id, clock_in_at, clock_out_at, duration_minutes, auto_closed, closed_reason,
+        technician:users(id, first_name, last_name),
+        category:time_entry_categories(id, key, label, kind, counts_toward_job, is_health_check, colour)`)
+      .order('clock_in_at', { ascending: true })
+    if (hcIds.length) q = q.or(`jobsheet_id.eq.${id},health_check_id.in.(${hcIds.join(',')})`)
+    else q = q.eq('jobsheet_id', id)
+
+    const { data: entries, error } = await q
+    if (error) return c.json({ error: error.message }, 500)
+
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const rows = (entries || []) as any[]
+    const breakdown = computeTimeBreakdown(rows as TimeSegmentRow[])
+    return c.json({
+      entries: rows.map((e) => {
+        const cat = e.category as { key?: string; label?: string; kind?: string; is_health_check?: boolean; colour?: string } | null
+        return {
+          id: e.id,
+          technician: e.technician ? { id: e.technician.id, firstName: e.technician.first_name, lastName: e.technician.last_name } : null,
+          clockIn: e.clock_in_at,
+          clockOut: e.clock_out_at,
+          durationMinutes: e.duration_minutes,
+          autoClosed: e.auto_closed === true,
+          category: cat ? { key: cat.key, label: cat.label, kind: cat.kind, isHealthCheck: cat.is_health_check === true, colour: cat.colour } : null
+        }
+      }),
+      totalMinutes: breakdown.jobMinutes,
+      jobMinutes: breakdown.jobMinutes,
+      healthCheckMinutes: breakdown.healthCheckMinutes,
+      indirectMinutes: breakdown.indirectMinutes,
+      activeClockInAt: breakdown.activeClockInAt,
+      activeCategory: breakdown.activeCategory
+    })
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+  } catch (error) {
+    console.error('Jobsheet time-entries error:', error)
+    return c.json({ error: 'Failed to get time entries' }, 500)
+  }
+})
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * Per-line completion + claim (TECH_JOB_MODEL.md §9/§10). Technician-permitted
+ * (unlike the advisor-only PATCH /:id). A jobsheet's lines are jobsheet_id-parented
+ * (booked / estimate-converted) UNION the linked VHC's health_check_id-parented
+ * inspection findings, so ownership is checked via BOTH parents (no jobsheet_id
+ * stamping required — the dual-parent check covers legacy inspection lines).
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+// Resolve + org-verify a repair_item that belongs to this jobsheet (booked line OR the
+// linked VHC's inspection finding). Returns the item row, or a notFound discriminant.
+async function loadJobsheetLine(jobsheetId: string, itemId: string, orgId: string): Promise<
+  | { item: { id: string; jobsheet_id: string | null; health_check_id: string | null; assigned_technician_id: string | null; work_completed_at: string | null } }
+  | { notFound: 'jobsheet' | 'line' }
+> {
+  const ctx = await loadJobsheetWithHc(jobsheetId, orgId)
+  if (!ctx) return { notFound: 'jobsheet' }
+  let q = supabaseAdmin
+    .from('repair_items')
+    .select('id, jobsheet_id, health_check_id, assigned_technician_id, work_completed_at')
+    .eq('id', itemId)
+    .eq('organization_id', orgId)
+    .is('deleted_at', null)
+  if (ctx.healthCheckId) q = q.or(`jobsheet_id.eq.${jobsheetId},health_check_id.eq.${ctx.healthCheckId}`)
+  else q = q.eq('jobsheet_id', jobsheetId)
+  const { data: item } = await q.maybeSingle()
+  if (!item) return { notFound: 'line' }
+  return { item }
+}
+
+// POST /:id/repair-items/:itemId/work-done — mark a work line physically complete.
+jobsheets.post('/:id/repair-items/:itemId/work-done', authorize([...CLOCK_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id, itemId } = c.req.param()
+    const res = await loadJobsheetLine(id, itemId, auth.orgId)
+    if ('notFound' in res) return c.json({ error: res.notFound === 'jobsheet' ? 'Jobsheet not found' : 'Work line not found' }, 404)
+    const { data: updated, error } = await supabaseAdmin
+      .from('repair_items')
+      .update({ work_completed_at: new Date().toISOString(), work_completed_by: auth.user.id })
+      .eq('id', itemId)
+      .eq('organization_id', auth.orgId)
+      .select('id, work_completed_at, work_completed_by')
+      .single()
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ id: updated.id, work_completed_at: updated.work_completed_at, work_completed_by: updated.work_completed_by })
+  } catch (error) {
+    console.error('Jobsheet work-done error:', error)
+    return c.json({ error: 'Failed to mark work done' }, 500)
+  }
+})
+
+// DELETE /:id/repair-items/:itemId/work-done — undo "work done".
+jobsheets.delete('/:id/repair-items/:itemId/work-done', authorize([...CLOCK_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id, itemId } = c.req.param()
+    const res = await loadJobsheetLine(id, itemId, auth.orgId)
+    if ('notFound' in res) return c.json({ error: res.notFound === 'jobsheet' ? 'Jobsheet not found' : 'Work line not found' }, 404)
+    const { error } = await supabaseAdmin
+      .from('repair_items')
+      .update({ work_completed_at: null, work_completed_by: null })
+      .eq('id', itemId)
+      .eq('organization_id', auth.orgId)
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ id: itemId, work_completed_at: null, work_completed_by: null })
+  } catch (error) {
+    console.error('Jobsheet work-undone error:', error)
+    return c.json({ error: 'Failed to clear work done' }, 500)
+  }
+})
+
+// POST /:id/repair-items/:itemId/claim — per-line tech assignment (§10).
+// Technician self-claims an unassigned/own line; advisor+ may assign a specific tech
+// (body.technicianId) or release (body.unassign).
+jobsheets.post('/:id/repair-items/:itemId/claim', authorize([...CLOCK_ROLES]), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id, itemId } = c.req.param()
+    const body = await c.req.json().catch(() => ({}))
+    const unassign = body?.unassign === true
+    const res = await loadJobsheetLine(id, itemId, auth.orgId)
+    if ('notFound' in res) return c.json({ error: res.notFound === 'jobsheet' ? 'Jobsheet not found' : 'Work line not found' }, 404)
+    const item = res.item
+    const isTech = auth.user.role === 'technician'
+
+    // A technician may only claim/release an unassigned line or their own.
+    if (isTech && item.assigned_technician_id && item.assigned_technician_id !== auth.user.id) {
+      return c.json({ error: 'This line is already claimed by another technician' }, 403)
+    }
+
+    let newTech: string | null
+    if (unassign) newTech = null
+    else if (body?.technicianId && !isTech) newTech = body.technicianId
+    else newTech = auth.user.id
+
+    const { data: updated, error } = await supabaseAdmin
+      .from('repair_items')
+      .update({ assigned_technician_id: newTech })
+      .eq('id', itemId)
+      .eq('organization_id', auth.orgId)
+      .select('id, assigned_technician_id')
+      .single()
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json({ id: updated.id, assignedTechnicianId: updated.assigned_technician_id })
+  } catch (error) {
+    console.error('Jobsheet claim error:', error)
+    return c.json({ error: 'Failed to claim line' }, 500)
   }
 })
 

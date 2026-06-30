@@ -45,10 +45,11 @@ export interface BoardNotePreview {
 }
 
 export interface BoardCard {
-  healthCheckId: string
+  /** null for VHC-less jobsheets (estimate conversions / "Requires VHC" unticked). Use cardKey() for a stable id. */
+  healthCheckId: string | null
   position: BoardPosition
   columnId: string | null
-  status: string
+  status: string | null
   jobState: JobState
   sortPosition: number
   workshopStatusId: string | null
@@ -80,6 +81,8 @@ export interface BoardCard {
   clockedOnSince: string | null
   /** Name of the technician holding the open productive segment (cross-tech attribution) */
   clockedOnBy: string | null
+  /** All technicians currently clocked on (multi-tech, TECH_JOB_MODEL.md §7) */
+  clockedOnTechs?: { name: string; since: string }[]
   vehicle: { id: string; registration: string; make: string | null; model: string | null; year: number | null; color: string | null } | null
   customer: { id: string; first_name: string; last_name: string; mobile: string | null } | null
   technician: { id: string; first_name: string; last_name: string } | null
@@ -87,6 +90,13 @@ export interface BoardCard {
   latestNote: BoardNotePreview | null
   notesCount: number
 }
+
+/** Stable per-card id for React keys / dnd: the VHC id when present, else the jobsheet id. */
+export const cardKey = (c: BoardCard): string => c.healthCheckId ?? c.jobsheetId ?? ''
+
+/** A VHC-backed card (healthCheckId guaranteed). Sub-views that don't yet support VHC-less
+ *  jobsheets (timeline planner, drag/reorder) narrow to this. */
+export type BoardCardWithHc = BoardCard & { healthCheckId: string }
 
 export interface BoardConfig {
   defaultTechHours: number
@@ -255,7 +265,7 @@ export function actualWorkedMinutes(card: BoardCard, now: Date, staleMinutes = D
 }
 
 // Friendly pipeline stage chip derived from the health check status
-export function pipelineStage(status: string): { label: string; tone: 'grey' | 'blue' | 'amber' | 'green' | 'red' | 'indigo' } {
+export function pipelineStage(status: string | null): { label: string; tone: 'grey' | 'blue' | 'amber' | 'green' | 'red' | 'indigo' } {
   switch (status) {
     case 'awaiting_arrival': return { label: 'Due In', tone: 'grey' }
     case 'awaiting_checkin': return { label: 'Awaiting Check-in', tone: 'amber' }
@@ -276,7 +286,7 @@ export function pipelineStage(status: string): { label: string; tone: 'grey' | '
     case 'declined': return { label: 'Work Declined', tone: 'red' }
     case 'expired': return { label: 'Link Expired', tone: 'red' }
     case 'completed': return { label: 'Completed', tone: 'green' }
-    default: return { label: status.replace(/_/g, ' '), tone: 'grey' }
+    default: return { label: (status ?? '').replace(/_/g, ' '), tone: 'grey' }
   }
 }
 

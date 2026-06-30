@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../../lib/supabase.js'
 import { authorize } from '../../middleware/auth.js'
 import { autoGenerateRepairItems, getStorageUrl } from './helpers.js'
 import { stampVehicleActivity, recordMileageReading } from '../../services/vehicle-expiry.js'
+import { spawnShellJobsheetForVhc } from '../../services/shell-jobsheet.js'
 
 const crud = new Hono()
 
@@ -19,7 +20,8 @@ crud.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advi
         vehicle:vehicles(id, registration, make, model, customer:customers(id, first_name, last_name)),
         technician:users!health_checks_technician_id_fkey(id, first_name, last_name),
         advisor:users!health_checks_advisor_id_fkey(id, first_name, last_name),
-        template:check_templates(id, name)
+        template:check_templates(id, name),
+        jobsheet:jobsheets!health_checks_jobsheet_id_fkey(is_shell)
       `, { count: 'exact' })
       .eq('organization_id', auth.orgId)
       .is('deleted_at', null) // Exclude soft-deleted records
@@ -73,7 +75,9 @@ crud.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advi
     return c.json({
       healthChecks: data?.map(hc => ({
         id: hc.id,
-        jobsheet_id: hc.jobsheet_id,
+        // A shell jobsheet is hidden plumbing — never surface it as a routable id, or the
+        // front-end (jobLink.jobPath) would route the VHC to a module-gated /jobsheets page.
+        jobsheet_id: (Array.isArray(hc.jobsheet) ? hc.jobsheet[0] : hc.jobsheet)?.is_shell ? null : hc.jobsheet_id,
         status: hc.status,
         vhc_reference: hc.vhc_reference,
         vehicle: hc.vehicle ? {
@@ -223,6 +227,18 @@ crud.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_adv
         change_source: 'user',
         notes: statusNotes
       })
+
+    // Every VHC gets a (hidden) jobsheet (TECH_JOB_MODEL.md §5 invariant). Best-effort:
+    // a shell failure leaves the VHC standalone and never fails the create.
+    await spawnShellJobsheetForVhc({
+      orgId: auth.orgId,
+      siteId: siteId || auth.user.siteId || null,
+      customerId: vehicle.customer_id,
+      vehicleId,
+      advisorId: advisorId || auth.user.id,
+      dueDate: null,
+      healthCheckId: healthCheck.id
+    })
 
     // Vehicles module: stamp recency (drives expiry-campaign suppression) and
     // capture the odometer reading. Best-effort, fire-and-forget.

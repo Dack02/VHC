@@ -1591,12 +1591,23 @@ adminOrgRoutes.patch('/:id/modules', async (c) => {
     else next[key] = val as boolean
   }
 
+  const settingsUpdate: Record<string, unknown> = {
+    organization_id: orgId,
+    module_overrides: next,
+    updated_at: new Date().toISOString()
+  }
+
+  // The `jobsheets` module is the master gate for operating_mode (TECH_JOB_MODEL.md §4:
+  // module gates the mode). When this change touches the jobsheets override, keep the
+  // stored operating_mode in lock-step: enabling => 'gms', disabling/inheriting => 'vhc_only'.
+  // (jobsheets is override-only, so next.jobsheets===true is the full "effective on" test.)
+  if (Object.prototype.hasOwnProperty.call(overrides, 'jobsheets')) {
+    settingsUpdate.operating_mode = next.jobsheets === true ? 'gms' : 'vhc_only'
+  }
+
   const { error } = await supabaseAdmin
     .from('organization_settings')
-    .upsert(
-      { organization_id: orgId, module_overrides: next, updated_at: new Date().toISOString() },
-      { onConflict: 'organization_id' }
-    )
+    .upsert(settingsUpdate, { onConflict: 'organization_id' })
 
   if (error) {
     return c.json({ error: error.message }, 500)

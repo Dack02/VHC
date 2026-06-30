@@ -7,6 +7,7 @@ import { api, ApiError, User, TimelineEvent } from '../../lib/api'
 import ComposeMessageModal from '../../components/ComposeMessageModal'
 import FollowUpDetailModal from '../FollowUps/FollowUpDetailModal'
 import WorkDetailsPanel from './WorkDetailsPanel'
+import JobsheetTechnicianTab from './JobsheetTechnicianTab'
 import CustomerInsightsBanner from '../../components/CustomerInsightsBanner'
 import { CheckInTab } from '../HealthChecks/tabs/CheckInTab'
 import { MriScanSection } from '../HealthChecks/components/MriScanSection'
@@ -38,6 +39,8 @@ interface Jobsheet {
   vehicle: { id: string; registration: string; make: string | null; model: string | null; year: number | null; fuelType: string | null; motExpiryDate: string | null; motStatus: string | null; motLastSyncedAt: string | null } | null
   serviceType: { id: string; code: string; colour: string } | null
   advisor: { id: string; firstName: string; lastName: string } | null
+  assignedTechnician: { id: string; firstName: string; lastName: string } | null
+  techAssignedAt: string | null
   createdBy: { id: string; firstName: string; lastName: string } | null
   // inspectionRequired distinguishes a real VHC from a check-in-only "visit" shell.
   healthCheck: { id: string; status: string; vehicleStatus: string; vhcReference: string | null; inspectionRequired: boolean; redCount: number; amberCount: number; greenCount: number; completedAt: string | null } | null
@@ -130,7 +133,7 @@ function toLocalInput(iso: string | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-type JobsheetTab = 'overview' | 'checkin' | 'mri' | 'work' | 'timeline'
+type JobsheetTab = 'overview' | 'checkin' | 'mri' | 'work' | 'technician' | 'timeline'
 
 export default function JobsheetDetail() {
   const { id } = useParams<{ id: string }>()
@@ -363,6 +366,7 @@ export default function JobsheetDetail() {
     ...(checkinEnabled ? [{ id: 'checkin' as JobsheetTab, label: 'Check-In' }] : []),
     ...(checkinEnabled ? [{ id: 'mri' as JobsheetTab, label: 'MRI Scan' }] : []),
     { id: 'work', label: 'Work' },
+    { id: 'technician', label: 'Technician' },
     { id: 'timeline', label: 'Timeline' }
   ]
   const tabIds = tabs.map(t => t.id)
@@ -739,6 +743,18 @@ export default function JobsheetDetail() {
           token={token}
           organizationId={user?.organization?.id}
           notes={{ label: 'Booking Notes', value: js.bookingNotes, onSave: (v) => api(`/api/v1/jobsheets/${js.id}`, { method: 'PATCH', token, body: { bookingNotes: v } }).then(() => {}) }}
+          onChange={load}
+        />
+      )}
+
+      {/* Technician tab — primary tech (P1); per-line tech + completion grid + job-time
+          breakdown arrive in P4. Works for VHC-backed and VHC-less jobsheets alike. */}
+      {activeTab === 'technician' && token && (
+        <JobsheetTechnicianTab
+          jobsheetId={js.id}
+          healthCheckId={js.healthCheck?.id ?? null}
+          assignedTechnician={js.assignedTechnician}
+          token={token}
           onChange={load}
         />
       )}

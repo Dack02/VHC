@@ -336,6 +336,7 @@ resourceManager.post('/suggest-technician', authorize([...ADVISOR_ROLES]), async
   // re-validates the id, so a foreign id simply yields no suggestions.
   let repairTypeId: string | null = body?.repairTypeId ?? null
   const healthCheckId = body?.healthCheckId ?? null
+  const jobsheetId = body?.jobsheetId ?? null
   if (!repairTypeId && healthCheckId) {
     const { data: ri } = await supabaseAdmin
       .from('repair_items')
@@ -347,11 +348,24 @@ resourceManager.post('/suggest-technician', authorize([...ADVISOR_ROLES]), async
       .maybeSingle()
     repairTypeId = ri?.repair_type_id ?? null
   }
+  // Jobsheet branch (TECH_JOB_MODEL.md §7) — VHC-less jobsheets (estimate conversions,
+  // "Requires VHC" unticked) resolve the repair type via repair_items.jobsheet_id.
+  if (!repairTypeId && jobsheetId) {
+    const { data: ri } = await supabaseAdmin
+      .from('repair_items')
+      .select('repair_type_id')
+      .eq('jobsheet_id', jobsheetId)
+      .not('repair_type_id', 'is', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    repairTypeId = ri?.repair_type_id ?? null
+  }
   if (!repairTypeId) {
-    if (healthCheckId) {
+    if (healthCheckId || jobsheetId) {
       return c.json({ siteId, suggestions: [], reason: 'No repair type set on this job yet' })
     }
-    return c.json({ error: 'repairTypeId or healthCheckId is required' }, 400)
+    return c.json({ error: 'repairTypeId, healthCheckId or jobsheetId is required' }, 400)
   }
 
   const { data: rt } = await supabaseAdmin

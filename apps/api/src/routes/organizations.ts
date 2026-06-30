@@ -241,7 +241,7 @@ organizations.get('/:id/pricing-settings', async (c) => {
     // Get settings from organization_settings table
     const { data: settings, error } = await supabaseAdmin
       .from('organization_settings')
-      .select('default_margin_percent, vat_rate, parts_mode, books_locked_through')
+      .select('default_margin_percent, vat_rate, parts_mode, books_locked_through, operating_mode')
       .eq('organization_id', id)
       .single()
 
@@ -255,12 +255,20 @@ organizations.get('/:id/pricing-settings', async (c) => {
     const storedPartsMode = settings?.parts_mode === 'full' ? 'full' : 'simple'
     const partsMode = mods.parts_stock ? storedPartsMode : 'simple'
 
+    // operating_mode = 'gms' only ever applies if the jobsheets module is on
+    // (TECH_JOB_MODEL.md §4 — the module gates the mode). The `=== 'gms'` test
+    // also COALESCEs a missing column / row-less org to 'vhc_only'.
+    const storedOperatingMode = settings?.operating_mode === 'gms' ? 'gms' : 'vhc_only'
+    const operatingMode = mods.jobsheets ? storedOperatingMode : 'vhc_only'
+
     return c.json({
       settings: {
         defaultMarginPercent: settings?.default_margin_percent ?? DEFAULT_PRICING.default_margin_percent,
         vatRate: settings?.vat_rate ?? DEFAULT_PRICING.vat_rate,
         partsMode,
         partsModeLocked: !mods.parts_stock,
+        operatingMode,
+        operatingModeLocked: !mods.jobsheets,
         booksLockedThrough: settings?.books_locked_through ?? null
       }
     })

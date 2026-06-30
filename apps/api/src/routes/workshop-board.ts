@@ -274,13 +274,21 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
     // live timer; closed productive segments are the job-time baseline; indirect
     // segments (counts_toward_job=false) are excluded from both.
     const clockedOnByHc = new Map<string, Record<string, unknown>>()
+    // Multi-tech (TECH_JOB_MODEL.md §7): a job can have several techs clocked on at once.
+    // Collect ALL open segments per job (the old single-value map was last-writer-wins).
+    const clockedTechsByHc = new Map<string, Array<{ name: string; since: string }>>()
     const productiveClosedMinByHc = new Map<string, number>()
     for (const entry of timeEntriesRes.data || []) {
       const cat = entry.category as { counts_toward_job?: boolean } | null
       if (cat && cat.counts_toward_job === false) continue
       const hcId = entry.health_check_id as string
       if (entry.clock_out_at == null) {
-        clockedOnByHc.set(hcId, entry)
+        if (!clockedOnByHc.has(hcId)) clockedOnByHc.set(hcId, entry)
+        const t = entry.technician as { first_name?: string; last_name?: string } | null
+        const name = (t ? `${t.first_name ?? ''} ${t.last_name ?? ''}`.trim() : '') || 'Technician'
+        const list = clockedTechsByHc.get(hcId) || []
+        list.push({ name, since: entry.clock_in_at as string })
+        clockedTechsByHc.set(hcId, list)
       } else {
         productiveClosedMinByHc.set(hcId, (productiveClosedMinByHc.get(hcId) || 0) + ((entry.duration_minutes as number) || 0))
       }
@@ -364,6 +372,7 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
         isClockedOn: !!clockEntry,
         clockedOnSince: (clockEntry?.clock_in_at as string) ?? null,
         clockedOnBy: clockTech ? `${clockTech.first_name ?? ''} ${clockTech.last_name ?? ''}`.trim() || null : null,
+        clockedOnTechs: clockedTechsByHc.get(hc.id) || [],
         vehicle: hc.vehicle,
         customer: hc.customer,
         technician: hc.technician,
@@ -379,6 +388,11 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
         notesCount: noteCountByHc.get(hc.id) || 0
       }
     })
+
+    // VHC-less jobsheets (estimate conversions / "Requires VHC" unticked) are the unit of
+    // work too — surface them on the board (TECH_JOB_MODEL.md §7). They carry healthCheckId:null
+    // + jobsheetId so the front-end routes them to /jobsheets/:id and skips dnd registration.
+    const vhcLessCards = await loadVhcLessBoardCards(auth.orgId, siteId, date)
 
     // Org-level time-tracking settings (stale-clock threshold + indirect toggle)
     const { data: orgTimeSettings } = await supabaseAdmin
@@ -441,7 +455,7 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
         sortOrder: col.sort_order,
         isVisible: col.is_visible
       })),
-      cards,
+      cards: [...cards, ...vhcLessCards],
       shiftsByTech,
       absencesByTech
     })
@@ -769,6 +783,7 @@ async function loadVhcLessFutureJobsheets(orgId: string, siteId: string, advisor
     .eq('site_id', siteId)
     .eq('job_state', 'due_in')
     .eq('is_draft', false)
+    .eq('is_shell', false)
     .is('deleted_at', null)
   if (advisorId) q = q.eq('advisor_id', advisorId)
   const { data, error } = await q
@@ -781,6 +796,115 @@ async function loadVhcLessFutureJobsheets(orgId: string, siteId: string, advisor
     .is('deleted_at', null)
   const hasHc = new Set((linked || []).map((l: any) => l.jobsheet_id))
   return (data as any[]).filter((r) => !hasHc.has(r.id))
+}
+
+/**
+ * VHC-less jobsheets as board cards (TECH_JOB_MODEL.md §7). Estimate conversions and
+ * "Requires VHC" unticked jobsheets have no health_checks row, so they never appeared on
+ * the kanban. Surface them with healthCheckId:null + jobsheetId (front-end routes to
+ * /jobsheets/:id and treats them as non-draggable until a jobsheet-keyed move lands).
+ * Excludes shells (those wrap a real VHC, already shown) and jobsheets with a linked VHC.
+ */
+async function loadVhcLessBoardCards(orgId: string, siteId: string, date: string): Promise<any[]> {
+  const { data: jsRows } = await supabaseAdmin
+    .from('jobsheets')
+    .select(`id, reference, job_state, due_in_date, created_at,
+      vehicle:vehicles(id, registration, make, model, year, fuel_type),
+      customer:customers(id, first_name, last_name, mobile, email, phone, contact_name),
+      technician:users!jobsheets_assigned_technician_id_fkey(id, first_name, last_name),
+      advisor:users!jobsheets_advisor_id_fkey(id, first_name, last_name)`)
+    .eq('organization_id', orgId)
+    .eq('site_id', siteId)
+    .eq('is_draft', false)
+    .eq('is_shell', false)
+    .is('deleted_at', null)
+    .in('job_state', ['due_in', 'arrived', 'in_workshop', 'work_complete'])
+  if (!jsRows || jsRows.length === 0) return []
+
+  const ids = (jsRows as any[]).map((r) => r.id)
+  const { data: linked } = await supabaseAdmin
+    .from('health_checks').select('jobsheet_id').in('jobsheet_id', ids).is('deleted_at', null)
+  const hasHc = new Set((linked || []).map((l: any) => l.jobsheet_id))
+  // VHC-less only; due_in jobs limited to those due on/before the board date (mirrors the HC due-in query).
+  const vhcLess = (jsRows as any[]).filter((r) =>
+    !hasHc.has(r.id) && (r.job_state !== 'due_in' || (r.due_in_date && r.due_in_date <= date))
+  )
+  if (vhcLess.length === 0) return []
+
+  // Clock state from jobsheet-keyed segments.
+  const clockByJs = new Map<string, Array<{ name: string; since: string }>>()
+  const closedMinByJs = new Map<string, number>()
+  for (const idChunk of chunkIds(vhcLess.map((r) => r.id), 100)) {
+    const { data: times } = await supabaseAdmin
+      .from('technician_time_entries')
+      .select('jobsheet_id, clock_in_at, clock_out_at, duration_minutes, category:time_entry_categories(counts_toward_job), technician:users(first_name, last_name)')
+      .in('jobsheet_id', idChunk)
+    for (const e of times || []) {
+      const cat = (e as any).category as { counts_toward_job?: boolean } | null
+      if (cat && cat.counts_toward_job === false) continue
+      const jid = (e as any).jobsheet_id as string
+      if ((e as any).clock_out_at == null) {
+        const t = (e as any).technician as { first_name?: string; last_name?: string } | null
+        const name = (t ? `${t.first_name ?? ''} ${t.last_name ?? ''}`.trim() : '') || 'Technician'
+        const list = clockByJs.get(jid) || []
+        list.push({ name, since: (e as any).clock_in_at as string })
+        clockByJs.set(jid, list)
+      } else {
+        closedMinByJs.set(jid, (closedMinByJs.get(jid) || 0) + (((e as any).duration_minutes as number) || 0))
+      }
+    }
+  }
+
+  return vhcLess.map((js) => {
+    const jobState = (js.job_state as string) || 'arrived'
+    const position = jobState === 'due_in' ? 'due_in'
+      : jobState === 'work_complete' ? 'work_complete'
+      : jobState === 'in_workshop' ? 'in_workshop' : 'checked_in'
+    const techs = clockByJs.get(js.id) || []
+    return {
+      healthCheckId: null,
+      position,
+      columnId: null,
+      status: null,
+      jobState,
+      sortPosition: 0,
+      workshopStatusId: null,
+      priority: 'normal',
+      estimatedHours: null,
+      plannedStartAt: null,
+      totalTechTimeMinutes: closedMinByJs.get(js.id) || 0,
+      workCompletedAt: null,
+      promiseTime: null,
+      dueDate: js.due_in_date ?? null,
+      arrivedAt: null,
+      createdAt: js.created_at,
+      customerWaiting: false,
+      loanCarRequired: false,
+      isInternal: false,
+      jobsheetId: js.id,
+      jobsheetReference: js.reference ?? null,
+      jobsheetNumber: null,
+      jobNumber: null,
+      mileageIn: null,
+      keyLocation: null,
+      checkinNotes: null,
+      advisorNotes: null,
+      bookedRepairs: [],
+      ragCounts: { red: 0, amber: 0, green: 0 },
+      techStartedAt: null,
+      techCompletedAt: null,
+      isClockedOn: techs.length > 0,
+      clockedOnSince: techs[0]?.since ?? null,
+      clockedOnBy: techs[0]?.name ?? null,
+      clockedOnTechs: techs,
+      vehicle: js.vehicle,
+      customer: js.customer,
+      technician: js.technician,
+      advisor: js.advisor,
+      latestNote: null,
+      notesCount: 0
+    }
+  })
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 

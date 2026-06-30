@@ -4,6 +4,7 @@ import { authorize } from '../../middleware/auth.js'
 import { notifyHealthCheckStatusChanged, notifyTechnicianClockedIn, notifyTechnicianClockedOut } from '../../services/websocket.js'
 import { isValidTransition, autoGenerateRepairItems, autoCreateMriRepairItems } from './helpers.js'
 import { createNotification } from '../notifications.js'
+import { closeOpenSegmentsForTech } from '../../services/clocking.js'
 
 const status = new Hono()
 
@@ -910,52 +911,11 @@ status.post('/:id/clock-in', authorize(['super_admin', 'org_admin', 'site_admin'
     // Get vehicle registration for notifications
     const vehicleReg = (healthCheck.vehicle as unknown as { registration: string })?.registration || 'Unknown'
 
-    // Check for existing open time entry for this technician
-    const { data: openEntry } = await supabaseAdmin
-      .from('technician_time_entries')
-      .select('id, clock_in_at')
-      .eq('health_check_id', id)
-      .eq('technician_id', auth.user.id)
-      .is('clock_out_at', null)
-      .single()
-
-    if (openEntry) {
-      // Auto-close the stale entry (e.g., from a crashed session) and continue
-      const clockOut = new Date()
-      const clockIn = new Date(openEntry.clock_in_at)
-      const durationMinutes = Math.round((clockOut.getTime() - clockIn.getTime()) / 60000)
-
-      await supabaseAdmin
-        .from('technician_time_entries')
-        .update({
-          clock_out_at: clockOut.toISOString(),
-          duration_minutes: durationMinutes,
-          closed_reason: 'reclock'
-        })
-        .eq('id', openEntry.id)
-    }
-
-    // A tech can't be on a break and on a job at once: clocking onto a job ends
-    // any open shop-level indirect segment (job-less break/cleaning/training).
-    const { data: openIndirect } = await supabaseAdmin
-      .from('technician_time_entries')
-      .select('id, clock_in_at')
-      .eq('technician_id', auth.user.id)
-      .eq('organization_id', auth.orgId)
-      .is('health_check_id', null)
-      .is('clock_out_at', null)
-
-    for (const seg of openIndirect || []) {
-      const closeAt = new Date()
-      await supabaseAdmin
-        .from('technician_time_entries')
-        .update({
-          clock_out_at: closeAt.toISOString(),
-          duration_minutes: Math.round((closeAt.getTime() - new Date(seg.clock_in_at).getTime()) / 60000),
-          closed_reason: 'reclock'
-        })
-        .eq('id', seg.id)
-    }
+    // One active productive segment per technician (TECH_JOB_MODEL.md §8.3): clocking onto
+    // a job ends ANY other open segment for this tech — a stale same-job entry, a job-less
+    // break, or a productive timer left running on a different job/jobsheet — so time never
+    // double-counts across jobs.
+    await closeOpenSegmentsForTech(auth.user.id, auth.orgId)
 
     // Resolve the time category. An optional categoryKey in the body overrides the
     // split-by-milestone default: inspection before the VHC is completed, repair
@@ -1295,22 +1255,9 @@ status.post('/:id/clock-indirect', authorize(['super_admin', 'org_admin', 'site_
     if (!category || category.is_active === false) return c.json({ error: 'Unknown or inactive category' }, 400)
     if (category.kind !== 'indirect') return c.json({ error: 'Category is not an indirect category' }, 400)
 
-    // Indirect pauses the job clock: close the tech's open segment on this job first.
-    const { data: openEntry } = await supabaseAdmin
-      .from('technician_time_entries')
-      .select('id, clock_in_at')
-      .eq('health_check_id', id)
-      .eq('technician_id', auth.user.id)
-      .is('clock_out_at', null)
-      .maybeSingle()
-    if (openEntry) {
-      const clockOut = new Date()
-      const dur = Math.round((clockOut.getTime() - new Date(openEntry.clock_in_at).getTime()) / 60000)
-      await supabaseAdmin
-        .from('technician_time_entries')
-        .update({ clock_out_at: clockOut.toISOString(), duration_minutes: dur, closed_reason: 'reclock' })
-        .eq('id', openEntry.id)
-    }
+    // Going on a break ends every open segment for this tech — the job clock pauses
+    // (TECH_JOB_MODEL.md §8.3, one active segment per tech).
+    await closeOpenSegmentsForTech(auth.user.id, auth.orgId)
 
     const { data: entry, error } = await supabaseAdmin
       .from('technician_time_entries')

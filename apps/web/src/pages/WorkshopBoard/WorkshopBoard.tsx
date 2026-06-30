@@ -5,7 +5,8 @@ import { moveCard, reorderCards, type MoveTarget, type SortPositionUpdate } from
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { useBoardData, useWeekData, useNow } from './useBoardData'
-import { sortCards, actualWorkedMinutes, isClockStale, weekStart, addDays, type BoardCard, type BoardData } from './types'
+import { useNavigate } from 'react-router-dom'
+import { sortCards, actualWorkedMinutes, isClockStale, weekStart, addDays, cardKey, type BoardCard, type BoardCardWithHc, type BoardData } from './types'
 import BoardColumn from './BoardColumn'
 import JobCard, { promiseCountdown } from './JobCard'
 import JobDetailModal from './JobDetailModal'
@@ -147,6 +148,7 @@ export default function WorkshopBoard() {
   const [waitingOnly, setWaitingOnly] = useState(false)
   const [loanOnly, setLoanOnly] = useState(false)
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null)
+  const navigate = useNavigate()
   const [showAddColumn, setShowAddColumn] = useState(false)
   const [showShifts, setShowShifts] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
@@ -472,6 +474,9 @@ export default function WorkshopBoard() {
       }
       const card = board.cards.find(c => c.healthCheckId === active.id)
       if (!card) { if (snapshot) setBoard(snapshot); return }
+      // VHC-less cards are non-draggable, so a drag always resolves to a VHC-backed card.
+      if (!card.healthCheckId) { if (snapshot) setBoard(snapshot); return }
+      const cardHcId: string = card.healthCheckId
 
       const overId = over.id as string
       // The drop target is either another card (sortable) or a column body
@@ -488,11 +493,12 @@ export default function WorkshopBoard() {
         const newIndex = targetCol.cards.findIndex(c => c.healthCheckId === overCard.healthCheckId)
         if (oldIndex < 0 || newIndex < 0 || oldIndex === newIndex) { if (snapshot) setBoard(snapshot); return }
         const positions = arrayMove(targetCol.cards, oldIndex, newIndex)
+          .filter((c): c is BoardCardWithHc => c.healthCheckId != null)
           .map((c, i) => ({ healthCheckId: c.healthCheckId, sortPosition: (i + 1) * 10 }))
         const posById = new Map(positions.map(p => [p.healthCheckId, p.sortPosition]))
         setBoard({
           ...board,
-          cards: board.cards.map(c => (posById.has(c.healthCheckId) ? { ...c, sortPosition: posById.get(c.healthCheckId)! } : c))
+          cards: board.cards.map(c => (posById.has(c.healthCheckId ?? '') ? { ...c, sortPosition: posById.get(c.healthCheckId ?? '')! } : c))
         })
         try {
           await reorderCards(session.accessToken, positions)
@@ -523,8 +529,10 @@ export default function WorkshopBoard() {
         const insertIndex = targetCol.cards.findIndex(c => c.healthCheckId === overCard.healthCheckId)
         const newOrder = targetCol.cards.filter(c => c.healthCheckId !== card.healthCheckId)
         newOrder.splice(insertIndex < 0 ? newOrder.length : insertIndex, 0, card)
-        positions = newOrder.map((c, i) => ({ healthCheckId: c.healthCheckId, sortPosition: (i + 1) * 10 }))
-        movedPosition = positions.find(p => p.healthCheckId === card.healthCheckId)!.sortPosition
+        positions = newOrder
+          .filter((c): c is BoardCardWithHc => c.healthCheckId != null)
+          .map((c, i) => ({ healthCheckId: c.healthCheckId, sortPosition: (i + 1) * 10 }))
+        movedPosition = positions.find(p => p.healthCheckId === cardHcId)!.sortPosition
       }
       const posById = new Map(positions.map(p => [p.healthCheckId, p.sortPosition]))
 
@@ -533,7 +541,7 @@ export default function WorkshopBoard() {
       const optimistic: BoardData = {
         ...board,
         cards: board.cards.map(c => {
-          const sortPosition = posById.get(c.healthCheckId) ?? (c.healthCheckId === card.healthCheckId ? 0 : c.sortPosition)
+          const sortPosition = posById.get(c.healthCheckId ?? '') ?? (c.healthCheckId === cardHcId ? 0 : c.sortPosition)
           if (c.healthCheckId !== card.healthCheckId) {
             return sortPosition !== c.sortPosition ? { ...c, sortPosition } : c
           }
@@ -562,7 +570,7 @@ export default function WorkshopBoard() {
       // The move carries the moved card's own slot, so a failed neighbour
       // renumber leaves the move correct - re-pull instead of reverting it.
       try {
-        await moveCard(session.accessToken, card.healthCheckId, { target, columnId, sortPosition: movedPosition })
+        await moveCard(session.accessToken, cardHcId, { target, columnId, sortPosition: movedPosition })
       } catch (err) {
         if (snapshot) setBoard(snapshot)
         toast.error(err instanceof Error ? err.message : 'Could not move card')
@@ -964,7 +972,7 @@ export default function WorkshopBoard() {
         ) : isTimeline ? (
           <TimelineView
             board={board}
-            cards={filteredCards}
+            cards={filteredCards.filter((c): c is BoardCardWithHc => c.healthCheckId != null)}
             date={date}
             now={now}
             canDrag={canDrag}
@@ -998,14 +1006,14 @@ export default function WorkshopBoard() {
                   dropState={columnDropState(col.key)}
                   tvMode={tvMode}
                 >
-                  <SortableContext items={col.cards.map(c => c.healthCheckId)} strategy={verticalListSortingStrategy}>
+                  <SortableContext items={col.cards.map(c => cardKey(c))} strategy={verticalListSortingStrategy}>
                     {col.cards.map(card => (
                       <JobCard
-                        key={card.healthCheckId}
+                        key={cardKey(card)}
                         card={card}
                         statuses={board.statuses}
                         now={now}
-                        draggable={canDrag && (view === 'tech' || card.position !== 'due_in')}
+                        draggable={canDrag && (view === 'tech' || card.position !== 'due_in') && !!card.healthCheckId}
                         tvMode={tvMode}
                         showTechChip={view === 'status'}
                         queueChipName={
@@ -1013,7 +1021,7 @@ export default function WorkshopBoard() {
                             ? queueNameById.get(card.columnId) || null
                             : null
                         }
-                        onClick={() => openCard(card.healthCheckId)}
+                        onClick={() => card.healthCheckId ? openCard(card.healthCheckId) : (card.jobsheetId && navigate(`/jobsheets/${card.jobsheetId}`))}
                       />
                     ))}
                   </SortableContext>

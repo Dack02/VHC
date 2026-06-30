@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { api } from '../../lib/api'
-import SettingsBackLink from '../../components/SettingsBackLink'
 
 interface SocialAccount {
   id: string
@@ -34,7 +33,7 @@ interface ConnectionResponse {
 
 const PLATFORM_LABEL: Record<string, string> = { facebook: 'Facebook', instagram: 'Instagram', tiktok: 'TikTok' }
 
-export default function SocialMediaSettings() {
+export default function SocialAccounts() {
   const { session } = useAuth()
   const token = session?.accessToken
   const [data, setData] = useState<ConnectionResponse | null>(null)
@@ -130,10 +129,7 @@ export default function SocialMediaSettings() {
   const isConnected = conn?.status === 'connected' || conn?.status === 'error'
 
   return (
-    <div className="max-w-3xl mx-auto">
-      <SettingsBackLink />
-
-      <h1 className="text-2xl font-bold text-gray-900 mb-1">Social Media Analytics</h1>
+    <div className="max-w-3xl">
       <p className="text-sm text-gray-500 mb-6">
         Link your Facebook, Instagram and TikTok accounts to track reach, engagement, follower growth and ad spend.
         Connections are handled securely by Zernio — you authorise each account through its own platform.

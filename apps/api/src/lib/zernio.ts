@@ -150,4 +150,15 @@ export const zernio = {
     key: string,
     query: { profileId?: string; accountId?: string; adAccountId?: string; platform?: string; fromDate?: string; toDate?: string }
   ) => zernioRequest('/ads/timeline', { key, query }),
+
+  /** Per-account, account-level insights. `path` = 'facebook/page-insights' | 'instagram/account-insights' | 'tiktok/account-insights'. */
+  accountInsights: (
+    key: string,
+    path: string,
+    query: { accountId: string; since?: string; until?: string; metricType?: string; metrics?: string }
+  ) => zernioRequest(`/analytics/${path}`, { key, query }),
+
+  /** All Facebook Pages an account can access (id, name, fan_count) + the active one. */
+  facebookPages: (key: string, accountId: string) =>
+    zernioRequest(`/accounts/${accountId}/facebook-page`, { key }),
 }

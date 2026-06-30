@@ -54,6 +54,15 @@ interface CustomerSearchResult {
   mobile: string | null
 }
 
+// A pickable open job card (GMS "job-card first" creation). Subset of the GET
+// /jobsheets shape — the VHC inherits the card's vehicle + customer.
+interface JobCardOption {
+  id: string
+  reference: string | null
+  vehicle: { id: string; registration: string; make: string | null; model: string | null; year: number | null; fuelType: string | null } | null
+  customer: { id: string; firstName: string; lastName: string; mobile: string | null; email: string | null } | null
+}
+
 export default function NewHealthCheck() {
   const { session } = useAuth()
   const navigate = useNavigate()
@@ -91,12 +100,24 @@ export default function NewHealthCheck() {
   const [customerError, setCustomerError] = useState<string | null>(null)
 
   // DVSA vehicle lookup (gated by the vehicle_lookup module)
-  const { isEnabled } = useModules()
+  const { isEnabled, modules, loading: modulesLoading } = useModules()
   const lookupEnabled = isEnabled('vehicle_lookup')
   const [lookingUp, setLookingUp] = useState(false)
   const [lookupError, setLookupError] = useState<string | null>(null)
   const [lookupDraft, setLookupDraft] = useState<VehicleLookupDraft | null>(null)
   const [creatingVehicle, setCreatingVehicle] = useState(false)
+
+  // GMS orgs are "job-card first" (TECH_JOB_MODEL.md §1, owner 2026-06-30): a health
+  // check must be created against an existing job card; the VHC inherits its vehicle +
+  // customer. VHC-only orgs keep the standalone vehicle→customer flow unchanged.
+  // Explicit-on (not isEnabled's optimistic-on): an unknown/errored module state must
+  // default to the standalone path, never trap a VHC-only org in the GMS picker (which
+  // calls the module-gated GET /jobsheets → 403). The page also waits for modules below.
+  const isGms = modules['jobsheets'] === true
+  const [selectedJobsheet, setSelectedJobsheet] = useState<JobCardOption | null>(null)
+  const [jobsheetSearch, setJobsheetSearch] = useState('')
+  const [jobsheetResults, setJobsheetResults] = useState<JobCardOption[]>([])
+  const [jobsheetSearching, setJobsheetSearching] = useState(false)
 
   // Load templates and technicians on mount
   useEffect(() => {
@@ -189,6 +210,28 @@ export default function NewHealthCheck() {
     return () => clearTimeout(debounce)
   }, [customerSearch, session?.accessToken])
 
+  // Search open job cards (GMS picker) — by reg / customer / reference, active only.
+  useEffect(() => {
+    if (!isGms) return
+    const run = async () => {
+      if (!session?.accessToken || jobsheetSearch.trim().length < 2) { setJobsheetResults([]); return }
+      setJobsheetSearching(true)
+      try {
+        const data = await api<{ jobsheets: JobCardOption[] }>(
+          `/api/v1/jobsheets?q=${encodeURIComponent(jobsheetSearch.trim())}&complete=false&limit=10`,
+          { token: session.accessToken }
+        )
+        setJobsheetResults(data.jobsheets || [])
+      } catch (err) {
+        console.error('Job card search failed:', err)
+      } finally {
+        setJobsheetSearching(false)
+      }
+    }
+    const debounce = setTimeout(run, 300)
+    return () => clearTimeout(debounce)
+  }, [jobsheetSearch, session?.accessToken, isGms])
+
   const resetCustomerUi = () => {
     setCustomerSearch('')
     setCustomerResults([])
@@ -207,7 +250,47 @@ export default function NewHealthCheck() {
 
   const clearVehicle = () => {
     setSelectedVehicle(null)
+    setSelectedJobsheet(null)
     setForm({ ...form, vehicleId: '' })
+    resetCustomerUi()
+  }
+
+  // GMS: pick a job card → the VHC inherits its vehicle + customer (reuse the existing
+  // selectedVehicle wiring so the read-only display + submit gate just work).
+  const selectJobsheet = (card: JobCardOption) => {
+    setSelectedJobsheet(card)
+    setJobsheetSearch('')
+    setJobsheetResults([])
+    if (card.vehicle) {
+      setSelectedVehicle({
+        id: card.vehicle.id,
+        registration: card.vehicle.registration,
+        vin: null,
+        make: card.vehicle.make,
+        model: card.vehicle.model,
+        year: card.vehicle.year,
+        color: null,
+        fuel_type: card.vehicle.fuelType,
+        mileage: null,
+        customer_id: card.customer?.id ?? '',
+        customer: card.customer ? {
+          id: card.customer.id,
+          first_name: card.customer.firstName,
+          last_name: card.customer.lastName,
+          email: card.customer.email,
+          mobile: card.customer.mobile,
+          external_id: null,
+        } : undefined,
+      })
+      setForm(f => ({ ...f, vehicleId: card.vehicle!.id }))
+    }
+    resetCustomerUi()
+  }
+
+  const clearJobsheet = () => {
+    setSelectedJobsheet(null)
+    setSelectedVehicle(null)
+    setForm(f => ({ ...f, vehicleId: '' }))
     resetCustomerUi()
   }
 
@@ -355,20 +438,27 @@ export default function NewHealthCheck() {
     e.preventDefault()
     if (!session?.accessToken) return
 
-    if (!form.vehicleId) {
-      setError('Please select a vehicle')
+    // GMS: a job card is required; the VHC inherits the card's vehicle/customer/site.
+    if (isGms && !selectedJobsheet) {
+      setError('Choose the job card this health check belongs to')
       return
     }
-    if (!selectedVehicle?.customer_id) {
-      setError('Please add a customer for this vehicle before creating the health check')
-      return
+    if (!isGms) {
+      if (!form.vehicleId) {
+        setError('Please select a vehicle')
+        return
+      }
+      if (!selectedVehicle?.customer_id) {
+        setError('Please add a customer for this vehicle before creating the health check')
+        return
+      }
+      if (!form.siteId) {
+        setError('No site available')
+        return
+      }
     }
     if (!form.templateId) {
       setError('Please select a template')
-      return
-    }
-    if (!form.siteId) {
-      setError('No site available')
       return
     }
 
@@ -381,16 +471,25 @@ export default function NewHealthCheck() {
         {
           method: 'POST',
           token: session.accessToken,
-          body: {
-            vehicleId: form.vehicleId,
-            templateId: form.templateId,
-            technicianId: form.technicianId || undefined,
-            siteId: form.siteId,
-            mileageIn: form.mileageIn ? parseInt(form.mileageIn) : undefined
-          }
+          body: isGms
+            ? {
+                jobsheetId: selectedJobsheet!.id,
+                templateId: form.templateId,
+                technicianId: form.technicianId || undefined,
+                mileageIn: form.mileageIn ? parseInt(form.mileageIn) : undefined
+              }
+            : {
+                vehicleId: form.vehicleId,
+                templateId: form.templateId,
+                technicianId: form.technicianId || undefined,
+                siteId: form.siteId,
+                mileageIn: form.mileageIn ? parseInt(form.mileageIn) : undefined
+              }
         }
       )
-      navigate(`/health-checks/${response.id}`)
+      // GMS: the job card is the unit of work — return to it. VHC-only: open the check.
+      if (isGms && selectedJobsheet) navigate(`/jobsheets/${selectedJobsheet.id}`)
+      else navigate(`/health-checks/${response.id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create health check')
     } finally {
@@ -398,7 +497,7 @@ export default function NewHealthCheck() {
     }
   }
 
-  if (loading) {
+  if (loading || modulesLoading) {
     return (
       <div className="flex items-center justify-center p-8">
         <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
@@ -426,7 +525,67 @@ export default function NewHealthCheck() {
 
       <form onSubmit={handleSubmit} className="max-w-2xl">
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-6">
-          {/* Vehicle Selection */}
+          {/* Job card (GMS only) — a health check must be created against an existing card */}
+          {isGms && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Job card *</label>
+              {selectedJobsheet ? (
+                <div className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                  <div>
+                    <div className="font-medium">
+                      {selectedJobsheet.reference || 'Job card'}
+                      {selectedJobsheet.vehicle?.registration ? ` · ${selectedJobsheet.vehicle.registration}` : ''}
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      {[selectedJobsheet.vehicle?.make, selectedJobsheet.vehicle?.model].filter(Boolean).join(' ')}
+                      {selectedJobsheet.customer ? ` — ${selectedJobsheet.customer.firstName} ${selectedJobsheet.customer.lastName}` : ''}
+                    </div>
+                  </div>
+                  <button type="button" onClick={clearJobsheet} className="text-sm font-medium text-primary hover:underline">Change</button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={jobsheetSearch}
+                    onChange={(e) => setJobsheetSearch(e.target.value)}
+                    placeholder="Search open job cards by reg, customer or reference..."
+                    className="w-full px-4 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                  {jobsheetSearching && (
+                    <div className="absolute right-3 top-2.5">
+                      <div className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full" />
+                    </div>
+                  )}
+                  {jobsheetResults.length > 0 && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-auto">
+                      {jobsheetResults.map(card => (
+                        <button
+                          key={card.id}
+                          type="button"
+                          onClick={() => selectJobsheet(card)}
+                          className="w-full text-left px-4 py-3 hover:bg-gray-50 border-b border-gray-100 last:border-0"
+                        >
+                          <div className="font-medium">
+                            {card.reference || 'Job card'}
+                            {card.vehicle?.registration ? ` · ${card.vehicle.registration}` : ''}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            {[card.vehicle?.make, card.vehicle?.model].filter(Boolean).join(' ')}
+                            {card.customer ? ` — ${card.customer.firstName} ${card.customer.lastName}` : ''}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="mt-2 text-xs text-gray-500">A health check is always created on a job card. Can&rsquo;t find it? Create the job card first.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Vehicle — VHC-only only; GMS shows the vehicle via the job-card chip above */}
+          {!isGms && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Vehicle *
@@ -626,9 +785,11 @@ export default function NewHealthCheck() {
               </div>
             )}
           </div>
+          )}
 
-          {/* Customer (required — a health check must belong to a customer) */}
-          {selectedVehicle && (
+          {/* Customer (required — a health check must belong to a customer).
+              GMS inherits the customer from the job card, so this is VHC-only. */}
+          {!isGms && selectedVehicle && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Customer *
@@ -730,7 +891,8 @@ export default function NewHealthCheck() {
             </select>
           </div>
 
-          {/* Site Selection */}
+          {/* Site Selection — GMS inherits the site from the job card */}
+          {!isGms && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Site *
@@ -747,6 +909,7 @@ export default function NewHealthCheck() {
               ))}
             </select>
           </div>
+          )}
 
           {/* Technician Assignment */}
           <div>
@@ -787,7 +950,7 @@ export default function NewHealthCheck() {
         <div className="mt-6 flex gap-3">
           <button
             type="submit"
-            disabled={submitting || !selectedVehicle?.customer_id}
+            disabled={submitting || (isGms ? !selectedJobsheet : !selectedVehicle?.customer_id)}
             className="px-6 py-2 bg-primary text-white font-medium hover:bg-primary-dark disabled:opacity-50"
           >
             {submitting ? 'Creating...' : 'Create Health Check'}

@@ -17,7 +17,6 @@ const CARD_MODULE: Record<string, ModuleKey> = {
   '/settings/follow-up-dispositions': 'follow_up',
   '/settings/follow-up-timelines': 'follow_up',
   '/settings/integrations': 'dms_integration',
-  '/settings/social-media': 'social_media',
   '/settings/daily-sms-overview': 'customer_comms',
   '/settings/message-templates': 'customer_comms',
   '/settings/service-types': 'jobsheets',
@@ -568,17 +567,6 @@ export default function SettingsHub() {
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-      ),
-      roles: ['super_admin', 'org_admin', 'site_admin']
-    },
-    {
-      to: '/settings/social-media',
-      title: 'Social Media Analytics',
-      description: 'Connect Facebook, Instagram & TikTok; track reach, engagement & ad spend',
-      icon: (
-        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
         </svg>
       ),
       roles: ['super_admin', 'org_admin', 'site_admin']

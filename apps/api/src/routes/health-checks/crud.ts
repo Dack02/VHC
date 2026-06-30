@@ -3,7 +3,7 @@ import { supabaseAdmin } from '../../lib/supabase.js'
 import { authorize } from '../../middleware/auth.js'
 import { autoGenerateRepairItems, getStorageUrl } from './helpers.js'
 import { stampVehicleActivity, recordMileageReading } from '../../services/vehicle-expiry.js'
-import { spawnShellJobsheetForVhc } from '../../services/shell-jobsheet.js'
+import { getEffectiveModules } from '../../services/modules.js'
 
 const crud = new Hono()
 
@@ -133,8 +133,46 @@ crud.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_adv
     const auth = c.get('auth')
     const body = await c.req.json()
     const { vehicleId, templateId, technicianId, advisorId, mileageIn, siteId } = body
+    const jobsheetId: string | null = body.jobsheet_id || body.jobsheetId || null
 
-    if (!vehicleId || !templateId) {
+    // GMS orgs are "job-card first" (TECH_JOB_MODEL.md §1, owner 2026-06-30): a health
+    // check must be created against an existing job card. VHC-only orgs are unchanged
+    // (standalone check, no job card). GMS ⟺ the jobsheets module is on.
+    const mods = await getEffectiveModules(auth.orgId)
+    const isGms = mods.jobsheets
+    if (isGms && !jobsheetId) {
+      return c.json({ error: 'In GMS mode a health check must be created on a job card. Choose the job card it belongs to.', code: 'JOBCARD_REQUIRED' }, 400)
+    }
+
+    // When a job card is supplied it is authoritative for the vehicle/customer/site
+    // (the check inherits them), and the real card link replaces the hidden shell.
+    let linkedSiteId: string | null = null
+    let cardCustomerId: string | null = null
+    let cardVehicleId: string | null = null
+    if (jobsheetId) {
+      const { data: js } = await supabaseAdmin
+        .from('jobsheets')
+        .select('id, vehicle_id, customer_id, site_id, is_shell, is_draft, jobsheet_complete')
+        .eq('id', jobsheetId)
+        .eq('organization_id', auth.orgId)
+        .is('deleted_at', null)
+        .maybeSingle()
+      if (!js || js.is_shell || js.is_draft) {
+        return c.json({ error: 'Job card not found' }, 404)
+      }
+      if (js.jobsheet_complete) {
+        return c.json({ error: 'That job card is completed — reopen it before adding a health check.' }, 400)
+      }
+      if (!js.vehicle_id) {
+        return c.json({ error: 'That job card has no vehicle — add one before creating a health check.' }, 400)
+      }
+      linkedSiteId = js.site_id
+      cardCustomerId = js.customer_id
+      cardVehicleId = js.vehicle_id
+    }
+
+    const effectiveVehicleId = cardVehicleId || vehicleId
+    if (!effectiveVehicleId || !templateId) {
       return c.json({ error: 'Vehicle ID and Template ID are required' }, 400)
     }
 
@@ -142,7 +180,7 @@ crud.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_adv
     const { data: vehicle } = await supabaseAdmin
       .from('vehicles')
       .select('id, customer_id')
-      .eq('id', vehicleId)
+      .eq('id', effectiveVehicleId)
       .eq('organization_id', auth.orgId)
       .single()
 
@@ -151,10 +189,11 @@ crud.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_adv
     }
 
     // A health check must belong to a customer — the entire downstream workflow
-    // (sending the quote, the customer portal, follow-ups) depends on one. Vehicles
-    // are allowed to exist without a customer (walk-in / DVSA reg lookup), so the
-    // check is enforced here rather than via a NOT NULL column.
-    if (!vehicle.customer_id) {
+    // (sending the quote, the customer portal, follow-ups) depends on one. When a job
+    // card is linked its customer wins; otherwise the vehicle's. Vehicles may exist
+    // without a customer (walk-in / DVSA reg lookup), so this is enforced here.
+    const customerId = cardCustomerId || vehicle.customer_id
+    if (!customerId) {
       return c.json({ error: 'A customer must be linked to the vehicle before creating a health check.' }, 400)
     }
 
@@ -196,14 +235,16 @@ crud.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_adv
       .from('health_checks')
       .insert({
         organization_id: auth.orgId,
-        site_id: siteId || auth.user.siteId,
-        vehicle_id: vehicleId,
-        customer_id: vehicle.customer_id,
+        site_id: linkedSiteId || siteId || auth.user.siteId,
+        vehicle_id: effectiveVehicleId,
+        customer_id: customerId,
         template_id: templateId,
         technician_id: technicianId,
         advisor_id: advisorId || auth.user.id,
         mileage_in: mileageIn,
-        status: initialStatus
+        status: initialStatus,
+        // GMS: link the real job card directly. VHC-only: null (gets a no-op below).
+        jobsheet_id: jobsheetId || null
       })
       .select()
       .single()
@@ -228,23 +269,16 @@ crud.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service_adv
         notes: statusNotes
       })
 
-    // Every VHC gets a (hidden) jobsheet (TECH_JOB_MODEL.md §5 invariant). Best-effort:
-    // a shell failure leaves the VHC standalone and never fails the create.
-    await spawnShellJobsheetForVhc({
-      orgId: auth.orgId,
-      siteId: siteId || auth.user.siteId || null,
-      customerId: vehicle.customer_id,
-      vehicleId,
-      advisorId: advisorId || auth.user.id,
-      dueDate: null,
-      healthCheckId: healthCheck.id
-    })
+    // No shell spawn here: GMS requires a real job card above (so the VHC is already
+    // linked), and VHC-only orgs are standalone by design. (The only !jobsheetId case
+    // reaching here is a VHC-only org, for which the shell service short-circuits
+    // anyway.) DMS import keeps its own shell path for now (out of scope, §see plan).
 
     // Vehicles module: stamp recency (drives expiry-campaign suppression) and
     // capture the odometer reading. Best-effort, fire-and-forget.
-    void stampVehicleActivity(auth.orgId, vehicleId)
+    void stampVehicleActivity(auth.orgId, effectiveVehicleId)
     if (typeof mileageIn === 'number' && mileageIn > 0) {
-      void recordMileageReading(auth.orgId, vehicleId, mileageIn, 'health_check')
+      void recordMileageReading(auth.orgId, effectiveVehicleId, mileageIn, 'health_check')
     }
 
     return c.json({

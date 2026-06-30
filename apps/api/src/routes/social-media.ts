@@ -214,8 +214,10 @@ socialMedia.post('/sync', authorizeMinRole('org_admin'), async (c) => {
 socialMedia.get('/overview', authorize(['super_admin', 'org_admin', 'site_admin', 'service_advisor']), async (c) => {
   const auth = c.get('auth')
   const now = new Date()
-  const dateTo = c.req.query('date_to') || now.toISOString().slice(0, 10)
-  const dateFrom = c.req.query('date_from') || new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10)
+  const dateTo = (c.req.query('date_to') || now.toISOString().slice(0, 10)).slice(0, 10)
+  const dateFrom = (c.req.query('date_from') || new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10)).slice(0, 10)
+  const gbRaw = c.req.query('group_by')
+  const groupBy = (gbRaw === 'week' || gbRaw === 'month' ? gbRaw : 'day') as 'day' | 'week' | 'month'
   const platformFilter = c.req.query('platform')
 
   let accountsQ = supabaseAdmin
@@ -229,7 +231,7 @@ socialMedia.get('/overview', authorize(['super_admin', 'org_admin', 'site_admin'
   const accountIds = (accounts || []).map((a: any) => a.id)
 
   if (accountIds.length === 0) {
-    return c.json({ period: { from: dateFrom, to: dateTo }, totals: emptyTotals(), platforms: [], series: [], accounts: [] })
+    return c.json({ period: { from: dateFrom, to: dateTo }, groupBy, totals: emptyTotals(), platforms: [], accountsBreakdown: [], periods: [], accounts: [] })
   }
 
   const [{ data: metrics }, { data: spend }] = await Promise.all([
@@ -252,28 +254,56 @@ socialMedia.get('/overview', authorize(['super_admin', 'org_admin', 'site_admin'
       .order('stat_date'),
   ])
 
-  // per-platform rollup
+  const ENGAGEMENT_METRICS = ['total_interactions', 'engagement', 'likes', 'comments', 'shares', 'saves']
+
+  // ---- per-platform rollup (powers the "By platform" table) ----
   const perPlatform = new Map<string, any>()
   const ensure = (p: string) => {
     if (!perPlatform.has(p)) perPlatform.set(p, { platform: p, followers: 0, followerGrowth: 0, reach: 0, views: 0, engagement: 0, spend: 0, impressions: 0, clicks: 0 })
     return perPlatform.get(p)
   }
-  // followers: latest snapshot per account; growth = latest - earliest
   const followerFirst = new Map<string, number>()
   const followerLast = new Map<string, number>()
-  const seriesByDate = new Map<string, { date: string; reach: number; views: number; spend: number }>()
+
+  // ---- per-account (per-page) breakdown ----
+  const perAccount = new Map<string, any>()
+  const ensureAcct = (id: string) => {
+    if (!perAccount.has(id)) {
+      const a = accountById.get(id)
+      perAccount.set(id, {
+        id, platform: a?.platform || 'unknown',
+        name: a?.display_name || a?.handle || a?.platform || 'Account',
+        handle: a?.handle || null, accountType: a?.account_type || 'organic',
+        followers: 0, followerGrowth: 0, reach: 0, views: 0, engagement: 0, spend: 0,
+      })
+    }
+    return perAccount.get(id)
+  }
+
+  // ---- period buckets (powers the day/week/month "Over time" table) ----
+  const periodAgg = new Map<string, { reach: number; views: number; engagement: number; spend: number }>()
+  const ensurePeriod = (key: string) => {
+    if (!periodAgg.has(key)) periodAgg.set(key, { reach: 0, views: 0, engagement: 0, spend: 0 })
+    return periodAgg.get(key)!
+  }
+  const followerSnaps = new Map<string, { date: string; value: number }[]>()  // accountId -> stat_date-asc series
 
   for (const m of (metrics || []) as any[]) {
     const acct = accountById.get(m.social_account_id)
     if (!acct) continue
-    const p = ensure(acct.platform)
     const v = Number(m.value) || 0
+    const day = String(m.stat_date).slice(0, 10)
+    const pk = periodKeyForDay(day, groupBy)
+    const p = ensure(acct.platform)
     if (m.metric === 'followers_count') {
       if (!followerFirst.has(m.social_account_id)) followerFirst.set(m.social_account_id, v)
       followerLast.set(m.social_account_id, v)
-    } else if (m.metric === 'reach') { p.reach += v; bumpSeries(seriesByDate, m.stat_date).reach += v }
-    else if (m.metric === 'views') { p.views += v; bumpSeries(seriesByDate, m.stat_date).views += v }
-    else if (['total_interactions', 'engagement', 'likes', 'comments', 'shares', 'saves'].includes(m.metric)) p.engagement += v
+      if (!followerSnaps.has(m.social_account_id)) followerSnaps.set(m.social_account_id, [])
+      followerSnaps.get(m.social_account_id)!.push({ date: day, value: v })
+      ensurePeriod(pk)  // register the period so follower-only days still get a row
+    } else if (m.metric === 'reach') { p.reach += v; ensureAcct(m.social_account_id).reach += v; ensurePeriod(pk).reach += v }
+    else if (m.metric === 'views') { p.views += v; ensureAcct(m.social_account_id).views += v; ensurePeriod(pk).views += v }
+    else if (ENGAGEMENT_METRICS.includes(m.metric)) { p.engagement += v; ensureAcct(m.social_account_id).engagement += v; ensurePeriod(pk).engagement += v }
   }
   // resolve followers per account into platform totals
   for (const [acctId, last] of followerLast) {
@@ -282,15 +312,20 @@ socialMedia.get('/overview', authorize(['super_admin', 'org_admin', 'site_admin'
     const p = ensure(acct.platform)
     p.followers += last
     p.followerGrowth += last - (followerFirst.get(acctId) ?? last)
+    const a = ensureAcct(acctId)
+    a.followers += last
+    a.followerGrowth += last - (followerFirst.get(acctId) ?? last)
   }
   for (const s of (spend || []) as any[]) {
     const acct = accountById.get(s.social_account_id)
     if (!acct) continue
     const p = ensure(acct.platform)
-    p.spend += Number(s.spend) || 0
+    const sp = Number(s.spend) || 0
+    p.spend += sp
     p.impressions += Number(s.impressions) || 0
     p.clicks += Number(s.clicks) || 0
-    bumpSeries(seriesByDate, s.stat_date).spend += Number(s.spend) || 0
+    ensureAcct(s.social_account_id).spend += sp
+    ensurePeriod(periodKeyForDay(String(s.stat_date).slice(0, 10), groupBy)).spend += sp
   }
 
   const platforms = [...perPlatform.values()]
@@ -305,18 +340,61 @@ socialMedia.get('/overview', authorize(['super_admin', 'org_admin', 'site_admin'
     clicks: t.clicks + p.clicks,
   }), emptyTotals())
 
-  const series = [...seriesByDate.values()].sort((a, b) => a.date.localeCompare(b.date))
+  // ---- assemble period rows: followers = total at the END of the period
+  //      (latest snapshot per account on/before the period's last day), with
+  //      growth = period-over-period delta. reach/views/engagement/spend summed. ----
+  const followersAtEnd = (endDay: string) => {
+    let sum = 0
+    for (const series of followerSnaps.values()) {
+      let val: number | null = null
+      for (const pt of series) { if (pt.date <= endDay) val = pt.value; else break }
+      if (val != null) sum += val
+    }
+    return sum
+  }
+  const periodKeys = [...periodAgg.keys()].sort((a, b) => a.localeCompare(b))
+  let prevFollowers: number | null = null
+  const periods = periodKeys.map((key) => {
+    const agg = periodAgg.get(key)!
+    const followers = followersAtEnd(periodEndDay(key, groupBy))
+    const followerGrowth = prevFollowers == null ? 0 : followers - prevFollowers
+    prevFollowers = followers
+    return { period: key, followers, followerGrowth, reach: agg.reach, views: agg.views, engagement: agg.engagement, spend: agg.spend }
+  })
 
-  return c.json({ period: { from: dateFrom, to: dateTo }, totals, platforms, series, accounts: accounts || [] })
+  const accountsBreakdown = [...perAccount.values()].sort((a, b) => b.followers - a.followers)
+
+  return c.json({ period: { from: dateFrom, to: dateTo }, groupBy, totals, platforms, accountsBreakdown, periods, accounts: accounts || [] })
 })
 
 function emptyTotals() {
   return { followers: 0, followerGrowth: 0, reach: 0, views: 0, engagement: 0, spend: 0, impressions: 0, clicks: 0 }
 }
-function bumpSeries(map: Map<string, any>, date: string) {
-  const d = String(date).slice(0, 10)
-  if (!map.has(d)) map.set(d, { date: d, reach: 0, views: 0, spend: 0 })
-  return map.get(d)
+
+/** Day → period bucket key (matches the reports' convention in routes/reports.ts). */
+function periodKeyForDay(dayKey: string, groupBy: 'day' | 'week' | 'month'): string {
+  if (groupBy === 'month') return `${dayKey.slice(0, 7)}-01`
+  if (groupBy === 'week') {
+    const d = new Date(`${dayKey}T00:00:00Z`)
+    const dow = d.getUTCDay() // 0=Sun..6=Sat
+    d.setUTCDate(d.getUTCDate() + (dow === 0 ? -6 : 1 - dow)) // back to Monday
+    return d.toISOString().split('T')[0]
+  }
+  return dayKey
+}
+
+/** Last calendar day of a period bucket (inclusive), for end-of-period followers. */
+function periodEndDay(key: string, groupBy: 'day' | 'week' | 'month'): string {
+  if (groupBy === 'month') {
+    const y = Number(key.slice(0, 4)); const mo = Number(key.slice(5, 7))
+    return new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10) // day 0 of next month = last day
+  }
+  if (groupBy === 'week') {
+    const d = new Date(`${key}T00:00:00Z`)
+    d.setUTCDate(d.getUTCDate() + 6) // Monday + 6 = Sunday
+    return d.toISOString().slice(0, 10)
+  }
+  return key
 }
 
 export default socialMedia

@@ -402,4 +402,75 @@ All `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`; every table `or
 - Reports: `apps/api/src/routes/reports.ts` + `apps/web/src/pages/Reports/OnlineVhcPerformance.tsx` (data shape, filters, CSV).
 - Jobs: `apps/api/src/services/queue.ts` / `worker.ts` / `scheduler.ts` (DMS import = the template; mind the boot re-register fix).
 - Form/UI standard: `docs/form-design-guidelines.md`; canonical `apps/web/src/components/customers/CustomerFormModal.tsx`.
+
+---
+
+## 16. Promote Social Media to a top-level module tab (UI refactor — PLAN)
+
+> Decision (Leo, 2026-06-30): Social Media should be a **first-class sidebar tab**, not a Reports sub-page + a Settings sub-page — because it will **grow beyond analytics** (content, ads, inbox, ROI). Make it a "proper module" now so later additions are just a new sub-tab, not a re-home.
+
+### 16.1 The model — mirror **Parts** exactly (the existing first-class module)
+Parts already is what we want: a sidebar item (`/parts`) → a **section shell** (`pages/Parts/PartsLayout.tsx`) that renders a **horizontal underline sub-tab bar** (`NavLink` + `<Outlet>` + `<Suspense>`, each tab optionally `module`-gated) → nested child routes in `App.tsx`. Copy that structure 1:1.
+
+**No API or DB changes.** API stays at `/api/v1/social-media/*`; the `social_media` module key, migration, sync, and routes are untouched. This is a **web-only nav/route/page-homing refactor** — small and low-risk.
+
+### 16.2 New structure
+```
+Sidebar:  … Parts · Social · Reports · Settings …     ← new "Social" item (DashboardLayout mainNavItems), gated by social_media
+Route:    /social            → SocialMediaLayout (sub-tab shell)
+            index            → Overview   (the dashboard — followers/reach/engagement/spend + per-platform)
+            /social/accounts → Accounts   (connect/sync/disconnect — today's settings page)
+```
+Sub-tab bar (v1): **Overview · Accounts**. Built to extend (16.5).
+
+### 16.3 Concrete changes
+**Create**
+- `pages/SocialMedia/SocialMediaLayout.tsx` — copy of `PartsLayout.tsx`; `TABS = [{ to:'/social', label:'Overview', end:true }, { to:'/social/accounts', label:'Accounts' }]` (future tabs add here, optionally `module`-gated).
+
+**Move (re-home, keep the working code)**
+- `pages/Reports/SocialMediaAnalytics.tsx` → `pages/SocialMedia/SocialOverview.tsx` (the `/social` index tab). Drop the page's own `<h1>`/`useReportFilters` site filter only if redundant with the shell; otherwise unchanged. It already calls `/api/v1/social-media/overview` — no data change.
+- `pages/Settings/SocialMediaSettings.tsx` → `pages/SocialMedia/SocialAccounts.tsx` (the `/social/accounts` tab). Swap `SettingsBackLink` for the shell context; drop the `<h1>` (the tab bar labels it). Logic unchanged.
+
+**Edit**
+- `layouts/DashboardLayout.tsx` — add to `mainNavItems` (place after `Parts`, before `Reports`):
+  ```tsx
+  { to: '/social', label: 'Social',
+    icon: (<svg className="w-[18px] h-[18px] shrink-0" …>{/* share/network glyph */}</svg>),
+    roles: ['super_admin','org_admin','site_admin','service_advisor'],
+    module: 'social_media' }
+  ```
+  The existing `.filter(item => !item.module || isEnabled(item.module))` hides it when the module is off — no extra gating code.
+- `App.tsx` — replace the two standalone routes with a nested block (mirror the `/parts` block):
+  ```tsx
+  <Route path="/social" element={<RequireModule module="social_media"><SocialMediaLayout /></RequireModule>}>
+    <Route index element={<SocialOverview />} />
+    <Route path="accounts" element={<SocialAccounts />} />
+  </Route>
+  ```
+  Update the two `lazy(() => import(...))` lines to the new paths.
+
+**Remove (revert the interim Reports/Settings entry points)**
+- `pages/Reports/ReportsHub.tsx` — remove the Social navCard, the `Marketing & Channels` reportGroup, and the `REPORT_CARD_MODULE`/`cardVisible` gate I added (it was only there to hide the social card; nothing else uses it).
+- `pages/Settings/SettingsHub.tsx` — remove the `'/settings/social-media': 'social_media'` `CARD_MODULE` entry and the Social system card.
+- Keep the module label in both `lib/modules.ts`; optionally rename label `Social Media Analytics` → **`Social Media`** (it's no longer analytics-only).
+
+**Redirects (avoid breaking bookmarks)**
+- `App.tsx`: `/reports/social-media` → `<Navigate to="/social" replace />`; `/settings/social-media` → `<Navigate to="/social/accounts" replace />`.
+
+### 16.4 Don't-trip-on-these
+- `PartsLayout` uses `NavLink … end` for the index tab — set `end: true` on the Overview tab so it isn't always-active.
+- Keep the routes wrapped in `RequireModule` **and** rely on the API's `requireModule('social_media')` (defense in depth; the tab is already hidden when off).
+- `SocialOverview` uses `useReportFilters`/`useReportData` which live under `pages/Reports/...` — keep importing them from there (shared infra), or relocate to a neutral `pages/Reports/hooks` import path; do not duplicate.
+
+### 16.5 Why this de-risks the roadmap (the point)
+Each future capability is now **one tab + one route + one page**, never a re-home:
+- **Content** (`/social/content`) — top posts/videos table (data already synced into `social_posts`).
+- **Ads** (`/social/ads`) — spend/ROAS once the Zernio Ads add-on is enabled (`social_ad_spend_daily` already exists).
+- **ROI** (`/social/roi`) — spend→bookings (P2).
+- **Inbox / Posting** (`/social/inbox`, compose) — the deferred Zernio MCP-backed roadmap (§2.5).
+Add a `TABS` entry (optionally `module`/role-gated) and a child route. Nothing else moves.
+
+### 16.6 Effort & acceptance
+- **Effort: S** (~half a day): 1 new shell, 2 page moves, 3 edits, 2 reverts, 2 redirects. No API/DB/migration.
+- **Acceptance:** with `social_media` on, a **Social** tab appears in the sidebar → Overview + Accounts sub-tabs work; with it off, the tab is hidden and `/social*` redirects home. Reports/Settings no longer list Social. `npm run build` green both apps.
 ```

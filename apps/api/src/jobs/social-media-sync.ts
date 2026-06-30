@@ -18,9 +18,6 @@ import type { SocialMediaSyncJob } from '../services/queue.js'
 
 const WINDOW_DAYS = 90
 
-// Organic metric keys present in Zernio's per-day platformMetrics.
-const METRIC_KEYS = ['impressions', 'reach', 'likes', 'comments', 'shares', 'saves', 'clicks', 'views'] as const
-
 function toISODate(d: Date): string {
   return d.toISOString().slice(0, 10)
 }
@@ -140,23 +137,61 @@ export async function runSocialMediaSync(job: SocialMediaSyncJob): Promise<void>
       }
     } catch (e) { if (!(e instanceof ZernioError && [403, 404].includes(e.status))) throw e }
 
-    // 3) Per-day organic metrics (per platform → first account of that platform)
+    // 3) Per-ACCOUNT organic metrics + post catalogue from /analytics (paginated).
+    //    Each post carries platforms[].accountId, so we attribute it to its page's
+    //    account and bucket by publish day → per-account daily reach/views/engagement.
+    //    Chosen over account-insights because those cap at 88 days and IG
+    //    views/engagement are total_value-only; posts are uniform, per-account and
+    //    per-day, and keep multiple Facebook Pages separated. (FB post reach is 0
+    //    from Meta — views is the FB visibility metric.) See GMS/SOCIAL_MEDIA.md §16.
+    const perAcctDay = new Map<string, { reach: number; views: number; engagement: number }>() // `${accountDbId}|${day}`
+    const postRows: any[] = []
     try {
-      const dm = await zernio.dailyMetrics(key, { profileId, fromDate, toDate })
-      for (const day of arr(dm.data, 'dailyData')) {
-        const date = String(day?.date || '').slice(0, 10)
-        if (!date) continue
-        const pm = day.platformMetrics || {}
-        for (const platform of Object.keys(pm)) {
-          const acctDbId = firstByPlatform.get(platform.toLowerCase())
+      for (let page = 1; page <= 20; page++) {
+        const { data } = await zernio.analytics(key, { profileId, fromDate, toDate, limit: 100, page })
+        const posts = arr(data, 'posts')
+        if (!posts.length) break
+        for (const post of posts) {
+          const plat = Array.isArray(post.platforms) ? post.platforms[0] : null
+          const acctDbId = byZernioId.get(String(plat?.accountId)) || firstByPlatform.get(String(post.platform || '').toLowerCase())
           if (!acctDbId) continue
-          for (const metric of METRIC_KEYS) {
-            const v = pm[platform]?.[metric]
-            if (v != null) metricRows.push({ accountDbId: acctDbId, stat_date: date, metric, value: num(v) })
+          const a = post.analytics || plat?.analytics || {}
+          const day = String(post.publishedAt || post.scheduledFor || '').slice(0, 10)
+          if (day) {
+            const k = `${acctDbId}|${day}`
+            if (!perAcctDay.has(k)) perAcctDay.set(k, { reach: 0, views: 0, engagement: 0 })
+            const agg = perAcctDay.get(k)!
+            agg.reach += num(a.reach)
+            agg.views += num(a.views)
+            agg.engagement += num(a.likes) + num(a.comments) + num(a.shares) + num(a.saves)
           }
+          const ext = post._id || plat?.platformPostId
+          if (ext) postRows.push({
+            organization_id: organizationId,
+            social_account_id: acctDbId,
+            external_post_id: String(ext),
+            post_type: post.mediaType ?? null,
+            permalink: post.platformPostUrl ?? plat?.platformPostUrl ?? null,
+            caption: post.content ?? null,
+            thumbnail_url: post.thumbnailUrl ?? null,
+            posted_at: post.publishedAt ? new Date(post.publishedAt).toISOString() : null,
+            metrics: a,
+            metrics_fetched_at: new Date().toISOString(),
+          })
         }
+        const pag = (data as any)?.pagination
+        const hasMore = pag ? (pag.hasMore ?? pag.hasNextPage ?? (Number(pag.page) < Number(pag.totalPages))) : posts.length >= 100
+        if (!hasMore) break
       }
     } catch (e) { if (!(e instanceof ZernioError && [403, 404].includes(e.status))) throw e }
+    // Emit per-account daily metric rows (store only the combined 'engagement' so
+    // the overview, which sums likes/comments/etc., doesn't double-count).
+    for (const [k, agg] of perAcctDay) {
+      const [acctDbId, day] = k.split('|')
+      metricRows.push({ accountDbId: acctDbId, stat_date: day, metric: 'reach', value: agg.reach })
+      metricRows.push({ accountDbId: acctDbId, stat_date: day, metric: 'views', value: agg.views })
+      metricRows.push({ accountDbId: acctDbId, stat_date: day, metric: 'engagement', value: agg.engagement })
+    }
 
     // Persist metrics: delete each account's window, then insert
     const byAccount = new Map<string, MetricRow[]>()
@@ -179,34 +214,21 @@ export async function runSocialMediaSync(job: SocialMediaSyncJob): Promise<void>
       }
     }
 
-    // 4) Posts → social_posts (attribute via platforms[].accountId)
-    try {
-      const an = await zernio.analytics(key, { profileId, fromDate, toDate, limit: 50 })
-      const postRows: any[] = []
-      for (const post of arr(an.data, 'posts')) {
-        const plat = Array.isArray(post.platforms) ? post.platforms[0] : null
-        const acctDbId = byZernioId.get(String(plat?.accountId)) || firstByPlatform.get(String(post.platform || '').toLowerCase())
-        const ext = post._id || plat?.platformPostId
-        if (!acctDbId || !ext) continue
-        postRows.push({
-          organization_id: organizationId,
-          social_account_id: acctDbId,
-          external_post_id: String(ext),
-          post_type: post.mediaType ?? null,
-          permalink: post.platformPostUrl ?? plat?.platformPostUrl ?? null,
-          caption: post.content ?? null,
-          thumbnail_url: post.thumbnailUrl ?? null,
-          posted_at: post.publishedAt ? new Date(post.publishedAt).toISOString() : null,
-          metrics: post.analytics ?? {},
-          metrics_fetched_at: new Date().toISOString(),
-        })
-      }
-      if (postRows.length) {
-        const { error } = await supabaseAdmin.from('social_posts').upsert(postRows, { onConflict: 'organization_id,social_account_id,external_post_id' })
+    // 4) Posts → social_posts (deduped; collected in step 3)
+    {
+      const seen = new Set<string>()
+      const uniquePosts = postRows.filter((p) => {
+        const k = `${p.social_account_id}|${p.external_post_id}`
+        if (seen.has(k)) return false
+        seen.add(k)
+        return true
+      })
+      if (uniquePosts.length) {
+        const { error } = await supabaseAdmin.from('social_posts').upsert(uniquePosts, { onConflict: 'organization_id,social_account_id,external_post_id' })
         if (error) throw error
-        rowsWritten += postRows.length
+        rowsWritten += uniquePosts.length
       }
-    } catch (e) { if (!(e instanceof ZernioError && [403, 404].includes(e.status))) throw e }
+    }
 
     // 5) Ad spend (Ads add-on gated — skip gracefully if 403)
     try {

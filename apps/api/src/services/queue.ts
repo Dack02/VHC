@@ -121,7 +121,8 @@ export const QUEUE_NAMES = {
   SMS: 'sms',
   DMS_IMPORT: 'dms-import',
   DAILY_SMS_OVERVIEW: 'daily-sms-overview',
-  CLOSE_STALE_ENTRIES: 'close-stale-entries'
+  CLOSE_STALE_ENTRIES: 'close-stale-entries',
+  SOCIAL_MEDIA_SYNC: 'social-media-sync'
 } as const
 
 // Create queues
@@ -217,6 +218,19 @@ export const closeStaleEntriesQueue = new Queue(QUEUE_NAMES.CLOSE_STALE_ENTRIES,
   }
 })
 
+export const socialMediaSyncQueue = new Queue(QUEUE_NAMES.SOCIAL_MEDIA_SYNC, {
+  connection: redis as any,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 10000
+    },
+    removeOnComplete: 50,
+    removeOnFail: 100
+  }
+})
+
 // Job types
 export interface DailySmsOverviewJob {
   type: 'daily_sms_overview'
@@ -226,6 +240,12 @@ export interface DailySmsOverviewJob {
 export interface CloseStaleEntriesJob {
   type: 'close_stale_entries'
   organizationId: string
+}
+
+export interface SocialMediaSyncJob {
+  type: 'social_media_sync'
+  organizationId: string
+  trigger?: 'scheduled' | 'manual'
 }
 
 export interface SendEmailJob {
@@ -570,6 +590,56 @@ export async function cancelCloseStaleEntriesSchedule(organizationId: string) {
   }
 }
 
+// Social Media Sync Queue Functions
+export async function queueSocialMediaSync(job: SocialMediaSyncJob) {
+  // Unique job id per org so a manual "sync now" can run alongside the scheduled one
+  const jobId = `social-media-sync-${job.organizationId}-${Date.now()}`
+  return socialMediaSyncQueue.add('sync', job, { jobId })
+}
+
+export async function scheduleSocialMediaSync(
+  organizationId: string,
+  hour: number,
+  minute: number
+) {
+  const jobId = `social-media-scheduled-${organizationId}`
+
+  // Remove existing repeatable job first
+  await cancelSocialMediaSyncSchedule(organizationId)
+
+  // Daily at the configured time, Europe/London timezone
+  return socialMediaSyncQueue.add(
+    'scheduled',
+    {
+      type: 'social_media_sync',
+      organizationId,
+      trigger: 'scheduled'
+    } as SocialMediaSyncJob,
+    {
+      jobId,
+      repeat: {
+        pattern: `${minute} ${hour} * * *`,
+        tz: 'Europe/London'
+      }
+    }
+  )
+}
+
+export async function cancelSocialMediaSyncSchedule(organizationId: string) {
+  const jobId = `social-media-scheduled-${organizationId}`
+  const job = await socialMediaSyncQueue.getJob(jobId)
+  if (job) {
+    await job.remove()
+  }
+
+  const repeatableJobs = await socialMediaSyncQueue.getRepeatableJobs()
+  for (const repeatJob of repeatableJobs) {
+    if (repeatJob.id === jobId || repeatJob.name === jobId) {
+      await socialMediaSyncQueue.removeRepeatableByKey(repeatJob.key)
+    }
+  }
+}
+
 // Check Redis connection (with timeout to prevent hanging when Redis is unreachable)
 export async function checkRedisConnection(): Promise<boolean> {
   try {
@@ -595,5 +665,6 @@ export async function closeQueues() {
   await dmsImportQueue.close()
   await dailySmsOverviewQueue.close()
   await closeStaleEntriesQueue.close()
+  await socialMediaSyncQueue.close()
   await redis.quit()
 }

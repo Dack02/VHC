@@ -45,7 +45,6 @@ const HC_CARD_SELECT = `
   jobsheet_number, jobsheet_status, job_number, jobsheet_id, booked_repairs,
   mileage_in, key_location, checkin_notes, advisor_notes,
   red_count, amber_count, green_count, tech_started_at, tech_completed_at,
-  total_tech_time_minutes,
   jobsheet:jobsheets!health_checks_jobsheet_id_fkey(reference),
   vehicle:vehicles(id, registration, make, model, year, color),
   customer:customers(id, first_name, last_name, mobile),
@@ -559,11 +558,12 @@ workshopBoard.get('/week', authorize([...ALL_ROLES]), async (c) => {
       const estimatedHours = meta?.estimated_hours != null ? Number(meta.estimated_hours) : bookedRepairsHours(hc.booked_repairs)
       const cust = hc.customer as { first_name?: string; last_name?: string } | null
       return {
-        healthCheckId: hc.id,
+        healthCheckId: hc.id as string | null,
+        jobsheetId: null as string | null,
         technicianId: hc.technician_id ?? null,
         plannedStartAt: (meta?.planned_start_at as string) ?? null,
         estimatedHours,
-        status: hc.status,
+        status: hc.status as string | null,
         jobState: hc.job_state ?? 'arrived',
         registration: (hc.vehicle as { registration?: string } | null)?.registration ?? null,
         customerName: cust ? `${cust.first_name ?? ''} ${cust.last_name ?? ''}`.trim() || null : null,
@@ -573,6 +573,13 @@ workshopBoard.get('/week', authorize([...ALL_ROLES]), async (c) => {
         isClockedOn: clockedOn.has(hc.id),
       }
     })
+
+    // VHC-less jobsheets (estimate conversions / "Requires VHC" unticked) belong in the
+    // planner too (TECH_JOB_MODEL.md §7). Lean projection: placed on their assigned tech's
+    // row only via a planned_start (they have no workshop_cards meta, so they default to the
+    // tray); healthCheckId:null + jobsheetId routes the click to /jobsheets/:id, non-draggable.
+    const vhcLessWeekCards = await loadVhcLessWeekJobsheets(auth.orgId, siteId, from, to)
+    cards.push(...vhcLessWeekCards)
 
     // Per-tech shift pattern + absences (times trimmed to HH:MM for the client).
     const shiftsByTech: Record<string, Array<{ weekday: number; startTime: string; endTime: string }>> = {}
@@ -903,6 +910,69 @@ async function loadVhcLessBoardCards(orgId: string, siteId: string, date: string
       advisor: js.advisor,
       latestNote: null,
       notesCount: 0
+    }
+  })
+}
+
+/**
+ * VHC-less jobsheets as lean WEEK-planner cards (TECH_JOB_MODEL.md §7). Mirrors
+ * loadVhcLessBoardCards but for GET /week: no workshop_cards meta exists for these
+ * (that table is health_check_id-keyed), so they carry no planned_start/estimate and
+ * land in the planner tray. healthCheckId:null + jobsheetId → client opens /jobsheets/:id.
+ */
+async function loadVhcLessWeekJobsheets(orgId: string, siteId: string, from: string, to: string): Promise<any[]> {
+  const { data: jsRows } = await supabaseAdmin
+    .from('jobsheets')
+    .select(`id, reference, job_state, due_in_date, assigned_technician_id,
+      vehicle:vehicles(registration),
+      customer:customers(first_name, last_name)`)
+    .eq('organization_id', orgId)
+    .eq('site_id', siteId)
+    .eq('is_draft', false)
+    .eq('is_shell', false)
+    .is('deleted_at', null)
+    .in('job_state', ['due_in', 'arrived', 'in_workshop', 'work_complete'])
+  if (!jsRows || jsRows.length === 0) return []
+
+  const ids = (jsRows as any[]).map((r) => r.id)
+  const { data: linked } = await supabaseAdmin
+    .from('health_checks').select('jobsheet_id').in('jobsheet_id', ids).is('deleted_at', null)
+  const hasHc = new Set((linked || []).map((l: any) => l.jobsheet_id))
+  // VHC-less only; due-in jobs limited to the visible week (mirrors the HC due-in query).
+  const vhcLess = (jsRows as any[]).filter((r) =>
+    !hasHc.has(r.id) && (r.job_state !== 'due_in' || (r.due_in_date && r.due_in_date >= from && r.due_in_date <= to))
+  )
+  if (vhcLess.length === 0) return []
+
+  const clockedJs = new Set<string>()
+  for (const idChunk of chunkIds(vhcLess.map((r) => r.id), 100)) {
+    const { data: times } = await supabaseAdmin
+      .from('technician_time_entries')
+      .select('jobsheet_id, category:time_entry_categories(counts_toward_job)')
+      .in('jobsheet_id', idChunk).is('clock_out_at', null)
+    for (const e of times || []) {
+      const cat = (e as any).category as { counts_toward_job?: boolean } | null
+      if (cat && cat.counts_toward_job === false) continue
+      if ((e as any).jobsheet_id) clockedJs.add((e as any).jobsheet_id as string)
+    }
+  }
+
+  return vhcLess.map((js) => {
+    const cust = js.customer as { first_name?: string; last_name?: string } | null
+    return {
+      healthCheckId: null as string | null,
+      jobsheetId: js.id as string | null,
+      technicianId: js.assigned_technician_id ?? null,
+      plannedStartAt: null as string | null,
+      estimatedHours: null as number | null,
+      status: null as string | null,
+      jobState: js.job_state ?? 'arrived',
+      registration: (js.vehicle as { registration?: string } | null)?.registration ?? null,
+      customerName: cust ? `${cust.first_name ?? ''} ${cust.last_name ?? ''}`.trim() || null : null,
+      customerWaiting: false,
+      promiseTime: null as string | null,
+      dueDate: js.due_in_date ?? null,
+      isClockedOn: clockedJs.has(js.id),
     }
   })
 }

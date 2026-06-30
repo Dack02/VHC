@@ -19,7 +19,8 @@ import {
   type DmsScheduledImportJob,
   type DmsJob,
   type DailySmsOverviewJob,
-  type CloseStaleEntriesJob
+  type CloseStaleEntriesJob,
+  type SocialMediaSyncJob
 } from './queue.js'
 import { runDmsImport } from '../jobs/dms-import.js'
 import { sendEmail, sendHealthCheckReadyEmail, sendReminderEmail, sendCustomerResponseNotification, sendWorkflowStatusNotification, RepairItemResponse } from './email.js'
@@ -1173,6 +1174,23 @@ closeStaleEntriesWorker.on('failed', (job, err) => {
   console.error(`Close stale entries job ${job?.id} failed:`, err.message)
 })
 
+const socialMediaSyncWorker = new Worker(
+  QUEUE_NAMES.SOCIAL_MEDIA_SYNC,
+  async (job: Job<SocialMediaSyncJob>) => {
+    const { runSocialMediaSync } = await import('../jobs/social-media-sync.js')
+    await runSocialMediaSync(job.data)
+  },
+  { connection: redis as any }
+)
+
+socialMediaSyncWorker.on('completed', (job) => {
+  console.log(`Social media sync job ${job.id} completed`)
+})
+
+socialMediaSyncWorker.on('failed', (job, err) => {
+  console.error(`Social media sync job ${job?.id} failed:`, err.message)
+})
+
 /**
  * Graceful shutdown
  */
@@ -1185,7 +1203,8 @@ async function shutdown() {
     reminderWorker.close(),
     dmsImportWorker.close(),
     dailySmsOverviewWorker.close(),
-    closeStaleEntriesWorker.close()
+    closeStaleEntriesWorker.close(),
+    socialMediaSyncWorker.close()
   ])
   await redis.quit()
   process.exit(0)

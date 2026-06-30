@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { DndContext, DragOverlay, PointerSensor, TouchSensor, useSensor, useSensors, useDraggable, useDroppable, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
-import { dayCapacityMinutes, type WeekCard, type WeekColumn, type WeekData } from './types'
+import { dayCapacityMinutes, weekCardKey, type WeekCard, type WeekColumn, type WeekData } from './types'
 import { moveCard, setPlannedStart } from './boardActions'
 
 interface WeekViewProps {
@@ -36,6 +37,7 @@ function dayLabel(day: string): string {
 export default function WeekView({ week, days, today, canDrag, onOpenCard, onPickDay, refresh, onDragActive }: WeekViewProps) {
   const { session } = useAuth()
   const toast = useToast()
+  const navigate = useNavigate()
   const token = session?.accessToken
   const recentDragRef = useRef(false)
   const [activeCard, setActiveCard] = useState<WeekCard | null>(null)
@@ -118,7 +120,7 @@ export default function WeekView({ week, days, today, canDrag, onOpenCard, onPic
   const handleDragStart = (e: DragStartEvent) => {
     recentDragRef.current = true
     onDragActive?.(true)
-    setActiveCard(week.cards.find(c => c.healthCheckId === e.active.id) || null)
+    setActiveCard(week.cards.find(c => weekCardKey(c) === e.active.id) || null)
   }
 
   const handleDragEnd = async (e: DragEndEvent) => {
@@ -127,12 +129,16 @@ export default function WeekView({ week, days, today, canDrag, onOpenCard, onPic
     try {
       const { active, over } = e
       if (!over || !canDrag) return
-      const card = week.cards.find(c => c.healthCheckId === active.id)
+      const card = week.cards.find(c => weekCardKey(c) === active.id)
       if (!card) return
+      // VHC-less jobsheet cards have no workshop_cards meta to place — they're
+      // non-draggable (planner visibility only). Guard defensively.
+      const hcId = card.healthCheckId
+      if (!hcId) return
       const overId = over.id as string
 
       if (overId === TRAY_ID) {
-        if (card.plannedStartAt) { if (await patch(card.healthCheckId, null)) refresh(true) }
+        if (card.plannedStartAt) { if (await patch(hcId, null)) refresh(true) }
         return
       }
       const [techId, day] = overId.split('|')
@@ -142,15 +148,20 @@ export default function WeekView({ week, days, today, canDrag, onOpenCard, onPic
       // about which day/tech; fine-tune the time on the day timeline).
       const plannedStartAt = new Date(`${day}T${week.config.dayStartTime}:00`).toISOString()
       if (card.technicianId !== techId) {
-        if (!(await moveToTech(card.healthCheckId, col.id))) return
+        if (!(await moveToTech(hcId, col.id))) return
       }
-      if (await patch(card.healthCheckId, plannedStartAt)) refresh(true)
+      if (await patch(hcId, plannedStartAt)) refresh(true)
     } finally {
       onDragActive?.(false)
     }
   }
 
-  const openCard = (id: string) => { if (!recentDragRef.current) onOpenCard(id) }
+  // VHC-backed → open the JobDetail modal by HC id; VHC-less → route to /jobsheets/:id.
+  const openCard = (card: WeekCard) => {
+    if (recentDragRef.current) return
+    if (card.healthCheckId) onOpenCard(card.healthCheckId)
+    else if (card.jobsheetId) navigate(`/jobsheets/${card.jobsheetId}`)
+  }
 
   if (techColumns.length === 0) {
     return (
@@ -170,7 +181,7 @@ export default function WeekView({ week, days, today, canDrag, onOpenCard, onPic
           {tray.length === 0 ? (
             <span className="text-xs text-gray-300">Everything is scheduled 🎉</span>
           ) : (
-            tray.map(card => <WeekChip key={card.healthCheckId} card={card} draggable={canDrag} onClick={() => openCard(card.healthCheckId)} />)
+            tray.map(card => <WeekChip key={weekCardKey(card)} card={card} draggable={canDrag} onClick={() => openCard(card)} />)
           )}
         </TrayStrip>
 
@@ -206,7 +217,7 @@ export default function WeekView({ week, days, today, canDrag, onOpenCard, onPic
                   available={capacityHours(col, day)}
                 >
                   {(cellCards.get(`${col.technicianId}|${day}`) || []).map(card => (
-                    <WeekChip key={card.healthCheckId} card={card} draggable={canDrag} compact onClick={() => openCard(card.healthCheckId)} />
+                    <WeekChip key={weekCardKey(card)} card={card} draggable={canDrag} compact onClick={() => openCard(card)} />
                   ))}
                 </WeekCell>
               ))}
@@ -284,7 +295,9 @@ function WeekChip({ card, draggable, compact, onClick }: {
   compact?: boolean
   onClick: () => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: card.healthCheckId, disabled: !draggable })
+  // VHC-less cards (no healthCheckId) are visible but not draggable — they have no
+  // workshop_cards placement row to move.
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: weekCardKey(card), disabled: !draggable || !card.healthCheckId })
   const notArrived = card.status === 'awaiting_arrival'
   return (
     <div

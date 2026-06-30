@@ -99,12 +99,13 @@ import repairTypes from './routes/repair-types.js'
 import expiryTypes from './routes/expiry-types.js'
 import expiryCampaigns from './routes/expiry-campaigns.js'
 import feedback from './routes/feedback.js'
+import socialMedia from './routes/social-media.js'
 import olloDevWebhookRoutes from './routes/webhooks/ollo-dev.js'
 
 // Services
 import { initializeWebSocket } from './services/websocket.js'
 import { checkRedisConnection, updateRedisStatus } from './services/queue.js'
-import { startScheduledCleanupTasks, initializeDailySmsOverviewSchedules, initializeAutoCloseSchedules, initializeDmsImportSchedules, startFollowUpSweepSchedule, startLibraryGapReportSchedule, startFeedbackSyncRetrySchedule } from './services/scheduler.js'
+import { startScheduledCleanupTasks, initializeDailySmsOverviewSchedules, initializeAutoCloseSchedules, initializeDmsImportSchedules, initializeSocialMediaSchedules, startFollowUpSweepSchedule, startLibraryGapReportSchedule, startFeedbackSyncRetrySchedule } from './services/scheduler.js'
 
 const app = new Hono()
 
@@ -328,6 +329,7 @@ app.route('/api/v1/time-entries', timeEntriesRoutes)
 
 // Pricing calculator routes
 app.route('/api/v1/pricing', pricing)
+app.route('/api/v1/social-media', socialMedia)
 
 // Public routes (no auth required)
 app.route('/api/public', publicRoutes)
@@ -371,6 +373,10 @@ checkRedisConnection().then(async (connected) => {
       // Redis restart; without this, scheduled imports silently stop firing).
       initializeDmsImportSchedules().catch(err => {
         logger.error('Failed to initialize DMS import schedules', { error: String(err) })
+      })
+      // Re-register Social Media nightly sync schedules (Zernio buy-layer).
+      initializeSocialMediaSchedules().catch(err => {
+        logger.error('Failed to initialize social media schedules', { error: String(err) })
       })
     } catch (err) {
       logger.error('Failed to start queue workers', { error: String(err) })

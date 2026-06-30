@@ -101,6 +101,12 @@ Use §3 mostly as-is, but `social_connections`/`social_accounts` store **Zernio 
 - Ad spend → `GET /v1/ads/timeline?accountId&fromDate&toDate` → `social_ad_spend_daily`.
 - Connect/health → `GET /v1/connect/{platform}`, `GET /v1/accounts/health`; webhooks `account.connected|disconnected`.
 
+### CLI, MCP & SDKs — where each fits (none is the v1 sync surface)
+Zernio ships **8 official SDKs** (Node `zernio-dev/zernio-node` + Python/Go/Ruby/Java/PHP/.NET/Rust), a **371-command CLI** (`@zernio/cli`), and a registry-listed **MCP** (`mcp.zernio.com/mcp`, ~300 tools) — a decent maturity signal, though it does **not** close the DPA/compliance gap (pilot-gate #1).
+- **Backend sync (v1):** use the **Node SDK** (or thin `fetch`) on our BullMQ schedule — deterministic, cheap. *Not* the CLI, *not* the MCP.
+- **CLI = pilot + ops tool.** JSON-by-default; use it for the **Z0 smoke test** (pilot-gate #6 — capture real `ads:timeline`/`analytics:daily-metrics` JSON with zero code) and for ops (`accounts:health`/reconnect checks). Auth via `ZERNIO_API_KEY`.
+- **MCP = deferred roadmap + internal prototyping.** Profile-scopable, supports Claude/Claude Code. Wrong for headless scheduled sync, but a **ready-made tool layer for the parked P4+ "AI social assistant for dealerships"** (draft/schedule posts, reply to comments, boost) on the Anthropic Claude API we already use — and usable now for dev prototyping.
+
 ### Open questions / pilot gate (before committing — do a paid pilot on ONE dealership)
 1. **DPA / GDPR / EU data-residency / SOC2** — *not published.* We'd route UK dealership PII + tokens through Zernio → **get a signed DPA + residency answer before go-live** (hard gate).
 2. **Vendor maturity** — rebranded from "Late"/getlate.dev in 2026, indie origin → continuity/concentration risk for a core module. The in-house Plan B (this doc) is our insurance.

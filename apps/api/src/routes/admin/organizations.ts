@@ -8,7 +8,7 @@ import { supabaseAdmin } from '../../lib/supabase.js'
 import { buildResetPasswordLink } from '../../lib/authLinks.js'
 import { superAdminMiddleware, logSuperAdminActivity, getClientIp } from '../../middleware/auth.js'
 import { provisionOrganization, ProvisionError } from '../../services/provisioning.js'
-import { getOrgModuleDetail } from '../../services/modules.js'
+import { getOrgModuleDetail, getEffectiveModules } from '../../services/modules.js'
 import { MODULE_MAP, isModuleKey, type ModuleKey } from '../../lib/modules.js'
 import { sendEmail } from '../../services/email.js'
 import crypto from 'crypto'
@@ -1631,6 +1631,98 @@ adminOrgRoutes.patch('/:id/modules', async (c) => {
   }))
 
   return c.json({ success: true, modules })
+})
+
+// =============================================================================
+// OPERATING MODE (VHC-only vs full GMS) — TECH_JOB_MODEL.md §4 / §13
+// =============================================================================
+// operating_mode is *coerced by* the jobsheets module (module-gates-mode): it is
+// inert unless that module is on. This endpoint is the friendly "switch the whole
+// account" control — it flips the jobsheets override AND operating_mode together so
+// the two can never drift. Super-admin only (GMS is effectively a tier).
+
+/**
+ * GET /api/v1/admin/organizations/:id/operating-mode
+ * Effective + stored mode, and whether the jobsheets module is currently on.
+ */
+adminOrgRoutes.get('/:id/operating-mode', async (c) => {
+  const orgId = c.req.param('id')
+  const { data: org } = await supabaseAdmin
+    .from('organizations')
+    .select('id')
+    .eq('id', orgId)
+    .single()
+  if (!org) return c.json({ error: 'Organisation not found' }, 404)
+
+  const { data: settings } = await supabaseAdmin
+    .from('organization_settings')
+    .select('operating_mode')
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  const mods = await getEffectiveModules(orgId)
+  const stored = settings?.operating_mode === 'gms' ? 'gms' : 'vhc_only'
+  // Effective mode = stored, but only if the module that gates it is actually on.
+  const operatingMode = mods.jobsheets ? stored : 'vhc_only'
+
+  return c.json({ operatingMode, storedOperatingMode: stored, jobsheetsModuleEnabled: mods.jobsheets })
+})
+
+/**
+ * PUT /api/v1/admin/organizations/:id/operating-mode
+ * Body: { operatingMode: 'vhc_only' | 'gms' }. Sets the jobsheets module override
+ * (explicit on/off so the mode is definitive regardless of plan default) AND
+ * operating_mode in one atomic upsert.
+ */
+adminOrgRoutes.put('/:id/operating-mode', async (c) => {
+  const superAdmin = c.get('superAdmin')
+  const orgId = c.req.param('id')
+  const body = await c.req.json().catch(() => ({}))
+  const operatingMode = body?.operatingMode
+  if (operatingMode !== 'vhc_only' && operatingMode !== 'gms') {
+    return c.json({ error: "operatingMode must be 'vhc_only' or 'gms'" }, 400)
+  }
+
+  const { data: org } = await supabaseAdmin
+    .from('organizations')
+    .select('id, name')
+    .eq('id', orgId)
+    .single()
+  if (!org) return c.json({ error: 'Organisation not found' }, 404)
+
+  const gms = operatingMode === 'gms'
+  const { data: existing } = await supabaseAdmin
+    .from('organization_settings')
+    .select('module_overrides')
+    .eq('organization_id', orgId)
+    .maybeSingle()
+  const next: Record<string, boolean> = { ...((existing?.module_overrides as Record<string, boolean>) || {}) }
+  next.jobsheets = gms
+
+  const { error } = await supabaseAdmin
+    .from('organization_settings')
+    .upsert(
+      { organization_id: orgId, module_overrides: next, operating_mode: operatingMode, updated_at: new Date().toISOString() },
+      { onConflict: 'organization_id' }
+    )
+  if (error) return c.json({ error: error.message }, 500)
+
+  await logSuperAdminActivity(
+    superAdmin.id,
+    'set_operating_mode',
+    'organization_settings',
+    orgId,
+    { organizationName: org.name, operatingMode },
+    getClientIp(c),
+    c.req.header('User-Agent')
+  )
+
+  const detail = await getOrgModuleDetail(orgId)
+  const modules = detail.map((m) => ({
+    ...m,
+    label: MODULE_MAP[m.key].label,
+    description: MODULE_MAP[m.key].description
+  }))
+  return c.json({ success: true, operatingMode, modules })
 })
 
 export default adminOrgRoutes

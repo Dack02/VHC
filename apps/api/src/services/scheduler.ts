@@ -2,7 +2,7 @@
  * Scheduler Service - Manages automatic reminder scheduling
  */
 
-import { scheduleReminder, cancelReminders, queueNotification, scheduleDailySmsOverview, scheduleCloseStaleEntries, scheduleDmsImport, cancelDmsSchedule } from './queue.js'
+import { scheduleReminder, cancelReminders, queueNotification, scheduleDailySmsOverview, scheduleCloseStaleEntries, scheduleDmsImport, cancelDmsSchedule, scheduleSocialMediaSync } from './queue.js'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { runFollowUpSweep } from './follow-up-engine.js'
 import { sendLibraryGapReport } from './library-gap-report.js'
@@ -377,6 +377,48 @@ export async function initializeAutoCloseSchedules() {
     console.log(`[Auto-close Scheduler] Initialized ${orgs.length} schedule(s)`)
   } catch (error) {
     console.error('[Auto-close Scheduler] Initialization error:', error)
+  }
+}
+
+/**
+ * Re-register the Social Media nightly sync for every org with an active Zernio
+ * connection. Mirrors the DMS scheduler: BullMQ repeatable jobs live in Redis,
+ * so a Redis restart drops them — this restores them on boot (and is called
+ * after a connection is created/updated). Each org pulls organic insights + ad
+ * spend from Zernio into our tables. See GMS/SOCIAL_MEDIA.md §2.5 / §6.
+ */
+export async function initializeSocialMediaSchedules() {
+  try {
+    const { data: conns, error } = await supabaseAdmin
+      .from('social_connections')
+      .select('organization_id, sync_hour, sync_minute, status, zernio_profile_id')
+      .neq('status', 'disabled')
+
+    if (error) {
+      console.error('[Social Media Scheduler] Error querying connections:', error)
+      return
+    }
+
+    const active = (conns || []).filter((c: any) => c.zernio_profile_id)
+    if (active.length === 0) {
+      console.log('[Social Media Scheduler] No active social connections')
+      return
+    }
+
+    for (const conn of active) {
+      const hour = typeof conn.sync_hour === 'number' ? conn.sync_hour : 2
+      const minute = typeof conn.sync_minute === 'number' ? conn.sync_minute : 0
+      try {
+        await scheduleSocialMediaSync(conn.organization_id, hour, minute)
+        console.log(`[Social Media Scheduler] Scheduled org ${conn.organization_id} at ${hour}:${String(minute).padStart(2, '0')}`)
+      } catch (err) {
+        console.error(`[Social Media Scheduler] Failed to schedule for org ${conn.organization_id}:`, err)
+      }
+    }
+
+    console.log(`[Social Media Scheduler] Initialized ${active.length} schedule(s)`)
+  } catch (error) {
+    console.error('[Social Media Scheduler] Initialization error:', error)
   }
 }
 

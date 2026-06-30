@@ -25,7 +25,7 @@ export async function autoCloseStaleTimeEntries(
 
   const { data: openEntries, error } = await supabaseAdmin
     .from('technician_time_entries')
-    .select('id, health_check_id, clock_in_at')
+    .select('id, clock_in_at')
     .eq('organization_id', organizationId)
     .is('clock_out_at', null)
 
@@ -34,7 +34,6 @@ export async function autoCloseStaleTimeEntries(
   }
 
   const nowMs = Date.now()
-  const affectedHcIds = new Set<string>()
 
   for (const entry of openEntries) {
     const clockInMs = new Date(entry.clock_in_at as string).getTime()
@@ -53,30 +52,12 @@ export async function autoCloseStaleTimeEntries(
         closed_reason: 'auto_eod'
       })
       .eq('id', entry.id)
-
-    if (entry.health_check_id) affectedHcIds.add(entry.health_check_id as string)
   }
 
-  // Recompute the denormalised job-time cache (productive segments only) for
-  // each affected health check, and clear its active-entry pointer.
-  for (const hcId of affectedHcIds) {
-    const { data: entries } = await supabaseAdmin
-      .from('technician_time_entries')
-      .select('duration_minutes, category:time_entry_categories(counts_toward_job)')
-      .eq('health_check_id', hcId)
-      .not('clock_out_at', 'is', null)
-
-    const total = (entries || []).reduce((sum, e) => {
-      const cat = e.category as { counts_toward_job?: boolean } | null
-      if (cat && cat.counts_toward_job === false) return sum
-      return sum + ((e.duration_minutes as number) || 0)
-    }, 0)
-
-    await supabaseAdmin
-      .from('health_checks')
-      .update({ total_tech_time_minutes: total, active_time_entry_id: null })
-      .eq('id', hcId)
-  }
+  // P5 (TECH_JOB_MODEL.md §8.5): the segment ledger is the sole source of job time
+  // now — board/efficiency/mobile all sum the (jobsheet-keyed) segments directly, so
+  // the old denormalised health_checks.total_tech_time_minutes / active_time_entry_id
+  // cache is no longer recomputed here. Columns are left in place (additive-safe).
 
   return { closed: openEntries.length }
 }

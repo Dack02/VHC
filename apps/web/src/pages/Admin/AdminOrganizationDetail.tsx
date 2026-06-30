@@ -127,6 +127,8 @@ export default function AdminOrganizationDetail() {
   const [modules, setModules] = useState<OrgModule[]>([])
   const [modulesSaving, setModulesSaving] = useState(false)
   const [modulesMessage, setModulesMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [operatingMode, setOperatingMode] = useState<'vhc_only' | 'gms'>('vhc_only')
+  const [operatingModeSaving, setOperatingModeSaving] = useState(false)
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const [loading, setLoading] = useState(true)
   const [activityLoading, setActivityLoading] = useState(false)
@@ -242,10 +244,38 @@ export default function AdminOrganizationDetail() {
   const fetchModules = async () => {
     if (!session?.accessToken || !id) return
     try {
-      const data = await api<{ modules: OrgModule[] }>(`/api/v1/admin/organizations/${id}/modules`, { token: session.accessToken })
-      setModules(data.modules || [])
+      const [modData, modeData] = await Promise.all([
+        api<{ modules: OrgModule[] }>(`/api/v1/admin/organizations/${id}/modules`, { token: session.accessToken }),
+        api<{ operatingMode: 'vhc_only' | 'gms' }>(`/api/v1/admin/organizations/${id}/operating-mode`, { token: session.accessToken })
+      ])
+      setModules(modData.modules || [])
+      setOperatingMode(modeData.operatingMode === 'gms' ? 'gms' : 'vhc_only')
     } catch (error) {
       console.error('Failed to fetch modules:', error)
+    }
+  }
+
+  // Flip the whole account between VHC-only and full GMS (TECH_JOB_MODEL.md §4) — the
+  // API sets the jobsheets module override + operating_mode together, so re-fetch both.
+  const handleSetOperatingMode = async (mode: 'vhc_only' | 'gms') => {
+    if (!session?.accessToken || !id || mode === operatingMode) return
+    setOperatingModeSaving(true)
+    setModulesMessage(null)
+    try {
+      await api(`/api/v1/admin/organizations/${id}/operating-mode`, {
+        method: 'PUT',
+        token: session.accessToken,
+        body: { operatingMode: mode }
+      })
+      setOperatingMode(mode)
+      await fetchModules()
+      setModulesMessage({ type: 'success', text: `Operating mode set to ${mode === 'gms' ? 'Full GMS' : 'VHC-only'}` })
+      setTimeout(() => setModulesMessage(null), 3000)
+    } catch (error) {
+      console.error('Failed to set operating mode:', error)
+      setModulesMessage({ type: 'error', text: 'Failed to set operating mode' })
+    } finally {
+      setOperatingModeSaving(false)
     }
   }
 
@@ -736,6 +766,44 @@ export default function AdminOrganizationDetail() {
               {modulesMessage.text}
             </div>
           )}
+
+          {/* Operating mode — the one switch that moves the whole account between
+              VHC-only and full GMS (sets the Jobsheets module + mode together). */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="font-semibold text-gray-900">Operating Mode</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                VHC-only runs as a vehicle-health-check tool; Full GMS makes the job sheet the unit of work (job-level technicians, clocking, work lines & invoicing). Switching this sets the Jobsheets module accordingly.
+              </p>
+            </div>
+            <div className="p-6 grid sm:grid-cols-2 gap-3">
+              {([
+                { value: 'vhc_only', title: 'VHC-only', desc: 'Health checks are the top-level record. Job sheets & invoicing hidden.' },
+                { value: 'gms', title: 'Full GMS', desc: 'Job sheet is the job; the health check is a child that generates work lines.' },
+              ] as const).map((opt) => {
+                const active = operatingMode === opt.value
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    disabled={operatingModeSaving}
+                    onClick={() => handleSetOperatingMode(opt.value)}
+                    className={`text-left p-4 rounded-[10px] border transition disabled:opacity-50 ${
+                      active ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${active ? 'border-gray-900 bg-gray-900' : 'border-gray-300'}`} />
+                      <span className="font-semibold text-gray-900">{opt.title}</span>
+                      {active && <span className="text-xs text-gray-400 ml-auto">Current</span>}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1 ml-6">{opt.desc}</p>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-200">
               <h3 className="font-semibold text-gray-900">Module Access</h3>

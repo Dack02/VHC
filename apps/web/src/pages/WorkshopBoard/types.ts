@@ -146,11 +146,14 @@ export function weekStart(date: string): string {
 
 // Lean per-card projection returned by GET /workshop-board/week.
 export interface WeekCard {
-  healthCheckId: string
+  // null for VHC-less jobsheets (TECH_JOB_MODEL.md §7) — those carry jobsheetId and
+  // open /jobsheets/:id; they have no workshop_cards meta so they sit in the tray.
+  healthCheckId: string | null
+  jobsheetId: string | null
   technicianId: string | null
   plannedStartAt: string | null
   estimatedHours: number | null
-  status: string
+  status: string | null
   jobState: JobState
   registration: string | null
   customerName: string | null
@@ -159,6 +162,9 @@ export interface WeekCard {
   dueDate: string | null
   isClockedOn: boolean
 }
+
+// Stable key / dnd id for a week card (VHC-backed → HC id; VHC-less → jobsheet id).
+export const weekCardKey = (c: WeekCard): string => c.healthCheckId ?? c.jobsheetId ?? ''
 
 export interface WeekColumn {
   id: string

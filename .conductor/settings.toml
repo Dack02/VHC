@@ -1,0 +1,42 @@
+#:schema https://conductor.build/schemas/settings.repo.schema.json
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Conductor shared repository settings — VHC (Vehicle Health Check) monorepo
+#
+# Turborepo with three apps under apps/* (api, web, mobile) + packages/shared,
+# managed with npm workspaces (root package-lock.json, packageManager npm@10.2.0).
+# Committed so every teammate's Conductor workspaces are set up identically.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Copy the gitignored, per-app .env files into every new workspace so the apps
+# can boot immediately. The committed .env.example files already ship with the
+# worktree, so they are intentionally NOT listed here.
+file_include_globs = """
+.env
+.env.local
+apps/*/.env
+apps/*/.env.local
+"""
+
+[scripts]
+# Runs once when a workspace is created. npm workspaces installs every app and
+# package from the single root lockfile.
+setup = "npm install"
+
+# The Run button starts the whole dev stack via Turbo:
+#   api    -> http://localhost:5180  (Hono API + BullMQ worker)
+#   web    -> http://localhost:5181  (Vite dashboard)
+#   mobile -> http://localhost:5182  (Vite technician PWA)
+run = "npm run dev"
+
+# One workspace runs at a time. The apps bind FIXED ports (5180-5182) and
+# reference each other by them (web/mobile VITE_API_URL -> http://localhost:5180),
+# and all workspaces share one cloud dev Supabase DB + Redis/BullMQ queue. Two
+# live stacks at once would collide on ports and double-process queued jobs.
+# (This is also why CONDUCTOR_PORT is not threaded in: only the API port is
+# env-driven, and shifting it alone would break the web/mobile -> API wiring.)
+run_mode = "nonconcurrent"
+
+# Before archive: drop the local Turbo cache. Safe no-op if it is absent; the
+# worktree itself (node_modules, dist, ...) is removed by Conductor on archive.
+archive = "rm -rf .turbo"

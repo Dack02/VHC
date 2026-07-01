@@ -60,7 +60,7 @@ export async function sendEstimateToCustomer(params: {
   const { data: est } = await supabaseAdmin
     .from('estimates')
     .select(`
-      id, reference, public_token, valid_until,
+      id, reference, public_token, valid_until, site_id,
       customer:customers(id, first_name, last_name, email, mobile),
       vehicle:vehicles(registration, make, model)
     `)
@@ -96,8 +96,8 @@ export async function sendEstimateToCustomer(params: {
   }))
   const total = repairItems.reduce((s, r) => s + r.totalIncVat, 0)
 
-  // 3. Branding + context.
-  const branding = await getOrganizationBranding(orgId)
+  // 3. Branding + context (site-aware — §5).
+  const branding = await getOrganizationBranding(orgId, (est as { site_id?: string | null }).site_id)
   const publicUrl = `${process.env.PUBLIC_APP_URL || 'http://localhost:5183'}/estimate/${est.public_token}`
   const customerName = `${customer?.first_name || ''} ${customer?.last_name || ''}`.trim() || 'there'
   const context: TemplateContext = {

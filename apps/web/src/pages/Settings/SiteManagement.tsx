@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api, ApiError } from '../../lib/api'
@@ -10,6 +10,9 @@ interface Site {
   address: string | null
   phone: string | null
   email: string | null
+  logoUrl: string | null
+  primaryColor: string | null
+  website: string | null
   isActive: boolean
   usersCount: number
   healthChecksCount: number
@@ -17,8 +20,13 @@ interface Site {
   updatedAt: string | null
 }
 
+interface SeparationState {
+  shareCustomersAcrossSites: boolean
+  readiness: { customersWithoutSite: number; vehiclesWithoutSite: number; activeSites: number }
+}
+
 export default function SiteManagement() {
-  const { session } = useAuth()
+  const { session, user } = useAuth()
   const toast = useToast()
   const [sites, setSites] = useState<Site[]>([])
   const [loading, setLoading] = useState(true)
@@ -28,6 +36,11 @@ export default function SiteManagement() {
   const [editAddress, setEditAddress] = useState('')
   const [editPhone, setEditPhone] = useState('')
   const [editEmail, setEditEmail] = useState('')
+  const [editLogoUrl, setEditLogoUrl] = useState('')
+  const [editPrimaryColor, setEditPrimaryColor] = useState('')
+  const [editWebsite, setEditWebsite] = useState('')
+  const [separation, setSeparation] = useState<SeparationState | null>(null)
+  const [savingSeparation, setSavingSeparation] = useState(false)
   const [showAddRow, setShowAddRow] = useState(false)
   const [newName, setNewName] = useState('')
   const [newAddress, setNewAddress] = useState('')
@@ -37,7 +50,38 @@ export default function SiteManagement() {
 
   useEffect(() => {
     fetchSites()
+    fetchSeparation()
   }, [])
+
+  const fetchSeparation = async () => {
+    if (!user?.organization?.id) return
+    try {
+      const data = await api<SeparationState>(
+        `/api/v1/organizations/${user.organization.id}/customer-separation`,
+        { token: session?.accessToken }
+      )
+      setSeparation(data)
+    } catch {
+      // non-fatal — toggle card just won't show
+    }
+  }
+
+  const handleToggleSeparation = async (share: boolean) => {
+    if (!user?.organization?.id) return
+    try {
+      setSavingSeparation(true)
+      await api(
+        `/api/v1/organizations/${user.organization.id}/customer-separation`,
+        { method: 'PATCH', body: { shareCustomersAcrossSites: share }, token: session?.accessToken }
+      )
+      toast.success(share ? 'Customers shared across sites' : 'Customers separated per site')
+      await fetchSeparation()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update setting')
+    } finally {
+      setSavingSeparation(false)
+    }
+  }
 
   const fetchSites = async () => {
     try {
@@ -96,6 +140,9 @@ export default function SiteManagement() {
     setEditAddress(site.address || '')
     setEditPhone(site.phone || '')
     setEditEmail(site.email || '')
+    setEditLogoUrl(site.logoUrl || '')
+    setEditPrimaryColor(site.primaryColor || '')
+    setEditWebsite(site.website || '')
   }
 
   const handleSaveEdit = async () => {
@@ -111,7 +158,10 @@ export default function SiteManagement() {
             name: editName.trim(),
             address: editAddress.trim() || null,
             phone: editPhone.trim() || null,
-            email: editEmail.trim() || null
+            email: editEmail.trim() || null,
+            logoUrl: editLogoUrl.trim() || null,
+            primaryColor: editPrimaryColor.trim() || null,
+            website: editWebsite.trim() || null
           },
           token: session?.accessToken
         }
@@ -184,6 +234,40 @@ export default function SiteManagement() {
         )}
       </div>
 
+      {/* Per-site customer/vehicle separation (GMS/GROUPS_AND_SITES.md §4.4b) */}
+      {separation && separation.readiness.activeSites > 1 && (
+        <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-5 mb-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">Customer &amp; vehicle records</h2>
+              <p className="text-sm text-gray-500 mt-1 max-w-2xl">
+                {separation.shareCustomersAcrossSites
+                  ? 'Customers and vehicles are shared across all sites in this organisation.'
+                  : 'Each site keeps its own separate customer and vehicle book. Org and site admins without an assigned site still see every site.'}
+              </p>
+            </div>
+            <button
+              onClick={() => handleToggleSeparation(!separation.shareCustomersAcrossSites)}
+              disabled={savingSeparation}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full transition-colors disabled:opacity-50 ${separation.shareCustomersAcrossSites ? 'bg-gray-300' : 'bg-primary'}`}
+              title={separation.shareCustomersAcrossSites ? 'Switch to separated per site' : 'Switch to shared across sites'}
+            >
+              <span className={`inline-block h-5 w-5 mt-0.5 rounded-full bg-white shadow transform transition-transform ${separation.shareCustomersAcrossSites ? 'translate-x-1' : 'translate-x-5'}`} />
+            </button>
+          </div>
+          <div className="mt-3 flex items-center gap-3 text-xs">
+            <span className={`px-2 py-0.5 rounded-full font-medium ${separation.shareCustomersAcrossSites ? 'bg-gray-100 text-gray-600' : 'bg-primary/10 text-primary'}`}>
+              {separation.shareCustomersAcrossSites ? 'Shared across sites' : 'Separated per site'}
+            </span>
+            {!separation.shareCustomersAcrossSites && (separation.readiness.customersWithoutSite > 0 || separation.readiness.vehiclesWithoutSite > 0) && (
+              <span className="text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+                {separation.readiness.customersWithoutSite} customer(s) and {separation.readiness.vehiclesWithoutSite} vehicle(s) have no site yet — they won&apos;t appear under separation until assigned to a site.
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="bg-white border border-gray-200 shadow-sm overflow-hidden rounded-none">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
@@ -220,7 +304,8 @@ export default function SiteManagement() {
               </tr>
             ) : (
               sites.map((site) => (
-                <tr key={site.id} className={`hover:bg-gray-50 ${!site.isActive ? 'opacity-50' : ''}`}>
+                <Fragment key={site.id}>
+                <tr className={`hover:bg-gray-50 ${!site.isActive ? 'opacity-50' : ''}`}>
                   <td className="px-6 py-3 whitespace-nowrap">
                     {editingId === site.id ? (
                       <input
@@ -324,6 +409,46 @@ export default function SiteManagement() {
                     )}
                   </td>
                 </tr>
+                {editingId === site.id && (
+                  <tr className="bg-gray-50/60">
+                    <td colSpan={7} className="px-6 pb-4 pt-0">
+                      <p className="text-xs font-medium text-gray-500 mb-2">Site branding (overrides organisation defaults on this site&apos;s quotes, reports &amp; messages)</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Logo URL</label>
+                          <input
+                            type="text"
+                            value={editLogoUrl}
+                            onChange={(e) => setEditLogoUrl(e.target.value)}
+                            placeholder="https://…/logo.png"
+                            className="w-full px-2 py-1 border border-gray-300 rounded-none text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Primary colour</label>
+                          <input
+                            type="text"
+                            value={editPrimaryColor}
+                            onChange={(e) => setEditPrimaryColor(e.target.value)}
+                            placeholder="#16191f"
+                            className="w-full px-2 py-1 border border-gray-300 rounded-none text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Website</label>
+                          <input
+                            type="text"
+                            value={editWebsite}
+                            onChange={(e) => setEditWebsite(e.target.value)}
+                            placeholder="www.example.com"
+                            className="w-full px-2 py-1 border border-gray-300 rounded-none text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                          />
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))
             )}
 

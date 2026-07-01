@@ -44,6 +44,9 @@ sites.get('/', async (c) => {
         phone: site.phone,
         email: site.email,
         settings: site.settings,
+        logoUrl: site.logo_url,
+        primaryColor: site.primary_color,
+        website: site.website,
         isActive: site.is_active,
         createdAt: site.created_at,
         updatedAt: site.updated_at,
@@ -136,6 +139,9 @@ sites.get('/:id', async (c) => {
       phone: site.phone,
       email: site.email,
       settings: site.settings,
+      logoUrl: site.logo_url,
+      primaryColor: site.primary_color,
+      website: site.website,
       createdAt: site.created_at,
       updatedAt: site.updated_at
     })
@@ -151,7 +157,7 @@ sites.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin']), async
     const auth = c.get('auth')
     const { id } = c.req.param()
     const body = await c.req.json()
-    const { name, address, phone, email, settings } = body
+    const { name, address, phone, email, settings, logoUrl, primaryColor, website } = body
 
     // Site admins can only update their own site
     if (auth.user.role === 'site_admin' && id !== auth.user.siteId) {
@@ -176,6 +182,10 @@ sites.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin']), async
     if (phone !== undefined) updateData.phone = phone
     if (email !== undefined) updateData.email = email
     if (settings !== undefined) updateData.settings = settings
+    // Site-level branding (GMS/GROUPS_AND_SITES.md §5) — overrides org defaults.
+    if (logoUrl !== undefined) updateData.logo_url = logoUrl
+    if (primaryColor !== undefined) updateData.primary_color = primaryColor
+    if (website !== undefined) updateData.website = website
 
     const { data: site, error } = await supabaseAdmin
       .from('sites')
@@ -195,6 +205,9 @@ sites.patch('/:id', authorize(['super_admin', 'org_admin', 'site_admin']), async
       phone: site.phone,
       email: site.email,
       settings: site.settings,
+      logoUrl: site.logo_url,
+      primaryColor: site.primary_color,
+      website: site.website,
       updatedAt: site.updated_at
     })
   } catch (error) {

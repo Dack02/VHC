@@ -48,6 +48,11 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Plans',
         icon: p('M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z'),
       },
+      {
+        to: '/admin/groups',
+        label: 'Groups',
+        icon: p('M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 10-4-4 4 4 0 004 4zm6 0a3 3 0 10-2.5-4.5'),
+      },
     ],
   },
   {

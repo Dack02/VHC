@@ -8,8 +8,16 @@ import { supabaseAdmin } from './supabase.js'
  *
  * Returns a PostgREST `.or()` filter string, or null when the term is empty.
  * Matches: document reference, customer first/last/contact name, vehicle reg.
+ *
+ * `scopeSiteId` (GMS/GROUPS_AND_SITES.md §4.2): when the org is separated and the
+ * caller is site-bound, pass the site id so the customer/vehicle id-resolve is
+ * confined to that site. Pass null/undefined for org-wide (shared / oversight).
  */
-export async function buildDocumentSearchOr(orgId: string, q: string): Promise<string | null> {
+export async function buildDocumentSearchOr(
+  orgId: string,
+  q: string,
+  scopeSiteId?: string | null,
+): Promise<string | null> {
   const term = q.trim()
   if (!term) return null
   // PostgREST .or() is comma/paren-delimited, so the ilike VALUE must be wrapped in
@@ -20,20 +28,24 @@ export async function buildDocumentSearchOr(orgId: string, q: string): Promise<s
   // Also match the reg with spaces stripped, so "LR68 KZT" is found by "LR68K".
   const regLike = `"%${esc(term.replace(/\s+/g, ''))}%"`
 
-  const [custRes, vehRes] = await Promise.all([
-    supabaseAdmin
-      .from('customers')
-      .select('id')
-      .eq('organization_id', orgId)
-      .or(`first_name.ilike.${like},last_name.ilike.${like},contact_name.ilike.${like}`)
-      .limit(300),
-    supabaseAdmin
-      .from('vehicles')
-      .select('id')
-      .eq('organization_id', orgId)
-      .or(`registration.ilike.${like},registration.ilike.${regLike}`)
-      .limit(300)
-  ])
+  let custQ = supabaseAdmin
+    .from('customers')
+    .select('id')
+    .eq('organization_id', orgId)
+    .or(`first_name.ilike.${like},last_name.ilike.${like},contact_name.ilike.${like}`)
+    .limit(300)
+  let vehQ = supabaseAdmin
+    .from('vehicles')
+    .select('id')
+    .eq('organization_id', orgId)
+    .or(`registration.ilike.${like},registration.ilike.${regLike}`)
+    .limit(300)
+  if (scopeSiteId) {
+    custQ = custQ.eq('site_id', scopeSiteId)
+    vehQ = vehQ.eq('site_id', scopeSiteId)
+  }
+
+  const [custRes, vehRes] = await Promise.all([custQ, vehQ])
 
   const custIds = (custRes.data || []).map((r) => r.id)
   const vehIds = (vehRes.data || []).map((r) => r.id)

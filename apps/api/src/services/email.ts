@@ -435,9 +435,14 @@ export function isResendConfigured(): boolean {
 }
 
 /**
- * Get organization branding settings
+ * Get organization branding settings.
+ *
+ * When `siteId` is provided, the site's own branding overrides the org default
+ * field-by-field (GMS/GROUPS_AND_SITES.md §5.2): site value → org value →
+ * platform default. With no siteId, behaviour is identical to before (org-only),
+ * so single-site orgs are unaffected.
  */
-export async function getOrganizationBranding(organizationId: string): Promise<OrganizationBranding> {
+export async function getOrganizationBranding(organizationId: string, siteId?: string | null): Promise<OrganizationBranding> {
   const defaultBranding: OrganizationBranding = {
     primaryColor: '#3B82F6',
     organizationName: 'Vehicle Health Check'
@@ -447,11 +452,23 @@ export async function getOrganizationBranding(organizationId: string): Promise<O
     // Branding lives in the organization_settings table — that's where the Org Settings
     // page writes logo/colour/phone/email/website. The legacy organizations.settings JSON
     // column is never populated for branding, so reading it left every value blank.
-    const { data: org } = await supabaseAdmin
+    const orgReq = supabaseAdmin
       .from('organizations')
       .select('name, organization_settings(logo_url, primary_color, phone, email, website)')
       .eq('id', organizationId)
       .single()
+
+    // Fetch the site override in parallel when requested (scoped to the org).
+    const siteReq = siteId
+      ? supabaseAdmin
+          .from('sites')
+          .select('name, logo_url, primary_color, phone, email, website')
+          .eq('id', siteId)
+          .eq('organization_id', organizationId)
+          .maybeSingle()
+      : Promise.resolve({ data: null })
+
+    const [{ data: org }, { data: site }] = await Promise.all([orgReq, siteReq])
 
     if (!org) return defaultBranding
 
@@ -465,13 +482,23 @@ export async function getOrganizationBranding(organizationId: string): Promise<O
       website?: string | null
     } | null | undefined
 
+    const s = site as {
+      name?: string | null
+      logo_url?: string | null
+      primary_color?: string | null
+      phone?: string | null
+      email?: string | null
+      website?: string | null
+    } | null
+
+    // site value → org value → platform default
     return {
-      logoUrl: settings?.logo_url ?? null,
-      primaryColor: settings?.primary_color || defaultBranding.primaryColor,
-      organizationName: org.name || defaultBranding.organizationName,
-      phone: settings?.phone || undefined,
-      email: settings?.email || undefined,
-      website: settings?.website || undefined
+      logoUrl: s?.logo_url ?? settings?.logo_url ?? null,
+      primaryColor: s?.primary_color || settings?.primary_color || defaultBranding.primaryColor,
+      organizationName: s?.name || org.name || defaultBranding.organizationName,
+      phone: s?.phone || settings?.phone || undefined,
+      email: s?.email || settings?.email || undefined,
+      website: s?.website || settings?.website || undefined
     }
   } catch (error) {
     console.error('Failed to get organization branding:', error)

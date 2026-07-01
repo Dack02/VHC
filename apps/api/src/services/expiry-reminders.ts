@@ -62,12 +62,17 @@ function render(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '')
 }
 
-/** Audience for a single campaign (also used by the count preview). */
-export async function getCampaignAudience(orgId: string, typeCode: string, leadDays: number): Promise<ExpiryAudienceRow[]> {
+/**
+ * Audience for a single campaign (also used by the count preview).
+ * `siteId` (§4.6): pass a site to confine the audience to that site (separated
+ * orgs); null/omitted = org-wide (today's behaviour, all sites).
+ */
+export async function getCampaignAudience(orgId: string, typeCode: string, leadDays: number, siteId: string | null = null): Promise<ExpiryAudienceRow[]> {
   const { data, error } = await supabaseAdmin.rpc('expiry_campaign_audience', {
     p_org: orgId,
     p_type_code: typeCode,
-    p_lead_days: leadDays
+    p_lead_days: leadDays,
+    p_site: siteId
   })
   if (error) {
     logger.error('Expiry audience query failed', { orgId, typeCode }, new Error(error.message))
@@ -77,8 +82,8 @@ export async function getCampaignAudience(orgId: string, typeCode: string, leadD
 }
 
 /** Count of the campaign audience (for the settings preview). */
-export async function getCampaignAudienceCount(orgId: string, typeCode: string, leadDays: number): Promise<number> {
-  const rows = await getCampaignAudience(orgId, typeCode, leadDays)
+export async function getCampaignAudienceCount(orgId: string, typeCode: string, leadDays: number, siteId: string | null = null): Promise<number> {
+  const rows = await getCampaignAudience(orgId, typeCode, leadDays, siteId)
   return rows.length
 }
 

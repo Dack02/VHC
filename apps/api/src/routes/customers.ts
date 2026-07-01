@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { supabaseAdmin } from '../lib/supabase.js'
 import { authMiddleware, authorize } from '../middleware/auth.js'
 import { getCustomerInsights } from '../services/customer-insights.js'
+import { getCustomerScopeMode, scopedSiteId } from '../lib/site-scope.js'
 
 const customers = new Hono()
 
@@ -94,6 +95,10 @@ customers.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
     const { search: rawSearch, site_id, limit = '50', offset = '0' } = c.req.query()
     const search = rawSearch?.trim() || ''
 
+    // Per-site separation (§4.2): confine to the actor's site when the org is separated.
+    const scopeMode = await getCustomerScopeMode(auth.orgId)
+    const sSite = scopedSiteId(auth, scopeMode)
+
     let query = supabaseAdmin
       .from('customers')
       .select('*, vehicles:vehicles(id, registration, make, model)', { count: 'exact' })
@@ -101,7 +106,10 @@ customers.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
       .order('created_at', { ascending: false })
       .range(parseInt(offset), parseInt(offset) + parseInt(limit) - 1)
 
-    if (site_id) {
+    if (sSite) {
+      query = query.eq('site_id', sSite)
+    } else if (site_id) {
+      // Explicit site filter (org-wide viewers can narrow to a chosen site)
       query = query.eq('site_id', site_id)
     }
 
@@ -110,11 +118,13 @@ customers.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
 
     if (search) {
       // Search vehicles by registration
-      const { data: vehicleMatches } = await supabaseAdmin
+      let vq = supabaseAdmin
         .from('vehicles')
         .select('customer_id')
         .eq('organization_id', auth.orgId)
         .ilike('registration', `%${search.replace(/\s/g, '')}%`)
+      if (sSite) vq = vq.eq('site_id', sSite)
+      const { data: vehicleMatches } = await vq
 
       if (vehicleMatches && vehicleMatches.length > 0) {
         vehicleCustomerIds = vehicleMatches.map((v: Record<string, unknown>) => v.customer_id as string)
@@ -204,12 +214,17 @@ customers.get('/search', authorize(['super_admin', 'org_admin', 'site_admin', 's
       return c.json({ customers: [] })
     }
 
-    const { data, error } = await supabaseAdmin
+    const scopeMode = await getCustomerScopeMode(auth.orgId)
+    const sSite = scopedSiteId(auth, scopeMode)
+
+    let sq = supabaseAdmin
       .from('customers')
       .select('id, first_name, last_name, email, mobile')
       .eq('organization_id', auth.orgId)
       .or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,email.ilike.%${q}%,mobile.ilike.%${q}%`)
       .limit(10)
+    if (sSite) sq = sq.eq('site_id', sSite)
+    const { data, error } = await sq
 
     if (error) {
       return c.json({ error: error.message }, 500)
@@ -382,11 +397,12 @@ customers.get('/:id/stats', authorize(['super_admin', 'org_admin', 'site_admin',
       return c.json({ error: hcError.message }, 500)
     }
 
-    // Get vehicle count
+    // Get vehicle count (org-scoped; the customer id is already org-validated above)
     const { count: vehicleCount, error: vError } = await supabaseAdmin
       .from('vehicles')
       .select('id', { count: 'exact', head: true })
       .eq('customer_id', id)
+      .eq('organization_id', auth.orgId)
 
     if (vError) {
       return c.json({ error: vError.message }, 500)
@@ -507,12 +523,16 @@ customers.get('/:id', authorize(['super_admin', 'org_admin', 'site_admin', 'serv
     const auth = c.get('auth')
     const { id } = c.req.param()
 
-    const { data: customer, error } = await supabaseAdmin
+    const scopeMode = await getCustomerScopeMode(auth.orgId)
+    const sSite = scopedSiteId(auth, scopeMode)
+
+    let cq = supabaseAdmin
       .from('customers')
       .select('*, vehicles:vehicles(*)')
       .eq('id', id)
       .eq('organization_id', auth.orgId)
-      .single()
+    if (sSite) cq = cq.eq('site_id', sSite)
+    const { data: customer, error } = await cq.single()
 
     if (error || !customer) {
       return c.json({ error: 'Customer not found' }, 404)

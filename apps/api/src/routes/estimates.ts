@@ -9,6 +9,7 @@ import { sendEstimateToCustomer } from '../services/estimate-send.js'
 import { convertEstimateToJobsheet } from '../services/estimate-convert.js'
 import { resolveBookingJobForParent, canBook } from '../services/resource-capacity.js'
 import { buildDocumentSearchOr } from '../lib/list-search.js'
+import { getCustomerScopeMode, scopedSiteId } from '../lib/site-scope.js'
 
 /**
  * Estimates (GMS) — a standalone, pre-booking priced quote. Mirrors the jobsheet
@@ -137,7 +138,8 @@ estimates.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
     }
     // Universal search: reference + customer name + vehicle reg.
     if (q && q.trim()) {
-      const orFilter = await buildDocumentSearchOr(auth.orgId, q)
+      const scopeMode = await getCustomerScopeMode(auth.orgId)
+      const orFilter = await buildDocumentSearchOr(auth.orgId, q, scopedSiteId(auth, scopeMode))
       if (orFilter) query = query.or(orFilter)
     }
 

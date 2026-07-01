@@ -8,6 +8,7 @@ import { authMiddleware, authorize } from '../middleware/auth.js'
 import { requireModule } from '../middleware/require-module.js'
 import { runFollowUpSweep, findFutureBooking, attributeBookingToFollowUp } from '../services/follow-up-engine.js'
 import { getFollowUpSettings } from '../services/follow-up-settings.js'
+import { getCustomerScopeMode, scopedSiteId } from '../lib/site-scope.js'
 import {
   scoreBookingRelatednessDeterministic,
   persistBookingVerdict,
@@ -258,20 +259,22 @@ followUps.get('/', async (c) => {
     // ids first, then constrain the case list by them.
     if (q && q.trim()) {
       const like = `%${q.trim()}%`
-      const [{ data: custRows }, { data: vehRows }] = await Promise.all([
-        supabaseAdmin
-          .from('customers')
-          .select('id')
-          .eq('organization_id', auth.orgId)
-          .or(`first_name.ilike.${like},last_name.ilike.${like},mobile.ilike.${like},email.ilike.${like}`)
-          .limit(1000),
-        supabaseAdmin
-          .from('vehicles')
-          .select('id')
-          .eq('organization_id', auth.orgId)
-          .ilike('registration', like)
-          .limit(1000),
-      ])
+      // Confine customer/vehicle id-resolve to the actor's site when separated (§4.2).
+      const sSite = scopedSiteId(auth, await getCustomerScopeMode(auth.orgId))
+      let custQ = supabaseAdmin
+        .from('customers')
+        .select('id')
+        .eq('organization_id', auth.orgId)
+        .or(`first_name.ilike.${like},last_name.ilike.${like},mobile.ilike.${like},email.ilike.${like}`)
+        .limit(1000)
+      let vehQ = supabaseAdmin
+        .from('vehicles')
+        .select('id')
+        .eq('organization_id', auth.orgId)
+        .ilike('registration', like)
+        .limit(1000)
+      if (sSite) { custQ = custQ.eq('site_id', sSite); vehQ = vehQ.eq('site_id', sSite) }
+      const [{ data: custRows }, { data: vehRows }] = await Promise.all([custQ, vehQ])
       const custIds = (custRows || []).map((r) => r.id)
       const vehIds = (vehRows || []).map((r) => r.id)
       if (custIds.length === 0 && vehIds.length === 0) {

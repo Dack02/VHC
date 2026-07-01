@@ -19,6 +19,8 @@ interface ReportFiltersBarProps {
   onAdvisorChange?: (id: string | null) => void
   showTechnicianFilter?: boolean
   showAdvisorFilter?: boolean
+  /** Extra date presets (e.g. 6m/12m/all), inserted before "Custom Range". Defaults to none. */
+  extraDatePresets?: { value: DatePreset; label: string }[]
 }
 
 interface SiteOption { id: string; name: string }
@@ -40,6 +42,7 @@ export default function ReportFiltersBar({
   onAdvisorChange,
   showTechnicianFilter = false,
   showAdvisorFilter = false,
+  extraDatePresets = [],
 }: ReportFiltersBarProps) {
   const { session, user } = useAuth()
   const [sites, setSites] = useState<SiteOption[]>([])
@@ -102,6 +105,9 @@ export default function ReportFiltersBar({
         <option value="30d">Last 30 Days</option>
         <option value="90d">Last 90 Days</option>
         <option value="ytd">Year to Date</option>
+        {extraDatePresets.map(p => (
+          <option key={p.value} value={p.value}>{p.label}</option>
+        ))}
         <option value="custom">Custom Range</option>
       </select>
 

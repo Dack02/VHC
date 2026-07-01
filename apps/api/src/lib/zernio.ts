@@ -118,6 +118,12 @@ export const zernio = {
   createProfile: (key: string, body: { name: string; description?: string; color?: string }) =>
     zernioRequest('/profiles', { key, method: 'POST', body }),
 
+  updateProfile: (key: string, profileId: string, body: { name?: string; description?: string; color?: string }) =>
+    zernioRequest(`/profiles/${profileId}`, { key, method: 'PUT', body }),
+
+  deleteProfile: (key: string, profileId: string) =>
+    zernioRequest(`/profiles/${profileId}`, { key, method: 'DELETE' }),
+
   /** Start the per-tenant OAuth connect; returns a hosted authUrl (+ state). */
   getConnectUrl: (
     key: string,

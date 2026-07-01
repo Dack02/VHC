@@ -398,10 +398,13 @@ vehicles.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
 
     // Customer is optional — a registration may be looked up for a walk-in
     // before a customer record exists. Validate only when provided.
+    // A vehicle follows its owner's site (§4.5, decision B); fall back to the
+    // actor's site for ownerless walk-in lookups.
+    let vehicleSiteId: string | null = auth.user.siteId
     if (customerId) {
       const { data: customer } = await supabaseAdmin
         .from('customers')
-        .select('id')
+        .select('id, site_id')
         .eq('id', customerId)
         .eq('organization_id', auth.orgId)
         .single()
@@ -409,12 +412,14 @@ vehicles.post('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
       if (!customer) {
         return c.json({ error: 'Customer not found' }, 404)
       }
+      vehicleSiteId = customer.site_id ?? auth.user.siteId
     }
 
     const { data: vehicle, error } = await supabaseAdmin
       .from('vehicles')
       .insert({
         organization_id: auth.orgId,
+        site_id: vehicleSiteId,
         customer_id: customerId || null,
         registration: registration.toUpperCase().replace(/\s/g, ''),
         vin: vin?.toUpperCase(),

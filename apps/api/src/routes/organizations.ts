@@ -351,4 +351,76 @@ organizations.patch('/:id/pricing-settings', authorize(['super_admin', 'org_admi
   }
 })
 
+// GET /api/v1/organizations/:id/customer-separation
+// The per-site customer/vehicle separation toggle + pre-flip readiness counts
+// (GMS/GROUPS_AND_SITES.md §4.4b). `separated` only when the flag is explicitly false.
+organizations.get('/:id/customer-separation', async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    if (id !== auth.orgId) {
+      return c.json({ error: 'Organisation not found' }, 404)
+    }
+
+    const { data: settings } = await supabaseAdmin
+      .from('organization_settings')
+      .select('share_customers_across_sites')
+      .eq('organization_id', id)
+      .maybeSingle()
+
+    // Readiness: rows that have no site yet won't appear once separated.
+    const [{ count: customersWithoutSite }, { count: vehiclesWithoutSite }, { count: siteCount }] = await Promise.all([
+      supabaseAdmin.from('customers').select('id', { count: 'exact', head: true }).eq('organization_id', id).is('site_id', null),
+      supabaseAdmin.from('vehicles').select('id', { count: 'exact', head: true }).eq('organization_id', id).is('site_id', null),
+      supabaseAdmin.from('sites').select('id', { count: 'exact', head: true }).eq('organization_id', id).eq('is_active', true),
+    ])
+
+    return c.json({
+      // shared when true/null/missing; separated only when explicitly false
+      shareCustomersAcrossSites: settings?.share_customers_across_sites !== false,
+      readiness: {
+        customersWithoutSite: customersWithoutSite ?? 0,
+        vehiclesWithoutSite: vehiclesWithoutSite ?? 0,
+        activeSites: siteCount ?? 0,
+      },
+    })
+  } catch (error) {
+    console.error('Get customer-separation error:', error)
+    return c.json({ error: 'Failed to get separation setting' }, 500)
+  }
+})
+
+// PATCH /api/v1/organizations/:id/customer-separation - flip shared/separated
+organizations.patch('/:id/customer-separation', authorize(['super_admin', 'org_admin']), async (c) => {
+  try {
+    const auth = c.get('auth')
+    const { id } = c.req.param()
+    if (id !== auth.orgId) {
+      return c.json({ error: 'Organisation not found' }, 404)
+    }
+    const body = await c.req.json()
+    const { shareCustomersAcrossSites } = body
+    if (typeof shareCustomersAcrossSites !== 'boolean') {
+      return c.json({ error: 'shareCustomersAcrossSites must be a boolean' }, 400)
+    }
+
+    const { error } = await supabaseAdmin
+      .from('organization_settings')
+      .upsert({
+        organization_id: id,
+        share_customers_across_sites: shareCustomersAcrossSites,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'organization_id' })
+
+    if (error) {
+      console.error('Update customer-separation error:', error)
+      return c.json({ error: error.message }, 500)
+    }
+    return c.json({ shareCustomersAcrossSites })
+  } catch (error) {
+    console.error('Update customer-separation error:', error)
+    return c.json({ error: 'Failed to update separation setting' }, 500)
+  }
+})
+
 export default organizations

@@ -8,6 +8,7 @@ import { resolveBookingJobForParent, canBook } from '../services/resource-capaci
 import { formatRepairItem } from './repair-items/helpers.js'
 import { buildHealthCheckTimeline, extractUser, type TimelineEvent } from './health-checks/timeline.js'
 import { buildDocumentSearchOr } from '../lib/list-search.js'
+import { getCustomerScopeMode, scopedSiteId } from '../lib/site-scope.js'
 import { closeOpenSegmentsForTech, resolveCategoryId, computeTimeBreakdown, type TimeSegmentRow } from '../services/clocking.js'
 import { emitToSite, WS_EVENTS } from '../services/websocket.js'
 
@@ -331,7 +332,8 @@ jobsheets.get('/', authorize(['super_admin', 'org_admin', 'site_admin', 'service
     if (date_to) query = query.lte('created_at', date_to)
     // Universal search: reference + customer name + vehicle reg.
     if (q && q.trim()) {
-      const orFilter = await buildDocumentSearchOr(auth.orgId, q)
+      const scopeMode = await getCustomerScopeMode(auth.orgId)
+      const orFilter = await buildDocumentSearchOr(auth.orgId, q, scopedSiteId(auth, scopeMode))
       if (orFilter) query = query.or(orFilter)
     }
 

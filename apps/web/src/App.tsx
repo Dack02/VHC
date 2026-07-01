@@ -85,6 +85,7 @@ const AdminDashboard = lazy(() => import('./pages/Admin/AdminDashboard'))
 const AdminOrganizations = lazy(() => import('./pages/Admin/AdminOrganizations'))
 const AdminOrganizationDetail = lazy(() => import('./pages/Admin/AdminOrganizationDetail'))
 const AdminPlans = lazy(() => import('./pages/Admin/AdminPlans'))
+const AdminGroups = lazy(() => import('./pages/Admin/AdminGroups'))
 const AdminActivity = lazy(() => import('./pages/Admin/AdminActivity'))
 const AdminSettings = lazy(() => import('./pages/Admin/AdminSettings'))
 const AdminStarterTemplate = lazy(() => import('./pages/Admin/AdminStarterTemplate'))
@@ -126,7 +127,7 @@ const DailyOverview = lazy(() => import('./pages/Reports/DailyOverview'))
 const OnlineVhcPerformance = lazy(() => import('./pages/Reports/OnlineVhcPerformance'))
 const SocialMediaLayout = lazy(() => import('./pages/SocialMedia/SocialMediaLayout'))
 const SocialOverview = lazy(() => import('./pages/SocialMedia/SocialOverview'))
-const SocialAccounts = lazy(() => import('./pages/SocialMedia/SocialAccounts'))
+const SocialProfiles = lazy(() => import('./pages/SocialMedia/SocialProfiles'))
 const DeletedHealthChecks = lazy(() => import('./pages/Reports/DeletedHealthChecks'))
 const Today = lazy(() => import('./pages/Today'))
 const PartsLayout = lazy(() => import('./pages/Parts/PartsLayout'))
@@ -213,6 +214,7 @@ function App() {
                       <Route path="organizations" element={<AdminOrganizations />} />
                       <Route path="organizations/:id" element={<AdminOrganizationDetail />} />
                       <Route path="plans" element={<AdminPlans />} />
+                      <Route path="groups" element={<AdminGroups />} />
                       <Route path="activity" element={<AdminActivity />} />
                       <Route path="ai-usage" element={<AIUsageDashboard />} />
                       <Route path="usage" element={<AdminUsageDashboard />} />
@@ -309,7 +311,9 @@ function App() {
                         </Route>
                         <Route path="/social" element={<RequireModule module="social_media"><SocialMediaLayout /></RequireModule>}>
                           <Route index element={<SocialOverview />} />
-                          <Route path="accounts" element={<SocialAccounts />} />
+                          <Route path="profiles" element={<SocialProfiles />} />
+                          {/* Accounts page superseded by Profiles — keep the old path working as a redirect */}
+                          <Route path="accounts" element={<Navigate to="/social/profiles" replace />} />
                         </Route>
                         <Route path="/templates" element={<TemplateList />} />
                         <Route path="/templates/:id" element={<TemplateBuilder />} />

@@ -1,7 +1,7 @@
 # VHC — Groups, Sites & Per-Site Separation
 
-> Status: **Draft v2 (build-ready, Phase 1).** Author: Principal Eng + Product. Date: 2026-06-30.
-> Owner decisions captured 2026-06-30 (see §2). All Phase-1 facts verified against the live tree (settings-read pattern, branding resolver + 9 call sites, create paths, nullable `auth.user.siteId`, audience RPC). **Build NOT started** — §4–§5 are now implementation-ready; §6 reporting deferred by owner; §7 group layer is Phase 2.
+> Status: **Phase 1 BUILT (steps 1–6), typecheck + production-build clean, UNCOMMITTED, migration NOT deployed.** Author: Principal Eng + Product. Date: 2026-06-30.
+> Owner decisions captured 2026-06-30 (see §2). Built: migration `20260702110000_groups_sites_phase1.sql`; create-path stamping; provisioning default; `lib/site-scope.ts` + read sweep; settings toggle + readiness endpoints + Site Management UI; site-aware `getOrganizationBranding` + site branding columns/UI + estimate-path threading; super-admin Groups in-app help (`AdminGroups.tsx`). **Remaining:** VHC SMS/email branding thread (zero-regression follow-up), inbound-SMS/messages site tiebreaker (deferred-delicate), 🟡 parent-inherit audit, §6 reporting (owner-deferred), §7 group layer (Phase 2). **Functional e2e is gated on deploying the migration (commit + push to dev).**
 > Builds on: the existing `sites` table (`supabase/migrations/20240114000000_initial_schema.sql:47`), multi-org auth (`supabase/migrations/20260130200000_multi_org_support.sql`, `apps/api/src/middleware/auth.ts`), super-admin cross-org reporting, and the org-branding source-of-truth fix (`organization_settings`, see memory `org-branding-source-of-truth`).
 
 ---
@@ -34,6 +34,7 @@ Two gaps block the vision:
 | **F** | Separation strength for separate Ltds | **Separate orgs (hard RLS wall) — never soft sites** | Separate legal entities = separate data controllers → never share a customer book across a soft site boundary. The DB-enforced org wall is the GDPR boundary. Resolves R2. |
 | **G** | Tenant mix | **Both kinds exist → build the full three-tier model, configured per tenant** | Phase 1 (per-site toggle) and Phase 2 (group layer) are both required; neither is optional. |
 | **H** | Group billing | **Per-org subscription (today's model); group is reporting-only** | No group-billing concept. Each entity invoiced separately. Resolves R5. |
+| **I** | Group setup | **Super-admin-only; auto-create owner membership in each member org** | Groups live in the platform admin app (not tenant settings); naming the group owner auto-provisions an `org_admin` `users` row per member org. Consent/audit step deferred (not now). See §7.4. |
 
 ---
 
@@ -256,26 +257,69 @@ CREATE INDEX IF NOT EXISTS idx_organizations_group ON organizations(group_id);
 - **Generalise the existing super-admin cross-org aggregation** to "orgs where `group_id = X`."
 - Because the comparison unit is the **site** (§D), the group report is just the §6 per-site report widened across all orgs in the group → **every site under the group, side by side, rolling up to org and to group totals.**
 
+### 7.4 Setting up a group (super-admin flow)
+
+Group creation is a **super-admin-only** operation (decision I) — it grants cross-org visibility, so it lives in the platform admin app, not in any single tenant's settings.
+
+**7.4.1 Schema addition (group membership marker)**
+```sql
+CREATE TABLE IF NOT EXISTS group_members (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  auth_id UUID NOT NULL,                      -- the owner's Supabase auth id (matches users.auth_id)
+  role VARCHAR(30) NOT NULL DEFAULT 'group_admin',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (group_id, auth_id)
+);
+CREATE INDEX IF NOT EXISTS idx_group_members_auth ON group_members(auth_id);
+```
+- An org belongs to **at most one** group (`organizations.group_id` is a single nullable FK — §7.1).
+- `group_members` grants the **cross-org reporting rollup**; the owner's actual per-org access is the `users` row auto-created in each member org (7.4.3).
+
+**7.4.2 Super-admin runbook (the 5 steps)**
+1. **Each legal entity exists as its own org** — normal onboarding per Ltd (own subscription, Xero, branding). Pre-requisite, not a group step.
+2. **Create the group** — Admin app → *Groups* → *Create group* → name (e.g. "Smith Motor Group"). Inserts a `groups` row.
+3. **Add member organizations** — in the group detail screen, add each entity. Sets `organizations.group_id`. The org picker only offers orgs **not already in a group**.
+4. **Assign the group admin** — enter the owner's email. The system **auto-creates an `org_admin` `users` row in every member org** for that `auth_id` (reusing the multi-org model — they may already have one in some) **and** a `group_members` row (decision: auto, Q2-A). One action → access to all entities.
+5. **Hand over** — the owner logs in, uses the existing org switcher (`/auth/switch-org`) to move between entities, and opens **Group Reporting** for the cross-entity rollup.
+
+**7.4.3 Auto-provisioning detail (step 4)**
+- For each member org, upsert a `users` row keyed on `(auth_id, organization_id)` with `role = 'org_admin'`, `is_active = true`, `site_id = NULL` (group owners are org-level, so they read **org-wide** under separation per §4.2 rule 1 — they see every site, which is exactly what a group owner wants).
+- Idempotent: if the owner already has a membership in an org, leave it (don't downgrade an existing role).
+- **Removing an org from a group**: clear `group_id` only. Leave the owner's `users` row in place (removing it is destructive and reversible only by re-invite) — just drop it from the rollup. Flag for later: optional "also revoke my access to this entity" toggle.
+
+**7.4.4 Admin-app screens (super-admin panel)**
+Adds a *Groups* area alongside the existing *Organizations* section of the super-admin panel (the `admin-panel-enhancement` build):
+- **Groups list** — name · # entities · # sites · group admin · *Create group*.
+- **Group detail** —
+  - *Member organizations*: add/remove (the org picker excludes orgs already grouped); each row links to that org's existing admin detail.
+  - *Group admin*: email field → auto-provision (7.4.3); shows which orgs the owner now has access to.
+  - *Open group reporting* (Phase-2 §7.3).
+- **Org detail (existing screen)** — show a **"Group: ‹name›"** badge with a link, and a *Detach from group* action.
+
+> Build note: this is Phase 2 — none of it exists yet (no `groups`/`group_members` tables, no Groups screen). It is specced here so the admin-app work is ready when Phase 1 lands.
+
 ---
 
 ## 8. Build order
 
 **Phase 1 — Site separation (most tenants benefit, stays inside the org wall).** Order matters — the writes and the safe default must land before any read is allowed to filter by site:
 
-1. **Migration** (§4.1): `vehicles.site_id` + index; `organization_settings.share_customers_across_sites BOOLEAN NOT NULL DEFAULT true`; site branding columns (§5.1); the `expiry_campaign_audience` RPC `p_site` param (§4.6). One migration, `IF NOT EXISTS` throughout, timestamp after the latest applied.
-2. **Create-path stamping** (§4.5): wire `site_id` into the 2 customer + 3 vehicle insert paths that omit it. *Must precede step 4* so newly-created rows are scoped.
-3. **Provisioning default** (§4.3): new-org provisioning sets `share_customers_across_sites = false` (separated for new tenants); existing orgs untouched (stay shared).
-4. **Scope helper + read sweep** (§4.2 + §4.4): add `lib/site-scope.ts`; route every 🔴 read through `applyCustomerScope`; verify the 🟡 parents are site-scoped. Behaviour is a no-op until an org is flipped to separated.
-5. **Settings UI + pre-flip readiness** (§4.4b): the toggle in Settings, the null-`site_id` readiness count, and the org-admin-sees-all-sites note.
-6. **Site-level branding** (§5): signature change + thread site through the 9 call sites.
-7. *(Reporting — §6 — deferred per owner; do after the above.)*
+1. ✅ **Migration** (§4.1): `vehicles.site_id` + index; `organization_settings.share_customers_across_sites BOOLEAN NOT NULL DEFAULT true`; site branding columns (§5.1); `expiry_campaign_audience` `p_site` param (§4.6). → `20260702110000_groups_sites_phase1.sql`. **Not yet deployed.**
+2. ✅ **Create-path stamping** (§4.5): `site_id` wired into `dms-import.ts` (customer + vehicle, incl. site-scoped dedup when separated), `vehicles.ts` create (follows owner site), `dms.ts` batch vehicle (follows customer site). Manual customers.ts already stamped. *(dms.ts batch customer has no site source — stays NULL, caught by §4.4b.)*
+3. ✅ **Provisioning default** (§4.3): `provisioning.ts` sets `share_customers_across_sites: false` for new orgs; existing untouched.
+4. ✅ **Scope helper + read sweep** (§4.2 + §4.4): `lib/site-scope.ts` (`getCustomerScopeMode` / `scopedSiteId` / `resolveCustomerScope`); inline scope applied to list-search (jobsheets+estimates), customers list/quick-search/detail (+ org-fix on stats vehicle-count), follow-ups case-search, expiry RPC `p_site` plumbing. No-op until an org is flipped to separated. *(🟡 parent-inherit audit + inbound-SMS/messages tiebreaker still TODO.)*
+5. ✅ **Settings UI + pre-flip readiness** (§4.4b): `GET/PATCH /organizations/:id/customer-separation` (toggle + readiness counts of null-`site_id` customers/vehicles); toggle card on **Site Management** (shows when >1 active site) with the readiness warning + the org-admin-sees-all-sites note.
+6. ◑ **Site-level branding** (§5): resolver `getOrganizationBranding(orgId, siteId?)` (site→org→default), site branding columns + GET/PATCH on `sites` + branding sub-row on Site Management edit. **Threaded** at the customer-facing estimate paths (`public-estimate.ts`, `estimate-send.ts`). **NOT yet threaded** (org-branding fallback, zero-regression): the VHC SMS/email sender chains (`sms.ts` ×3, `email.ts` ×5 — take `organizationId`, need a `siteId` param threaded from `worker.ts`/`status.ts` callers) and `follow-up-engine.ts`/`expiry-reminders.ts`/`library-gap-report.ts`. Tracked as the branding follow-up.
+7. *(Reporting — §6 — deferred per owner.)*
 
-Each step typechecks clean (`npm run build`) before the next. Steps 1–4 are the data-integrity core; 5–6 are the surfacing.
+**All of steps 1–6 (minus the VHC-comms branding thread) + the in-app Groups help are built; both apps typecheck-clean AND production-build clean; uncommitted; migration NOT deployed.**
 
 **Phase 2 — Group layer (additive, inert for single-entity tenants):**
-4. `groups` + `organizations.group_id` (§7.1).
-5. Group-admin access via existing multi-org membership (§7.2).
-6. Cross-org → per-site group rollup reporting (§7.3).
+4. `groups` + `organizations.group_id` + `group_members` (§7.1, §7.4.1).
+5. Super-admin *Groups* admin-app screens + the auto-provisioning flow (§7.4) — create group, add orgs, assign group admin.
+6. Group-admin access via existing multi-org membership + `/auth/switch-org` (§7.2).
+7. Cross-org → per-site group rollup reporting (§7.3).
 
 Phase 1 is the bulk of the value and carries the only real migration risk (§4.3). Phase 2 is purely additive.
 

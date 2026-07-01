@@ -14,13 +14,13 @@ interface SocialTab {
 
 const TABS: SocialTab[] = [
   { to: '/social', label: 'Overview', end: true },
-  { to: '/social/accounts', label: 'Accounts' },
+  { to: '/social/profiles', label: 'Profiles' },
   // Future sub-tabs slot in here (Content, Ads, ROI, Inbox) — see GMS/SOCIAL_MEDIA.md §16.5.
 ]
 
 /**
  * Section shell for the Social Media module. Renders the sub-pages (Overview,
- * Accounts) under a horizontal underline tab bar — mirrors PartsLayout so new
+ * Profiles) under a horizontal underline tab bar — mirrors PartsLayout so new
  * capabilities are a tab + a route, never a re-home. The inner Suspense keeps
  * the tabs mounted while a lazy sub-page chunk loads.
  */

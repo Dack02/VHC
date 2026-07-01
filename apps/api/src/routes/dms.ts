@@ -315,6 +315,9 @@ dms.post('/batch', async (c) => {
             .eq('id', existing.id)
           results.customers.updated++
         } else {
+          // NOTE: the /batch payload carries no site mapping, so site_id stays NULL
+          // here. A separated org importing via /batch must backfill (§4.4b readiness
+          // check) or use the single /customers endpoint which resolves the site.
           await supabaseAdmin
             .from('customers')
             .insert({
@@ -340,14 +343,16 @@ dms.post('/batch', async (c) => {
 
         // Find customer
         let customerId = null
+        let customerSiteId: string | null = null
         if (veh.customerExternalId) {
           const { data: customer } = await supabaseAdmin
             .from('customers')
-            .select('id')
+            .select('id, site_id')
             .eq('organization_id', orgId)
             .eq('external_id', veh.customerExternalId)
             .single()
           customerId = customer?.id
+          customerSiteId = customer?.site_id ?? null
         }
 
         const { data: existing } = await supabaseAdmin
@@ -382,6 +387,7 @@ dms.post('/batch', async (c) => {
             .from('vehicles')
             .insert({
               organization_id: orgId,
+              site_id: customerSiteId,   // vehicle follows its owner's site (§4.5, decision B)
               customer_id: customerId,
               registration: normalizedReg,
               vin: veh.vin?.toUpperCase(),

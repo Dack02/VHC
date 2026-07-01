@@ -1,9 +1,15 @@
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { useReportFilters } from '../Reports/hooks/useReportFilters'
 import type { GroupBy } from '../Reports/hooks/useReportFilters'
 import { useReportData } from '../Reports/hooks/useReportData'
+import { useAuth } from '../../contexts/AuthContext'
+import { api } from '../../lib/api'
 import ReportFiltersBar from '../Reports/components/ReportFiltersBar'
+import ChartCard from '../Reports/components/ChartCard'
 import StatCard from '../Reports/components/StatCard'
+import { SERIES_COLORS } from '../Reports/utils/colors'
 import { formatCurrency, formatNumber, formatDateFull } from '../Reports/utils/formatters'
 
 interface PlatformRow {
@@ -26,6 +32,25 @@ interface PeriodRow {
   views: number
   engagement: number
   spend: number
+  posts: number
+}
+
+type SeriesRow = Record<string, string | number | null>
+interface DeltaPair { recent: number; prior: number }
+interface RecentData {
+  window: number
+  unit: GroupBy
+  followerGrowth: DeltaPair
+  posts: DeltaPair
+  views: DeltaPair
+  engagement: DeltaPair
+}
+interface ChartData {
+  platforms: string[]
+  followers: SeriesRow[]
+  posts: SeriesRow[]
+  views: SeriesRow[]
+  engagement: SeriesRow[]
 }
 
 interface AccountRow {
@@ -42,6 +67,19 @@ interface AccountRow {
   spend: number
 }
 
+interface ProfileBreakdownRow {
+  id: string
+  name: string
+  color: string | null
+  isDefault: boolean
+  followers: number
+  followerGrowth: number
+  views: number
+  engagement: number
+  spend: number
+  accountCount: number
+}
+
 interface OverviewData {
   period: { from: string; to: string }
   groupBy: GroupBy
@@ -49,12 +87,30 @@ interface OverviewData {
   platforms: PlatformRow[]
   accountsBreakdown: AccountRow[]
   periods: PeriodRow[]
+  chart: ChartData
+  recent: RecentData | null
   accounts: { id: string; platform: string; account_type: string; display_name: string | null; handle: string | null }[]
+  profilesBreakdown: ProfileBreakdownRow[]
+  selectedProfileId: string
+}
+
+/** Minimal profile shape for the selector — from GET /profiles. */
+interface ProfileOption {
+  id: string
+  name: string
+  color: string | null
+  isDefault: boolean
 }
 
 const PLATFORM_LABEL: Record<string, string> = { facebook: 'Facebook', instagram: 'Instagram', tiktok: 'TikTok', linkedin: 'LinkedIn', googlebusiness: 'Google Business', twitter: 'X', youtube: 'YouTube', pinterest: 'Pinterest', threads: 'Threads' }
+const PLATFORM_COLOR: Record<string, string> = { facebook: '#1877F2', instagram: '#E1306C', tiktok: '#111111', linkedin: '#0A66C2', googlebusiness: '#34A853', twitter: '#1DA1F2', youtube: '#FF0000', pinterest: '#E60023', threads: '#444444' }
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const PERIOD_HEADER: Record<GroupBy, string> = { day: 'Date', week: 'Week', month: 'Month' }
+const UNIT_WORD: Record<GroupBy, string> = { day: 'day', week: 'week', month: 'month' }
+
+function colorFor(platform: string, i: number): string {
+  return PLATFORM_COLOR[platform] || SERIES_COLORS[i % SERIES_COLORS.length]
+}
 
 function periodLabel(key: string, groupBy: GroupBy): string {
   if (groupBy === 'month') { const [y, m] = key.split('-'); return `${MONTH_NAMES[Number(m) - 1]} ${y}` }
@@ -71,15 +127,110 @@ function growthTrend(row: { followers: number; followerGrowth: number }) {
   }
 }
 
+function TrendTile({ label, pair, unit, signed, decimals }: { label: string; pair: DeltaPair; unit: string; signed?: boolean; decimals?: number }) {
+  const fmt = (x: number) => {
+    const r = decimals ? x.toFixed(decimals) : formatNumber(Math.round(x))
+    return signed && x > 0 ? `+${r}` : r
+  }
+  const delta = pair.recent - pair.prior
+  const cls = delta > 0 ? 'text-green-600' : delta < 0 ? 'text-red-600' : 'text-gray-800'
+  return (
+    <div className="bg-gray-50 rounded-xl p-4">
+      <div className="text-sm text-gray-500 mb-1">{label} <span className="text-gray-400">/ {unit}</span></div>
+      <div className="flex items-baseline gap-1.5">
+        <span className="text-sm text-gray-400 tabular-nums">{fmt(pair.prior)}</span>
+        <span className="text-gray-300">→</span>
+        <span className={`text-2xl font-semibold tabular-nums ${cls}`}>{fmt(pair.recent)}</span>
+      </div>
+      <div className="text-[11px] text-gray-400 mt-1">recent vs prior</div>
+    </div>
+  )
+}
+
 export default function SocialOverview() {
-  const { filters, queryString, setDatePreset, setCustomDateRange, setGroupBy, setSiteId } = useReportFilters()
-  const { data, loading, error } = useReportData<OverviewData>({ endpoint: '/api/v1/social-media/overview', queryString })
+  const { session } = useAuth()
+  const token = session?.accessToken
+  const { filters, queryString, setDatePreset, setCustomDateRange, setGroupBy, setSiteId } = useReportFilters({ period: '12m', groupBy: 'week' })
+
+  // Profile selector — "all" or a specific profile id. Drives the &profileId param.
+  const [profileOptions, setProfileOptions] = useState<ProfileOption[]>([])
+  const [selectedProfileId, setSelectedProfileId] = useState<string>('all')
+
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    api<{ profiles: ProfileOption[] }>('/api/v1/social-media/profiles', { token })
+      .then((res) => { if (!cancelled) setProfileOptions(res.profiles || []) })
+      .catch(() => { if (!cancelled) setProfileOptions([]) })
+    return () => { cancelled = true }
+  }, [token])
+
+  // The overview query is the report filters plus the selected profile.
+  const overviewQuery = useMemo(() => `${queryString}&profileId=${encodeURIComponent(selectedProfileId)}`, [queryString, selectedProfileId])
+  const { data, loading, error } = useReportData<OverviewData>({ endpoint: '/api/v1/social-media/overview', queryString: overviewQuery })
 
   const totals = data?.totals
   const hasData = (data?.accounts?.length ?? 0) > 0
+  const recent = data?.recent ?? null
+  const chartPlatforms = data?.chart?.platforms ?? []
+  const unitWord = UNIT_WORD[filters.groupBy]
+  const profilesBreakdown = data?.profilesBreakdown ?? []
+
+  // The selector options: "All profiles" + each profile (fall back to whatever
+  // the overview returned if the /profiles list hasn't loaded yet).
+  const selectorOptions: ProfileOption[] = profileOptions.length > 0
+    ? profileOptions
+    : profilesBreakdown.map((p) => ({ id: p.id, name: p.name, color: p.color, isDefault: p.isDefault }))
+
+  // Followers re-based to 100 at the period start, so big and small accounts compare on one axis.
+  const followerIndexed = useMemo<SeriesRow[]>(() => {
+    const rows = data?.chart?.followers ?? []
+    const platforms = data?.chart?.platforms ?? []
+    const base: Record<string, number> = {}
+    for (const pl of platforms) {
+      for (const r of rows) { const v = r[pl]; if (v != null) { base[pl] = Number(v); break } }
+    }
+    return rows.map((r) => {
+      const out: SeriesRow = { period: r.period }
+      for (const pl of platforms) {
+        const v = r[pl]
+        out[pl] = v != null && base[pl] ? Math.round((Number(v) / base[pl]) * 1000) / 10 : null
+      }
+      return out
+    })
+  }, [data])
 
   return (
     <div className="space-y-6">
+      {/* Profile selector — All profiles / one profile (deep dive) */}
+      {selectorOptions.length > 0 && (
+        <div className="flex items-center gap-3 overflow-x-auto pb-1">
+          <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-gray-400">Profile</span>
+          <div className="inline-flex shrink-0 items-center gap-1 rounded-[10px] border border-gray-200 bg-gray-50 p-1">
+            <button
+              onClick={() => setSelectedProfileId('all')}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
+                selectedProfileId === 'all' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              All profiles
+            </button>
+            {selectorOptions.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setSelectedProfileId(p.id)}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
+                  selectedProfileId === p.id ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: p.color || '#6366F1' }} />
+                {p.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <ReportFiltersBar
         datePreset={filters.datePreset}
         groupBy={filters.groupBy}
@@ -90,6 +241,11 @@ export default function SocialOverview() {
         onCustomDateRange={setCustomDateRange}
         onGroupByChange={setGroupBy}
         onSiteChange={setSiteId}
+        extraDatePresets={[
+          { value: '6m', label: 'Last 6 Months' },
+          { value: '12m', label: 'Last 12 Months' },
+          { value: 'all', label: 'All Time' },
+        ]}
       />
 
       {error && <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">{error}</div>}
@@ -106,12 +262,133 @@ export default function SocialOverview() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <StatCard label="Followers" value={formatNumber(totals?.followers || 0)} trend={totals ? growthTrend(totals) : undefined} />
-            <StatCard label="Reach" value={formatNumber(totals?.reach || 0)} />
-            <StatCard label="Engagement" value={formatNumber(totals?.engagement || 0)} />
-            <StatCard label="Ad spend" value={formatCurrency(totals?.spend || 0)} />
-          </div>
+          {/* Trajectory — recent vs prior averages (the "is it accelerating" read) */}
+          {recent ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <TrendTile label="Follower growth" pair={recent.followerGrowth} unit={unitWord} signed />
+              <TrendTile label="Posts published" pair={recent.posts} unit={unitWord} decimals={1} />
+              <TrendTile label="Views" pair={recent.views} unit={unitWord} />
+              <TrendTile label="Engagement" pair={recent.engagement} unit={unitWord} />
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <StatCard label="Followers" value={formatNumber(totals?.followers || 0)} trend={totals ? growthTrend(totals) : undefined} />
+              <StatCard label="Views" value={formatNumber(totals?.views || 0)} />
+              <StatCard label="Engagement" value={formatNumber(totals?.engagement || 0)} />
+              <StatCard label="Ad spend" value={formatCurrency(totals?.spend || 0)} />
+            </div>
+          )}
+
+          {/* By profile — only when viewing all profiles and there's more than one.
+              Each card deep-dives into that profile when clicked. */}
+          {selectedProfileId === 'all' && profilesBreakdown.length > 1 && (
+            <div>
+              <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-gray-400">By profile</h2>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {profilesBreakdown.map((p) => {
+                  const accent = p.color || '#6366F1'
+                  const growthCls = p.followerGrowth > 0 ? 'text-green-600' : p.followerGrowth < 0 ? 'text-red-600' : 'text-gray-400'
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setSelectedProfileId(p.id)}
+                      className="group relative overflow-hidden rounded-xl border border-gray-200 bg-white p-5 text-left shadow-sm transition-shadow hover:shadow-md"
+                    >
+                      <div className="absolute inset-y-0 left-0 w-1" style={{ backgroundColor: accent }} />
+                      <div className="flex items-center justify-between">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="inline-block h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: accent }} />
+                          <span className="truncate font-semibold text-gray-900">{p.name}</span>
+                          {p.isDefault && <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">Default</span>}
+                        </div>
+                        <span className="shrink-0 text-gray-300 transition-colors group-hover:text-primary">
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                        </span>
+                      </div>
+
+                      <div className="mt-4 flex items-baseline gap-2">
+                        <span className="text-3xl font-bold tabular-nums text-gray-900">{formatNumber(p.followers)}</span>
+                        <span className={`text-sm font-medium tabular-nums ${growthCls}`}>
+                          {p.followerGrowth > 0 ? '+' : ''}{formatNumber(p.followerGrowth)}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-400">followers · {p.accountCount} account{p.accountCount === 1 ? '' : 's'}</div>
+
+                      <div className="mt-4 grid grid-cols-3 gap-2 border-t border-gray-100 pt-3 text-center">
+                        <div>
+                          <div className="text-sm font-semibold tabular-nums text-gray-900">{formatNumber(p.views)}</div>
+                          <div className="text-[10px] uppercase tracking-wide text-gray-400">Views</div>
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold tabular-nums text-gray-900">{formatNumber(p.engagement)}</div>
+                          <div className="text-[10px] uppercase tracking-wide text-gray-400">Engage</div>
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold tabular-nums text-gray-900">{formatCurrency(p.spend)}</div>
+                          <div className="text-[10px] uppercase tracking-wide text-gray-400">Ad spend</div>
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Hero — follower growth per platform, indexed to 100 at the start */}
+          <ChartCard title="Follower growth by platform" subtitle="Indexed to 100 at the start of the period so platforms of different sizes compare directly.">
+            {followerIndexed.length === 0 ? (
+              <div className="h-64 flex items-center justify-center text-sm text-gray-400">No follower history in this period.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={320}>
+                <LineChart data={followerIndexed} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="period" tickFormatter={(k) => periodLabel(String(k), filters.groupBy)} tick={{ fontSize: 12 }} minTickGap={28} />
+                  <YAxis tick={{ fontSize: 12 }} width={40} domain={['auto', 'auto']} />
+                  <Tooltip
+                    formatter={(v, name) => [v == null ? '—' : `${v}`, PLATFORM_LABEL[String(name)] || String(name)]}
+                    labelFormatter={(k) => periodLabel(String(k), filters.groupBy)}
+                  />
+                  <Legend formatter={(name) => PLATFORM_LABEL[String(name)] || String(name)} />
+                  {chartPlatforms.map((pl, i) => (
+                    <Line key={pl} type="monotone" dataKey={pl} name={pl} stroke={colorFor(pl, i)} strokeWidth={2} dot={false} connectNulls />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+
+          {/* Activity — posts published per period (leading indicator) */}
+          <ChartCard title={`Posts published per ${unitWord}`} subtitle="The activity the team controls directly — the leading indicator the rest follows.">
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={data?.chart?.posts ?? []} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="period" tickFormatter={(k) => periodLabel(String(k), filters.groupBy)} tick={{ fontSize: 12 }} minTickGap={28} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 12 }} width={32} />
+                <Tooltip labelFormatter={(k) => periodLabel(String(k), filters.groupBy)} formatter={(v, name) => [v, PLATFORM_LABEL[String(name)] || String(name)]} />
+                <Legend formatter={(name) => PLATFORM_LABEL[String(name)] || String(name)} />
+                {chartPlatforms.map((pl, i) => (
+                  <Bar key={pl} dataKey={pl} name={pl} stackId="p" fill={colorFor(pl, i)} radius={[2, 2, 0, 0]} />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartCard>
+
+          {/* Visibility — views per period (reach isn't reported for Facebook, so views stands in) */}
+          <ChartCard title={`Views per ${unitWord} by platform`} subtitle="Facebook doesn’t report reach through Zernio, so views is the visibility metric here.">
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={data?.chart?.views ?? []} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="period" tickFormatter={(k) => periodLabel(String(k), filters.groupBy)} tick={{ fontSize: 12 }} minTickGap={28} />
+                <YAxis tick={{ fontSize: 12 }} width={44} tickFormatter={(v) => formatNumber(Number(v))} />
+                <Tooltip labelFormatter={(k) => periodLabel(String(k), filters.groupBy)} formatter={(v, name) => [formatNumber(Number(v)), PLATFORM_LABEL[String(name)] || String(name)]} />
+                <Legend formatter={(name) => PLATFORM_LABEL[String(name)] || String(name)} />
+                {chartPlatforms.map((pl, i) => (
+                  <Line key={pl} type="monotone" dataKey={pl} name={pl} stroke={colorFor(pl, i)} strokeWidth={2} dot={false} connectNulls />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
 
           {/* Per-page (per-account) breakdown */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">

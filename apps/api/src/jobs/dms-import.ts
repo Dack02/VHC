@@ -20,6 +20,7 @@ import {
   GeminiBooking
 } from '../services/gemini-osi.js'
 import { spawnShellJobsheetForVhc } from '../services/shell-jobsheet.js'
+import { getCustomerScopeMode } from '../lib/site-scope.js'
 
 // ============================================
 // Types
@@ -89,7 +90,9 @@ const SWEEP_MAX_MISSING_RATIO = envFloat('DMS_SWEEP_MAX_MISSING_RATIO', 0.5) // 
 async function findOrCreateCustomer(
   organizationId: string,
   booking: GeminiBooking,
-  externalSource: string
+  externalSource: string,
+  siteId: string | null,
+  separated: boolean
 ): Promise<{ customerId: string; created: boolean }> {
   console.log('[DMS Import] findOrCreateCustomer called with:', {
     organizationId,
@@ -100,14 +103,19 @@ async function findOrCreateCustomer(
     mobile: booking.customerMobile
   })
 
+  // When the org keeps customers separated per site, dedup only within this site
+  // (§4.2) — otherwise a site-B import would attach a site-A customer.
+  const dedupSite = separated && siteId ? siteId : null
+
   // First, try to find by external_id
-  const { data: existingByExternal } = await supabaseAdmin
+  let extQ = supabaseAdmin
     .from('customers')
     .select('id')
     .eq('organization_id', organizationId)
     .eq('external_source', externalSource)
     .eq('external_id', booking.customerId)
-    .single()
+  if (dedupSite) extQ = extQ.eq('site_id', dedupSite)
+  const { data: existingByExternal } = await extQ.single()
 
   if (existingByExternal) {
     return { customerId: existingByExternal.id, created: false }
@@ -115,12 +123,13 @@ async function findOrCreateCustomer(
 
   // Try to find by email (if available)
   if (booking.customerEmail) {
-    const { data: existingByEmail } = await supabaseAdmin
+    let emailQ = supabaseAdmin
       .from('customers')
       .select('id')
       .eq('organization_id', organizationId)
       .eq('email', booking.customerEmail.toLowerCase())
-      .single()
+    if (dedupSite) emailQ = emailQ.eq('site_id', dedupSite)
+    const { data: existingByEmail } = await emailQ.single()
 
     if (existingByEmail) {
       // Update with external_id and address fields (Phase 1 Quick Wins)
@@ -146,12 +155,13 @@ async function findOrCreateCustomer(
   // Try to find by mobile (if available)
   if (booking.customerMobile) {
     const normalizedMobile = booking.customerMobile.replace(/\s+/g, '')
-    const { data: existingByMobile } = await supabaseAdmin
+    let mobileQ = supabaseAdmin
       .from('customers')
       .select('id')
       .eq('organization_id', organizationId)
       .eq('mobile', normalizedMobile)
-      .single()
+    if (dedupSite) mobileQ = mobileQ.eq('site_id', dedupSite)
+    const { data: existingByMobile } = await mobileQ.single()
 
     if (existingByMobile) {
       // Update with external_id and address fields (Phase 1 Quick Wins)
@@ -179,6 +189,7 @@ async function findOrCreateCustomer(
     .from('customers')
     .insert({
       organization_id: organizationId,
+      site_id: siteId,
       first_name: booking.customerFirstName,
       last_name: booking.customerLastName,
       email: booking.customerEmail?.toLowerCase() || null,
@@ -212,7 +223,9 @@ async function findOrCreateVehicle(
   organizationId: string,
   customerId: string,
   booking: GeminiBooking,
-  externalSource: string
+  externalSource: string,
+  siteId: string | null,
+  separated: boolean
 ): Promise<{ vehicleId: string; created: boolean }> {
   console.log('[DMS Import] findOrCreateVehicle called with:', {
     organizationId,
@@ -230,14 +243,18 @@ async function findOrCreateVehicle(
     throw new Error('Vehicle registration is required')
   }
 
+  // When separated, dedup only within this site (§4.2).
+  const dedupSite = separated && siteId ? siteId : null
+
   // First, try to find by external_id
-  const { data: existingByExternal, error: externalError } = await supabaseAdmin
+  let vExtQ = supabaseAdmin
     .from('vehicles')
     .select('id')
     .eq('organization_id', organizationId)
     .eq('external_source', externalSource)
     .eq('external_id', booking.vehicleId)
-    .single()
+  if (dedupSite) vExtQ = vExtQ.eq('site_id', dedupSite)
+  const { data: existingByExternal, error: externalError } = await vExtQ.single()
 
   console.log('[DMS Import] Search by external_id result:', { found: !!existingByExternal, error: externalError?.message })
 
@@ -249,12 +266,13 @@ async function findOrCreateVehicle(
   // Try to find by registration
   const normalizedReg = booking.vehicleReg.replace(/\s+/g, '').toUpperCase()
   console.log('[DMS Import] Normalized registration:', normalizedReg)
-  const { data: existingByReg, error: regError } = await supabaseAdmin
+  let vRegQ = supabaseAdmin
     .from('vehicles')
     .select('id')
     .eq('organization_id', organizationId)
     .eq('registration', normalizedReg)
-    .single()
+  if (dedupSite) vRegQ = vRegQ.eq('site_id', dedupSite)
+  const { data: existingByReg, error: regError } = await vRegQ.single()
 
   console.log('[DMS Import] Search by registration result:', { found: !!existingByReg, error: regError?.message })
 
@@ -287,12 +305,13 @@ async function findOrCreateVehicle(
 
   // Try to find by VIN (if available)
   if (booking.vehicleVin) {
-    const { data: existingByVin } = await supabaseAdmin
+    let vVinQ = supabaseAdmin
       .from('vehicles')
       .select('id')
       .eq('organization_id', organizationId)
       .eq('vin', booking.vehicleVin.toUpperCase())
-      .single()
+    if (dedupSite) vVinQ = vVinQ.eq('site_id', dedupSite)
+    const { data: existingByVin } = await vVinQ.single()
 
     if (existingByVin) {
       // Update with external_id
@@ -326,6 +345,7 @@ async function findOrCreateVehicle(
     .from('vehicles')
     .insert({
       organization_id: organizationId,
+      site_id: siteId,
       customer_id: customerId,
       registration: normalizedReg,
       vin: booking.vehicleVin?.toUpperCase() || null,
@@ -757,6 +777,10 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
       console.warn('[DMS Import] No site_id provided, falling back to most recent active site:', effectiveSiteId)
     }
 
+    // Resolve customer/vehicle scope once for this run (§4.2): when separated, the
+    // dedup below must match within effectiveSiteId only.
+    const separatedScope = (await getCustomerScopeMode(organizationId)) === 'separated'
+
     // Fetch bookings from DMS
     // Note: serviceTypes filtering is not yet supported by fetchDiaryBookings.
     // siteId scopes the feed to the org's mapped Gemini Site (default 1) so the
@@ -941,7 +965,7 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
         }
 
         // Find or create customer
-        const customerResult = await findOrCreateCustomer(organizationId, booking, externalSource)
+        const customerResult = await findOrCreateCustomer(organizationId, booking, externalSource, effectiveSiteId, separatedScope)
         if (customerResult.created) result.customersCreated++
 
         // Find or create vehicle
@@ -949,7 +973,9 @@ export async function runDmsImport(options: ImportOptions): Promise<ImportResult
           organizationId,
           customerResult.customerId,
           booking,
-          externalSource
+          externalSource,
+          effectiveSiteId,
+          separatedScope
         )
         if (vehicleResult.created) result.vehiclesCreated++
 

@@ -127,7 +127,7 @@ publicEstimate.get('/estimate/:token', async (c) => {
 
   const [lines, branding, settings] = await Promise.all([
     loadLines(est.id),
-    getOrganizationBranding(est.organization_id),
+    getOrganizationBranding(est.organization_id, est.site_id),
     getEstimateSettings(est.organization_id)
   ])
 

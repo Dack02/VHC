@@ -122,9 +122,12 @@ export async function provisionOrganization(
     createdOrgId = org.id
 
     // 2. Organization settings
+    // New tenants default to per-site SEPARATED customers/vehicles (GMS/GROUPS_AND_SITES.md
+    // §4.3, decision A). Existing orgs stay SHARED via the column default — only new orgs are
+    // flipped here. An explicit value in `settings` still wins.
     const { error: settingsError } = await supabaseAdmin
       .from('organization_settings')
-      .insert({ organization_id: org.id, ...settings })
+      .insert({ organization_id: org.id, share_customers_across_sites: false, ...settings })
     if (settingsError) {
       throw new ProvisionError(`Failed to create organization settings: ${settingsError.message}`)
     }

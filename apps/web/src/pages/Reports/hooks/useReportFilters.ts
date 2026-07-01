@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
-export type DatePreset = '7d' | '30d' | '90d' | 'ytd' | 'custom'
+export type DatePreset = '7d' | '30d' | '90d' | '6m' | '12m' | 'ytd' | 'all' | 'custom'
 export type GroupBy = 'day' | 'week' | 'month'
 
 export interface ReportFilters {
@@ -31,10 +31,21 @@ function getPresetDateRange(preset: DatePreset): { from: Date; to: Date } {
     case '90d':
       from = new Date(to.getTime() - 90 * 24 * 60 * 60 * 1000)
       break
+    case '6m': {
+      const d = new Date(to); d.setMonth(d.getMonth() - 6); from = d
+      break
+    }
+    case '12m': {
+      const d = new Date(to); d.setFullYear(d.getFullYear() - 1); from = d
+      break
+    }
     case 'ytd': {
       from = new Date(to.getFullYear(), 0, 1)
       break
     }
+    case 'all':
+      from = new Date(2000, 0, 1)
+      break
     default:
       from = new Date(to.getTime() - 30 * 24 * 60 * 60 * 1000)
   }
@@ -43,12 +54,14 @@ function getPresetDateRange(preset: DatePreset): { from: Date; to: Date } {
   return { from, to }
 }
 
-export function useReportFilters() {
+export function useReportFilters(defaults?: { period?: DatePreset; groupBy?: GroupBy }) {
   const [searchParams, setSearchParams] = useSearchParams()
+  const defaultPeriod = defaults?.period ?? '30d'
+  const defaultGroupBy = defaults?.groupBy ?? 'day'
 
   const filters: ReportFilters = useMemo(() => {
-    const preset = (searchParams.get('period') || '30d') as DatePreset
-    const groupBy = (searchParams.get('group_by') || 'day') as GroupBy
+    const preset = (searchParams.get('period') || defaultPeriod) as DatePreset
+    const groupBy = (searchParams.get('group_by') || defaultGroupBy) as GroupBy
     const siteId = searchParams.get('site_id') || null
     const technicianId = searchParams.get('technician_id') || null
     const advisorId = searchParams.get('advisor_id') || null
@@ -76,7 +89,7 @@ export function useReportFilters() {
     }
 
     return { datePreset: preset, dateFrom, dateTo, groupBy, siteId, technicianId, advisorId, customFrom, customTo }
-  }, [searchParams])
+  }, [searchParams, defaultPeriod, defaultGroupBy])
 
   const setFilter = useCallback((key: string, value: string | null) => {
     setSearchParams(prev => {

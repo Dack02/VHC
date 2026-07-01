@@ -5,7 +5,7 @@ import { moveCard, reorderCards, type MoveTarget, type SortPositionUpdate } from
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { useBoardData, useWeekData, useNow } from './useBoardData'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { sortCards, actualWorkedMinutes, isClockStale, weekStart, addDays, cardKey, type BoardCard, type BoardCardWithHc, type BoardData } from './types'
 import BoardColumn from './BoardColumn'
 import JobCard, { promiseCountdown } from './JobCard'
@@ -134,15 +134,24 @@ export default function WorkshopBoard() {
   const { user, session } = useAuth()
   const toast = useToast()
   const now = useNow(30000)
+  const [searchParams] = useSearchParams()
 
-  const [date, setDate] = useState(() => dateForOffset(0))
+  // Deep-linkable: e.g. a jobsheet's "Adjust on Workshop Board" link opens the
+  // board on that booking's day, focused on its technician. Falls back to today.
+  const [date, setDate] = useState(() => {
+    const q = searchParams.get('date')
+    return q && /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : dateForOffset(0)
+  })
   const { board, setBoard, loading, error, refresh, setPaused } = useBoardData(date)
 
-  const [view, setView] = useState<BoardView>(() => (localStorage.getItem(VIEW_KEY) as BoardView) || 'status')
-  const [techMode, setTechMode] = useState<TechMode>(() => (localStorage.getItem(TECH_MODE_KEY) as TechMode) || 'cards')
+  // A "?view=timeline" deep link lands straight on the draggable day timeline
+  // (initial state only, so a visitor's saved default view is preserved).
+  const wantTimeline = searchParams.get('view') === 'timeline'
+  const [view, setView] = useState<BoardView>(() => wantTimeline ? 'tech' : ((localStorage.getItem(VIEW_KEY) as BoardView) || 'status'))
+  const [techMode, setTechMode] = useState<TechMode>(() => wantTimeline ? 'timeline' : ((localStorage.getItem(TECH_MODE_KEY) as TechMode) || 'cards'))
   const [search, setSearch] = useState('')
   const [advisorFilter, setAdvisorFilter] = useState('')
-  const [technicianFilter, setTechnicianFilter] = useState('')
+  const [technicianFilter, setTechnicianFilter] = useState(() => searchParams.get('tech') || '')
   const [statusFilter, setStatusFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState<'' | 'internal' | 'retail'>('')
   const [waitingOnly, setWaitingOnly] = useState(false)

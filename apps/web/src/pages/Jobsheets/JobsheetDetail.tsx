@@ -754,6 +754,7 @@ export default function JobsheetDetail() {
           jobsheetId={js.id}
           healthCheckId={js.healthCheck?.id ?? null}
           assignedTechnician={js.assignedTechnician}
+          bookingDate={js.dueInDate}
           token={token}
           onChange={load}
         />

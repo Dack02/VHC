@@ -114,6 +114,34 @@ function bookedRepairsHours(bookedRepairs: unknown): number | null {
   return found ? Math.round(total * 100) / 100 : null
 }
 
+// Sum booked labour hours per jobsheet from its work lines (repair_labour under
+// repair_items). Used to size a GMS jobsheet's workshop block when it has neither a
+// manual card estimate nor DMS booked_repairs — without this those jobs default to 1h
+// even though their labour lines (e.g. 1 + 1.5 + 0.3 = 2.8h) already say otherwise.
+async function labourHoursByJobsheet(jobsheetIds: (string | null | undefined)[]): Promise<Map<string, number>> {
+  const byJobsheet = new Map<string, number>()
+  const ids = [...new Set(jobsheetIds.filter((x): x is string => !!x))]
+  if (ids.length === 0) return byJobsheet
+  for (const idChunk of chunkIds(ids, 100)) {
+    const { data, error } = await supabaseAdmin
+      .from('repair_items')
+      .select('jobsheet_id, repair_labour!repair_labour_repair_item_id_fkey(hours)')
+      .in('jobsheet_id', idChunk)
+    if (error) { console.error('labourHoursByJobsheet error:', error); continue }
+    for (const item of (data || []) as Array<{ jobsheet_id: string | null; repair_labour: Array<{ hours: number | string | null }> | null }>) {
+      if (!item.jobsheet_id) continue
+      let sum = 0
+      for (const l of item.repair_labour || []) {
+        const h = Number(l?.hours)
+        if (!Number.isNaN(h) && h > 0) sum += h
+      }
+      if (sum > 0) byJobsheet.set(item.jobsheet_id, (byJobsheet.get(item.jobsheet_id) || 0) + sum)
+    }
+  }
+  for (const [k, v] of byJobsheet) byJobsheet.set(k, Math.round(v * 100) / 100)
+  return byJobsheet
+}
+
 async function ensureStatusesSeeded(orgId: string) {
   const { count } = await supabaseAdmin
     .from('workshop_statuses')
@@ -221,6 +249,10 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
     ]
     const hcIds = healthChecks.map(hc => hc.id)
 
+    // Booked labour per jobsheet (fallback estimate for GMS work-line jobs). Kicked
+    // off here so it runs alongside the per-HC chunk loop below.
+    const labourByJobsheetP = labourHoursByJobsheet(healthChecks.map(hc => hc.jobsheet_id as string | null))
+
     // Card metadata, latest notes, live clocked-on state. Chunk by HC id so a
     // busy board's WIP set can't overflow a single .in() URL. Each HC lives in
     // exactly one chunk, so the per-chunk note order/limit still yields the
@@ -302,6 +334,8 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
       if (col.column_type === 'queue') queueColumnIds.add(col.id as string)
     }
 
+    const labourByJobsheet = await labourByJobsheetP
+
     const cards = healthChecks.map(hc => {
       const meta = cardMetaByHc.get(hc.id) || null
       const latestNote = latestNoteByHc.get(hc.id) || null
@@ -327,10 +361,13 @@ workshopBoard.get('/', authorize([...ALL_ROLES]), async (c) => {
         position = 'in_workshop'
       }
 
+      // Manual card estimate wins; else DMS booked-repair hours; else the jobsheet's
+      // booked labour (GMS work lines); else null → the client's 1h default.
       const estimatedHours =
         meta?.estimated_hours != null
           ? Number(meta.estimated_hours)
           : bookedRepairsHours(hc.booked_repairs)
+            ?? (hc.jobsheet_id ? labourByJobsheet.get(hc.jobsheet_id as string) ?? null : null)
 
       const clockEntry = clockedOnByHc.get(hc.id)
       const clockTech = clockEntry?.technician as { first_name?: string; last_name?: string } | null
@@ -488,7 +525,7 @@ workshopBoard.get('/week', authorize([...ALL_ROLES]), async (c) => {
     const toEnd = `${to}T23:59:59`
 
     const WEEK_HC_SELECT = `
-      id, status, job_state, technician_id, customer_waiting, promise_time, due_date, booked_repairs,
+      id, status, job_state, technician_id, customer_waiting, promise_time, due_date, booked_repairs, jobsheet_id,
       vehicle:vehicles(registration),
       customer:customers(first_name, last_name)
     `
@@ -527,6 +564,7 @@ workshopBoard.get('/week', authorize([...ALL_ROLES]), async (c) => {
 
     const healthChecks = [...(activeRes.data || []), ...(dueInRes.data || [])]
     const hcIds = healthChecks.map(hc => hc.id)
+    const labourByJobsheetP = labourHoursByJobsheet(healthChecks.map(hc => hc.jobsheet_id as string | null))
 
     const cardMetaByHc = new Map<string, Record<string, unknown>>()
     const clockedOn = new Set<string>()
@@ -553,9 +591,15 @@ workshopBoard.get('/week', authorize([...ALL_ROLES]), async (c) => {
       col.column_type === 'technician' && (col.technician as { is_active?: boolean } | null)?.is_active !== false
     )
 
+    const labourByJobsheet = await labourByJobsheetP
+
     const cards = healthChecks.map(hc => {
       const meta = cardMetaByHc.get(hc.id) || null
-      const estimatedHours = meta?.estimated_hours != null ? Number(meta.estimated_hours) : bookedRepairsHours(hc.booked_repairs)
+      const estimatedHours =
+        meta?.estimated_hours != null
+          ? Number(meta.estimated_hours)
+          : bookedRepairsHours(hc.booked_repairs)
+            ?? (hc.jobsheet_id ? labourByJobsheet.get(hc.jobsheet_id as string) ?? null : null)
       const cust = hc.customer as { first_name?: string; last_name?: string } | null
       return {
         healthCheckId: hc.id as string | null,

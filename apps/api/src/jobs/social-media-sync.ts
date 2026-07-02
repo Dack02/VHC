@@ -100,10 +100,16 @@ export async function runSocialMediaSync(job: SocialMediaSyncJob): Promise<void>
           for (const [zid, series] of Object.entries(statsByAccount)) {
             const acctDbId = byZernioId.get(String(zid))
             if (!acctDbId || !Array.isArray(series)) continue
+            let pushed = false
             for (const pt of series) {
-              if (pt?.date && pt.followers != null) metricRows.push({ accountDbId: acctDbId, stat_date: String(pt.date).slice(0, 10), metric: 'followers_count', value: num(pt.followers) })
+              if (pt?.date && pt.followers != null) { metricRows.push({ accountDbId: acctDbId, stat_date: String(pt.date).slice(0, 10), metric: 'followers_count', value: num(pt.followers) }); pushed = true }
             }
-            seriesAccounts.add(acctDbId)
+            // Only treat the account as "has a daily series" when it actually
+            // produced points. A newly-connected page returns an empty stats[]
+            // key before Zernio builds its history — without this guard that
+            // empty key suppresses the currentFollowers fallback below, so the
+            // page would show 0 even once Zernio knows the live count.
+            if (pushed) seriesAccounts.add(acctDbId)
           }
           for (const fa of arr(fs.data, 'accounts')) {
             const acctDbId = byZernioId.get(String(fa?._id))

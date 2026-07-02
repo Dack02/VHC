@@ -320,6 +320,112 @@ resourceManager.delete('/certifications/:id', authorize([...ADMIN_ROLES]), async
   return c.json({ ok: true })
 })
 
+// ---------------------------------------------------------------------------
+// P1 — designated MOT tester pool (per site). Membership IS the designation:
+// no certification is required to be listed here (certs stay optional metadata).
+// Ordered by `priority` (1 = filled first) with an optional per-tester
+// `daily_mot_cap`; Phase 2 auto-assign fills by priority until a cap bites.
+// ---------------------------------------------------------------------------
+
+// GET /mot-testers?siteId=...  → the ordered pool + the site's technician roster.
+// Advisors read it (the job-card MOT-line picker); only admins edit it (PUT below).
+resourceManager.get('/mot-testers', authorize([...ADVISOR_ROLES]), async (c) => {
+  const auth = c.get('auth')
+  const siteId = await resolveSiteId(c)
+  if (!siteId) return c.json({ error: 'No site selected' }, 400)
+
+  const [{ data: techs, error: techErr }, { data: pool, error: poolErr }] = await Promise.all([
+    supabaseAdmin
+      .from('users')
+      .select('id, first_name, last_name, email, site_id')
+      .eq('organization_id', auth.orgId)
+      .eq('role', 'technician')
+      .eq('is_active', true)
+      .order('first_name', { ascending: true }),
+    supabaseAdmin
+      .from('site_mot_testers')
+      .select('*')
+      .eq('organization_id', auth.orgId)
+      .eq('site_id', siteId)
+      .eq('is_active', true)
+      .order('priority', { ascending: true })
+  ])
+  if (techErr || poolErr) {
+    console.error('mot-testers load error:', techErr || poolErr)
+    return c.json({ error: 'Failed to load MOT testers' }, 500)
+  }
+
+  // Resolve names across all org techs (a tester may have moved site); derive the
+  // add-picker roster from the techs actually at this site.
+  const nameById = new Map((techs || []).map((t: any) => [t.id, techName(t)]))
+  return c.json({
+    siteId,
+    technicians: (techs || [])
+      .filter((t: any) => t.site_id === siteId)
+      .map((t: any) => ({ id: t.id, name: techName(t) })),
+    testers: (pool || []).map((r: any) => ({
+      technicianId: r.technician_id,
+      name: nameById.get(r.technician_id) || 'Unknown technician',
+      priority: r.priority,
+      dailyMotCap: r.daily_mot_cap,
+      isActive: r.is_active
+    }))
+  })
+})
+
+// PUT /mot-testers?siteId=...  → replace the whole ordered pool (site_admin+)
+resourceManager.put('/mot-testers', authorize([...ADMIN_ROLES]), async (c) => {
+  const auth = c.get('auth')
+  const siteId = await resolveSiteId(c)
+  if (!siteId) return c.json({ error: 'No site selected' }, 400)
+
+  let body: any
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
+  const incoming = Array.isArray(body?.testers) ? body.testers : []
+
+  // Validate each technician belongs to the org. Membership = designation; no cert.
+  const rows: any[] = []
+  const seen = new Set<string>()
+  for (const t of incoming) {
+    const techId = t?.technicianId
+    if (!techId || seen.has(techId)) continue
+    if (!(await verifyTechnician(auth.orgId, techId))) continue
+    seen.add(techId)
+    rows.push({
+      organization_id: auth.orgId,
+      site_id: siteId,
+      technician_id: techId,
+      priority: clamp(Math.round(Number(t.priority) || (rows.length + 1)), 1, 999),
+      daily_mot_cap: t.dailyMotCap == null || t.dailyMotCap === '' ? null : clamp(Math.round(Number(t.dailyMotCap)), 1, 200),
+      is_active: true,
+      updated_at: new Date().toISOString()
+    })
+  }
+
+  if (rows.length) {
+    const { error } = await supabaseAdmin
+      .from('site_mot_testers')
+      .upsert(rows, { onConflict: 'site_id,technician_id' })
+    if (error) {
+      console.error('site_mot_testers upsert error:', error)
+      return c.json({ error: 'Failed to save MOT testers' }, 500)
+    }
+  }
+
+  // Drop any tester the editor removed from the pool.
+  const keep = rows.map((r: any) => r.technician_id)
+  let delQ = supabaseAdmin.from('site_mot_testers').delete()
+    .eq('organization_id', auth.orgId).eq('site_id', siteId)
+  if (keep.length) delQ = delQ.not('technician_id', 'in', `(${keep.join(',')})`)
+  const { error: delErr } = await delQ
+  if (delErr) {
+    console.error('site_mot_testers delete error:', delErr)
+    return c.json({ error: 'Failed to save MOT testers' }, 500)
+  }
+
+  return c.json({ ok: true, count: rows.length })
+})
+
 // POST /suggest-technician  → ranked, advisory tech suggestions for a job.
 // DISPATCH advisory only (does NOT gate a booking). P1 ranks by qualified + primary
 // + proficiency; live load-balancing arrives with the P2 capacity RPCs.

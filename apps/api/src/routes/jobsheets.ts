@@ -1136,6 +1136,7 @@ jobsheets.delete('/:id', authorize(['super_admin', 'org_admin', 'site_admin']), 
 
 const WORK_LINE_SELECT = `
   *,
+  repair_type:repair_types(id, is_mot),
   labour:repair_labour!repair_labour_repair_item_id_fkey(
     id, labour_code_id, hours, rate, total, is_vat_exempt, notes,
     labour_code:labour_codes(id, code, description)
@@ -1152,6 +1153,8 @@ function shapeWorkLine(item: any) {
   return {
     ...base,
     origin: item.jobsheet_id ? 'booking' : 'inspection',
+    // Is this line an MOT? (drives the MOT-tester-scoped picker — MOT_TESTER_ROUTING.md)
+    isMot: item.repair_type?.is_mot ?? false,
     // Per-line technician + physical completion (TECH_JOB_MODEL.md §9/§10).
     workCompletedAt: item.work_completed_at ?? null,
     workCompletedBy: item.work_completed_by ?? null,

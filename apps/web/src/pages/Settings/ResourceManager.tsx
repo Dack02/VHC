@@ -51,6 +51,19 @@ interface AssetItem {
   quantity: number | null   // null = no limit (untracked)
 }
 
+// Designated MOT tester pool (MOT_TESTER_ROUTING.md). Ordered = priority; the
+// per-tester daily cap is the overflow point for Phase 2 auto-assign.
+interface MotTester {
+  technicianId: string
+  name: string
+  dailyMotCap: number | null
+}
+interface MotTestersResponse {
+  siteId: string
+  technicians: { id: string; name: string }[]
+  testers: { technicianId: string; name: string; priority: number; dailyMotCap: number | null }[]
+}
+
 const FieldLabel = ({ children, hint, tip }: { children: React.ReactNode; hint?: string; tip?: string }) => (
   <label className="block text-sm font-medium text-gray-700 mb-1">
     <span className="inline-flex items-center gap-1">
@@ -203,6 +216,9 @@ export default function ResourceManager() {
   const [savingAssets, setSavingAssets] = useState(false)
   const [savingEnforce, setSavingEnforce] = useState(false)
   const [savingMot, setSavingMot] = useState(false)
+  const [motTesters, setMotTesters] = useState<MotTester[] | null>(null)
+  const [motRoster, setMotRoster] = useState<{ id: string; name: string }[]>([])
+  const [savingTesters, setSavingTesters] = useState(false)
   const [showQuotaHelp, setShowQuotaHelp] = useState(false)
   // Tracks which site's config we've already loaded. Guards against `fetchConfig`
   // re-running (when the auth token/user object re-hydrates a few seconds after mount)
@@ -259,7 +275,21 @@ export default function ResourceManager() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, user?.site?.id])
 
-  useEffect(() => { fetchConfig(); fetchQuotas(); fetchAssets() }, [fetchConfig, fetchQuotas, fetchAssets])
+  const fetchMotTesters = useCallback(async () => {
+    if (!token) return
+    try {
+      const params = new URLSearchParams()
+      if (user?.site?.id) params.set('siteId', user.site.id)
+      const data = await api<MotTestersResponse>(`/api/v1/resource-manager/mot-testers?${params}`, { token })
+      setMotRoster(data.technicians || [])
+      setMotTesters((data.testers || []).map(t => ({ technicianId: t.technicianId, name: t.name, dailyMotCap: t.dailyMotCap })))
+    } catch {
+      setMotTesters([])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, user?.site?.id])
+
+  useEffect(() => { fetchConfig(); fetchQuotas(); fetchAssets(); fetchMotTesters() }, [fetchConfig, fetchQuotas, fetchAssets, fetchMotTesters])
 
   const editAsset = (assetType: string, quantity: number | null) =>
     setAssets(prev => prev ? prev.map(a => a.assetType === assetType ? { ...a, quantity } : a) : prev)
@@ -299,6 +329,48 @@ export default function ResourceManager() {
       toast.error(err instanceof Error ? err.message : 'Failed to save MOT capacity')
     } finally {
       setSavingMot(false)
+    }
+  }
+
+  // MOT tester pool: array order = priority (1 = filled first). Edits are local
+  // until "Save testers" persists the whole ordered list.
+  const addMotTester = (techId: string) => {
+    if (!techId) return
+    setMotTesters(prev => {
+      const list = prev || []
+      if (list.some(t => t.technicianId === techId)) return list
+      const entry = motRoster.find(r => r.id === techId)
+      return [...list, { technicianId: techId, name: entry?.name || 'Technician', dailyMotCap: null }]
+    })
+  }
+  const removeMotTester = (techId: string) =>
+    setMotTesters(prev => (prev ? prev.filter(t => t.technicianId !== techId) : prev))
+  const moveMotTester = (index: number, dir: -1 | 1) =>
+    setMotTesters(prev => {
+      if (!prev) return prev
+      const to = index + dir
+      if (to < 0 || to >= prev.length) return prev
+      const next = [...prev]
+      ;[next[index], next[to]] = [next[to], next[index]]
+      return next
+    })
+  const editMotTesterCap = (techId: string, cap: number | null) =>
+    setMotTesters(prev => (prev ? prev.map(t => t.technicianId === techId ? { ...t, dailyMotCap: cap } : t) : prev))
+
+  const handleSaveTesters = async () => {
+    if (!token || !siteId || !motTesters) return
+    setSavingTesters(true)
+    try {
+      await api(`/api/v1/resource-manager/mot-testers?siteId=${siteId}`, {
+        method: 'PUT', token,
+        body: { testers: motTesters.map((t, i) => ({ technicianId: t.technicianId, priority: i + 1, dailyMotCap: t.dailyMotCap })) }
+      })
+      toast.success('MOT testers saved')
+      fetchMotTesters()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save MOT testers')
+    } finally {
+      setSavingTesters(false)
     }
   }
 
@@ -533,6 +605,58 @@ export default function ResourceManager() {
               {savingMot ? 'Saving…' : 'Save MOT capacity'}
             </button>
           </div>
+        </Card>
+
+        <Card title="MOT testers" subtitle="Your designated MOT tester(s) for this site, in priority order. When a job has an MOT plus other work, the MOT line is routed to a tester and the rest to another technician. Being listed here is the designation — no certificate needed.">
+          {!motTesters ? (
+            <p className="text-sm text-gray-400">Loading…</p>
+          ) : (
+            <>
+              {motTesters.length === 0 ? (
+                <p className="text-sm text-gray-400 mb-4">No MOT testers set — add one below. Until then the MOT line lists all technicians.</p>
+              ) : (
+                <div className="mb-4">
+                  <div className="grid grid-cols-[auto_1fr_auto_auto] gap-x-3 items-center text-[11px] uppercase tracking-wide text-gray-400 pb-1 border-b border-gray-100">
+                    <span>Order</span>
+                    <span>Technician</span>
+                    <QHead label="Daily cap" tip="MOTs routed to this tester per day before overflow to the next. Blank = no per-tester cap (the site MOT bay cap still applies)." />
+                    <span></span>
+                  </div>
+                  {motTesters.map((t, i) => (
+                    <div key={t.technicianId} className="grid grid-cols-[auto_1fr_auto_auto] gap-x-3 items-center py-2 border-b border-gray-50">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-4 text-center text-sm font-semibold text-gray-500 tabular-nums">{i + 1}</span>
+                        <div className="flex flex-col leading-none">
+                          <button type="button" disabled={i === 0} onClick={() => moveMotTester(i, -1)}
+                            className="text-gray-400 hover:text-gray-700 disabled:opacity-30 text-[10px]" title="Move up">▲</button>
+                          <button type="button" disabled={i === motTesters.length - 1} onClick={() => moveMotTester(i, 1)}
+                            className="text-gray-400 hover:text-gray-700 disabled:opacity-30 text-[10px]" title="Move down">▼</button>
+                        </div>
+                      </div>
+                      <span className="text-sm text-gray-900">{t.name}</span>
+                      <input type="number" min={1} max={200} className="border border-gray-300 rounded-lg px-2 py-1 text-sm w-20"
+                        value={t.dailyMotCap ?? ''} placeholder="—"
+                        onChange={e => editMotTesterCap(t.technicianId, e.target.value === '' ? null : Math.max(1, Math.round(Number(e.target.value))))} />
+                      <button type="button" onClick={() => removeMotTester(t.technicianId)}
+                        className="text-xs font-medium text-gray-400 hover:text-red-600" title="Remove from pool">Remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <select className={inputCls + ' flex-1'} value="" onChange={e => addMotTester(e.target.value)}>
+                  <option value="">Add a technician…</option>
+                  {motRoster.filter(r => !(motTesters ?? []).some(t => t.technicianId === r.id)).map(r => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+                <button onClick={handleSaveTesters} disabled={savingTesters}
+                  className="px-4 py-2 bg-primary text-white text-sm font-semibold rounded-lg disabled:opacity-50 whitespace-nowrap">
+                  {savingTesters ? 'Saving…' : 'Save testers'}
+                </button>
+              </div>
+            </>
+          )}
         </Card>
 
         <Card title="Category quotas" subtitle="Protect your service mix without turning away work. Protection is sized from how you've staffed each lane (the staffed column); these are overrides + caps.">

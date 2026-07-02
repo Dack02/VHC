@@ -32,8 +32,14 @@ interface WorkLine {
   id: string
   name: string
   origin: 'booking' | 'inspection' | 'estimate'
+  isMot: boolean
   workCompletedAt: string | null
   assignedTechnicianId: string | null
+}
+
+interface MotTester {
+  technicianId: string
+  name: string
 }
 
 interface Props {
@@ -85,6 +91,7 @@ export default function JobsheetTechnicianTab({ jobsheetId, healthCheckId, assig
   const { user } = useAuth()
   const siteId = user?.site?.id
   const [technicians, setTechnicians] = useState<User[]>([])
+  const [motTesters, setMotTesters] = useState<MotTester[]>([])
   const [suggestions, setSuggestions] = useState<TechSuggestion[]>([])
   const [selected, setSelected] = useState<string>(assignedTechnician?.id || '')
   const [saving, setSaving] = useState(false)
@@ -101,6 +108,14 @@ export default function JobsheetTechnicianTab({ jobsheetId, healthCheckId, assig
       .then(d => setTechnicians((d.users || []).filter(u => u.role === 'technician')))
       .catch(() => {})
   }, [token])
+
+  // The site's designated MOT tester pool (priority order) — scopes the MOT line's picker.
+  useEffect(() => {
+    if (!siteId) { setMotTesters([]); return }
+    api<{ testers: MotTester[] }>(`/api/v1/resource-manager/mot-testers?siteId=${siteId}`, { token })
+      .then(d => setMotTesters(d.testers || []))
+      .catch(() => setMotTesters([]))
+  }, [token, siteId])
 
   // Advisory ranking — server resolves the repair type from the jobsheet's lines or the VHC.
   useEffect(() => {
@@ -419,16 +434,22 @@ export default function JobsheetTechnicianTab({ jobsheetId, healthCheckId, assig
                   title="Mark this line complete"
                 />
                 <div className="flex-1 min-w-0">
-                  <div className={`text-sm truncate ${line.workCompletedAt ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{line.name}</div>
+                  <div className="flex items-center gap-1.5">
+                    {line.isMot && (
+                      <span className="shrink-0 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-semibold uppercase tracking-wide">MOT</span>
+                    )}
+                    <div className={`text-sm truncate ${line.workCompletedAt ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{line.name}</div>
+                  </div>
                   {line.assignedTechnicianId && <div className="text-xs text-gray-500">🔧 {techName(line.assignedTechnicianId)}</div>}
                 </div>
                 <select
                   value={line.assignedTechnicianId || ''}
                   onChange={(e) => assignLine(line, e.target.value)}
                   className={selectCls}
+                  title={line.isMot ? 'Assign an MOT tester' : 'Assign a technician'}
                 >
-                  <option value="">Unclaimed</option>
-                  {technicians.map(t => <option key={t.id} value={t.id}>{t.firstName} {t.lastName}</option>)}
+                  <option value="">{line.isMot ? 'No tester' : 'Unclaimed'}</option>
+                  {lineOptions(line).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               </div>
             ))}
@@ -456,5 +477,19 @@ export default function JobsheetTechnicianTab({ jobsheetId, healthCheckId, assig
       toast.error(err instanceof Error ? err.message : 'Failed to assign line')
       setReloadKey(k => k + 1)
     })
+  }
+
+  // Options for a line's technician picker: MOT lines are scoped to the designated
+  // tester pool (priority order); everything else lists all technicians. A pre-existing
+  // assignee no longer in the pool stays visible so a save doesn't silently drop them.
+  function lineOptions(line: WorkLine): { value: string; label: string }[] {
+    if (line.isMot && motTesters.length > 0) {
+      const opts = motTesters.map(t => ({ value: t.technicianId, label: t.name }))
+      if (line.assignedTechnicianId && !opts.some(o => o.value === line.assignedTechnicianId)) {
+        opts.push({ value: line.assignedTechnicianId, label: `${techName(line.assignedTechnicianId) || 'Technician'} (not a tester)` })
+      }
+      return opts
+    }
+    return technicians.map(t => ({ value: t.id, label: `${t.firstName} ${t.lastName}` }))
   }
 }

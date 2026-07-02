@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
+import WorkingHoursEditor from '../../components/WorkingHoursEditor'
 
 interface ShiftsModalProps {
   siteId: string
@@ -16,15 +17,10 @@ interface OrgUser {
   role: string
   is_active?: boolean; isActive?: boolean
 }
-interface ShiftRow { technicianId: string; weekday: number; startTime: string; endTime: string }
 interface Absence {
   id: string; technicianId: string; startDate: string; endDate: string
   startTime: string | null; endTime: string | null; allDay: boolean; reason: string | null
 }
-interface DayEdit { on: boolean; start: string; end: string }
-
-const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-const DEFAULT_DAY: DayEdit = { on: true, start: '08:00', end: '17:30' }
 
 export default function ShiftsModal({ siteId, onClose, onChanged }: ShiftsModalProps) {
   const { session } = useAuth()
@@ -32,11 +28,9 @@ export default function ShiftsModal({ siteId, onClose, onChanged }: ShiftsModalP
   const token = session?.accessToken
   const [tab, setTab] = useState<'hours' | 'absence'>('hours')
   const [technicians, setTechnicians] = useState<OrgUser[]>([])
-  const [shifts, setShifts] = useState<ShiftRow[]>([])
   const [absences, setAbsences] = useState<Absence[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedTechId, setSelectedTechId] = useState('')
-  const [days, setDays] = useState<DayEdit[]>(WEEKDAYS.map(() => ({ ...DEFAULT_DAY })))
   const [saving, setSaving] = useState(false)
   // Absence form
   const [absTech, setAbsTech] = useState('')
@@ -53,13 +47,14 @@ export default function ShiftsModal({ siteId, onClose, onChanged }: ShiftsModalP
     if (!token) return
     setLoading(true)
     try {
+      // Hours (workshop_tech_shifts) are owned by WorkingHoursEditor now; here we only
+      // need the technician list and the absence calendar.
       const [usersRes, shiftsRes] = await Promise.all([
         api<{ users: OrgUser[] }>('/api/v1/users', { token }),
-        api<{ shifts: ShiftRow[]; absences: Absence[] }>(`/api/v1/workshop-board/shifts?siteId=${siteId}`, { token }),
+        api<{ absences: Absence[] }>(`/api/v1/workshop-board/shifts?siteId=${siteId}`, { token }),
       ])
       const techs = (usersRes.users || []).filter(u => u.role === 'technician' && (u.is_active ?? u.isActive ?? true))
       setTechnicians(techs)
-      setShifts(shiftsRes.shifts || [])
       setAbsences(shiftsRes.absences || [])
       const firstTech = techs[0]?.id || ''
       setSelectedTechId(prev => prev || firstTech)
@@ -72,40 +67,6 @@ export default function ShiftsModal({ siteId, onClose, onChanged }: ShiftsModalP
   }, [token, siteId, toast])
 
   useEffect(() => { load() }, [load])
-
-  // Populate the weekday editor from the selected tech's saved shift rows.
-  useEffect(() => {
-    if (!selectedTechId) return
-    const next = WEEKDAYS.map((_, wd) => {
-      const row = shifts.find(s => s.technicianId === selectedTechId && s.weekday === wd)
-      return row ? { on: true, start: row.startTime, end: row.endTime } : { on: false, start: '08:00', end: '17:30' }
-    })
-    setDays(next)
-  }, [selectedTechId, shifts])
-
-  const setDay = (i: number, patch: Partial<DayEdit>) =>
-    setDays(d => d.map((day, idx) => (idx === i ? { ...day, ...patch } : day)))
-
-  const copyMonToWeekdays = () => setDays(d => d.map((day, i) => (i >= 1 && i <= 4 ? { ...d[0] } : day)))
-
-  const saveHours = async () => {
-    if (!token || !selectedTechId) return
-    for (const d of days) {
-      if (d.on && d.start >= d.end) { toast.error('Each working day must start before it ends'); return }
-    }
-    setSaving(true)
-    try {
-      const payload = days.map((d, wd) => (d.on ? { weekday: wd, startTime: d.start, endTime: d.end } : null)).filter(Boolean)
-      await api(`/api/v1/workshop-board/shifts/${selectedTechId}`, { method: 'PUT', token, body: { shifts: payload } })
-      toast.success('Working hours saved')
-      onChanged()
-      await load()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to save hours')
-    } finally {
-      setSaving(false)
-    }
-  }
 
   const addAbsence = async () => {
     if (!token || !absTech || !absFrom || !absTo) { toast.error('Pick a technician and dates'); return }
@@ -162,29 +123,11 @@ export default function ShiftsModal({ siteId, onClose, onChanged }: ShiftsModalP
                 {technicians.map(t => <option key={t.id} value={t.id}>{userName(t.id)}</option>)}
               </select>
             </div>
-            <div className="space-y-1.5">
-              {WEEKDAYS.map((label, i) => (
-                <div key={label} className="flex items-center gap-2">
-                  <label className="flex items-center gap-1.5 w-20 text-sm text-gray-700 cursor-pointer">
-                    <input type="checkbox" checked={days[i].on} onChange={e => setDay(i, { on: e.target.checked })} className="rounded border-gray-300 text-primary focus:ring-primary" />
-                    {label}
-                  </label>
-                  {days[i].on ? (
-                    <>
-                      <input type="time" value={days[i].start} onChange={e => setDay(i, { start: e.target.value })} className="border border-gray-300 rounded-lg px-2 py-1 text-sm" />
-                      <span className="text-gray-400 text-sm">–</span>
-                      <input type="time" value={days[i].end} onChange={e => setDay(i, { end: e.target.value })} className="border border-gray-300 rounded-lg px-2 py-1 text-sm" />
-                    </>
-                  ) : (
-                    <span className="text-sm text-gray-400">Day off</span>
-                  )}
-                </div>
-              ))}
-            </div>
-            <button onClick={copyMonToWeekdays} className="text-xs text-primary hover:underline">Copy Monday to Tue–Fri</button>
-            <div className="flex justify-end gap-2 pt-2">
+            {selectedTechId && token && (
+              <WorkingHoursEditor siteId={siteId} technicianId={selectedTechId} token={token} onSaved={onChanged} />
+            )}
+            <div className="flex justify-end pt-2">
               <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg">Close</button>
-              <button onClick={saveHours} disabled={saving} className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90 disabled:opacity-50">{saving ? 'Saving…' : 'Save hours'}</button>
             </div>
           </div>
         ) : (

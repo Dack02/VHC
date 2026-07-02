@@ -3,6 +3,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../contexts/ToastContext'
 import { api } from '../../lib/api'
 import SettingsBackLink from '../../components/SettingsBackLink'
+import WorkingHoursEditor from '../../components/WorkingHoursEditor'
 import { Tooltip } from '../../components/ui/Tooltip'
 
 interface Tech { id: string; name: string }
@@ -412,6 +413,18 @@ export default function TechnicianSkills() {
                 </div>
                 <button onClick={handleAddCert} className="px-3 py-1.5 border border-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50">Add</button>
               </div>
+            </div>
+
+            {/* Working hours — the tech's normal week (capacity/availability); a sibling to skills */}
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+              <h2 className="text-base font-semibold text-gray-900 mb-1">Working hours</h2>
+              <p className="text-xs text-gray-500 mb-4">
+                {selected?.name}&apos;s normal week. The Workshop Board and capacity schedule against these hours;
+                holidays &amp; one-off changes stay on the board&apos;s Shifts &amp; absence panel.
+              </p>
+              {selectedId && token && (
+                <WorkingHoursEditor siteId={user?.site?.id} technicianId={selectedId} token={token} />
+              )}
             </div>
           </div>
         </div>
